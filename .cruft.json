@@ -1,0 +1,31 @@
+{
+  "template": "https://github.com/scverse/cookiecutter-scverse",
+  "commit": "052424af0b4c74a99a791bbfce7b2de15d780fc9",
+  "checkout": null,
+  "context": {
+    "cookiecutter": {
+      "project_name": "embpy",
+      "package_name": "embpy",
+      "project_description": "A package for embeddings in python",
+      "author_full_name": "Goncalo Rei Pinto",
+      "author_email": "goncalo.pinto@helmholtz-munich.de",
+      "github_user": "grpinto",
+      "github_repo": "embpy",
+      "license": "MIT License",
+      "ide_integration": true,
+      "_copy_without_render": [
+        ".github/workflows/build.yaml",
+        ".github/workflows/test.yaml",
+        "docs/_templates/autosummary/**.rst"
+      ],
+      "_render_devdocs": false,
+      "_jinja2_env_vars": {
+        "lstrip_blocks": true,
+        "trim_blocks": true
+      },
+      "_template": "https://github.com/scverse/cookiecutter-scverse",
+      "_commit": "052424af0b4c74a99a791bbfce7b2de15d780fc9"
+    }
+  },
+  "directory": null
+}
