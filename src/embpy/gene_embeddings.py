@@ -20,18 +20,35 @@ from enformer_pytorch import from_pretrained
 from tqdm import tqdm
 
 
+def get_device() -> torch.device:
+    """Selects the best available device: CUDA, MPS (for Apple Silicon), or CPU."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")
+
+
 class GeneEmbeddingProcessor:
     """Processes gene embeddings using a pre-trained Enformer model.
 
     Attributes
     ----------
-        gene_coordinate_file (str): Path to the gene coordinate CSV file.
-        chromosome_dict_file (str): Path to the chromosome dictionary pickle file.
-        region (str): Region mode, either "full_gene" or "TSS_only".
-        gene_coordinate_df (pd.DataFrame): DataFrame with gene coordinates.
-        chromosome_dict (dict): Dictionary mapping chromosomes to sequence objects.
-        model (torch.nn.Module): Pre-trained Enformer model.
-        device (torch.device): Device for running computations.
+    gene_coordinate_file : str
+        Path to the gene coordinate CSV file.
+    chromosome_dict_file : str
+        Path to the chromosome dictionary pickle file.
+    region : str
+        Region mode, either "full_gene" or "TSS_only".
+    gene_coordinate_df : pd.DataFrame
+        DataFrame with gene coordinates.
+    chromosome_dict : dict
+        Dictionary mapping chromosomes to sequence objects.
+    model : torch.nn.Module
+        Pre-trained Enformer model.
+    device : torch.device
+        Device for running computations.
     """
 
     def __init__(self, gene_coordinate_file: str, chromosome_dict_file: str, region: str):
@@ -50,10 +67,10 @@ class GeneEmbeddingProcessor:
         self.chromosome_dict_file = chromosome_dict_file
         self.region = region
 
-        self.gene_coordinate_df: pd.DataFrame | None = None
-        self.chromosome_dict: dict[str, Any] | None = None
-        self.model: torch.nn.Module | None = None
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.gene_coordinate_df: pd.DataFrame
+        self.chromosome_dict: dict[str, Any]
+        self.model: torch.nn.Module
+        self.device = get_device()
 
         # Define column names for consistency.
         self.chromosome_col_name = "Chromosome/scaffold name"
@@ -75,9 +92,9 @@ class GeneEmbeddingProcessor:
 
     def initialize_model(self) -> None:
         """Initializes the pre-trained Enformer model and moves it to the proper device."""
-        logging.info("Initializing the Enformer model.")
+        logging.info(f"Initializing the Enformer model on device: {self.device}.")
         self.model = from_pretrained("EleutherAI/enformer-official-rough", use_tf_gamma=False)
-        self.model.to(self.device)
+        # self.model = cast(torch.nn.Module, self.model.to(self.device))
         self.model.eval()
 
     def process_gene_row(self, row: pd.Series) -> tuple[np.ndarray, np.ndarray, np.ndarray, str] | None:
@@ -162,7 +179,9 @@ class GeneEmbeddingProcessor:
 
         # Cleanup
         del seq_tensor, embeddings
-        torch.cuda.empty_cache()
+        # Clear CUDA cache only if CUDA is used.
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
 
         return max_values, mean_values, median_values, gene_symbol
 
@@ -209,7 +228,7 @@ class GeneEmbeddingProcessor:
             "max": np.array(embeddings_max_list),
             "mean": np.array(embeddings_mean_list),
             "median": np.array(embeddings_median_list),
-            "genes": genes_list,
+            "genes": np.array(genes_list),
         }
 
 
@@ -218,9 +237,9 @@ def save_embeddings(output_file: str, embeddings: dict[str, np.ndarray]) -> None
 
     Args:
         output_file (str): Path to the output NPZ file.
-        embeddings (Dict[str, np.ndarray]): Dictionary containing embeddings and gene symbols.
+        embeddings (dict[str, np.ndarray]): Dictionary containing embeddings and gene symbols.
     """
-    np.savez(output_file, **embeddings)
+    np.savez(output_file, allow_pickle=True, **embeddings)
     logging.info(f"Saved embeddings to {output_file}")
 
 
