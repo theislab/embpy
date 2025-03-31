@@ -24,12 +24,17 @@ classifiers = [
 ]
 dependencies = [
   "anndata",
+  "enformer-pytorch",
   # for debug logging (referenced from the issue template)
   "session-info",
+  "torch>=2.6",      # Add torch here
+  "torchaudio>=2.6",
+
+  "torchvision>=0.21", # And torchvision
 ]
 optional-dependencies.dev = [
   "pre-commit",
-  "twine>=4.0.2",
+  "twine>=6.1",
 ]
 optional-dependencies.doc = [
   "docutils>=0.8,!=0.18.*,!=0.19.*",
