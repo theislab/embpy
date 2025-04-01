@@ -25,12 +25,10 @@ classifiers = [
 dependencies = [
   "anndata",
   "enformer-pytorch",
-  # for debug logging (referenced from the issue template)
+  "numpy",
+  "pandas",
   "session-info",
-  "torch>=2.6",      # Add torch here
-  "torchaudio>=2.6",
-
-  "torchvision>=0.21", # And torchvision
+  "torch>=2.0",
 ]
 optional-dependencies.dev = [
   "pre-commit",
@@ -41,8 +39,6 @@ optional-dependencies.doc = [
   "ipykernel",
   "ipython",
   "myst-nb>=1.1",
-  "pandas",
-  # Until pybtex >0.23.0 releases: https://bitbucket.org/pybtex-devs/pybtex/issues/169/
   "setuptools",
   "sphinx>=4",
   "sphinx-autodoc-typehints",
@@ -56,6 +52,13 @@ optional-dependencies.test = [
   "coverage",
   "pytest",
 ]
+# Add optional dependencies for specific model types
+optional-dependencies.transformers = ["transformers>=4.0"]
+optional-dependencies.sentence_transformers = ["sentence-transformers>=2.0"]
+# You could create combined extras
+optional-dependencies.text = ["transformers>=4.0", "sentence-transformers>=2.0"]
+optional-dependencies.protein = ["transformers>=4.0"] # If ESM uses transformers
+optional-dependencies.molecule = ["transformers>=4.0"] # If ChemBERTa uses transformers
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://embpy.readthedocs.io/"
 urls.Homepage = "https://github.com/grpinto/embpy"
@@ -101,9 +104,9 @@ lint.ignore = [
   "D105", # __magic__ methods are often self-explanatory, allow missing docstrings
   "D107", # Missing docstring in __init__
   # Disable one in each pair of mutually incompatible rules
-  "D203", # We don’t want a blank line before a class docstring
+  "D203", # We don't want a blank line before a class docstring
   "D213", # <> We want docstrings to start immediately after the opening triple quote
-  "D400", # first line should end with a period [Bug: doesn’t work with single-line docstrings]
+  "D400", # first line should end with a period [Bug: doesn't work with single-line docstrings]
   "D401", # First line should be in imperative mood; try rephrasing
   "E501", # line too long -> we accept long comment lines; formatter gets rid of long code lines
   "E731", # Do not assign a lambda expression, use a def -> lambda expression assignments are convenient
