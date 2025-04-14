@@ -152,7 +152,7 @@ class GeneResolver:
         except KeyError as e:
             logging.error(f"Format string requires key not available in description data: {e}")
             return None
-        except Exception as e:
+        except (ValueError, TypeError) as e:
             logging.error(f"Error constructing gene description for '{identifier}': {e}")
             return None
 

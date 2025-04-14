@@ -34,6 +34,7 @@ class BaseModelWrapper(ABC):
     def load(self, device: torch.device):
         """
         Loads the model weights and moves the model to the specified device.
+
         Must be implemented by subclasses.
         """
         pass
@@ -47,6 +48,7 @@ class BaseModelWrapper(ABC):
     ) -> np.ndarray:
         """
         Computes the embedding for a single input string.
+
         Must be implemented by subclasses.
 
         Args:

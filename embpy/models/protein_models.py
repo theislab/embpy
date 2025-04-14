@@ -10,9 +10,7 @@ from .base import BaseModelWrapper
 
 
 class ESMWrapper(BaseModelWrapper):
-    """
-    Wrapper for ESM protein language models (using Hugging Face Transformers).
-    """
+    """Wrapper for ESM protein language models (using Hugging Face Transformers)."""
 
     model_type = "protein"
     # ESM often uses CLS token or mean pooling
@@ -53,9 +51,9 @@ class ESMWrapper(BaseModelWrapper):
             self.model = torch.nn.Module()  # Dummy model
             self.device = device
             logging.info("ESM model loaded (placeholder).")
-        except NameError:
+        except NameError as err:
             logging.error("Failed to load ESM model: 'transformers' library not found.")
-            raise RuntimeError("Please install 'transformers' to use ESM models: pip install transformers")
+            raise RuntimeError("Please install 'transformers' to use ESM models: pip install transformers") from err
         except Exception as e:
             logging.error(f"Failed to load ESM model: {e}")
             raise RuntimeError(f"Could not load ESM model '{self.model_name}'") from e

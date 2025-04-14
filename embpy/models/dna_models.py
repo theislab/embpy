@@ -68,10 +68,11 @@ class EnformerWrapper(BaseModelWrapper):
 
     def _preprocess_sequence(self, sequence: str, print_debug: bool = False) -> torch.Tensor:
         """
-        Converts DNA sequence string to a one-hot encoded tensor and pads/truncates
-        to the required Enformer input length (SEQUENCE_LENGTH).
+
+        Converts DNA sequence string to a one-hot encoded tensor and pads/truncates to the required Enformer input length (SEQUENCE_LENGTH).
 
         Aligns with enformer-pytorch tutorial input format.
+
         """
         if seq_indices_to_one_hot is None:
             raise RuntimeError("seq_indices_to_one_hot function not available from enformer-pytorch.")
@@ -147,6 +148,7 @@ class EnformerWrapper(BaseModelWrapper):
     ) -> np.ndarray:
         """
         Computes the Enformer trunk embedding for a single DNA sequence.
+
         Input sequence is converted to one-hot encoding before inference.
 
         Args:
@@ -220,6 +222,7 @@ class EnformerWrapper(BaseModelWrapper):
     ) -> list[np.ndarray]:
         """
         Computes Enformer trunk embeddings for a batch of DNA sequences efficiently.
+
         Input sequences are converted to one-hot encoding before inference.
 
         Args:
@@ -295,7 +298,8 @@ class EnformerWrapper(BaseModelWrapper):
                 # Should be caught by initial check, but as safeguard
                 raise ValueError(f"Pooling strategy '{pooling_strategy}' not implemented for batch.")
 
-            results = [arr for arr in pooled_batch.cpu().numpy()]
+            results = list(pooled_batch.cpu().numpy())
+
         except Exception as e:
             logging.error(f"Error during batch pooling: {e}")
             # Handle pooling error - maybe return partial results or raise

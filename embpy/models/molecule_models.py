@@ -10,9 +10,7 @@ from .base import BaseModelWrapper
 
 
 class ChembertaWrapper(BaseModelWrapper):  # Example name
-    """
-    Wrapper for ChemBERTa-like models for SMILES strings.
-    """
+    """Wrapper for ChemBERTa-like models for SMILES strings."""
 
     model_type = "molecule"
     available_pooling_strategies = ["mean", "max", "cls"]  # Depending on model
@@ -49,9 +47,9 @@ class ChembertaWrapper(BaseModelWrapper):  # Example name
             self.model = torch.nn.Module()  # Dummy model
             self.device = device
             logging.info("SMILES model loaded (placeholder).")
-        except NameError:
+        except NameError as err:
             logging.error("Failed to load SMILES model: 'transformers' library not found.")
-            raise RuntimeError("Please install 'transformers' to use SMILES models: pip install transformers")
+            raise RuntimeError("Please install 'transformers' to use SMILES models: pip install transformers") from err
         except Exception as e:
             logging.error(f"Failed to load SMILES model: {e}")
             raise RuntimeError(f"Could not load SMILES model '{self.model_name}'") from e

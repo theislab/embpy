@@ -10,9 +10,7 @@ from .base import BaseModelWrapper
 
 
 class TextLLMWrapper(BaseModelWrapper):
-    """
-    Wrapper for general-purpose text embedding models
-    """
+    """Wrapper for general-purpose text embedding models"""
 
     model_type = "text"
     # Common pooling strategies for text models
