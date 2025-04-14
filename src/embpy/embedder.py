@@ -60,7 +60,7 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # "borzoi_human_v1": (BorzoiWrapper, "calico/borzoi-human-v1"), # Hypothetical Borzoi
     # --- Protein Models ---
     # Add specific ESM models you want to support by default
-    "esm2_8M": (ESMWrapper, "facebook/esm2_t6_8M_UR50D"), # iam not sure about this, TODO: check original esm repo
+    "esm2_8M": (ESMWrapper, "facebook/esm2_t6_8M_UR50D"),  # iam not sure about this, TODO: check original esm repo
     "esm2_35M": (ESMWrapper, "facebook/esm2_t12_35M_UR50D"),  # Corrected name likely
     "esm2_150M": (ESMWrapper, "facebook/esm2_t30_150M_UR50D"),
     "esm2_650M": (ESMWrapper, "facebook/esm2_t33_650M_UR50D"),
@@ -235,8 +235,8 @@ class BioEmbedder:
                     input_data = self.gene_resolver.get_dna_sequence(identifier, id_type, organism)
                 else:  # protein
                     input_data = self.gene_resolver.get_protein_sequence(identifier, id_type, organism)
-            except Exception as e:
-                # Catch potential errors during sequence fetching
+            except (KeyError, ValueError) as e:
+                # Catch specific errors during sequence fetching
                 raise IdentifierError(
                     f"Failed to fetch {sequence_type} sequence for {id_type} '{identifier}': {e}"
                 ) from e
@@ -323,7 +323,7 @@ class BioEmbedder:
                         logging.warning(
                             f"No {sequence_type} sequence found for {id_type} '{identifier}' ({organism}). Skipping."
                         )
-                except Exception as e:
+                except (KeyError, ValueError) as e:
                     logging.warning(
                         f"Failed to fetch {sequence_type} sequence for {id_type} '{identifier}': {e}. Skipping."
                     )
@@ -340,7 +340,7 @@ class BioEmbedder:
                         logging.warning(
                             f"Could not construct description for {id_type} '{identifier}' ({organism}). Skipping."
                         )
-                except Exception as e:
+                except (KeyError, ValueError) as e:
                     logging.warning(f"Failed to construct description for {id_type} '{identifier}': {e}. Skipping.")
                 input_data_list.append(desc)  # Append description or None
         else:
@@ -368,8 +368,8 @@ class BioEmbedder:
                 # Handle mismatch - maybe return all None?
                 return [None] * len(identifiers)
             logging.info("Batch gene embedding successful.")
-        except Exception as e:
-            logging.error(f"Error during batch embedding generation for model '{model}': {e}")
+        except (KeyError, ValueError) as e:
+            logging.warning(f"Failed to construct description for {id_type} '{identifier}': {e}. Skipping.")
             # If batch fails entirely, return None for all original identifiers
             return [None] * len(identifiers)
 
@@ -462,7 +462,7 @@ class BioEmbedder:
             # Assuming embed_batch didn't produce Nones internally for errors
             results: list[np.ndarray | None] = batch_results
 
-        except Exception as e:
+        except (KeyError, ValueError) as e:
             logging.error(f"Error during batch molecule embedding generation for model '{model}': {e}")
             results = [None] * len(identifiers)  # Return None for all if batch fails
 
@@ -548,7 +548,7 @@ class BioEmbedder:
             logging.info("Batch text embedding successful.")
             results: list[np.ndarray | None] = batch_results
 
-        except Exception as e:
+        except (ValueError, KeyError) as e:
             logging.error(f"Error during batch text embedding generation for model '{model}': {e}")
             results = [None] * len(texts)
 
@@ -562,4 +562,4 @@ class BioEmbedder:
 
     def list_available_models(self) -> list[str]:
         """Returns a list of available model names."""
-        return sorted(list(self._available_models.keys()))
+        return sorted(self._available_models.keys())
