@@ -1,20 +1,35 @@
-# Temp files
+# OS and Editor specific
 .DS_Store
 *~
-buck-out/
 
-# Compiled files
+# Virtual Environments (including Hatch environments)
 .venv/
+env/
+venv/
+
+# Python bytecode and cache files
 __pycache__/
+*.py[cod]
+*$py.class
+
+# Cached files created by various build tools
 .*cache/
 
-# Distribution / packaging
+# Distribution / packaging outputs
 /dist/
+*.egg-info/
+.eggs/
 
-# Tests and coverage
+# Tests, coverage, and temporary files
 /data/
-/node_modules/
+node_modules/
+.tox/
+.pytest_cache/
+.coverage
 
-# docs
+# Documentation build outputs
 /docs/generated/
 /docs/_build/
+
+# Buck build output (if applicable)
+buck-out/

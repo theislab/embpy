@@ -6,7 +6,7 @@ import torch
 
 # Attempt to import the specific wrapper
 try:
-    from embpy.models.dna_models import EnformerWrapper
+    from embpy.models.dna_models.enformer import EnformerWrapper
 
     ENFORMER_PYTORCH_INSTALLED = True
 except ImportError:
@@ -52,7 +52,7 @@ def loaded_enformer_wrapper():
         if wrapper.model is None:
             pytest.skip(f"Failed to load Enformer model on {TEST_DEVICE}, skipping embedding tests.")
         return wrapper
-    except Exception as e:
+    except (FileNotFoundError, RuntimeError) as e:
         pytest.skip(f"Failed to load Enformer model due to error: {e}, skipping embedding tests.")
 
 

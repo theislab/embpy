@@ -1,4 +1,4 @@
-from .dna_models import EnformerWrapper
+from .dna_models.enformer import EnformerWrapper
 from .molecule_models import ChembertaWrapper
 from .protein_models import ESMWrapper
 

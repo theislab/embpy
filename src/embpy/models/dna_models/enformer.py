@@ -14,7 +14,7 @@ except ImportError:
     from_pretrained = None  # type: ignore
     seq_indices_to_one_hot = None  # type: ignore
 
-from .base import BaseModelWrapper
+from embpy.models.base import BaseModelWrapper
 
 
 class EnformerWrapper(BaseModelWrapper):

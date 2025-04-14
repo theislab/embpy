@@ -7,7 +7,7 @@ import torch
 
 # Import all potential wrappers - handle ImportErrors later if deps are missing
 try:
-    from .models.dna_models import EnformerWrapper
+    from .models.DNA_models.enformer import EnformerWrapper
 except ImportError:
     EnformerWrapper = None  # type: ignore
 # try:
