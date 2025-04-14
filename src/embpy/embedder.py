@@ -31,9 +31,9 @@ try:
 except ImportError:
     TextLLMWrapper = None  # type: ignore
 
+from .errors import ConfigError, IdentifierError, ModelNotFoundError
 from .models.base import BaseModelWrapper
 from .resources.gene_resolver import GeneResolver
-from .utils.exceptions import ConfigError, IdentifierError, ModelNotFoundError
 
 
 # Helper function (can be moved to utils later)
