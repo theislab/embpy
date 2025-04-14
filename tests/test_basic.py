@@ -1,6 +1,5 @@
-import pytest
-
 import embpy
+import pytest
 
 
 def test_package_has_version():
