@@ -24,13 +24,15 @@ classifiers = [
 ]
 dependencies = [
   "anndata",
+  "borzoi-pytorch",
   "enformer-pytorch",
+  "esm",
+  "ipywidgets",
   "numpy",
   "pandas",
   "pytest",
   "session-info",
   "torch",
-  "tree",
 ]
 optional-dependencies.dev = [
   "pre-commit",
@@ -38,6 +40,7 @@ optional-dependencies.dev = [
 ]
 optional-dependencies.doc = [
   "docutils>=0.8,!=0.18.*,!=0.19.*",
+  "huggingface-hub",
   "ipykernel",
   "ipython",
   "myst-nb>=1.1",

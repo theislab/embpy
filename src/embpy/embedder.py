@@ -7,7 +7,7 @@ import torch
 
 # Import all potential wrappers - handle ImportErrors later if deps are missing
 try:
-    from .models.DNA_models.enformer import EnformerWrapper
+    from .models.dna_models.enformer import EnformerWrapper
 except ImportError:
     EnformerWrapper = None  # type: ignore
 # try:
@@ -15,7 +15,7 @@ except ImportError:
 # except ImportError:
 #     BorzoiWrapper = None
 try:
-    from .models.protein_models import ESMWrapper
+    from .models.protein_models.ESM2 import ESMWrapper
 except ImportError:
     ESMWrapper = None  # type: ignore
 try:
