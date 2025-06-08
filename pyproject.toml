@@ -33,6 +33,7 @@ dependencies = [
   "pytest",
   "session-info",
   "torch",
+  "transformers",
 ]
 optional-dependencies.dev = [
   "pre-commit",

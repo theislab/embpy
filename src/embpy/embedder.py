@@ -22,7 +22,7 @@ except ImportError:
     ESM2Wrapper = None  # type: ignore
 
 try:
-    from .models.molecule_models import ChembertaWrapper
+    from .models.molecule_models import ChembertaWrapper, MolformerWrapper
 except ImportError:
     ChembertaWrapper = None  # type: ignore
 
@@ -75,7 +75,7 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     "esm2_3B": (ESM2Wrapper, "facebook/esm2_t36_3B_UR50D"),
     # --- Molecule Models ---
     "chemberta_zinc_v1": (ChembertaWrapper, "seyonec/ChemBERTa-zinc-base-v1"),
-    # "molformer_base": (MolformerWrapper, "ibm/MoLFormer-Base"), # Hypothetical Molformer
+    "molformer_base": (MolformerWrapper, "ibm/MoLFormer-XL-both-10pct"),  # Hypothetical Molformer
     # --- Text Models ---
     "minilm_l6_v2": (TextLLMWrapper, "sentence-transformers/all-MiniLM-L6-v2"),
     "bert_base_uncased": (TextLLMWrapper, "bert-base-uncased"),  # Example standard HF model
