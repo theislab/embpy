@@ -6,10 +6,10 @@ import numpy as np
 import torch
 from transformers import AutoModel, AutoTokenizer
 
-from .base_protein import ProteinEmbedder
+from .base import BaseModelWrapper
 
 
-class ESM2Wrapper(ProteinEmbedder):
+class ESM2Wrapper(BaseModelWrapper):
     """
     Wrapper for ESM2 protein language models using Hugging Face Transformers.
 

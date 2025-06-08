@@ -7,25 +7,30 @@ import torch
 
 # Import all potential wrappers - handle ImportErrors later if deps are missing
 try:
-    from .models.dna_models.enformer import EnformerWrapper
+    from .models.dna_models import EnformerWrapper
 except ImportError:
     EnformerWrapper = None  # type: ignore
-# try:
-#     from .models.dna_models import BorzoiWrapper
-# except ImportError:
-#     BorzoiWrapper = None
+
 try:
-    from .models.protein_models.ESM2 import ESMWrapper
+    from .models.dna_models import BorzoiWrapper
 except ImportError:
-    ESMWrapper = None  # type: ignore
+    BorzoiWrapper = None
+
+try:
+    from .models.protein_models import ESM2Wrapper
+except ImportError:
+    ESM2Wrapper = None  # type: ignore
+
 try:
     from .models.molecule_models import ChembertaWrapper
 except ImportError:
     ChembertaWrapper = None  # type: ignore
+
 # try:
 #     from .models.molecule_models import MolformerWrapper
 # except ImportError:
 #     MolformerWrapper = None
+
 try:
     from .models.text_models import TextLLMWrapper
 except ImportError:
@@ -57,14 +62,17 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # --- DNA Models ---
     # Use specific, descriptive names users will provide
     "enformer_human_rough": (EnformerWrapper, "EleutherAI/enformer-official-rough"),
-    # "borzoi_human_v1": (BorzoiWrapper, "calico/borzoi-human-v1"), # Hypothetical Borzoi
+    # There are several versions of borzoi models on hf
+    "borzoi_v0": (BorzoiWrapper, "johahi/borzoi-replicate-0"),  # Hypothetical Borzoi
+    "borzoi_v1": (BorzoiWrapper, "johani/borzoi-replicate-1"),
+    # consider adding flashzoi
     # --- Protein Models ---
     # Add specific ESM models you want to support by default
-    "esm2_8M": (ESMWrapper, "facebook/esm2_t6_8M_UR50D"),  # iam not sure about this, TODO: check original esm repo
-    "esm2_35M": (ESMWrapper, "facebook/esm2_t12_35M_UR50D"),  # Corrected name likely
-    "esm2_150M": (ESMWrapper, "facebook/esm2_t30_150M_UR50D"),
-    "esm2_650M": (ESMWrapper, "facebook/esm2_t33_650M_UR50D"),
-    "esm2_3B": (ESMWrapper, "facebook/esm2_t36_3B_UR50D"),
+    "esm2_8M": (ESM2Wrapper, "facebook/esm2_t6_8M_UR50D"),  # iam not sure about this, TODO: check original esm repo
+    "esm2_35M": (ESM2Wrapper, "facebook/esm2_t12_35M_UR50D"),  # Corrected name likely
+    "esm2_150M": (ESM2Wrapper, "facebook/esm2_t30_150M_UR50D"),
+    "esm2_650M": (ESM2Wrapper, "facebook/esm2_t33_650M_UR50D"),
+    "esm2_3B": (ESM2Wrapper, "facebook/esm2_t36_3B_UR50D"),
     # --- Molecule Models ---
     "chemberta_zinc_v1": (ChembertaWrapper, "seyonec/ChemBERTa-zinc-base-v1"),
     # "molformer_base": (MolformerWrapper, "ibm/MoLFormer-Base"), # Hypothetical Molformer
