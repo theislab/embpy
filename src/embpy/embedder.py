@@ -26,11 +26,6 @@ try:
 except ImportError:
     ChembertaWrapper = None  # type: ignore
 
-# try:
-#     from .models.molecule_models import MolformerWrapper
-# except ImportError:
-#     MolformerWrapper = None
-
 try:
     from .models.text_models import TextLLMWrapper
 except ImportError:

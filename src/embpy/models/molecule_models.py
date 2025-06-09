@@ -9,127 +9,128 @@ from transformers import AutoModel, AutoTokenizer, BatchEncoding
 from .base import BaseModelWrapper
 
 
-class ChembertaWrapper(BaseModelWrapper):  # Example name
-    """Wrapper for ChemBERTa-like models for SMILES strings."""
+class ChembertaWrapper(BaseModelWrapper):
+    """
+    Wrapper for ChemBERTa models for SMILES strings.
+
+    Implements:
+      - embed(smiles, pooling_strategy, use_pooler) → np.ndarray
+      - embed_batch([...], pooling_strategy, use_pooler) → list[np.ndarray]
+
+    Pooling strategies:
+      • cls  → take token 0 from last_hidden_state
+      • mean → mean over all tokens (mask‐aware)
+      • max  → max  over all tokens (mask‐aware)
+
+    You can also set `use_pooler=True` to get `outputs.pooler_output` (if your model has one).
+    """
 
     model_type = "molecule"
-    available_pooling_strategies = ["mean", "max", "cls"]  # Depending on model
+    available_pooling_strategies = ["cls", "mean", "max"]
 
     def __init__(self, model_path_or_name: str = "seyonec/ChemBERTa-zinc-base-v1", **kwargs):
-        """
-        Initializes the SMILES model wrapper.
-
-        Args:
-            model_path_or_name (str): Hugging Face model name for SMILES embedding.
-            **kwargs: Additional config.
-        """
         super().__init__(model_path_or_name, **kwargs)
-        self.tokenizer = None
+        self.tokenizer: AutoTokenizer | None = None
+        self.model: AutoModel | None = None
 
     def load(self, device: torch.device):
-        """Loads the SMILES model and tokenizer."""
+        """Load the tokenizer and model onto `device`."""
         if self.model is not None:
-            logging.debug("SMILES model already loaded.")
             return
+        logging.info(f"Loading ChemBERTa '{self.model_name}'…")
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        self.model = AutoModel.from_pretrained(self.model_name).to(device).eval()
+        self.device = device
 
-        if self.model_name is None:
-            raise ValueError("model_path_or_name must be set for molecule model wrapper.")
+    def _preprocess_smiles(self, smiles: str) -> dict[str, torch.Tensor]:
+        """
+        Tokenize a SMILES string.
 
-        logging.info(f"Loading SMILES model '{self.model_name}'...")
-        try:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            self.model = AutoModel.from_pretrained(self.model_name)
-            self.model = self.model.to(device)
-            self.model.eval()
-            self.device = device
-            # logging.warning("SMILES model loading is commented out. Need 'transformers' dependency.")
-            # Placeholder for now:
-            # logging.info("SMILES model loaded (placeholder).")
-        except NameError as err:
-            logging.error("Failed to load SMILES model: 'transformers' library not found.")
-            raise RuntimeError("Please install 'transformers' to use SMILES models: pip install transformers") from err
-        except Exception as e:
-            logging.error(f"Failed to load SMILES model: {e}")
-            raise RuntimeError(f"Could not load SMILES model '{self.model_name}'") from e
-
-    def _preprocess_smiles(self, smiles: str) -> Any:
-        """Tokenizes a SMILES string."""
-        if not self.tokenizer:
-            raise RuntimeError("Tokenizer not loaded.")
-        return self.tokenizer(smiles, return_tensors="pt", truncation=True, padding=True)
-        # logging.warning("SMILES preprocessing is commented out.")
-        # return {"input_ids": torch.randint(0, 100, (1, len(smiles)))}  # Dummy tokenization
+        Returns a dict with:
+          - input_ids:    (1, seq_len)
+          - attention_mask:(1, seq_len)
+        """
+        if self.tokenizer is None:
+            raise RuntimeError("Call load() first.")
+        return self.tokenizer(smiles, padding=True, truncation=True, return_tensors="pt")
 
     def embed(
         self,
-        input: str,  # Renamed from input_text
+        input: str,
         pooling_strategy: str = "mean",
-        target_layer: int | None = None,  # Optional layer extraction for HF models
+        use_pooler: bool = False,
         **kwargs: Any,
     ) -> np.ndarray:
         """
-        Computes the embedding for a single SMILES string.
+        Embed a single SMILES string.
 
-        Args:
-            input (str): The input SMILES string.
-            pooling_strategy (str): Pooling strategy ('mean', 'max', 'cls').
-            target_layer (Optional[int]): Extract embeddings from this hidden layer index.
-            **kwargs: Additional arguments.
+        Parameters
+        ----------
+        smiles : str
+            The SMILES string to embed.
+        pooling_strategy : {'cls','mean','max'}
+            How to pool `last_hidden_state`.
+        use_pooler : bool, default=False
+            If True and the model provides `pooler_output`, returns that instead.
+        **kwargs
+            Ignored.
 
         Returns
         -------
-            np.ndarray: The resulting embedding vector.
+        np.ndarray
+            1D array of shape (hidden_dim,).
         """
-        smiles = input  # Assign to a more specific variable name internally if desired
         if self.model is None or self.device is None:
-            raise RuntimeError("SMILES model not loaded. Call load() first.")
+            raise RuntimeError("Call load() first.")
         if pooling_strategy not in self.available_pooling_strategies:
-            raise ValueError(
-                f"Invalid pooling strategy '{pooling_strategy}'. Available: {self.available_pooling_strategies}"
-            )
+            raise ValueError(f"pooling_strategy must be one of {self.available_pooling_strategies}")
 
-        # Preprocess
-        tokenized_input = self._preprocess_smiles(smiles)
-        input_ids = tokenized_input["input_ids"].to(self.device)
-        attention_mask = tokenized_input.get("attention_mask", None)
-        if attention_mask is not None:
-            attention_mask = attention_mask.to(self.device)
-            print(f"Attention mask shape: {attention_mask}")
-        # logging.warning("SMILES embedding uses placeholder preprocessing and inference.")
-        # Placeholder inference
-        # input_ids = torch.randint(0, 100, (1, min(len(smiles), 128)), device=self.device)  # Dummy input
-        # attention_mask = torch.ones_like(input_ids)
+        # 1) tokenize & move to device
+        enc = self._preprocess_smiles(input)
+        input_ids = enc["input_ids"].to(self.device)
+        attention_mask = enc["attention_mask"].to(self.device)
 
-        # Inference
+        # 2) forward
         with torch.no_grad():
-            outputs = self.model(
-                input_ids=input_ids, attention_mask=attention_mask, output_hidden_states=(target_layer is not None)
-            )
-            if target_layer is not None:
-                embeddings_tensor = outputs.hidden_states[target_layer]
-            else:
-                embeddings_tensor = outputs.last_hidden_state
+            outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+            last_hidden = outputs.last_hidden_state  # (1, seq_len, hidden_dim)
+            pooler_out = getattr(outputs, "pooler_output", None)
 
-            # Placeholder output
-            # hidden_dim = 768  # Example for base models
-            # embeddings_tensor = torch.randn(input_ids.shape[0], input_ids.shape[1], hidden_dim, device=self.device)
+        # 3) optionally use pooler
+        if use_pooler and pooler_out is not None:
+            return pooler_out[0].cpu().numpy()
 
-        # Squeeze batch dim
-        if embeddings_tensor.dim() == 3 and embeddings_tensor.shape[0] == 1:
-            embeddings_tensor = embeddings_tensor.squeeze(0)  # (L, D)
+        # 4) squeeze batch dim
+        hidden = last_hidden.squeeze(0)  # (seq_len, hidden_dim)
 
-        # Apply pooling
+        # 5) apply masking‐aware pooling
         if pooling_strategy == "cls":
-            pooled_embedding = embeddings_tensor[0, :].cpu().numpy()
+            vec = hidden[0]
         else:
-            pooled_embedding = self._apply_pooling(embeddings_tensor, pooling_strategy)
+            mask = attention_mask.squeeze(0).unsqueeze(-1)  # (seq_len, 1)
+            if pooling_strategy == "mean":
+                summed = (hidden * mask).sum(dim=0)
+                vec = summed / mask.sum(dim=0)
+            else:  # 'max'
+                neg_inf = torch.finfo(hidden.dtype).min
+                masked = hidden.masked_fill(mask == 0, neg_inf)
+                vec = masked.max(dim=0).values
 
-        # Cleanup
-        del input_ids, attention_mask, embeddings_tensor  # , outputs
-        if self.device.type == "cuda":
-            torch.cuda.empty_cache()
+        return vec.cpu().numpy()
 
-        return pooled_embedding
+    def embed_batch(
+        self,
+        smiles_list: list[str],
+        pooling_strategy: str = "mean",
+        use_pooler: bool = False,
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        """
+        Embed a batch of SMILES strings.
+
+        Returns a list of 1D numpy arrays.
+        """
+        return [self.embed(s, pooling_strategy=pooling_strategy, use_pooler=use_pooler) for s in smiles_list]
 
 
 class MolformerWrapper(BaseModelWrapper):
