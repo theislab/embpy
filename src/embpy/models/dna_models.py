@@ -10,6 +10,8 @@ import torch.nn.functional as F
 #                       ENFORMER WRAPPER
 # ——————————————————————————————————————————————————————————————————————————
 
+# TODO: This 2 wrappers can be merged with some condition logic
+
 # Use the specific enformer-pytorch package you have as a dependency
 try:
     from enformer_pytorch import from_pretrained, seq_indices_to_one_hot
@@ -156,8 +158,8 @@ class EnformerWrapper(BaseModelWrapper):
             raise ValueError(f"Enformer preprocessing error: final length {idx_tensor.shape[1]} != {target_len}")
 
         try:
-            oh = seq_indices_to_one_hot(idx_tensor)  # (1, 196608, 5)
-            one_hot = oh.permute(0, 2, 1).float()  # (1, 5, 196608)
+            one_hot = seq_indices_to_one_hot(idx_tensor)  # (1, 196608, 5)
+            # one_hot = oh.permute(0, 2, 1).float()  # (1, 5, 196608)
         except Exception as e:
             logging.error(f"One-hot encoding failed: {e}")
             raise RuntimeError("Failed to one-hot encode Enformer input.") from e
@@ -303,7 +305,6 @@ class EnformerWrapper(BaseModelWrapper):
 
 try:
     from borzoi_pytorch import Borzoi
-    from borzoi_pytorch.config_borzoi import BorzoiConfig
 except ImportError:
     logging.warning("borzoi_pytorch not installed; BorzoiWrapper will be nonfunctional.")
     Borzoi = None  # type: ignore
@@ -382,9 +383,7 @@ class BorzoiWrapper(BaseModelWrapper):
 
         logging.info(f"Loading Borzoi '{self.model_name}' …")
         try:
-            cfg = BorzoiConfig.from_pretrained("johahi/borzoi-replicate-0")
-            cfg.return_center_bins_only = False
-            self.model = Borzoi.from_pretrained(self.model_name, config=cfg).to(device).eval()
+            self.model = Borzoi.from_pretrained(self.model_name).to(device).eval()
             self.device = device
             hidden_dim = getattr(self.model.config, "dim", None)
             if hidden_dim is None:
@@ -400,12 +399,18 @@ class BorzoiWrapper(BaseModelWrapper):
 
     def _preprocess_sequence(self, sequence: str) -> torch.Tensor:
         """
-        Convert an arbitrary-length DNA string into a one-hot tensor of shape (1, 4, 524288).
+        Internal method to preprocess a DNA sequence for Borzoi.
+
+        Convert an arbitrary-length DNA string into a one-hot tensor of shape
+        (1, NUM_CHANNELS, SEQUENCE_LENGTH), padding with zero-vectors if necessary.
 
         Steps:
-          1. Uppercase the input string and map characters A/C/G/T → 0/1/2/3. Others → 0.
-          2. Pad (with index 0) or center-truncate the index tensor to length 524,288.
-          3. Use `torch.nn.functional.one_hot` to get (1, 524288, 4), then permute to (1, 4, 524288).
+        1. Uppercase the input string and map characters A/C/G/T → 0/1/2/3; others → 0.
+        2. Build an index tensor of shape (1, L_in).
+        3. One-hot encode → (1, L_in, NUM_CHANNELS), then permute → (1, NUM_CHANNELS, L_in).
+        4. If L_in < SEQUENCE_LENGTH, pad on the last axis with [0,0,0,0] columns.
+            If L_in > SEQUENCE_LENGTH, center-crop the last axis to exactly SEQUENCE_LENGTH.
+        5. Return the resulting float tensor of shape (1, NUM_CHANNELS, SEQUENCE_LENGTH).
 
         Parameters
         ----------
@@ -415,38 +420,40 @@ class BorzoiWrapper(BaseModelWrapper):
         Returns
         -------
         torch.Tensor
-            A float tensor of shape (1, 4, 524288), suitable for Borzoi input.
+            Float tensor of shape (1, 4, SEQUENCE_LENGTH), zero-padded or cropped.
 
         Raises
         ------
         ValueError
-            If, after padding/truncation, the length is not exactly 524,288.
+            If after padding/cropping the final length is not exactly SEQUENCE_LENGTH.
         """
         seq = sequence.upper()
-        idx_list = [self.ALPHABET_MAP.get(b, 0) for b in seq]
-        idx_tensor = torch.tensor(idx_list, dtype=torch.long).unsqueeze(0)  # (1, L_in)
+        # 1) Map to integer indices
+        idx = torch.tensor([self.ALPHABET_MAP.get(b, 0) for b in seq], dtype=torch.long).unsqueeze(0)  # (1, L_in)
 
-        current_len = idx_tensor.shape[1]
-        target_len = self.SEQUENCE_LENGTH
+        # 2) One-hot → (1, L_in, 4) then permute → (1, 4, L_in)
+        oh = F.one_hot(idx, num_classes=self.NUM_CHANNELS).permute(0, 2, 1).float()  # (1, 4, L_in)
 
-        if current_len < target_len:
-            pad_total = target_len - current_len
+        L_in = oh.shape[2]
+        L_tar = self.SEQUENCE_LENGTH
+
+        # 3) Pad or crop on the last dimension
+        if L_in < L_tar:
+            pad_total = L_tar - L_in
             pad_left = pad_total // 2
             pad_right = pad_total - pad_left
-            idx_tensor = F.pad(idx_tensor, (pad_left, pad_right), mode="constant", value=0)
-            logging.debug(f"Padded Borzoi indices from {current_len}→{target_len} with 'A' (0).")
-        elif current_len > target_len:
-            trim_total = current_len - target_len
-            trim_left = trim_total // 2
-            idx_tensor = idx_tensor[:, trim_left : trim_left + target_len]
-            logging.warning(f"Truncated Borzoi indices from {current_len}→{target_len} (center‐crop).")
+            # pad with zero-vectors → value=0.0
+            oh = F.pad(oh, (pad_left, pad_right), mode="constant", value=0.0)
+            logging.debug(f"Padded Borzoi indices from {L_in}→{L_tar} with 'N' (4).")
+        elif L_in > L_tar:
+            trim = (L_in - L_tar) // 2
+            oh = oh[:, :, trim : trim + L_tar]
+            logging.warning(f"Truncated Borzoi indices from {L_in}→{L_tar} (center‐crop).")
+        # 4) Sanity check
+        if oh.shape[2] != L_tar:
+            raise ValueError(f"Preprocessing error: final length {oh.shape[2]} != {L_tar}")
 
-        if idx_tensor.shape[1] != target_len:
-            raise ValueError(f"Borzoi preprocessing error: final length {idx_tensor.shape[1]} != {target_len}")
-
-        oh = F.one_hot(idx_tensor, num_classes=self.NUM_CHANNELS)  # (1, 524288, 4)
-        one_hot = oh.permute(0, 2, 1).float()  # (1, 4, 524288)
-        return one_hot
+        return oh  # shape: (1, 4, SEQUENCE_LENGTH)
 
     def embed(
         self,
@@ -492,6 +499,7 @@ class BorzoiWrapper(BaseModelWrapper):
 
         with torch.no_grad():
             print("Running Borzoi model …")
+            print(one_hot)
             embs = self.model.get_embs_after_crop(one_hot)
             print(embs.shape)
             if not isinstance(embs, torch.Tensor) or embs.dim() != 3:
