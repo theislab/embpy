@@ -115,20 +115,46 @@ class GeneResolver:
 
         Notes
         -----
-        - Gene symbols and Ensembl IDs are resolved to UniProt accession IDs using MyGene.info.
-        - Only the first result is used if multiple UniProt entries are found.
-        - Use `uniprot_id` directly if already known to avoid unnecessary resolution.
+        - Gene symbols and Ensembl IDs are resolved to UniProt accession IDs using MyGene.info via get_gene_description.
+        - Only the first UniProt Swiss-Prot ID is used.
+        - If the identifier is already a UniProt ID, no resolution is needed.
         """
         logging.debug(f"Fetching protein for {id_type} '{identifier}' ({organism})")
 
         try:
-            # Step 1: Resolve to UniProt ID if needed
             if id_type == "uniprot_id":
                 uniprot_id = identifier
             elif id_type in {"symbol", "ensembl_id"}:
-                uniprot_id = self._get_uniprot_id_from_gene(identifier, id_type, organism)
-                if uniprot_id is None:
-                    logging.warning(f"Could not resolve UniProt ID for {id_type} '{identifier}'")
+                # Call get_gene_description with expanded fields
+                query_url = "https://mygene.info/v3/query"
+                scopes = {
+                    "symbol": "symbol",
+                    "ensembl_id": "ensembl.gene",
+                }
+
+                response = requests.get(
+                    query_url,
+                    params={
+                        "q": identifier,
+                        "scopes": scopes[id_type],
+                        "species": organism,
+                        "fields": "uniprot.Swiss-Prot",
+                    },
+                )
+                response.raise_for_status()
+                hits = response.json().get("hits", [])
+
+                if not hits:
+                    logging.warning(f"No MyGene.info result for {id_type} '{identifier}'")
+                    return None
+
+                uniprot_data = hits[0].get("uniprot", {}).get("Swiss-Prot")
+                if isinstance(uniprot_data, str):
+                    uniprot_id = uniprot_data
+                elif isinstance(uniprot_data, list) and uniprot_data:
+                    uniprot_id = uniprot_data[0]
+                else:
+                    logging.warning(f"No UniProt Swiss-Prot ID found for {id_type} '{identifier}'")
                     return None
             else:
                 raise ValueError(f"Unsupported id_type: {id_type}")
@@ -138,9 +164,8 @@ class GeneResolver:
             fasta_response = requests.get(fasta_url)
             fasta_response.raise_for_status()
 
-            # Parse the FASTA format
             lines = fasta_response.text.strip().split("\n")
-            sequence = "".join(lines[1:])  # Skip header
+            sequence = "".join(lines[1:])  # Skip header line
             return sequence
 
         except Exception as e:  # noqa: BLE001
@@ -148,7 +173,6 @@ class GeneResolver:
             return None
 
     # TODO: get gene description only fetched from MyGene.info it needs to fetch from other sources like NCBI
-    # TODO: get_gene_description and _get_uniprot_id_from_gene should be merged into one function
 
     def get_gene_description(
         self,
@@ -202,7 +226,7 @@ class GeneResolver:
                     "q": identifier,
                     "scopes": scopes[id_type],
                     "species": organism,
-                    "fields": "symbol,name,summary",
+                    "fields": "all",
                 },
             )
 
@@ -229,62 +253,4 @@ class GeneResolver:
             return None
         except Exception as e:  # noqa: BLE001
             logging.error(f"Unexpected error constructing gene description: {e}")
-            return None
-
-    def _get_uniprot_id_from_gene(
-        self,
-        identifier: str,
-        id_type: Literal["symbol", "ensembl_id"],
-        organism: str = "human",
-    ) -> str | None:
-        """
-        Resolves a UniProt ID from a gene symbol or Ensembl gene ID using MyGene.info.
-
-        Parameters
-        ----------
-        identifier : str
-            Gene identifier (e.g., "TP53", "ENSG00000141510").
-        id_type : {"symbol", "ensembl_id"}
-            The type of gene identifier.
-        organism : str
-            Organism name (default "human").
-
-        Returns
-        -------
-        str or None
-            A UniProt ID (Swiss-Prot) or None if not found.
-        """
-        import requests
-
-        scopes = {
-            "symbol": "symbol",
-            "ensembl_id": "ensembl.gene",
-        }
-
-        if id_type not in scopes:
-            logging.error(f"Unsupported id_type: {id_type}")
-            return None
-
-        try:
-            response = requests.get(
-                "https://mygene.info/v3/query",
-                params={
-                    "q": identifier,
-                    "scopes": scopes[id_type],
-                    "species": organism,
-                    "fields": "uniprot.Swiss-Prot",
-                },
-            )
-            response.raise_for_status()
-            hits = response.json().get("hits", [])
-            if not hits:
-                logging.warning(f"No UniProt mapping found for {id_type} '{identifier}'")
-                return None
-
-            swissprot = hits[0].get("uniprot", {}).get("Swiss-Prot")
-            if isinstance(swissprot, list):
-                return swissprot[0]
-            return swissprot
-        except Exception as e:  # noqa: BLE001
-            logging.error(f"Failed to resolve UniProt ID for {identifier}: {e}")
             return None

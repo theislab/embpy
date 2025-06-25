@@ -5,34 +5,14 @@ from typing import Any, Literal
 import numpy as np
 import torch
 
-# Import all potential wrappers - handle ImportErrors later if deps are missing
-try:
-    from .models.dna_models import EnformerWrapper
-except ImportError:
-    EnformerWrapper = None  # type: ignore
-
-try:
-    from .models.dna_models import BorzoiWrapper
-except ImportError:
-    BorzoiWrapper = None
-
-try:
-    from .models.protein_models import ESM2Wrapper
-except ImportError:
-    ESM2Wrapper = None  # type: ignore
-
-try:
-    from .models.molecule_models import ChembertaWrapper, MolformerWrapper
-except ImportError:
-    ChembertaWrapper = None  # type: ignore
-
-try:
-    from .models.text_models import TextLLMWrapper
-except ImportError:
-    TextLLMWrapper = None  # type: ignore
-
 from .errors import ConfigError, IdentifierError, ModelNotFoundError
 from .models.base import BaseModelWrapper
+
+# Import all potential wrappers - handle ImportErrors later if deps are missing
+from .models.dna_models import BorzoiWrapper, EnformerWrapper
+from .models.molecule_models import ChembertaWrapper, MolformerWrapper
+from .models.protein_models import ESM2Wrapper
+from .models.text_models import TextLLMWrapper
 from .resources.gene_resolver import GeneResolver
 
 
