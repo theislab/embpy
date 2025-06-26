@@ -112,7 +112,7 @@ class GeneEmbeddingProcessor:
 
         Takes a row from the Mart file, extracts the chromosome sequence,
         and computes the embeddings using Enformer.
-        slices self.chrom_seq, pads up to 196608, runs Enformer, then pools.
+        slices self.chrom_seq, pads/truncates to 196608, runs Enformer, then pools.
         """
         # only our chromosome:
         if str(row[self.chrom_col]) != str(self.row[self.chrom_col]):  # type: ignore
@@ -136,13 +136,24 @@ class GeneEmbeddingProcessor:
         # 3) tensor + batch
         xt = torch.from_numpy(arr).unsqueeze(0)
 
-        # 4) pad to 196608 equally with 4 (“N”)
+        # 4) pad or truncate to 196608 equally with 4 (“N”)
+        target_len = 196_608
         L = xt.shape[1]
-        if L < 196608:
-            tot = 196608 - L
+        if L < target_len:
+            tot = target_len - L
             left, right = tot // 2, tot - tot // 2
             xt = F.pad(xt, (left, right), value=4)
-        assert xt.shape[1] == 196608
+            logging.debug(f"Padded sequence from {L} to {target_len}.")
+        elif L > target_len:
+            # Truncate from center
+            trim_total = L - target_len
+            trim_left = trim_total // 2
+            trim_end = trim_left + target_len
+            xt = xt[:, trim_left:trim_end]
+            logging.warning(f"Truncated sequence from {L} to {target_len} from center.")
+        # else L == target_len → do nothing
+
+        assert xt.shape[1] == target_len
 
         # 5) forward
         xt = xt.to(self.device)
