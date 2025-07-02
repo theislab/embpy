@@ -104,6 +104,7 @@ class GeneEmbeddingProcessor:
         """Instantiates Enformer and moves it to self.device."""
         logging.info(f"Loading Enformer onto {self.device}")
         m = from_pretrained("EleutherAI/enformer-official-rough", use_tf_gamma=False)
+        print(self.device)
         self.model = m.to(self.device).eval()  # type: ignore
 
     def embed_row(self, row: pd.Series) -> tuple[np.ndarray, np.ndarray, np.ndarray, str] | None:
