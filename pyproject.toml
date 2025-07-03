@@ -30,6 +30,7 @@ dependencies = [
   "numpy",
   "pandas",
   "pyarrow",
+  "biopython",
 
   "pyensembl",
   "pytest",
