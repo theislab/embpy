@@ -26,11 +26,11 @@ dependencies = [
   "anndata",
   "borzoi-pytorch",
   "enformer-pytorch",
+  "esm",
   "ipywidgets",
   "numpy",
   "pandas",
   "pyarrow",
-
   "pyensembl",
   "pytest",
   "session-info",
