@@ -120,7 +120,7 @@ class ChembertaWrapper(BaseModelWrapper):
 
     def embed_batch(
         self,
-        smiles_list: list[str],
+        input: list[str],
         pooling_strategy: str = "mean",
         use_pooler: bool = False,
         **kwargs: Any,
@@ -130,7 +130,7 @@ class ChembertaWrapper(BaseModelWrapper):
 
         Returns a list of 1D numpy arrays.
         """
-        return [self.embed(s, pooling_strategy=pooling_strategy, use_pooler=use_pooler) for s in smiles_list]
+        return [self.embed(s, pooling_strategy=pooling_strategy, use_pooler=use_pooler) for s in input]
 
 
 class MolformerWrapper(BaseModelWrapper):
@@ -273,7 +273,7 @@ class MolformerWrapper(BaseModelWrapper):
 
     def embed_batch(
         self,
-        inputs: str,
+        input: str,
         pooling_strategy: str = "cls",
         **kwargs: Any,
     ) -> list[np.ndarray]:
@@ -297,7 +297,7 @@ class MolformerWrapper(BaseModelWrapper):
         if pooling_strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling '{pooling_strategy}'. Choose from {self.available_pooling_strategies}")
 
-        tokens = self._preprocess_smiles(inputs)
+        tokens = self._preprocess_smiles(input)
         tokens = {k: v.to(self.device) for k, v in tokens.items()}
 
         with torch.no_grad():

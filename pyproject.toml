@@ -35,6 +35,7 @@ dependencies = [
   "pyarrow",
   "pyensembl",
   "pytest",
+  "rdkit",            # For molecule embeddings
   "session-info",
   "torch",
   "transformers",
