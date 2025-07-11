@@ -77,16 +77,20 @@ class BioEmbedder:
     def __init__(
         self,
         device: str | torch.device | None = "auto",
-        # Add options for gene resolver backend, cache paths etc. later
+        resolver_backend: Literal["api", "local"] = "api",
+        mart_file: str | None = None,
+        chromosome_folder: str | None = None,
     ):
         """
         Initializes the BioEmbedder.
 
         Args:
-            device (Optional[Union[str, torch.device]]): The device to use ('cuda', 'mps', 'cpu', 'auto').
-                Defaults to "auto".
-            # Add other config args
+            device: 'auto', 'cuda', 'mps', or 'cpu', or torch.device.
+            resolver_backend: 'api' to use online APIs, 'local' to use local FASTAs.
+            mart_file: path to Mart CSV (required if resolver_backend='local').
+            chromosome_folder: path to folder with chr*.fa files (required if 'local').
         """
+        # Device setup
         if isinstance(device, str):
             if device == "auto":
                 self.device = get_device()
@@ -95,14 +99,26 @@ class BioEmbedder:
         elif isinstance(device, torch.device):
             self.device = device
         else:
-            raise ConfigError("Invalid device specified. Use 'auto', 'cpu', 'cuda', 'mps', or a torch.device object.")
+            raise ConfigError("Invalid device; use 'auto','cpu','cuda','mps', or torch.device.")
 
+        # GeneResolver setup
+        self.resolver_backend = resolver_backend
+        if resolver_backend == "local":
+            if not mart_file or not chromosome_folder:
+                raise ConfigError("mart_file and chromosome_folder must be provided for local resolver.")
+            self.gene_resolver = GeneResolver(
+                mart_file=mart_file,
+                chromosome_folder=chromosome_folder,
+            )
+        else:
+            # API mode; mart/chrom args ignored
+            self.gene_resolver = GeneResolver()
+
+        # Model cache and discovery
         self.model_cache: dict[str, BaseModelWrapper] = {}
-        self.gene_resolver = GeneResolver()  # Initialize the resolver
-        # Filter registry based on available wrappers (handles optional dependencies)
         self._available_models = self._discover_models()
 
-        logging.info(f"BioEmbedder initialized on device: {self.device}")
+        logging.info(f"BioEmbedder initialized on device {self.device}, backend={self.resolver_backend}")
         logging.info(f"Available models: {self.list_available_models()}")
 
     def _discover_models(self) -> dict[str, tuple[type[BaseModelWrapper], str]]:
@@ -165,10 +181,9 @@ class BioEmbedder:
     def embed_gene(
         self,
         identifier: str,
-        model: str,  # User provides name like "enformer_human_rough" or "esm2_650M"
+        model: str,
         id_type: Literal["symbol", "ensembl_id", "uniprot_id"] = "symbol",
         organism: str = "human",
-        # sequence_type: Optional[Literal["dna", "protein"]] = None, # Keep auto-detection
         pooling_strategy: str = "mean",
         gene_description_format: str = "Gene: {identifier}. Type: {id_type}. Organism: {organism}.",
         **kwargs: Any,
@@ -182,16 +197,16 @@ class BioEmbedder:
         Args:
             identifier (str): The gene identifier (e.g., "TP53", "ENSG00000141510").
             model (str): The user-facing name of the model to use (e.g., "enformer_human_rough",
-                         "esm2_650M", "minilm_l6_v2"). Must be a key in MODEL_REGISTRY.
+                        "esm2_650M", "minilm_l6_v2"). Must be a key in MODEL_REGISTRY.
             id_type (Literal): Type of the identifier provided. Defaults to "symbol".
             organism (str): Organism name (e.g., "human", "mouse"). Used for sequence/description lookup.
                             Defaults to "human".
             pooling_strategy (str): Pooling strategy if the model outputs per-token/residue embeddings.
                                     Defaults to "mean". Check model's `available_pooling_strategies`.
             gene_description_format (str): Format string used to generate input for text models.
-                                           Defaults to "Gene: {identifier}. Type: {id_type}. Organism: {organism}.".
+                                        Defaults to "Gene: {identifier}. Type: {id_type}. Organism: {organism}.".
             **kwargs: Additional arguments passed to the specific model's embed method
-                      (e.g., `target_layer` for transformer models).
+                    (e.g., `target_layer` for transformer models).
 
         Returns
         -------
@@ -204,60 +219,38 @@ class BioEmbedder:
             ValueError: If the model type is ambiguous or incompatible inputs are generated.
             RuntimeError: If model loading or inference fails.
         """
-        model_instance = self._get_model(model)  # Gets the specific loaded model instance
-        input_data: str | None = None  # To hold sequence or text description
-
-        # --- Determine input type based on model ---
-        if model_instance.model_type in ["dna", "protein"]:
-            sequence_type = model_instance.model_type
-            logging.debug(
-                f"Model '{model}' requires '{sequence_type}' sequence for {id_type} '{identifier}'. Fetching..."
+        inst = self._get_model(model)
+        mtype = inst.model_type
+        # Fetch input data
+        if mtype == "dna":
+            if self.resolver_backend == "local":
+                seq = self.gene_resolver.get_local_dna_sequence(identifier, id_type)
+            else:
+                seq = self.gene_resolver.get_dna_sequence(identifier, id_type, organism)
+            if not seq:
+                raise IdentifierError(f"DNA not found for {id_type}='{identifier}'")
+            input_data = seq
+        elif mtype == "protein":
+            prot = self.gene_resolver.get_protein_sequence(identifier, id_type, organism)
+            if not prot:
+                raise IdentifierError(f"Protein not found for {id_type}='{identifier}'")
+            input_data = prot
+        elif mtype == "text":
+            desc = self.gene_resolver.get_gene_description(
+                identifier, id_type, organism, format_string=gene_description_format
             )
-            try:
-                if sequence_type == "dna":
-                    input_data = self.gene_resolver.get_dna_sequence(identifier, id_type, organism)
-                else:  # protein
-                    input_data = self.gene_resolver.get_protein_sequence(identifier, id_type, organism)
-            except (KeyError, ValueError) as e:
-                # Catch specific errors during sequence fetching
-                raise IdentifierError(
-                    f"Failed to fetch {sequence_type} sequence for {id_type} '{identifier}': {e}"
-                ) from e
-
-            if not input_data:
-                raise IdentifierError(f"No {sequence_type} sequence found for {id_type} '{identifier}' ({organism}).")
-            logging.debug(f"Sequence fetched successfully (length: {len(input_data)}). Embedding...")
-
-        elif model_instance.model_type == "text":
-            logging.debug(f"Model '{model}' requires text description for {id_type} '{identifier}'. Constructing...")
-            try:
-                input_data = self.gene_resolver.get_gene_description(
-                    identifier, id_type, organism, format_string=gene_description_format
-                )
-            except Exception as e:
-                raise IdentifierError(f"Failed to construct description for {id_type} '{identifier}': {e}") from e
-
-            if not input_data:
-                raise IdentifierError(f"Could not construct description for {id_type} '{identifier}' ({organism}).")
-            logging.debug(f"Description constructed: '{input_data[:100]}...'. Embedding...")
-
+            if not desc:
+                raise IdentifierError(f"Description not found for {id_type}='{identifier}'")
+            input_data = desc
         else:
-            # Should not happen if registry/discovery is correct, but as safeguard
-            raise ValueError(
-                f"Unsupported model type '{model_instance.model_type}' for model '{model}'. Cannot embed gene."
-            )
-
-        # --- Embed the input data (sequence or text) ---
-        logging.debug(
-            f"Embedding gene '{identifier}' using model '{model}' with input type '{model_instance.model_type}'"
-        )
+            raise ValueError(f"Unsupported model type '{mtype}' for embedding.")
+        # Embed
         try:
-            embedding = model_instance.embed(input=input_data, pooling_strategy=pooling_strategy, **kwargs)
-            logging.debug(f"Gene embedding generated with shape: {embedding.shape}")
-            return embedding
+            emb = inst.embed(input=input_data, pooling_strategy=pooling_strategy, **kwargs)
+            return emb
         except Exception as e:
-            logging.error(f"Error during embedding generation for '{identifier}' with model '{model}': {e}")
-            raise RuntimeError(f"Embedding failed for identifier '{identifier}'.") from e
+            logging.error(f"Embedding error for {identifier} with model {model}: {e}")
+            raise RuntimeError(f"Embedding failed for {identifier}") from e
 
     def embed_genes_batch(
         self,

@@ -1,0 +1,4 @@
+▶ Starting embeddings on supergpu08.scidom.de at Thu Jul  3 11:02:29 AM CEST 2025
+   GPUs: 0,1
+   Python: /ictstr01/home/icb/goncalo.pinto/tools/apps/mamba/envs/embpy/bin/python
+Found 18978 genes in CCLE file.

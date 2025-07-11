@@ -24,6 +24,8 @@ classifiers = [
 ]
 dependencies = [
   "anndata",
+  "biopython",
+
   "borzoi-pytorch",
   "enformer-pytorch",
   "esm",

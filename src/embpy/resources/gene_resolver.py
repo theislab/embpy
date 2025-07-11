@@ -1,7 +1,10 @@
 import logging
+import os
 from typing import Literal
 
+import pandas as pd
 import requests
+from Bio import SeqIO
 
 # --- Placeholder Implementation ---
 # This needs to be replaced with actual logic using libraries like:
@@ -19,13 +22,20 @@ class GeneResolver:
     Placeholder implementation. Needs actual backend logic.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        mart_file: str | None = None,
+        chromosome_folder: str | None = None,
+    ):
+        # API-based resolver initialization
         logging.info("GeneResolver initialized.")
+        self.mart_file = mart_file
+        self.chrom_folder = chromosome_folder
 
+        # Attempt to load pyensembl for optional offline queries
         try:
             import pyensembl
 
-            # Initialize Ensembl GRCh38 (Ensembl 109)
             self.ensembl = pyensembl.EnsemblRelease(109)
             logging.info("pyensembl found. Downloading and indexing if necessary...")
             self.ensembl.download()
@@ -33,10 +43,53 @@ class GeneResolver:
             logging.info("pyensembl data ready.")
         except ImportError:
             self.ensembl = None
-            logging.warning("pyensembl not found. Gene resolution will be limited.")
+            logging.warning("pyensembl not found. API-only mode.")
         except Exception as e:  # noqa: BLE001
             self.ensembl = None
             logging.warning(f"Failed to initialize pyensembl: {e}")
+
+    def get_local_dna_sequence(
+        self,
+        identifier: str,
+        id_type: Literal["symbol", "ensembl_id"],
+    ) -> str | None:
+        """
+        Get DNA locally
+
+        Fetch the genomic DNA sequence for a gene using a local Mart file
+        and chromosome FASTA files.
+
+        Requires that `mart_file` and `chrom_folder` were provided.
+        """
+        if not self.mart_file or not self.chrom_folder:
+            raise ValueError("mart_file and chromosome_folder must be set for local lookup")
+
+        # Load the gene annotation table
+        df = pd.read_csv(self.mart_file)
+        # Select the row matching gene symbol or Ensembl ID
+        if id_type == "symbol":
+            mask = df["HGNC symbol"].eq(identifier)
+        else:
+            mask = df["Gene stable ID"].eq(identifier)
+        hits = df[mask]
+        if hits.empty:
+            logging.error(f"No entry found for {id_type} '{identifier}' in Mart file")
+            return None
+        row = hits.iloc[0]
+
+        # Extract coordinates
+        chrom = str(row["Chromosome/scaffold name"])  # e.g. '1'
+        start = int(row["Gene start (bp)"])
+        end = int(row["Gene end (bp)"])
+
+        # Load chromosome FASTA
+        fasta_path = os.path.join(self.chrom_folder, f"chr{chrom}.fa")
+        rec = SeqIO.read(fasta_path, "fasta")
+        full_seq = str(rec.seq).upper()
+
+        # Slice sequence (1-based inclusive)
+        seq = full_seq[start - 1 : end]
+        return seq
 
     def get_dna_sequence(
         self,

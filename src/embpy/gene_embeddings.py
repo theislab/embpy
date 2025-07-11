@@ -186,6 +186,7 @@ class GeneEmbeddingProcessor:
             oh = self._preprocess_borzoi(seq)
             with torch.no_grad():
                 embs = self.model.get_embs_after_crop(oh)
+                print(embs)
             emb = embs.squeeze(0).cpu().numpy()
 
         # pool along bins axis
