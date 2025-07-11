@@ -17,6 +17,7 @@ class ESM2Wrapper(BaseModelWrapper):
     model inference, and pooling strategies to produce protein embeddings.
     """
 
+    model_type = "protein"
     available_pooling_strategies = ["mean", "max", "cls"]
 
     def __init__(self, model_path_or_name: str = "facebook/esm2_t6_8M_UR50D", **kwargs):
@@ -82,7 +83,7 @@ class ESM2Wrapper(BaseModelWrapper):
         return self.tokenizer(sequence, return_tensors="pt", truncation=True, padding=True)
 
     def embed(
-        self, sequence: str, pooling_strategy: str = "mean", target_layer: int | None = None, **kwargs
+        self, input: str, pooling_strategy: str = "mean", target_layer: int | None = None, **kwargs
     ) -> np.ndarray:
         """
         Generate an embedding for a protein sequence using the ESM2 model.
@@ -112,7 +113,7 @@ class ESM2Wrapper(BaseModelWrapper):
             )
 
         # Preprocess the sequence and move inputs to the correct device:
-        tokenized_input = self._preprocess_sequence(sequence)
+        tokenized_input = self._preprocess_sequence(input)
         input_ids = tokenized_input["input_ids"].to(self.device)
         attention_mask = tokenized_input.get("attention_mask", None)
         if attention_mask is not None:
