@@ -38,14 +38,13 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # --- DNA Models ---
     # Use specific, descriptive names users will provide
     "enformer_human_rough": (EnformerWrapper, "EleutherAI/enformer-official-rough"),
-    # There are several versions of borzoi models on hf
-    "borzoi_v0": (BorzoiWrapper, "johahi/borzoi-replicate-0"),  # Hypothetical Borzoi
+    "borzoi_v0": (BorzoiWrapper, "johahi/borzoi-replicate-0"),
     "borzoi_v1": (BorzoiWrapper, "johani/borzoi-replicate-1"),
     # consider adding flashzoi
     # --- Protein Models ---
     # Add specific ESM models you want to support by default
-    "esm2_8M": (ESM2Wrapper, "facebook/esm2_t6_8M_UR50D"),  # iam not sure about this, TODO: check original esm repo
-    "esm2_35M": (ESM2Wrapper, "facebook/esm2_t12_35M_UR50D"),  # Corrected name likely
+    "esm2_8M": (ESM2Wrapper, "facebook/esm2_t6_8M_UR50D"),
+    "esm2_35M": (ESM2Wrapper, "facebook/esm2_t12_35M_UR50D"),
     "esm2_150M": (ESM2Wrapper, "facebook/esm2_t30_150M_UR50D"),
     "esm2_650M": (ESM2Wrapper, "facebook/esm2_t33_650M_UR50D"),
     "esm2_3B": (ESM2Wrapper, "facebook/esm2_t36_3B_UR50D"),

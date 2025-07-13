@@ -4,6 +4,10 @@ from typing import Any
 
 import numpy as np
 import torch
+
+# ESMC SDK import
+from esm.models.esmc import ESMC
+from esm.sdk.api import ESMProtein, LogitsConfig
 from transformers import AutoModel, AutoTokenizer
 
 from .base import BaseModelWrapper
@@ -148,3 +152,126 @@ class ESM2Wrapper(BaseModelWrapper):
             pooled_embedding = torch.mean(embeddings_tensor, dim=0).cpu().numpy()
 
         return pooled_embedding
+
+
+class ESMCWrapper(BaseModelWrapper):
+    """
+    Wrapper for the ESMC‐SDK protein language model 'esmc_300m'.
+
+    This class handles:
+      1. Loading the ESMC client onto the target device.
+      2. Encoding a protein sequence via ESMC.encode.
+      3. Retrieving logits and embeddings via ESMC.logits.
+      4. Pooling over the sequence dimension: mean, max or CLS-token.
+
+    Attributes
+    ----------
+    model_type : str
+        Always "protein" for this wrapper.
+    available_pooling_strategies : list[str]
+        Supported pooling modes: ["mean", "max", "cls"].
+    """
+
+    model_type = "protein"
+    available_pooling_strategies = ["mean", "max", "cls"]
+
+    def __init__(self):
+        """
+        ESMC Embeddings.
+
+        Initialize the ESMC wrapper. No model_path needed—ESMC is hard‐coded
+        to use the 'esmc_300m' checkpoint.
+        """
+        self.client: ESMC | None = None
+        self.device: torch.device | None = None
+
+    def load(self, device: torch.device) -> None:
+        """
+        Load the ESMC client for 'esmc_300m' onto the specified device.
+
+        Parameters
+        ----------
+        device : torch.device
+            The target device (CPU, CUDA, or MPS).
+
+        Raises
+        ------
+        RuntimeError
+            If loading fails for any reason.
+        """
+        self.device = device
+        logging.info("Loading ESMC client 'esmc_300m' …")
+        try:
+            self.client = ESMC.from_pretrained("esmc_300m").to(device)
+            logging.info(f"ESMC client loaded on {device}")
+        except Exception as e:
+            logging.error(f"Failed to load ESMC client: {e}")
+            raise RuntimeError("Could not load ESMC client 'esmc_300m'.") from e
+
+    def embed(self, sequence: str, pooling_strategy: str = "mean", **kwargs: Any) -> np.ndarray:
+        """
+        Generate a protein embedding.
+
+        Parameters
+        ----------
+        sequence : str
+            The amino‐acid string to embed (e.g. "MEEPQSDPSV").
+        pooling_strategy : str, optional
+            One of "mean", "max", or "cls" (the first token).
+
+        Returns
+        -------
+        np.ndarray
+            A 1D vector of size hidden_dim with the pooled representation.
+
+        Raises
+        ------
+        RuntimeError
+            If the client isn't loaded yet.
+        ValueError
+            If an unsupported pooling_strategy is requested.
+        """
+        if self.client is None or self.device is None:
+            raise RuntimeError("ESMC client not loaded; call load() first.")
+
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(f"Invalid pooling '{pooling_strategy}'; choose from {self.available_pooling_strategies}.")
+
+        # 1) Wrap sequence
+        prot = ESMProtein(sequence=sequence)
+        # 2) Encode → tensor
+        tensor = self.client.encode(prot)
+        # 3) Get logits & embeddings
+        out = self.client.logits(tensor, LogitsConfig(sequence=True, return_embeddings=True))
+        emb = out.embeddings  # shape: (1, L, H) or (L, H)
+        # squeeze batch if needed
+        if emb.dim() == 3 and emb.shape[0] == 1:
+            emb = emb.squeeze(0)
+
+        # 4) Pool over length dimension
+        if pooling_strategy == "cls":
+            pooled = emb[0]
+        elif pooling_strategy == "max":
+            pooled = torch.max(emb, dim=0)[0]
+        else:  # mean
+            pooled = torch.mean(emb, dim=0)
+
+        return pooled.cpu().numpy()
+
+    def embed_batch(self, sequences: list[str], pooling_strategy: str = "mean", **kwargs: Any) -> list[np.ndarray]:
+        """
+        Batch‐mode embedding: simply calls `embed` on each sequence in turn.
+
+        Parameters
+        ----------
+        sequences : list[str]
+            A list of amino‐acid sequences.
+        pooling_strategy : str, optional
+            Pooling strategy to apply in each `embed` call.
+
+        Returns
+        -------
+        list[np.ndarray]
+            A list of pooled embeddings, one per input sequence.
+        """
+        return [self.embed(seq, pooling_strategy=pooling_strategy, **kwargs) for seq in sequences]
