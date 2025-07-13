@@ -207,7 +207,7 @@ class ESMCWrapper(BaseModelWrapper):
 
     def embed(
         self,
-        sequence: str,
+        input: str,
         pooling_strategy: str = "mean",
         **kwargs: Any,
     ) -> np.ndarray:
@@ -230,7 +230,7 @@ class ESMCWrapper(BaseModelWrapper):
         if pooling_strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling '{pooling_strategy}'")
 
-        prot = ESMProtein(sequence=sequence)
+        prot = ESMProtein(sequence=input)
         tensor = self.client.encode(prot)
         out = self.client.logits(tensor, LogitsConfig(sequence=True, return_embeddings=True))
         emb = out.embeddings
