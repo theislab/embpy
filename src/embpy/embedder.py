@@ -12,7 +12,7 @@ from .models.base import BaseModelWrapper
 # Import all potential wrappers - handle ImportErrors later if deps are missing
 from .models.dna_models import BorzoiWrapper, EnformerWrapper
 from .models.molecule_models import ChembertaWrapper, MolformerWrapper
-from .models.protein_models import ESM2Wrapper
+from .models.protein_models import ESM2Wrapper, ESMCWrapper
 from .models.text_models import TextLLMWrapper
 from .resources.gene_resolver import GeneResolver
 
@@ -48,6 +48,9 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     "esm2_150M": (ESM2Wrapper, "facebook/esm2_t30_150M_UR50D"),
     "esm2_650M": (ESM2Wrapper, "facebook/esm2_t33_650M_UR50D"),
     "esm2_3B": (ESM2Wrapper, "facebook/esm2_t36_3B_UR50D"),
+    # ESMC Models
+    "esmc_300m":(ESMCWrapper, "esmc_300m"),
+    "esmc_600m":(ESMCWrapper, "esmc_600m"),
     # --- Molecule Models ---
     "chemberta_zinc_v1": (ChembertaWrapper, "seyonec/ChemBERTa-zinc-base-v1"),
     "molformer_base": (MolformerWrapper, "ibm/MoLFormer-XL-both-10pct"),  # Hypothetical Molformer
@@ -161,7 +164,7 @@ class BioEmbedder:
         if model_name not in self.model_cache:
             logging.info(f"Loading model '{model_name}' onto device '{self.device}'...")
             WrapperClass, model_path_or_name = self._available_models[model_name]
-
+            print(self._available_models)
             # Instantiate the specific wrapper with the correct model path/name from the registry
             try:
                 # Pass the specific HF path/name to the wrapper instance
