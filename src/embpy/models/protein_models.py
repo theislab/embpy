@@ -1,14 +1,19 @@
-# embpy/models/esm2_wrapper.py
+# embpy/models/protein_models.py
+import io
 import logging
+import time
 from typing import Any
 
 import numpy as np
+import pandas as pd
+import requests
 import torch
 
 # ESMC SDK import
 try:
     from esm.models.esmc import ESMC
     from esm.sdk.api import ESMProtein, LogitsConfig
+
     _HAVE_ESMC = True
 except ImportError:
     _HAVE_ESMC = False
@@ -158,7 +163,6 @@ class ESM2Wrapper(BaseModelWrapper):
         return pooled_embedding
 
 
-
 class ESMCWrapper(BaseModelWrapper):
     """
     Wrapper for the ESMC‑SDK protein language models (e.g., 'esmc_300m', 'esmc_600m').
@@ -218,10 +222,12 @@ class ESMCWrapper(BaseModelWrapper):
             sequence (str): Amino‑acid string to embed.
             pooling_strategy (str): One of 'mean', 'max', or 'cls'.
 
-        Returns:
+        Returns
+        -------
             np.ndarray: Pooled 1D embedding vector.
 
-        Raises:
+        Raises
+        ------
             RuntimeError: If client isn't loaded.
             ValueError: On invalid pooling strategy.
         """
@@ -264,3 +270,154 @@ class ESMCWrapper(BaseModelWrapper):
             List[np.ndarray]: Pooled embeddings, one per input.
         """
         return [self.embed(seq, pooling_strategy=pooling_strategy, **kwargs) for seq in sequences]
+
+
+class STRINGWrapper(BaseModelWrapper):
+    """
+    Class to get embeddings from the protein-protein interaction database :
+
+    https://string-db.org/help/api/#getting-started
+
+    Follows the same logic as the previous classes. One needs to preprocess the input
+    and then can provide one or multiple inputs in embed or embed batch.
+
+    """
+
+    model_type = "protein"
+    BASE_URL = "https://version-12-0.string-db.org/api"
+
+    def __init__(self, caller_identity: str = "my_app"):
+        """
+        Initialize the STRING API client.
+
+        Args:
+            caller_identity (str): Identifier for our application or organization.
+            This will be sent with each request to help STRING track usage.
+        """
+        self.caller = caller_identity
+
+    def _post(self, output_format: str, method: str, params: dict) -> requests.Response:
+        """
+        Internal helper to perform a POST request to the STRING API.
+
+        Args:
+            output_format (str): Desired format of the response (e.g., 'tsv', 'json', 'xml', 'image').
+            method (str): API method name (e.g., 'get_string_ids', 'network').
+            params (Dict): Dictionary of parameters specific to the API method.
+
+        Returns
+        -------
+            requests.Response: The HTTP response object.
+
+        Raises
+        ------
+            resquest.HTTPError: If the API returns a status code indicating an error.
+        """
+        url = f"{self.BASE_URL}/{output_format}/{method}"
+        response = requests.post(
+            url,
+            data={**params, "caller_identity": self.caller},
+        )
+        response.raise_for_status()
+        time.sleep(1)
+        return response
+
+    def get_string_ids(
+        self,
+        identifiers: list[str],
+        species: int | None = None,
+        echo_query: bool = False,
+    ) -> pd.DataFrame:
+        """
+        Map external identifiers (e.g., gene symbols, Uniprot IDs) to string IDs.
+
+        Args:
+            identifiers (List[str]): List of identifiers to map (one per line).
+            species (Optional[int]): NCBI taxonomy ID to restrict mapping (e.g., 9606 for human).
+                If None, all species are considered.
+            echo_query (bool): Whether to include the original query item in the result.
+
+        Returns
+        -------
+            pd.dataframe: DataFrame containing columns such as 'queryItem', 'stringId',
+                'ncbiTaxonID', 'preferredName', and others.
+
+        Raises
+        ------
+            requests.HTTPError: If the API request fails.
+        """
+        params: dict[str, Any] = {
+            "identifiers": "\r".join(identifiers),
+            "echo_query": int(echo_query),
+        }
+        if species is not None:
+            params["species"] = species
+
+        resp = self._post("tsv", "get_string_ids", params)
+        return pd.read_csv(io.StringIO(resp.text), sep="\t", header=0)
+
+    def get_network(
+        self,
+        identifiers: list[str],
+        species: int,
+        required_score: int = 400,
+        network_type: str = "functional",
+    ) -> pd.DataFrame:
+        """
+        Retrieve protein-protein interaction network for given identifiers.
+
+        Args:
+            identifiers (List[str]): List of STRING IDs or external IDs.
+            species (int): NCBI taxonomy ID (e.g., 9606 for human).
+            required_score (int): Minimum combined score to include an interaction (0-1000).
+            network_type (str): Type of network ('functional', 'physical', etc.)
+
+        Returns
+        -------
+            pd.DataFrame: DataFrame with columns 'protein1', 'protein2', 'combined_score', etc.
+
+        Raises
+        ------
+            requests.HTTPError: If the API requests fails.
+        """
+        params: dict[str, Any] = {
+            "identifiers": "\r".join(identifiers),
+            "species": species,
+            "required_score": required_score,
+            "network_type": network_type,
+        }
+        resp = self._post("tsv", "network", params)
+        return pd.read_csv(io.StringIO(resp.text), sep="\t", header=0)
+
+    def get_network_image(
+        self,
+        identifiers: list[str],
+        species: int,
+        network_flavor: str = "evidence",
+        image_format: str = "png",
+    ) -> bytes:
+        """
+        Fetch an image of the interaction network.
+
+        Args:
+            identifiers (list[str]): List of STRING IDs or external IDs.
+            species (int): NCBI taxonomy ID (e.g., 9606 for human).
+            network_flavor (str): Flavor of network edges ("evidence", "confidence"),
+            image_format (str): Image format, either "png" or "svg".
+
+        Returns
+        -------
+            bytes: Raw image bytes.
+
+        Raises
+        ------
+            requests.HTTPError: If the API request fails.
+        """
+        fmt = "image" if image_format.lower() == "png" else "svg"
+        params: dict[str, Any] = {
+            "identifiers": "\r".join(identifiers),
+            "species": species,
+            "network_flavor": network_flavor,
+        }
+        resp = self._post(fmt, "network", params)
+        return resp.content
