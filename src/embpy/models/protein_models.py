@@ -2,12 +2,15 @@
 import io
 import logging
 import time
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import requests
 import torch
+
+from .base import BaseModelWrapper
 
 # ESMC SDK import
 try:
@@ -18,8 +21,6 @@ try:
 except ImportError:
     _HAVE_ESMC = False
 from transformers import AutoModel, AutoTokenizer
-
-from .base import BaseModelWrapper
 
 
 class ESM2Wrapper(BaseModelWrapper):
@@ -274,77 +275,94 @@ class ESMCWrapper(BaseModelWrapper):
 
 class STRINGWrapper(BaseModelWrapper):
     """
-    Class to get embeddings from the protein-protein interaction database :
+    STRINGWrapper API.
 
-    https://string-db.org/help/api/#getting-started
+    Wrapper for the STRING database API to retrieve protein interaction data
+    and convert it into simple embeddings (e.g., pooled interaction scores).
 
-    Follows the same logic as the previous classes. One needs to preprocess the input
-    and then can provide one or multiple inputs in embed or embed batch.
-
+    Methods
+    -------
+        - load: No-op loader (stores device).
+        - embed: Fetches the interaction network for a single protein,
+          pools the combined scores, and returns a 1D numpy array.
+        - embed_batch: Inherited batch looping over embed.
     """
 
     model_type = "protein"
+    available_pooling_strategies = ["mean", "max"]
     BASE_URL = "https://version-12-0.string-db.org/api"
 
-    def __init__(self, caller_identity: str = "my_app"):
+    def __init__(
+        self,
+        model_path_or_name: str | None = None,
+        caller_identity: str = "my_app",
+        **kwargs: Any,
+    ):
         """
-        Initialize the STRING API client.
+        Initialize the STRINGWrapper.
 
         Args:
-            caller_identity (str): Identifier for our application or organization.
-            This will be sent with each request to help STRING track usage.
+            model_path_or_name (Optional[str]): Ignored for STRING API.
+            caller_identity (str): Identifier for your application. Used by STRING for usage tracking.
+            **kwargs: Additional configuration (ignored).
         """
+        super().__init__(model_path_or_name, **kwargs)
         self.caller = caller_identity
 
-    def _post(self, output_format: str, method: str, params: dict) -> requests.Response:
+    def load(self, device: torch.device) -> None:
         """
-        Internal helper to perform a POST request to the STRING API.
+        'Load' the wrapper by storing the device (no actual model to load).
 
         Args:
-            output_format (str): Desired format of the response (e.g., 'tsv', 'json', 'xml', 'image').
-            method (str): API method name (e.g., 'get_string_ids', 'network').
-            params (Dict): Dictionary of parameters specific to the API method.
+            device (torch.device): Device placeholder (not used).
+        """
+        self.device = device
+
+    def _post(self, output_format: str, method: str, params: dict[str, Any]) -> requests.Response:
+        """
+        Internal helper to perform a POST to STRING API.
+
+        Args:
+            output_format (str): 'tsv', 'json', 'xml', or 'image'.
+            method (str): API endpoint (e.g., 'get_string_ids', 'network').
+            params (dict[str, Any]): API-specific parameters.
 
         Returns
         -------
-            requests.Response: The HTTP response object.
+            requests.Response: The HTTP response.
 
         Raises
         ------
-            resquest.HTTPError: If the API returns a status code indicating an error.
+            requests.HTTPError: On bad status codes.
         """
         url = f"{self.BASE_URL}/{output_format}/{method}"
         response = requests.post(
             url,
             data={**params, "caller_identity": self.caller},
         )
+        # Raise on HTTP error
         response.raise_for_status()
+        # Respect rate limits
         time.sleep(1)
         return response
 
     def get_string_ids(
         self,
-        identifiers: list[str],
+        identifiers: Sequence[str],
         species: int | None = None,
         echo_query: bool = False,
     ) -> pd.DataFrame:
         """
-        Map external identifiers (e.g., gene symbols, Uniprot IDs) to string IDs.
+        Map external IDs (gene symbols, UniProt IDs) to STRING internal IDs.
 
         Args:
-            identifiers (List[str]): List of identifiers to map (one per line).
-            species (Optional[int]): NCBI taxonomy ID to restrict mapping (e.g., 9606 for human).
-                If None, all species are considered.
-            echo_query (bool): Whether to include the original query item in the result.
+            identifiers (Sequence[str]): Input IDs.
+            species (Optional[int]): NCBI taxonomy ID filter.
+            echo_query (bool): Include original query in output.
 
         Returns
         -------
-            pd.dataframe: DataFrame containing columns such as 'queryItem', 'stringId',
-                'ncbiTaxonID', 'preferredName', and others.
-
-        Raises
-        ------
-            requests.HTTPError: If the API request fails.
+            pd.DataFrame: Columns include 'queryItem', 'stringId', etc.
         """
         params: dict[str, Any] = {
             "identifiers": "\r".join(identifiers),
@@ -358,27 +376,23 @@ class STRINGWrapper(BaseModelWrapper):
 
     def get_network(
         self,
-        identifiers: list[str],
+        identifiers: Sequence[str],
         species: int,
         required_score: int = 400,
         network_type: str = "functional",
     ) -> pd.DataFrame:
         """
-        Retrieve protein-protein interaction network for given identifiers.
+        Retrieve interaction edges for given STRING IDs.
 
         Args:
-            identifiers (List[str]): List of STRING IDs or external IDs.
-            species (int): NCBI taxonomy ID (e.g., 9606 for human).
-            required_score (int): Minimum combined score to include an interaction (0-1000).
-            network_type (str): Type of network ('functional', 'physical', etc.)
+            identifiers (Sequence[str]): STRING or external IDs.
+            species (int): NCBI taxonomy ID.
+            required_score (int): Minimum combined score (0–1000).
+            network_type (str): 'functional', 'physical', etc.
 
         Returns
         -------
-            pd.DataFrame: DataFrame with columns 'protein1', 'protein2', 'combined_score', etc.
-
-        Raises
-        ------
-            requests.HTTPError: If the API requests fails.
+            pd.DataFrame: Columns include 'protein1', 'protein2', 'combined_score'.
         """
         params: dict[str, Any] = {
             "identifiers": "\r".join(identifiers),
@@ -389,35 +403,59 @@ class STRINGWrapper(BaseModelWrapper):
         resp = self._post("tsv", "network", params)
         return pd.read_csv(io.StringIO(resp.text), sep="\t", header=0)
 
-    def get_network_image(
+    def embed(
         self,
-        identifiers: list[str],
-        species: int,
-        network_flavor: str = "evidence",
-        image_format: str = "png",
-    ) -> bytes:
+        input: str,
+        species: int = 9606,
+        required_score: int = 400,
+        **kwargs: Any,
+    ) -> pd.DataFrame:
         """
-        Fetch an image of the interaction network.
+        Retrieve the interaction network for a single protein as a DataFrame.
+
+        This method maps the input identifier to a STRING ID and retrieves
+        the full interaction network DataFrame (with columns like 'protein1',
+        'protein2', 'combined_score').
 
         Args:
-            identifiers (list[str]): List of STRING IDs or external IDs.
-            species (int): NCBI taxonomy ID (e.g., 9606 for human).
-            network_flavor (str): Flavor of network edges ("evidence", "confidence"),
-            image_format (str): Image format, either "png" or "svg".
+            input (str): Gene symbol or STRING ID.
+            species (int): NCBI taxonomy ID.
+            required_score (int): Minimum combined score (0–1000).
+            **kwargs: Ignored.
 
         Returns
         -------
-            bytes: Raw image bytes.
-
-        Raises
-        ------
-            requests.HTTPError: If the API request fails.
+            pd.DataFrame: DataFrame of interaction edges for the given protein.
         """
-        fmt = "image" if image_format.lower() == "png" else "svg"
-        params: dict[str, Any] = {
-            "identifiers": "\r".join(identifiers),
-            "species": species,
-            "network_flavor": network_flavor,
-        }
-        resp = self._post(fmt, "network", params)
-        return resp.content
+        # Map to STRING ID
+        ids_df = self.get_string_ids([input], species=species, echo_query=False)
+        string_id = ids_df["stringId"].iloc[0]
+
+        # Retrieve and return the full network DataFrame
+        net_df = self.get_network([string_id], species=species, required_score=required_score)
+        return net_df
+
+    def embed_batch(
+        self,
+        inputs: Sequence[str],
+        species: int = 9606,
+        required_score: int = 400,
+        **kwargs: Any,
+    ) -> dict[str, pd.DataFrame]:
+        """
+        Retrieve interaction networks for multiple proteins.
+
+        Args:
+            inputs (Sequence[str]): List of gene symbols or STRING IDs.
+            species (int): NCBI taxonomy ID.
+            required_score (int): Minimum combined score (0–1000).
+            **kwargs: Ignored.
+
+        Returns
+        -------
+            Dict[str, pd.DataFrame]: Mapping from input identifier to its network DataFrame.
+        """
+        results: dict[str, pd.DataFrame] = {}
+        for inp in inputs:
+            results[inp] = self.embed(inp, species=species, required_score=required_score)
+        return results

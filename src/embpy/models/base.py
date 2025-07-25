@@ -66,6 +66,7 @@ class BaseModelWrapper(ABC):
         """
         pass
 
+    @abstractmethod
     def embed_batch(
         self,
         inputs: Sequence[str],
@@ -87,15 +88,7 @@ class BaseModelWrapper(ABC):
         -------
             list[np.ndarray]: A list of resulting embedding vectors.
         """
-        if self.model is None or self.device is None:
-            raise RuntimeError("Model has not been loaded. Call load() first.")
-
-        results = []
-        # Basic loop - override in subclasses for efficiency!
-        for single_input in inputs:
-            # Note: Error handling for individual sequences in batch might be needed
-            results.append(self.embed(single_input, pooling_strategy=pooling_strategy, **kwargs))
-        return results
+        pass
 
     def _apply_pooling(self, embeddings: torch.Tensor, strategy: str) -> np.ndarray:
         """
