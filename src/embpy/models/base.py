@@ -14,7 +14,7 @@ class BaseModelWrapper(ABC):
     """
 
     model_type: Literal["dna", "protein", "molecule", "text", "unknown"] = "unknown"
-    available_pooling_strategies: list[str] = ["mean", "max"]  # Common defaults
+    available_pooling_strategies: list[str] = ["mean", "max", "median"]  # Common defaults
 
     def __init__(self, model_path_or_name: str | None = None, **kwargs):
         """
@@ -114,6 +114,8 @@ class BaseModelWrapper(ABC):
             # Add other strategies like 'cls' if applicable (e.g., index 0)
             elif strategy == "cls":
                 pooled = embeddings[:, 0, :]
+            elif strategy == "median":
+                pooled = embeddings[0, :]
             else:
                 # Should be caught by the check above, but as fallback
                 raise ValueError(f"Pooling strategy '{strategy}' not implemented for batched tensors.")
@@ -123,6 +125,8 @@ class BaseModelWrapper(ABC):
             elif strategy == "max":
                 pooled = embeddings.max(dim=0).values
             elif strategy == "cls":
+                pooled = embeddings[0, :]
+            elif strategy == "median":
                 pooled = embeddings[0, :]
             else:
                 raise ValueError(f"Pooling strategy '{strategy}' not implemented for single tensors.")

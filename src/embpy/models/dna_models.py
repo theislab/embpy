@@ -46,7 +46,7 @@ class EnformerWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
-    available_pooling_strategies = ["mean", "max"]
+    available_pooling_strategies = ["mean", "max", "median"]
 
     SEQUENCE_LENGTH = 196_608
     TRUNK_OUTPUT_DIM = 3072
@@ -206,12 +206,11 @@ class EnformerWrapper(BaseModelWrapper):
         if self.model is None or self.device is None:
             raise RuntimeError("Enformer model not loaded. Call load() first.")
         if pooling_strategy not in self.available_pooling_strategies:
-            raise ValueError(f"Invalid pooling: '{pooling_strategy}'")
+            raise ValueError(f"Invalid pooling strategy:'{pooling_strategy}'")
 
         one_hot = self._preprocess_sequence(input).to(self.device)  # (1, 5, 196608)
 
         with torch.no_grad():
-            one_hot = one_hot.permute(0, 2, 1)  # → (1, C, L)
             out = self.model(one_hot, return_embeddings=True)
             if isinstance(out, tuple) and len(out) >= 2 and isinstance(out[1], torch.Tensor):
                 trunk = out[1]  # (1, num_bins, 3072)
@@ -227,6 +226,8 @@ class EnformerWrapper(BaseModelWrapper):
 
         if pooling_strategy == "mean":
             pooled = trunk.mean(dim=0)  # (3072,)
+        elif pooling_strategy == "median":
+            pooled = trunk.median(dim=0).values
         else:
             pooled = trunk.max(dim=0).values  # (3072,)
 
@@ -275,7 +276,7 @@ class EnformerWrapper(BaseModelWrapper):
         if not inputs:
             return []
         if pooling_strategy not in self.available_pooling_strategies:
-            raise ValueError(f"Invalid pooling: '{pooling_strategy}'")
+            raise ValueError(f"Invalid pooling strategy:'{pooling_strategy}'")
 
         preproc_list = []
         for seq in inputs:
@@ -293,6 +294,8 @@ class EnformerWrapper(BaseModelWrapper):
 
         if pooling_strategy == "mean":
             pooled = emb.mean(dim=1)  # (B, 3072)
+        elif pooling_strategy == "median":
+            pooled = emb.median(dim=1).values
         else:
             pooled = emb.max(dim=1).values  # (B, 3072)
 

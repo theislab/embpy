@@ -6,7 +6,7 @@ import torch
 
 # Attempt to import the specific wrapper
 try:
-    from embpy.models.dna_models.enformer import EnformerWrapper
+    from embpy.models.dna_models import EnformerWrapper
 
     ENFORMER_PYTORCH_INSTALLED = True
 except ImportError:
@@ -120,7 +120,7 @@ def test_enformer_embed_single(loaded_enformer_wrapper):
     # Use a sequence that requires padding/truncation to test preprocessing integration
     test_seq = "A" * (wrapper.SEQUENCE_LENGTH // 2)
 
-    embedding = wrapper.embed(test_seq, pooling_strategy="mean")
+    embedding = wrapper.embed(input=test_seq, pooling_strategy="mean")
 
     assert isinstance(embedding, np.ndarray)
     assert embedding.shape == (wrapper.TRUNK_OUTPUT_DIM,)  # Check output dimension
@@ -168,8 +168,8 @@ def test_enformer_invalid_pooling(loaded_enformer_wrapper):
     """Test that invalid pooling strategy raises ValueError."""
     wrapper = loaded_enformer_wrapper
     test_seq = "N" * wrapper.SEQUENCE_LENGTH
-    with pytest.raises(ValueError, match="Invalid pooling strategy"):
-        wrapper.embed(test_seq, pooling_strategy="median")  # Median not supported
+    with pytest.raises(ValueError, match="Invalid pooling strategy:"):
+        wrapper.embed(test_seq, pooling_strategy="min")  # Minimum not supported
 
-    with pytest.raises(ValueError, match="Invalid pooling strategy"):
+    with pytest.raises(ValueError, match="Invalid pooling strategy:"):
         wrapper.embed_batch([test_seq], pooling_strategy="some_invalid_pooling")
