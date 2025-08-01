@@ -133,6 +133,35 @@ def test_enformer_embed_single(loaded_enformer_wrapper):
     assert not np.isnan(embedding_max).any()
 
 
+def test_enformer_preprocess_trims_center():
+    """Make sure long sequences are truncated around the center."""
+    wrapper = EnformerWrapper()
+    target_len = wrapper.SEQUENCE_LENGTH
+
+    # build a long sequence whose content is easily distinguishable
+    # e.g. first half all “A”, second half all “C”
+    half = target_len + 50
+    long_seq = "A" * half + "C" * half  # total length = 2*half
+
+    # preprocess the long sequence
+    processed_long = wrapper._preprocess_sequence(long_seq)
+    assert isinstance(processed_long, torch.Tensor)
+    assert processed_long.shape == (1, target_len, 4)
+
+    # compute the expected center substring
+    total_len = len(long_seq)
+    start = (total_len - target_len) // 2
+    center_seq = long_seq[start : start + target_len]
+
+    # preprocess exactly that center substring
+    processed_center = wrapper._preprocess_sequence(center_seq)
+    assert isinstance(processed_center, torch.Tensor)
+    assert processed_center.shape == (1, target_len, 4)
+
+    # they should be identical one-hot encodings
+    assert torch.equal(processed_long, processed_center)
+
+
 def test_enformer_embed_batch(loaded_enformer_wrapper):
     """Test embedding a batch of sequences."""
     wrapper = loaded_enformer_wrapper
