@@ -4,6 +4,8 @@ import numpy as np
 import pytest
 import torch
 
+# TODO: Add a real suquence, generate the embedding using pretrain borzoi and then verify against the wrapper
+
 # Attempt to import BorzoiWrapper
 try:
     from embpy.models.dna_models import BorzoiWrapper
