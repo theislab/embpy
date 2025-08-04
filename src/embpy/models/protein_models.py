@@ -163,6 +163,67 @@ class ESM2Wrapper(BaseModelWrapper):
 
         return pooled_embedding
 
+    def embed_batch(
+        self,
+        inputs: list[str],
+        pooling_strategy: str = "mean",
+        target_layer: int | None = None,
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        """
+        Compute embeddings for multiple protein sequences.
+
+        This feeds each sequence through the full ESM2 pipeline:
+          1. Tokenize via the loaded HuggingFace tokenizer
+          2. Move tokens to `self.device`
+          3. Run the model to produce hidden states or last hidden layer
+          4. Pool across sequence positions using `pooling_strategy`
+
+        Parameters
+        ----------
+        inputs
+            A list of protein sequence strings (e.g. ["MTEYKLVVVG", "ACDEFGHIK..."]).
+        pooling_strategy
+            One of {"mean", "max", "cls"}.  “cls” returns the embedding of the first token,
+            “mean” averages across positions, and “max” takes the maximum across positions.
+        target_layer
+            If specified, extract embeddings from a particular hidden state layer
+            instead of the default `last_hidden_state`.  Must be in range
+            `[-num_layers, num_layers)`.
+
+        Returns
+        -------
+        list[np.ndarray]
+            A list of 1D NumPy arrays, one per input sequence, each of length
+            `self.TRUNK_OUTPUT_DIM`.
+
+        Raises
+        ------
+        RuntimeError
+            If `load()` has not been called (i.e., model or device is None).
+        ValueError
+            If `pooling_strategy` is not one of the supported strategies.
+        """
+        if self.model is None or self.device is None:
+            raise RuntimeError("ESM2 model not loaded. Please call load() first.")
+        if not inputs:
+            return []
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(
+                f"Invalid pooling strategy '{pooling_strategy}'. Choose from {self.available_pooling_strategies}"
+            )
+
+        embeddings: list[np.ndarray] = []
+        for seq in inputs:
+            emb = self.embed(
+                input=seq,
+                pooling_strategy=pooling_strategy,
+                target_layer=target_layer,
+                **kwargs,
+            )
+            embeddings.append(emb)
+        return embeddings
+
 
 class ESMCWrapper(BaseModelWrapper):
     """

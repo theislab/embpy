@@ -338,7 +338,7 @@ class BorzoiWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
-    available_pooling_strategies = ["mean", "max"]
+    available_pooling_strategies = ["mean", "max", "median"]
 
     SEQUENCE_LENGTH = 524_288
     NUM_CHANNELS = 4

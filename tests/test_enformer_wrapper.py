@@ -20,6 +20,8 @@ pytestmark = pytest.mark.skipif(
     not ENFORMER_PYTORCH_INSTALLED, reason="enformer-pytorch package not found, skipping Enformer tests"
 )
 
+# TODO: Add a real suquence, generate the embedding using pretrain enformer and then verify against the wrapper
+
 
 # Determine device for testing (prefer GPU if available)
 def get_test_device():
