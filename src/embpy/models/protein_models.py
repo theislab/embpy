@@ -265,7 +265,7 @@ class ESMCWrapper(BaseModelWrapper):
         self.device = device
         logging.info(f"Loading ESMC client '{self.model_name}'...")
         try:
-            self.client = ESMC.from_pretrained(self.model_name).to(device)
+            self.client = ESMC.from_pretrained(self.model_name).to(device).eval()
             logging.info("ESMC client loaded successfully.")
         except Exception as e:
             logging.error(f"Failed to load ESMC client: {e}")
