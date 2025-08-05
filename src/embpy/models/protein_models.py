@@ -355,15 +355,26 @@ class ESMCWrapper(BaseModelWrapper):
             pooled = torch.max(embs, dim=0)[0]
         else:  # 'mean'
             pooled = torch.mean(embs, dim=0)
-        result: dict[str, np.ndarray] = {"embedding": pooled.cpu().numpy()}
+        result = {"embedding": pooled.cpu().numpy()}
 
-        # 5) Optionally extract hidden states
         if return_hidden_states:
-            # out.hidden_states is a tuple[length num_layers] of (1, seq_len, hidden_dim)
-            hs = torch.stack(out.hidden_states, dim=0).squeeze(1)  # (num_layers, seq_len, hidden_dim)
+            hidden = out.hidden_states
+            if isinstance(hidden, tuple):
+                hs = torch.stack(hidden, dim=0)
+            else:
+                hs = hidden
+            # drop any batch‐ or extra singleton dims
+            while hs.dim() > 3 and hs.shape[0] == 1:
+                hs = hs.squeeze(0)
+            if hs.dim() == 4 and hs.shape[1] == 1:
+                hs = hs.squeeze(1)
+            if hs.dim() != 3:
+                raise RuntimeError(f"Unexpected hidden_states shape {hs.shape}")
+
             if hidden_layers is not None:
                 hs = hs[list(hidden_layers), :, :]
-            result["hidden_states"] = hs.cpu().numpy()
+
+            result["hidden_states"] = hs.to(torch.float32).cpu().numpy()
 
         return result
 
