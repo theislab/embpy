@@ -25,17 +25,18 @@ classifiers = [
 dependencies = [
   "anndata",
   "biopython",
-
   "borzoi-pytorch",
   "enformer-pytorch",
   "esm",
   "ipywidgets",
+  "matplotlib",
   "numpy",
   "pandas",
   "pyarrow",
   "pyensembl",
   "pytest",
   "rdkit",            # For molecule embeddings
+  "seaborn",
   "session-info",
   "torch",
   "transformers",

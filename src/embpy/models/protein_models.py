@@ -15,7 +15,7 @@ from .base import BaseModelWrapper
 # ESMC SDK import
 try:
     from esm.models.esmc import ESMC
-    from esm.sdk.api import ESMProtein, LogitsConfig
+    from esm.sdk.api import ESMProtein, LogitsConfig, LogitsOutput
 
     _HAVE_ESMC = True
 except ImportError:
@@ -227,111 +227,183 @@ class ESM2Wrapper(BaseModelWrapper):
 
 class ESMCWrapper(BaseModelWrapper):
     """
-    Wrapper for the ESMC‑SDK protein language models (e.g., 'esmc_300m', 'esmc_600m').
+    Wrapper for the ESMC-SDK protein language models (e.g., 'esmc_300m', 'esmc_600m').
 
-    Uses the external ESMC client to generate embeddings.
+    This class hides the details of the ESMC client and provides a
+    simple interface for:
+      - loading the model to a device,
+      - embedding a single sequence with mean/max/cls pooling,
+      - optionally returning hidden‐states from all layers,
+      - embedding batches of sequences.
+
+    Attributes
+    ----------
+    model_name : str
+        The checkpoint identifier passed to ESMC.from_pretrained().
+    client : ESMC | None
+        The underlying ESMC inference client (None until loaded).
+    device : torch.device | None
+        Device to which the client is moved (None until loaded).
+    available_pooling_strategies : List[str]
+        Allowed values for pooling_strategy: ['mean', 'max', 'cls'].
     """
 
     model_type = "protein"
     available_pooling_strategies = ["mean", "max", "cls"]
 
-    def __init__(
-        self,
-        model_path_or_name: str = "esmc_300m",
-        **kwargs: Any,
-    ):
+    def __init__(self, model_path_or_name: str = "esmc_300m", **kwargs: Any):
         """
-        Initialize the ESMC wrapper.
+        Initialize the ESMCWrapper.
 
-        Args:
-            model_path_or_name (str): ESMC checkpoint name, e.g. 'esmc_300m' or 'esmc_600m'.
+        Parameters
+        ----------
+        model_path_or_name : str, optional
+            The ESMC checkpoint name, e.g. 'esmc_300m' or 'esmc_600m'.
+            Defaults to 'esmc_300m'.
         """
-        self.model_name = model_path_or_name
+        super().__init__(model_path_or_name=model_path_or_name, **kwargs)
         self.client: ESMC | None = None
         self.device: torch.device | None = None
 
     def load(self, device: torch.device) -> None:
         """
-        Load the ESMC client onto the specified device.
+        Load the ESMC client onto the specified device and switch to eval mode.
+
+        If already loaded, this is a no-op.
+
+        Parameters
+        ----------
+        device : torch.device
+            Target device for model inference (CPU, CUDA, or MPS).
 
         Raises
         ------
-            RuntimeError: If SDK not installed or loading fails.
+        RuntimeError
+            If the ESMC SDK is not installed or loading the client fails.
         """
-        if not _HAVE_ESMC:
-            raise RuntimeError("ESMC SDK not installed.")
         if self.client is not None:
             return
+        if not hasattr(ESMC, "from_pretrained"):
+            raise RuntimeError("ESMC SDK not installed.")
         self.device = device
-        logging.info(f"Loading ESMC client '{self.model_name}'...")
+        logging.info(f"Loading ESMC client '{self.model_name}' onto {device} …")
         try:
             self.client = ESMC.from_pretrained(self.model_name).to(device).eval()
             logging.info("ESMC client loaded successfully.")
         except Exception as e:
-            logging.error(f"Failed to load ESMC client: {e}")
+            logging.error(f"Failed to load ESMC client '{self.model_name}': {e}")
             raise RuntimeError(f"Could not load ESMC client '{self.model_name}'") from e
 
     def embed(
         self,
         input: str,
         pooling_strategy: str = "mean",
-        **kwargs: Any,
-    ) -> np.ndarray:
+        return_hidden_states: bool = False,
+        hidden_layers: Sequence[int] | None = None,
+    ) -> dict[str, np.ndarray]:
         """
-        Generate an embedding via ESMC SDK.
+        Embed a single protein sequence.
 
-        Args:
-            sequence (str): Amino‑acid string to embed.
-            pooling_strategy (str): One of 'mean', 'max', or 'cls'.
+        Parameters
+        ----------
+        sequence : str
+            The amino‐acid sequence to embed.
+        pooling_strategy : {'mean', 'max', 'cls'}, default='mean'
+            How to aggregate per‐residue embeddings into a single vector.
+        return_hidden_states : bool, default=False
+            If True, also return the hidden‐states from each transformer layer.
+        hidden_layers : Sequence[int], optional
+            If provided, select only these layer indices from the hidden states.
 
         Returns
         -------
-            np.ndarray: Pooled 1D embedding vector.
+        Dict[str, np.ndarray]
+            A dictionary containing:
+              - 'embedding': 1D array of shape (hidden_dim,)
+              - 'hidden_states': 3D array of shape
+                (num_layers, seq_len, hidden_dim), if requested.
 
         Raises
         ------
-            RuntimeError: If client isn't loaded.
-            ValueError: On invalid pooling strategy.
+        RuntimeError
+            If the client is not loaded.
+        ValueError
+            If pooling_strategy is invalid.
         """
         if self.client is None or self.device is None:
             raise RuntimeError("ESMC client not loaded; call load() first.")
         if pooling_strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling '{pooling_strategy}'")
 
+        # 1) Prepare input
         prot = ESMProtein(sequence=input)
         tensor = self.client.encode(prot)
-        out = self.client.logits(tensor, LogitsConfig(sequence=True, return_embeddings=True))
-        emb = out.embeddings
-        if emb.dim() == 3 and emb.shape[0] == 1:
-            emb = emb.squeeze(0)
 
+        # 2) Configure and run logits call
+        cfg = LogitsConfig(sequence=True, return_embeddings=True, return_hidden_states=return_hidden_states)
+        out: LogitsOutput = self.client.logits(tensor, cfg)
+
+        # 3) Extract per-residue embeddings and remove batch dim
+        embs = out.embeddings
+        if embs.dim() == 3 and embs.shape[0] == 1:
+            embs = embs.squeeze(0)  # (seq_len, hidden_dim)
+
+        # 4) Pool to fixed-length embedding
         if pooling_strategy == "cls":
-            pooled = emb[0]
+            pooled = embs[0]
         elif pooling_strategy == "max":
-            pooled = torch.max(emb, dim=0)[0]
-        else:
-            pooled = torch.mean(emb, dim=0)
+            pooled = torch.max(embs, dim=0)[0]
+        else:  # 'mean'
+            pooled = torch.mean(embs, dim=0)
+        result: dict[str, np.ndarray] = {"embedding": pooled.cpu().numpy()}
 
-        return pooled.cpu().numpy()
+        # 5) Optionally extract hidden states
+        if return_hidden_states:
+            # out.hidden_states is a tuple[length num_layers] of (1, seq_len, hidden_dim)
+            hs = torch.stack(out.hidden_states, dim=0).squeeze(1)  # (num_layers, seq_len, hidden_dim)
+            if hidden_layers is not None:
+                hs = hs[list(hidden_layers), :, :]
+            result["hidden_states"] = hs.cpu().numpy()
+
+        return result
 
     def embed_batch(
         self,
         sequences: list[str],
         pooling_strategy: str = "mean",
-        **kwargs: Any,
-    ) -> list[np.ndarray]:
+        return_hidden_states: bool = False,
+        hidden_layers: Sequence[int] | None = None,
+    ) -> list[dict[str, np.ndarray]]:
         """
-        Batch‑mode embedding for multiple sequences.
+        Embed a batch of protein sequences.
 
-        Args:
-            sequences (Sequence[str]): A list of amino‑acid sequences to embed.
-            pooling_strategy (str): Pooling strategy to apply per sequence.
+        Parameters
+        ----------
+        sequences : List[str]
+            A list of amino‐acid sequences.
+        pooling_strategy : {'mean', 'max', 'cls'}, default='mean'
+            Pooling to apply per sequence.
+        return_hidden_states : bool, default=False
+            Whether to return hidden states for each sequence.
+        hidden_layers : Sequence[int], optional
+            If provided, select only these layer indices.
 
         Returns
         -------
-            List[np.ndarray]: Pooled embeddings, one per input.
+        List[Dict[str, np.ndarray]]
+            A list of dictionaries, one per sequence, each containing:
+              - 'embedding': array of shape (hidden_dim,)
+              - 'hidden_states': array (num_layers, seq_len, hidden_dim), if requested.
         """
-        return [self.embed(seq, pooling_strategy=pooling_strategy, **kwargs) for seq in sequences]
+        return [
+            self.embed(
+                seq,
+                pooling_strategy=pooling_strategy,
+                return_hidden_states=return_hidden_states,
+                hidden_layers=hidden_layers,
+            )
+            for seq in sequences
+        ]
 
 
 class STRINGWrapper(BaseModelWrapper):
