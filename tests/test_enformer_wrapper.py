@@ -6,6 +6,8 @@ import torch
 
 # Attempt to import the specific wrapper
 try:
+    from enformer_pytorch import Enformer
+
     from embpy.models.dna_models import EnformerWrapper
 
     ENFORMER_PYTORCH_INSTALLED = True
@@ -204,3 +206,51 @@ def test_enformer_invalid_pooling(loaded_enformer_wrapper):
 
     with pytest.raises(ValueError, match="Invalid pooling strategy:"):
         wrapper.embed_batch([test_seq], pooling_strategy="some_invalid_pooling")
+
+
+@pytest.mark.parametrize("pooling", ["mean", "max"])
+def test_enformer_direct_vs_wrapper(loaded_enformer_wrapper, pooling):
+    """
+    Compare embeddings from:
+      1) Direct enformer-pytorch API
+      2) EnformerWrapper.embed(..., pooling_strategy)
+
+    Parameters
+    ----------
+    pooling : {'mean','max'}
+        Pooling strategy to use when aggregating across genomic bins.
+
+    Raises
+    ------
+    AssertionError
+        If wrapper output and direct model output differ by more than 1e-6.
+    """
+    w = loaded_enformer_wrapper
+    L = w.SEQUENCE_LENGTH
+    TRUNK = w.TRUNK_OUTPUT_DIM
+
+    # create an exact-length test sequence (no pad/trunc)
+    seq = "ACGT" * (L // 4)
+
+    # 1) wrapper embedding
+    wrapper_emb = w.embed(input=seq, pooling_strategy=pooling)
+    assert isinstance(wrapper_emb, np.ndarray)
+    assert wrapper_emb.shape == (TRUNK,)
+
+    # 2) direct enformer-pytorch
+    one_hot = w._preprocess_sequence(seq).to(w.device)  # (1, L, 4)
+    # enformer-pytorch expects shape (batch, channels, length)
+    direct_model = Enformer.from_pretrained(w.model_name, use_tf_gamma=False).to(w.device).eval()
+    with torch.no_grad():
+        _, embs = direct_model(one_hot, return_embeddings=True)  # (1, TRUNK, bins)
+    trunk = embs.squeeze(0)  # (TRUNK, bins)
+
+    if pooling == "mean":
+        direct_emb = trunk.mean(dim=0).cpu().numpy()
+    else:
+        direct_emb = trunk.max(dim=0)[0].cpu().numpy()
+
+    # Compare
+    assert np.allclose(wrapper_emb, direct_emb, atol=1e-6), (
+        f"Enformer {pooling}-pooled mismatch: max|diff|={np.max(np.abs(wrapper_emb - direct_emb)):.3e}"
+    )

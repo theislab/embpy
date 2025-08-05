@@ -3,6 +3,7 @@ import logging
 import numpy as np
 import pytest
 import torch
+from borzoi_pytorch import Borzoi
 
 # TODO: Add a real suquence, generate the embedding using pretrain borzoi and then verify against the wrapper
 
@@ -150,3 +151,39 @@ def test_borzoi_invalid_pooling(loaded_borzoi_wrapper):
         w.embed(input=seq, pooling_strategy="median")
     with pytest.raises(ValueError, match="Invalid pooling"):
         w.embed_batch([seq], pooling_strategy="unsupported")
+
+
+def test_borzoi_direct_vs_wrapper(loaded_borzoi_wrapper):
+    """
+    Compare mean‐pooled embeddings from:
+      1) the BorzoiWrapper.embed(...)
+      2) the raw Borzoi.from_pretrained(...).get_embs_after_crop(...)
+    for a fixed test sequence.
+    """
+    w = loaded_borzoi_wrapper
+    L = w.SEQUENCE_LENGTH
+
+    # create a test sequence exactly L bases long (no padding/truncation)
+    seq = ("ACGT" * (L // 4))[:L]
+
+    # 1) wrapper result
+    wrapper_mean = w.embed(input=seq, pooling_strategy="mean")
+    assert isinstance(wrapper_mean, np.ndarray)
+
+    # 2) direct Borzoi API
+    # preprocess into one‐hot tensor and move to device
+    oh = w._preprocess_sequence(seq).to(w.device)  # (1,4,L)
+    # load a fresh Borzoi instance
+    direct_model = Borzoi.from_pretrained(w.model_name).to(w.device).eval()
+    with torch.no_grad():
+        embs = direct_model.get_embs_after_crop(oh)  # (1, hidden_dim, bins)
+    trunk = embs.squeeze(0)  # (hidden_dim, bins)
+    direct_mean = trunk.mean(dim=1).cpu().numpy()  # (hidden_dim,)
+
+    # verify shapes match
+    assert wrapper_mean.shape == direct_mean.shape, "Shape mismatch between wrapper and direct model"
+
+    # compare numerical values
+    assert np.allclose(wrapper_mean, direct_mean, atol=1e-6), (
+        f"Max abs diff = {np.max(np.abs(wrapper_mean - direct_mean)):.3e}"
+    )
