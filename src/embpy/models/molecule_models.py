@@ -8,6 +8,8 @@ from transformers import AutoModel, AutoTokenizer, BatchEncoding
 
 from .base import BaseModelWrapper
 
+# TODO: If we use the transformers library we can access to other hidden states, since we are using it here for molecules we can add this option to the package
+
 
 class ChembertaWrapper(BaseModelWrapper):
     """
@@ -28,13 +30,15 @@ class ChembertaWrapper(BaseModelWrapper):
     model_type = "molecule"
     available_pooling_strategies = ["cls", "mean", "max"]
 
-    def __init__(self, model_path_or_name: str = "seyonec/ChemBERTa-zinc-base-v1", **kwargs):
+    def __init__(self, model_path_or_name: str = "DeepChem/ChemBERTa-77M-MTR", **kwargs):
         super().__init__(model_path_or_name, **kwargs)
         self.tokenizer: AutoTokenizer | None = None
         self.model: AutoModel | None = None
+        self.device: torch.device | None = None
+        self.max_len: int | None = None
 
     def load(self, device: torch.device):
-        """Load the tokenizer and model onto `device`."""
+        """Load the dataset"""
         if self.model is not None:
             return
         logging.info(f"Loading ChemBERTa '{self.model_name}'…")
@@ -42,17 +46,38 @@ class ChembertaWrapper(BaseModelWrapper):
         self.model = AutoModel.from_pretrained(self.model_name).to(device).eval()
         self.device = device
 
-    def _preprocess_smiles(self, smiles: str) -> dict[str, torch.Tensor]:
-        """
-        Tokenize a SMILES string.
+        # derive a safe max sequence length (RoBERTa-style ≈512)
+        mmax = getattr(self.model.config, "max_position_embeddings", None)
+        if mmax is None or mmax > 512:
+            mmax = 512
+        self.max_len = int(mmax)
+        # make tokenizer aware (some HF tokenizers have "no max" by default)
+        self.tokenizer.model_max_length = self.max_len
+        logging.info(f"Using model_max_length={self.max_len}")
 
-        Returns a dict with:
-          - input_ids:    (1, seq_len)
-          - attention_mask:(1, seq_len)
-        """
+    def _token_length(self, smiles: str) -> int:
+        """Tokenized length incl. special tokens, without truncation/padding."""
+        toks = self.tokenizer(
+            smiles,
+            add_special_tokens=True,
+            padding=False,
+            truncation=False,
+            return_attention_mask=False,
+            return_token_type_ids=False,
+        )
+        return len(toks["input_ids"])
+
+    def _preprocess_smiles(self, smiles: str) -> dict[str, torch.Tensor]:
         if self.tokenizer is None:
             raise RuntimeError("Call load() first.")
-        return self.tokenizer(smiles, padding=True, truncation=True, return_tensors="pt")
+        # we’ll still pass max_length for safety even though we pre-check length
+        return self.tokenizer(
+            smiles,
+            return_tensors="pt",
+            padding=False,
+            truncation=True,
+            max_length=self.max_len,
+        )
 
     def embed(
         self,
@@ -60,30 +85,18 @@ class ChembertaWrapper(BaseModelWrapper):
         pooling_strategy: str = "mean",
         use_pooler: bool = False,
         **kwargs: Any,
-    ) -> np.ndarray:
-        """
-        Embed a single SMILES string.
-
-        Parameters
-        ----------
-        smiles : str
-            The SMILES string to embed.
-        pooling_strategy : {'cls','mean','max'}
-            How to pool `last_hidden_state`.
-        use_pooler : bool, default=False
-            If True and the model provides `pooler_output`, returns that instead.
-        **kwargs
-            Ignored.
-
-        Returns
-        -------
-        np.ndarray
-            1D array of shape (hidden_dim,).
-        """
+    ) -> np.ndarray | None:  # << allow None for skipped items
+        """Embeddings function, which generates the embeddings for a specific provided model"""
         if self.model is None or self.device is None:
             raise RuntimeError("Call load() first.")
         if pooling_strategy not in self.available_pooling_strategies:
             raise ValueError(f"pooling_strategy must be one of {self.available_pooling_strategies}")
+
+        # --- Skip too-long SMILES ---
+        L = self._token_length(input)
+        if L > self.max_len:
+            logging.warning(f"Skipping SMILES ({L} tokens > max {self.max_len}): {input[:80]}...")
+            return None
 
         # 1) tokenize & move to device
         enc = self._preprocess_smiles(input)
@@ -96,21 +109,21 @@ class ChembertaWrapper(BaseModelWrapper):
             last_hidden = outputs.last_hidden_state  # (1, seq_len, hidden_dim)
             pooler_out = getattr(outputs, "pooler_output", None)
 
-        # 3) optionally use pooler
+        # 3) use pooler if requested
         if use_pooler and pooler_out is not None:
             return pooler_out[0].cpu().numpy()
 
         # 4) squeeze batch dim
         hidden = last_hidden.squeeze(0)  # (seq_len, hidden_dim)
 
-        # 5) apply masking‐aware pooling
+        # 5) masking-aware pooling
         if pooling_strategy == "cls":
             vec = hidden[0]
         else:
             mask = attention_mask.squeeze(0).unsqueeze(-1)  # (seq_len, 1)
             if pooling_strategy == "mean":
                 summed = (hidden * mask).sum(dim=0)
-                vec = summed / mask.sum(dim=0)
+                vec = summed / mask.sum(dim=0).clamp(min=1)  # safe denom
             else:  # 'max'
                 neg_inf = torch.finfo(hidden.dtype).min
                 masked = hidden.masked_fill(mask == 0, neg_inf)
@@ -318,6 +331,3 @@ class MolformerWrapper(BaseModelWrapper):
                 embeddings.append(vec.cpu().numpy())
 
         return embeddings
-
-    # Override embed_batch for efficiency
-    # def embed_batch(...) -> list[np.ndarray]: ...

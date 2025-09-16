@@ -33,3 +33,8 @@ node_modules/
 
 # Buck build output (if applicable)
 buck-out/
+
+# Job outputs & logs
+/output/
+/err/
+

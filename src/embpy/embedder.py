@@ -49,10 +49,11 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     "esm2_650M": (ESM2Wrapper, "facebook/esm2_t33_650M_UR50D"),
     "esm2_3B": (ESM2Wrapper, "facebook/esm2_t36_3B_UR50D"),
     # ESMC Models
-    "esmc_300m":(ESMCWrapper, "esmc_300m"),
-    "esmc_600m":(ESMCWrapper, "esmc_600m"),
+    "esmc_300m": (ESMCWrapper, "esmc_300m"),
+    "esmc_600m": (ESMCWrapper, "esmc_600m"),
     # --- Molecule Models ---
-    "chemberta_zinc_v1": (ChembertaWrapper, "seyonec/ChemBERTa-zinc-base-v1"),
+    "chemberta2MTR": (ChembertaWrapper, "DeepChem/ChemBERTa-77M-MTR"),
+    "chemberta2MLM": (ChembertaWrapper, "DeepChem/ChemBERTa-100M-MLM"),
     "molformer_base": (MolformerWrapper, "ibm/MoLFormer-XL-both-10pct"),  # Hypothetical Molformer
     # --- Text Models ---
     "minilm_l6_v2": (TextLLMWrapper, "sentence-transformers/all-MiniLM-L6-v2"),
