@@ -1,6 +1,7 @@
 from .dna_models import BorzoiWrapper, EnformerWrapper
 from .molecule_models import ChembertaWrapper, MolformerWrapper
 from .protein_models import ESM2Wrapper, ESMCWrapper, STRINGWrapper
+from .text_models import TextLLMWrapper
 
 __all__ = [
     "BorzoiWrapper",
@@ -10,4 +11,5 @@ __all__ = [
     "ESMCWrapper",
     "MolformerWrapper",
     "STRINGWrapper",
+    "TextLLMWrapper",
 ]
