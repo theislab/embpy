@@ -6,6 +6,8 @@ import torch
 
 # Attempt to import the specific wrapper
 try:
+    from enformer_pytorch import Enformer
+
     from embpy.models.dna_models import EnformerWrapper
 
     ENFORMER_PYTORCH_INSTALLED = True
@@ -19,6 +21,8 @@ except ImportError:
 pytestmark = pytest.mark.skipif(
     not ENFORMER_PYTORCH_INSTALLED, reason="enformer-pytorch package not found, skipping Enformer tests"
 )
+
+# TODO: Add a real suquence, generate the embedding using pretrain enformer and then verify against the wrapper
 
 
 # Determine device for testing (prefer GPU if available)
@@ -52,7 +56,7 @@ def loaded_enformer_wrapper():
         if wrapper.model is None:
             pytest.skip(f"Failed to load Enformer model on {TEST_DEVICE}, skipping embedding tests.")
         return wrapper
-    except Exception as e:
+    except (FileNotFoundError, RuntimeError) as e:
         pytest.skip(f"Failed to load Enformer model due to error: {e}, skipping embedding tests.")
 
 
@@ -120,7 +124,7 @@ def test_enformer_embed_single(loaded_enformer_wrapper):
     # Use a sequence that requires padding/truncation to test preprocessing integration
     test_seq = "A" * (wrapper.SEQUENCE_LENGTH // 2)
 
-    embedding = wrapper.embed(test_seq, pooling_strategy="mean")
+    embedding = wrapper.embed(input=test_seq, pooling_strategy="mean")
 
     assert isinstance(embedding, np.ndarray)
     assert embedding.shape == (wrapper.TRUNK_OUTPUT_DIM,)  # Check output dimension
@@ -131,6 +135,35 @@ def test_enformer_embed_single(loaded_enformer_wrapper):
     assert isinstance(embedding_max, np.ndarray)
     assert embedding_max.shape == (wrapper.TRUNK_OUTPUT_DIM,)
     assert not np.isnan(embedding_max).any()
+
+
+def test_enformer_preprocess_trims_center():
+    """Make sure long sequences are truncated around the center."""
+    wrapper = EnformerWrapper()
+    target_len = wrapper.SEQUENCE_LENGTH
+
+    # build a long sequence whose content is easily distinguishable
+    # e.g. first half all “A”, second half all “C”
+    half = target_len + 50
+    long_seq = "A" * half + "C" * half  # total length = 2*half
+
+    # preprocess the long sequence
+    processed_long = wrapper._preprocess_sequence(long_seq)
+    assert isinstance(processed_long, torch.Tensor)
+    assert processed_long.shape == (1, target_len, 4)
+
+    # compute the expected center substring
+    total_len = len(long_seq)
+    start = (total_len - target_len) // 2
+    center_seq = long_seq[start : start + target_len]
+
+    # preprocess exactly that center substring
+    processed_center = wrapper._preprocess_sequence(center_seq)
+    assert isinstance(processed_center, torch.Tensor)
+    assert processed_center.shape == (1, target_len, 4)
+
+    # they should be identical one-hot encodings
+    assert torch.equal(processed_long, processed_center)
 
 
 def test_enformer_embed_batch(loaded_enformer_wrapper):
@@ -168,8 +201,56 @@ def test_enformer_invalid_pooling(loaded_enformer_wrapper):
     """Test that invalid pooling strategy raises ValueError."""
     wrapper = loaded_enformer_wrapper
     test_seq = "N" * wrapper.SEQUENCE_LENGTH
-    with pytest.raises(ValueError, match="Invalid pooling strategy"):
-        wrapper.embed(test_seq, pooling_strategy="median")  # Median not supported
+    with pytest.raises(ValueError, match="Invalid pooling strategy:"):
+        wrapper.embed(test_seq, pooling_strategy="min")  # Minimum not supported
 
-    with pytest.raises(ValueError, match="Invalid pooling strategy"):
+    with pytest.raises(ValueError, match="Invalid pooling strategy:"):
         wrapper.embed_batch([test_seq], pooling_strategy="some_invalid_pooling")
+
+
+@pytest.mark.parametrize("pooling", ["mean", "max"])
+def test_enformer_direct_vs_wrapper(loaded_enformer_wrapper, pooling):
+    """
+    Compare embeddings from:
+      1) Direct enformer-pytorch API
+      2) EnformerWrapper.embed(..., pooling_strategy)
+
+    Parameters
+    ----------
+    pooling : {'mean','max'}
+        Pooling strategy to use when aggregating across genomic bins.
+
+    Raises
+    ------
+    AssertionError
+        If wrapper output and direct model output differ by more than 1e-6.
+    """
+    w = loaded_enformer_wrapper
+    L = w.SEQUENCE_LENGTH
+    TRUNK = w.TRUNK_OUTPUT_DIM
+
+    # create an exact-length test sequence (no pad/trunc)
+    seq = "ACGT" * (L // 4)
+
+    # 1) wrapper embedding
+    wrapper_emb = w.embed(input=seq, pooling_strategy=pooling)
+    assert isinstance(wrapper_emb, np.ndarray)
+    assert wrapper_emb.shape == (TRUNK,)
+
+    # 2) direct enformer-pytorch
+    one_hot = w._preprocess_sequence(seq).to(w.device)  # (1, L, 4)
+    # enformer-pytorch expects shape (batch, channels, length)
+    direct_model = Enformer.from_pretrained(w.model_name, use_tf_gamma=False).to(w.device).eval()
+    with torch.no_grad():
+        _, embs = direct_model(one_hot, return_embeddings=True)  # (1, TRUNK, bins)
+    trunk = embs.squeeze(0)  # (TRUNK, bins)
+
+    if pooling == "mean":
+        direct_emb = trunk.mean(dim=0).cpu().numpy()
+    else:
+        direct_emb = trunk.max(dim=0)[0].cpu().numpy()
+
+    # Compare
+    assert np.allclose(wrapper_emb, direct_emb, atol=1e-6), (
+        f"Enformer {pooling}-pooled mismatch: max|diff|={np.max(np.abs(wrapper_emb - direct_emb)):.3e}"
+    )

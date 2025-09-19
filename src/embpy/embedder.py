@@ -4,36 +4,17 @@ from typing import Any, Literal
 
 import numpy as np
 import torch
+from rdkit import Chem
+
+from .errors import ConfigError, IdentifierError, ModelNotFoundError
+from .models.base import BaseModelWrapper
 
 # Import all potential wrappers - handle ImportErrors later if deps are missing
-try:
-    from .models.dna_models import EnformerWrapper
-except ImportError:
-    EnformerWrapper = None  # type: ignore
-# try:
-#     from .models.dna_models import BorzoiWrapper
-# except ImportError:
-#     BorzoiWrapper = None
-try:
-    from .models.protein_models import ESMWrapper
-except ImportError:
-    ESMWrapper = None  # type: ignore
-try:
-    from .models.molecule_models import ChembertaWrapper
-except ImportError:
-    ChembertaWrapper = None  # type: ignore
-# try:
-#     from .models.molecule_models import MolformerWrapper
-# except ImportError:
-#     MolformerWrapper = None
-try:
-    from .models.text_models import TextLLMWrapper
-except ImportError:
-    TextLLMWrapper = None  # type: ignore
-
-from .models.base import BaseModelWrapper
+from .models.dna_models import BorzoiWrapper, EnformerWrapper
+from .models.molecule_models import ChembertaWrapper, MolformerWrapper
+from .models.protein_models import ESM2Wrapper, ESMCWrapper
+from .models.text_models import TextLLMWrapper
 from .resources.gene_resolver import GeneResolver
-from .utils.exceptions import ConfigError, IdentifierError, ModelNotFoundError
 
 
 # Helper function (can be moved to utils later)
@@ -57,17 +38,23 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # --- DNA Models ---
     # Use specific, descriptive names users will provide
     "enformer_human_rough": (EnformerWrapper, "EleutherAI/enformer-official-rough"),
-    # "borzoi_human_v1": (BorzoiWrapper, "calico/borzoi-human-v1"), # Hypothetical Borzoi
+    "borzoi_v0": (BorzoiWrapper, "johahi/borzoi-replicate-0"),
+    "borzoi_v1": (BorzoiWrapper, "johani/borzoi-replicate-1"),
+    # consider adding flashzoi
     # --- Protein Models ---
     # Add specific ESM models you want to support by default
-    "esm2_8M": (ESMWrapper, "facebook/esm2_t6_8M_UR50D"), # iam not sure about this, TODO: check original esm repo
-    "esm2_35M": (ESMWrapper, "facebook/esm2_t12_35M_UR50D"),  # Corrected name likely
-    "esm2_150M": (ESMWrapper, "facebook/esm2_t30_150M_UR50D"),
-    "esm2_650M": (ESMWrapper, "facebook/esm2_t33_650M_UR50D"),
-    "esm2_3B": (ESMWrapper, "facebook/esm2_t36_3B_UR50D"),
+    "esm2_8M": (ESM2Wrapper, "facebook/esm2_t6_8M_UR50D"),
+    "esm2_35M": (ESM2Wrapper, "facebook/esm2_t12_35M_UR50D"),
+    "esm2_150M": (ESM2Wrapper, "facebook/esm2_t30_150M_UR50D"),
+    "esm2_650M": (ESM2Wrapper, "facebook/esm2_t33_650M_UR50D"),
+    "esm2_3B": (ESM2Wrapper, "facebook/esm2_t36_3B_UR50D"),
+    # ESMC Models
+    "esmc_300m": (ESMCWrapper, "esmc_300m"),
+    "esmc_600m": (ESMCWrapper, "esmc_600m"),
     # --- Molecule Models ---
-    "chemberta_zinc_v1": (ChembertaWrapper, "seyonec/ChemBERTa-zinc-base-v1"),
-    # "molformer_base": (MolformerWrapper, "ibm/MoLFormer-Base"), # Hypothetical Molformer
+    "chemberta2MTR": (ChembertaWrapper, "DeepChem/ChemBERTa-77M-MTR"),
+    "chemberta2MLM": (ChembertaWrapper, "DeepChem/ChemBERTa-100M-MLM"),
+    "molformer_base": (MolformerWrapper, "ibm/MoLFormer-XL-both-10pct"),  # Hypothetical Molformer
     # --- Text Models ---
     "minilm_l6_v2": (TextLLMWrapper, "sentence-transformers/all-MiniLM-L6-v2"),
     "bert_base_uncased": (TextLLMWrapper, "bert-base-uncased"),  # Example standard HF model
@@ -94,16 +81,20 @@ class BioEmbedder:
     def __init__(
         self,
         device: str | torch.device | None = "auto",
-        # Add options for gene resolver backend, cache paths etc. later
+        resolver_backend: Literal["api", "local"] = "api",
+        mart_file: str | None = None,
+        chromosome_folder: str | None = None,
     ):
         """
         Initializes the BioEmbedder.
 
         Args:
-            device (Optional[Union[str, torch.device]]): The device to use ('cuda', 'mps', 'cpu', 'auto').
-                Defaults to "auto".
-            # Add other config args
+            device: 'auto', 'cuda', 'mps', or 'cpu', or torch.device.
+            resolver_backend: 'api' to use online APIs, 'local' to use local FASTAs.
+            mart_file: path to Mart CSV (required if resolver_backend='local').
+            chromosome_folder: path to folder with chr*.fa files (required if 'local').
         """
+        # Device setup
         if isinstance(device, str):
             if device == "auto":
                 self.device = get_device()
@@ -112,14 +103,26 @@ class BioEmbedder:
         elif isinstance(device, torch.device):
             self.device = device
         else:
-            raise ConfigError("Invalid device specified. Use 'auto', 'cpu', 'cuda', 'mps', or a torch.device object.")
+            raise ConfigError("Invalid device; use 'auto','cpu','cuda','mps', or torch.device.")
 
+        # GeneResolver setup
+        self.resolver_backend = resolver_backend
+        if resolver_backend == "local":
+            if not mart_file or not chromosome_folder:
+                raise ConfigError("mart_file and chromosome_folder must be provided for local resolver.")
+            self.gene_resolver = GeneResolver(
+                mart_file=mart_file,
+                chromosome_folder=chromosome_folder,
+            )
+        else:
+            # API mode; mart/chrom args ignored
+            self.gene_resolver = GeneResolver()
+
+        # Model cache and discovery
         self.model_cache: dict[str, BaseModelWrapper] = {}
-        self.gene_resolver = GeneResolver()  # Initialize the resolver
-        # Filter registry based on available wrappers (handles optional dependencies)
         self._available_models = self._discover_models()
 
-        logging.info(f"BioEmbedder initialized on device: {self.device}")
+        logging.info(f"BioEmbedder initialized on device {self.device}, backend={self.resolver_backend}")
         logging.info(f"Available models: {self.list_available_models()}")
 
     def _discover_models(self) -> dict[str, tuple[type[BaseModelWrapper], str]]:
@@ -162,7 +165,7 @@ class BioEmbedder:
         if model_name not in self.model_cache:
             logging.info(f"Loading model '{model_name}' onto device '{self.device}'...")
             WrapperClass, model_path_or_name = self._available_models[model_name]
-
+            print(self._available_models)
             # Instantiate the specific wrapper with the correct model path/name from the registry
             try:
                 # Pass the specific HF path/name to the wrapper instance
@@ -182,10 +185,9 @@ class BioEmbedder:
     def embed_gene(
         self,
         identifier: str,
-        model: str,  # User provides name like "enformer_human_rough" or "esm2_650M"
+        model: str,
         id_type: Literal["symbol", "ensembl_id", "uniprot_id"] = "symbol",
         organism: str = "human",
-        # sequence_type: Optional[Literal["dna", "protein"]] = None, # Keep auto-detection
         pooling_strategy: str = "mean",
         gene_description_format: str = "Gene: {identifier}. Type: {id_type}. Organism: {organism}.",
         **kwargs: Any,
@@ -199,16 +201,16 @@ class BioEmbedder:
         Args:
             identifier (str): The gene identifier (e.g., "TP53", "ENSG00000141510").
             model (str): The user-facing name of the model to use (e.g., "enformer_human_rough",
-                         "esm2_650M", "minilm_l6_v2"). Must be a key in MODEL_REGISTRY.
+                        "esm2_650M", "minilm_l6_v2"). Must be a key in MODEL_REGISTRY.
             id_type (Literal): Type of the identifier provided. Defaults to "symbol".
             organism (str): Organism name (e.g., "human", "mouse"). Used for sequence/description lookup.
                             Defaults to "human".
             pooling_strategy (str): Pooling strategy if the model outputs per-token/residue embeddings.
                                     Defaults to "mean". Check model's `available_pooling_strategies`.
             gene_description_format (str): Format string used to generate input for text models.
-                                           Defaults to "Gene: {identifier}. Type: {id_type}. Organism: {organism}.".
+                                        Defaults to "Gene: {identifier}. Type: {id_type}. Organism: {organism}.".
             **kwargs: Additional arguments passed to the specific model's embed method
-                      (e.g., `target_layer` for transformer models).
+                    (e.g., `target_layer` for transformer models).
 
         Returns
         -------
@@ -221,253 +223,216 @@ class BioEmbedder:
             ValueError: If the model type is ambiguous or incompatible inputs are generated.
             RuntimeError: If model loading or inference fails.
         """
-        model_instance = self._get_model(model)  # Gets the specific loaded model instance
-        input_data: str | None = None  # To hold sequence or text description
-
-        # --- Determine input type based on model ---
-        if model_instance.model_type in ["dna", "protein"]:
-            sequence_type = model_instance.model_type
-            logging.debug(
-                f"Model '{model}' requires '{sequence_type}' sequence for {id_type} '{identifier}'. Fetching..."
+        inst = self._get_model(model)
+        mtype = inst.model_type
+        # Fetch input data
+        if mtype == "dna":
+            if self.resolver_backend == "local":
+                seq = self.gene_resolver.get_local_dna_sequence(identifier, id_type)
+            else:
+                seq = self.gene_resolver.get_dna_sequence(identifier, id_type, organism)
+            if not seq:
+                raise IdentifierError(f"DNA not found for {id_type}='{identifier}'")
+            input_data = seq
+        elif mtype == "protein":
+            prot = self.gene_resolver.get_protein_sequence(identifier, id_type, organism)
+            if not prot:
+                raise IdentifierError(f"Protein not found for {id_type}='{identifier}'")
+            input_data = prot
+        elif mtype == "text":
+            desc = self.gene_resolver.get_gene_description(
+                identifier, id_type, organism, format_string=gene_description_format
             )
-            try:
-                if sequence_type == "dna":
-                    input_data = self.gene_resolver.get_dna_sequence(identifier, id_type, organism)
-                else:  # protein
-                    input_data = self.gene_resolver.get_protein_sequence(identifier, id_type, organism)
-            except Exception as e:
-                # Catch potential errors during sequence fetching
-                raise IdentifierError(
-                    f"Failed to fetch {sequence_type} sequence for {id_type} '{identifier}': {e}"
-                ) from e
-
-            if not input_data:
-                raise IdentifierError(f"No {sequence_type} sequence found for {id_type} '{identifier}' ({organism}).")
-            logging.debug(f"Sequence fetched successfully (length: {len(input_data)}). Embedding...")
-
-        elif model_instance.model_type == "text":
-            logging.debug(f"Model '{model}' requires text description for {id_type} '{identifier}'. Constructing...")
-            try:
-                input_data = self.gene_resolver.get_gene_description(
-                    identifier, id_type, organism, format_string=gene_description_format
-                )
-            except Exception as e:
-                raise IdentifierError(f"Failed to construct description for {id_type} '{identifier}': {e}") from e
-
-            if not input_data:
-                raise IdentifierError(f"Could not construct description for {id_type} '{identifier}' ({organism}).")
-            logging.debug(f"Description constructed: '{input_data[:100]}...'. Embedding...")
-
+            if not desc:
+                raise IdentifierError(f"Description not found for {id_type}='{identifier}'")
+            input_data = desc
         else:
-            # Should not happen if registry/discovery is correct, but as safeguard
-            raise ValueError(
-                f"Unsupported model type '{model_instance.model_type}' for model '{model}'. Cannot embed gene."
-            )
-
-        # --- Embed the input data (sequence or text) ---
-        logging.debug(
-            f"Embedding gene '{identifier}' using model '{model}' with input type '{model_instance.model_type}'"
-        )
+            raise ValueError(f"Unsupported model type '{mtype}' for embedding.")
+        # Embed
         try:
-            embedding = model_instance.embed(input=input_data, pooling_strategy=pooling_strategy, **kwargs)
-            logging.debug(f"Gene embedding generated with shape: {embedding.shape}")
-            return embedding
+            emb = inst.embed(input=input_data, pooling_strategy=pooling_strategy, **kwargs)
+            return emb
         except Exception as e:
-            logging.error(f"Error during embedding generation for '{identifier}' with model '{model}': {e}")
-            raise RuntimeError(f"Embedding failed for identifier '{identifier}'.") from e
+            logging.error(f"Embedding error for {identifier} with model {model}: {e}")
+            raise RuntimeError(f"Embedding failed for {identifier}") from e
 
     def embed_genes_batch(
         self,
         identifiers: Sequence[str],
-        model: str,  # User provides name like "enformer_human_rough" or "esm2_650M"
+        model: str,
         id_type: Literal["symbol", "ensembl_id", "uniprot_id"] = "symbol",
         organism: str = "human",
         pooling_strategy: str = "mean",
         gene_description_format: str | None = None,
         **kwargs: Any,
-    ) -> list[np.ndarray | None]:  # Return None for errors
+    ) -> list[np.ndarray | None]:
         """
-        Generates embeddings for a batch of genes (sequence or text based).
+        Generates embeddings in batch.
 
-        Args:
-            identifiers (Sequence[str]): List of gene identifiers.
-            model (str): The user-facing name of the model to use.
-            id_type (Literal): Type of the identifiers. Defaults to "symbol".
-            organism (str): Organism name. Defaults to "human".
-            pooling_strategy (str): Pooling strategy. Defaults to "mean".
-            gene_description_format (str): Format string for text models.
-            **kwargs: Additional arguments for the model's embed_batch method.
+        Generates embeddings for a batch of genes using DNA, protein, text, or molecule models.
+        Honors the resolver_backend for DNA lookups.
 
-        Returns
-        -------
-            list[Optional[np.ndarray]]: List of embeddings, with None for identifiers that failed.
+        Returns list of embeddings or None, preserving original order.
         """
-        model_instance = self._get_model(model)
-        input_data_list: list[str | None] = []  # Holds sequences or descriptions
-
-        logging.info(
-            f"Preparing batch of {len(identifiers)} identifiers for model '{model}' ({model_instance.model_type} input)..."
-        )
-
-        # --- Prepare batch input data ---
-        if model_instance.model_type in ["dna", "protein"]:
-            sequence_type = model_instance.model_type
-            for identifier in identifiers:
-                seq = None
-                try:
-                    if sequence_type == "dna":
-                        seq = self.gene_resolver.get_dna_sequence(identifier, id_type, organism)
-                    else:
-                        seq = self.gene_resolver.get_protein_sequence(identifier, id_type, organism)
-                    if seq is None:
-                        logging.warning(
-                            f"No {sequence_type} sequence found for {id_type} '{identifier}' ({organism}). Skipping."
-                        )
-                except Exception as e:
-                    logging.warning(
-                        f"Failed to fetch {sequence_type} sequence for {id_type} '{identifier}': {e}. Skipping."
+        inst = self._get_model(model)
+        mtype = inst.model_type
+        input_data_list: list[str | None] = []
+        logging.info(f"Batch: {len(identifiers)} items for '{model}' ({mtype})...")
+        for ident in identifiers:
+            data = None
+            try:
+                if mtype == "dna":
+                    data = (
+                        self.gene_resolver.get_local_dna_sequence(ident, id_type)
+                        if self.resolver_backend == "local"
+                        else self.gene_resolver.get_dna_sequence(ident, id_type, organism)
                     )
-                input_data_list.append(seq)  # Append sequence or None
-
-        elif model_instance.model_type == "text":
-            for identifier in identifiers:
-                desc = None
-                try:
-                    desc = self.gene_resolver.get_gene_description(
-                        identifier, id_type, organism, format_string=gene_description_format
-                    )
-                    if desc is None:
-                        logging.warning(
-                            f"Could not construct description for {id_type} '{identifier}' ({organism}). Skipping."
-                        )
-                except Exception as e:
-                    logging.warning(f"Failed to construct description for {id_type} '{identifier}': {e}. Skipping.")
-                input_data_list.append(desc)  # Append description or None
-        else:
-            raise ValueError(f"Unsupported model type '{model_instance.model_type}' for batch gene embedding.")
-
-        # Filter out None entries before passing to batch embedding
-        valid_inputs = [item for item in input_data_list if item is not None]
-        valid_indices = [i for i, item in enumerate(input_data_list) if item is not None]
-
+                elif mtype == "protein":
+                    data = self.gene_resolver.get_protein_sequence(ident, id_type, organism)
+                elif mtype == "text":
+                    fmt = gene_description_format or "Gene: {identifier}. Type: {id_type}. Organism: {organism}."
+                    data = self.gene_resolver.get_gene_description(ident, id_type, organism, format_string=fmt)
+                elif mtype == "molecule":
+                    data = ident
+                else:
+                    logging.error(f"Unsupported model type '{mtype}' in batch.")
+                if data is None:
+                    logging.warning(f"No data for {ident}; skipping.")
+            except Exception as e:  # noqa: BLE001
+                logging.warning(f"Error fetching {ident}: {e}")
+            input_data_list.append(data)
+        # Filter and embed
+        valid_inputs = [d for d in input_data_list if d is not None]
+        valid_indices = [i for i, d in enumerate(input_data_list) if d is not None]
         if not valid_inputs:
-            logging.warning("No valid inputs could be generated for the batch.")
             return [None] * len(identifiers)
-
-        logging.info(f"Embedding batch of {len(valid_inputs)} valid inputs using model '{model}'...")
-
-        # --- Embed the batch ---
-        batch_results: list[np.ndarray] = []
         try:
-            # Assume embed_batch takes list[str] and returns list[np.ndarray]
-            batch_results = model_instance.embed_batch(inputs=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
-            if len(batch_results) != len(valid_inputs):
-                logging.error(
-                    f"Batch embedding returned {len(batch_results)} results for {len(valid_inputs)} inputs. Mismatch!"
-                )
-                # Handle mismatch - maybe return all None?
-                return [None] * len(identifiers)
-            logging.info("Batch gene embedding successful.")
-        except Exception as e:
-            logging.error(f"Error during batch embedding generation for model '{model}': {e}")
-            # If batch fails entirely, return None for all original identifiers
+            batch_results = inst.embed_batch(inputs=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
+        except Exception as e:  # noqa: BLE001
+            logging.error(f"Batch embed failed: {e}")
             return [None] * len(identifiers)
-
-        # --- Reconstruct the full results list including Nones ---
-        final_results: list[np.ndarray | None] = [None] * len(identifiers)
-        for i, result_embedding in enumerate(batch_results):
-            original_index = valid_indices[i]
-            final_results[original_index] = result_embedding
-
-        return final_results
+        results: list[np.ndarray | None] = [None] * len(identifiers)
+        for idx, emb in zip(valid_indices, batch_results, strict=False):
+            results[idx] = emb
+        return results
 
     def embed_molecule(
         self,
         identifier: str,  # Expecting SMILES string
-        model: str,  # User provides name like "chemberta_zinc_v1"
+        model: str,  # e.g. "chemberta_zinc_v1"
         pooling_strategy: str = "mean",
         **kwargs: Any,
     ) -> np.ndarray:
         """
-        Generates an embedding for a single small molecule from its SMILES string.
+        Generate an embedding for a single small molecule.
+
+        Validates that the input is a proper SMILES string before embedding.
 
         Args:
-            identifier (str): The SMILES string representation of the molecule.
-            model (str): The user-facing name of the molecule embedding model (e.g., "chemberta_zinc_v1").
-            pooling_strategy (str): Pooling strategy. Defaults to "mean".
-            **kwargs: Additional arguments for the model's embed method.
+            identifier (str):
+                A SMILES string representing the molecule (e.g., "CCO" for ethanol).
+            model (str):
+                Key of the molecule embedding model to use (e.g., "chemberta_zinc_v1").
+            pooling_strategy (str, optional):
+                Pooling strategy to aggregate token‐level embeddings.
+                Defaults to "mean".
+            **kwargs:
+                Additional keyword arguments forwarded to the model’s `embed` method.
 
         Returns
         -------
-            np.ndarray: The computed molecule embedding.
+            np.ndarray:
+                A 1D NumPy array representing the molecule embedding.
 
         Raises
         ------
-            ModelNotFoundError: If the requested model name is not registered or available.
-            ValueError: If the model is not of type 'molecule'.
-            RuntimeError: If model loading or inference fails.
+            ModelNotFoundError:
+                If the specified model key is not registered.
+            ValueError:
+                If the chosen model is not of type "molecule", or if the SMILES string is invalid.
+            RuntimeError:
+                If the embedding process itself fails.
         """
-        model_instance = self._get_model(model)
-        if model_instance.model_type != "molecule":
+        inst = self._get_model(model)
+        if inst.model_type != "molecule":
             raise ValueError(f"Model '{model}' is not a molecule embedder.")
 
         smiles = identifier
-        logging.debug(f"Embedding molecule SMILES: {smiles[:30]}... using model '{model}'")
+        # Validate SMILES
+        if Chem.MolFromSmiles(smiles) is None:
+            raise ValueError(f"Invalid SMILES string: '{smiles}'")
 
+        logging.debug(f"Embedding molecule SMILES: {smiles} with model '{model}'")
         try:
-            embedding = model_instance.embed(input=smiles, pooling_strategy=pooling_strategy, **kwargs)
-            logging.debug(f"Molecule embedding generated with shape: {embedding.shape}")
-            return embedding
+            emb = inst.embed(input=smiles, pooling_strategy=pooling_strategy, **kwargs)
+            logging.debug(f"Molecule embedding shape: {emb.shape}")
+            return emb
         except Exception as e:
-            logging.error(f"Error during embedding generation for SMILES '{smiles[:30]}...' with model '{model}': {e}")
-            raise RuntimeError(f"Embedding failed for SMILES '{smiles[:30]}...'.") from e
+            logging.error(f"Embedding failed for SMILES '{smiles}': {e}")
+            raise RuntimeError(f"Embedding failed for SMILES '{smiles}'") from e
 
     def embed_molecules_batch(
         self,
-        identifiers: Sequence[str],  # Expecting list of SMILES
-        model: str,  # User provides name like "chemberta_zinc_v1"
+        identifiers: Sequence[str],
+        model: str,
         pooling_strategy: str = "mean",
         **kwargs: Any,
-    ) -> list[np.ndarray | None]:  # Return None for errors
+    ) -> list[np.ndarray | None]:
         """
-        Generates embeddings for a batch of small molecules from their SMILES strings.
+        Generate embeddings for a batch of small molecules.
+
+        Invalid SMILES strings are skipped and return `None` in their positions.
 
         Args:
-            identifiers (Sequence[str]): A list or tuple of SMILES strings.
-            model (str): The name of the molecule embedding model.
-            pooling_strategy (str): Pooling strategy. Defaults to "mean".
-            **kwargs: Additional arguments for the model's embed_batch method.
+            identifiers (Sequence[str]):
+                A list of SMILES strings to embed.
+            model (str):
+                Key of the molecule embedding model to use.
+            pooling_strategy (str, optional):
+                Pooling strategy to apply. Defaults to "mean".
+            **kwargs:
+                Additional keyword arguments forwarded to `embed_batch`.
 
         Returns
         -------
-            list[Optional[np.ndarray]]: List of embeddings, with None for SMILES that failed.
+            List[Optional[np.ndarray]]:
+                A list of embeddings (NumPy arrays) for valid SMILES, with `None`
+                for any invalid or failed entries. Order aligns with input list.
+
+        Raises
+        ------
+            ModelNotFoundError:
+                If the specified model key is not registered.
+            ValueError:
+                If the chosen model is not of type "molecule".
         """
-        model_instance = self._get_model(model)
-        if model_instance.model_type != "molecule":
+        inst = self._get_model(model)
+        if inst.model_type != "molecule":
             raise ValueError(f"Model '{model}' is not a molecule embedder.")
 
-        # Basic validation could be added here (e.g., check if strings look like SMILES)
-        valid_inputs = list(identifiers)  # Assume all are valid for now
-        logging.info(f"Embedding batch of {len(valid_inputs)} SMILES using model '{model}'...")
+        valid_inputs: list[str] = []
+        valid_indices: list[int] = []
+        for idx, smi in enumerate(identifiers):
+            if Chem.MolFromSmiles(smi) is not None:
+                valid_inputs.append(smi)
+                valid_indices.append(idx)
+            else:
+                logging.warning(f"Skipping invalid SMILES: '{smi}'")
 
+        # Prepare output list
+        results: list[np.ndarray | None] = [None] * len(identifiers)
+        if not valid_inputs:
+            logging.warning("No valid SMILES provided; returning all None.")
+            return results
+
+        logging.info(f"Embedding {len(valid_inputs)} valid SMILES with model '{model}'")
         try:
-            # Assuming embed_batch takes list[str] and returns list[np.ndarray]
-            batch_results = model_instance.embed_batch(inputs=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
-            if len(batch_results) != len(valid_inputs):
-                logging.error(
-                    f"Batch embedding returned {len(batch_results)} results for {len(valid_inputs)} inputs. Mismatch!"
-                )
-                return [None] * len(identifiers)  # Or handle differently
-            logging.info("Batch molecule embedding successful.")
-            # Assuming embed_batch didn't produce Nones internally for errors
-            results: list[np.ndarray | None] = batch_results
-
-        except Exception as e:
-            logging.error(f"Error during batch molecule embedding generation for model '{model}': {e}")
-            results = [None] * len(identifiers)  # Return None for all if batch fails
-
-        # TODO: Add per-item error handling if the wrapper's embed_batch can return None or raise partially.
-        # For now, assume batch success or complete failure.
+            batch_embs = inst.embed_batch(input=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
+            for out_idx, emb in zip(valid_indices, batch_embs, strict=False):
+                results[out_idx] = emb
+        except Exception as e:  # noqa: BLE001
+            logging.error(f"Batch embedding failed: {e}")
+            # Leave all as None
 
         return results
 
@@ -548,7 +513,7 @@ class BioEmbedder:
             logging.info("Batch text embedding successful.")
             results: list[np.ndarray | None] = batch_results
 
-        except Exception as e:
+        except (ValueError, KeyError) as e:
             logging.error(f"Error during batch text embedding generation for model '{model}': {e}")
             results = [None] * len(texts)
 
@@ -562,4 +527,4 @@ class BioEmbedder:
 
     def list_available_models(self) -> list[str]:
         """Returns a list of available model names."""
-        return sorted(list(self._available_models.keys()))
+        return sorted(self._available_models.keys())

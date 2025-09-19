@@ -1,5 +1,13 @@
-from .dna_models import EnformerWrapper
-from .molecule_models import ChembertaWrapper
-from .protein_models import ESMWrapper
+from .dna_models import BorzoiWrapper, EnformerWrapper
+from .molecule_models import ChembertaWrapper, MolformerWrapper
+from .protein_models import ESM2Wrapper, ESMCWrapper, STRINGWrapper
 
-__all__ = ["EnformerWrapper", "ESMWrapper", "ChembertaWrapper"]
+__all__ = [
+    "BorzoiWrapper",
+    "EnformerWrapper",
+    "ChembertaWrapper",
+    "ESM2Wrapper",
+    "ESMCWrapper",
+    "MolformerWrapper",
+    "STRINGWrapper",
+]

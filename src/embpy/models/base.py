@@ -14,7 +14,7 @@ class BaseModelWrapper(ABC):
     """
 
     model_type: Literal["dna", "protein", "molecule", "text", "unknown"] = "unknown"
-    available_pooling_strategies: list[str] = ["mean", "max"]  # Common defaults
+    available_pooling_strategies: list[str] = ["mean", "max", "median"]  # Common defaults
 
     def __init__(self, model_path_or_name: str | None = None, **kwargs):
         """
@@ -34,6 +34,7 @@ class BaseModelWrapper(ABC):
     def load(self, device: torch.device):
         """
         Loads the model weights and moves the model to the specified device.
+
         Must be implemented by subclasses.
         """
         pass
@@ -47,6 +48,7 @@ class BaseModelWrapper(ABC):
     ) -> np.ndarray:
         """
         Computes the embedding for a single input string.
+
         Must be implemented by subclasses.
 
         Args:
@@ -64,6 +66,7 @@ class BaseModelWrapper(ABC):
         """
         pass
 
+    @abstractmethod
     def embed_batch(
         self,
         inputs: Sequence[str],
@@ -85,15 +88,7 @@ class BaseModelWrapper(ABC):
         -------
             list[np.ndarray]: A list of resulting embedding vectors.
         """
-        if self.model is None or self.device is None:
-            raise RuntimeError("Model has not been loaded. Call load() first.")
-
-        results = []
-        # Basic loop - override in subclasses for efficiency!
-        for single_input in inputs:
-            # Note: Error handling for individual sequences in batch might be needed
-            results.append(self.embed(single_input, pooling_strategy=pooling_strategy, **kwargs))
-        return results
+        pass
 
     def _apply_pooling(self, embeddings: torch.Tensor, strategy: str) -> np.ndarray:
         """
@@ -117,8 +112,10 @@ class BaseModelWrapper(ABC):
             elif strategy == "max":
                 pooled = embeddings.max(dim=1).values
             # Add other strategies like 'cls' if applicable (e.g., index 0)
-            # elif strategy == "cls":
-            #     pooled = embeddings[:, 0, :]
+            elif strategy == "cls":
+                pooled = embeddings[:, 0, :]
+            elif strategy == "median":
+                pooled = embeddings[0, :]
             else:
                 # Should be caught by the check above, but as fallback
                 raise ValueError(f"Pooling strategy '{strategy}' not implemented for batched tensors.")
@@ -127,8 +124,10 @@ class BaseModelWrapper(ABC):
                 pooled = embeddings.mean(dim=0)
             elif strategy == "max":
                 pooled = embeddings.max(dim=0).values
-            # elif strategy == "cls":
-            #     pooled = embeddings[0, :]
+            elif strategy == "cls":
+                pooled = embeddings[0, :]
+            elif strategy == "median":
+                pooled = embeddings[0, :]
             else:
                 raise ValueError(f"Pooling strategy '{strategy}' not implemented for single tensors.")
         else:
