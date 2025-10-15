@@ -151,36 +151,45 @@ class BioEmbedder:
         return available
 
     def _get_model(self, model_name: str) -> BaseModelWrapper:
-        """Loads a model or retrieves it from the cache using the registry."""
-        if model_name not in self._available_models:
-            # Provide helpful error message, suggesting available models
-            available_model_names = self.list_available_models()
-            message = f"Model '{model_name}' is not available or supported."
-            if available_model_names:
-                message += f" Available models: {available_model_names}"
-            else:
-                message += " No models are currently available (check dependencies and registry)."
-            raise ModelNotFoundError(message)
+        """Loads a model or retrieves it from the cache using the registry or direct HF loading for text models."""
+        # Return from cache if already loaded
+        if model_name in self.model_cache:
+            return self.model_cache[model_name]
 
-        if model_name not in self.model_cache:
-            logging.info(f"Loading model '{model_name}' onto device '{self.device}'...")
+        # Check if it's in the registry first
+        if model_name in self._available_models:
+            logging.info(f"Loading registered model '{model_name}' onto device '{self.device}'...")
             WrapperClass, model_path_or_name = self._available_models[model_name]
-            print(self._available_models)
-            # Instantiate the specific wrapper with the correct model path/name from the registry
             try:
-                # Pass the specific HF path/name to the wrapper instance
                 model_instance = WrapperClass(model_path_or_name=model_path_or_name)
                 model_instance.load(self.device)
                 self.model_cache[model_name] = model_instance
                 logging.info(f"Model '{model_name}' loaded successfully.")
+                return model_instance
             except Exception as e:
                 logging.error(
                     f"Failed to load model '{model_name}' using wrapper {WrapperClass.__name__} and path '{model_path_or_name}': {e}"
                 )
-                # Chain the exception for better debugging
                 raise RuntimeError(f"Could not load model '{model_name}'.") from e
 
-        return self.model_cache[model_name]
+        # If not in registry, try to load as a text model from Hugging Face
+        else:
+            logging.info(f"Model '{model_name}' not in registry. Attempting to load as text model from Hugging Face...")
+            try:
+                model_instance = TextLLMWrapper(model_path_or_name=model_name)
+                model_instance.load(self.device)
+                self.model_cache[model_name] = model_instance
+                logging.info(f"Successfully loaded text model '{model_name}' from Hugging Face.")
+                return model_instance
+            except Exception as e:
+                available_model_names = self.list_available_models()
+                message = (
+                    f"Model '{model_name}' could not be loaded from Hugging Face and is not in the predefined registry."
+                )
+                if available_model_names:
+                    message += f" Available predefined models: {available_model_names}"
+                message += f" Original error: {str(e)}"
+                raise ModelNotFoundError(message) from e
 
     def embed_gene(
         self,
@@ -439,7 +448,7 @@ class BioEmbedder:
     def embed_text(
         self,
         text: str,
-        model: str,  # User provides name like "minilm_l6_v2"
+        model: str,  # Can be registry name OR any HF model identifier
         pooling_strategy: str = "mean",
         **kwargs: Any,
     ) -> np.ndarray:
@@ -448,7 +457,9 @@ class BioEmbedder:
 
         Args:
             text (str): The input text string.
-            model (str): The name of the text embedding model (e.g., "minilm_l6_v2", "bert_base_uncased").
+            model (str): The name of the text embedding model. Can be either:
+                        - A predefined model name (e.g., "minilm_l6_v2", "bert_base_uncased")
+                        - Any Hugging Face model identifier (e.g., "sentence-transformers/all-MiniLM-L6-v2")
             pooling_strategy (str): Pooling strategy. Defaults to "mean".
             **kwargs: Additional arguments for the text model's embed method.
 
@@ -458,8 +469,8 @@ class BioEmbedder:
 
         Raises
         ------
-            ModelNotFoundError: If the requested model name is not registered or available.
-            ValueError: If the model is not of type 'text'.
+            ModelNotFoundError: If the model cannot be loaded from HF or found in registry.
+            ValueError: If the loaded model is not a text model.
             RuntimeError: If model loading or inference fails.
         """
         model_instance = self._get_model(model)
@@ -475,11 +486,12 @@ class BioEmbedder:
             logging.error(f"Error during text embedding generation for model '{model}': {e}")
             raise RuntimeError(f"Text embedding failed for input '{text[:50]}...'.") from e
 
-    def embed_texts_batch(
+    def last_(
         self,
         texts: Sequence[str],
-        model: str,  # User provides name like "minilm_l6_v2"
+        model: str,
         pooling_strategy: str = "mean",
+        batch_size: int | None = None,
         **kwargs: Any,
     ) -> list[np.ndarray | None]:  # Return None for errors
         """
@@ -489,6 +501,8 @@ class BioEmbedder:
             texts (Sequence[str]): A list or tuple of text strings.
             model (str): The name of the text embedding model.
             pooling_strategy (str): Pooling strategy. Defaults to "mean".
+            batch_size (Optional[int]): Maximum batch size for processing. If None, processes all texts at once.
+                                       Use smaller values to avoid OOM errors with large datasets.
             **kwargs: Additional arguments for the model's embed_batch method.
 
         Returns
@@ -499,12 +513,13 @@ class BioEmbedder:
         if model_instance.model_type != "text":
             raise ValueError(f"Model '{model}' is not a text embedder.")
 
-        valid_inputs = list(texts)  # Assume all valid
+        valid_inputs = list(texts)
         logging.info(f"Embedding batch of {len(valid_inputs)} texts using model '{model}'...")
 
         try:
-            # Assuming embed_batch takes list[str] and returns list[np.ndarray]
-            batch_results = model_instance.embed_batch(inputs=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
+            batch_results = model_instance.embed_batch(
+                inputs=valid_inputs, pooling_strategy=pooling_strategy, batch_size=batch_size, **kwargs
+            )
             if len(batch_results) != len(valid_inputs):
                 logging.error(
                     f"Batch embedding returned {len(batch_results)} results for {len(valid_inputs)} inputs. Mismatch!"
@@ -517,13 +532,7 @@ class BioEmbedder:
             logging.error(f"Error during batch text embedding generation for model '{model}': {e}")
             results = [None] * len(texts)
 
-        # TODO: Add per-item error handling if the wrapper's embed_batch can return None or raise partially.
-
         return results
-
-    # Add methods for direct sequence embedding if desired
-    # def embed_dna_sequence(self, sequence: str, model: str, ...) -> np.ndarray: ...
-    # def embed_protein_sequence(self, sequence: str, model: str, ...) -> np.ndarray: ...
 
     def list_available_models(self) -> list[str]:
         """Returns a list of available model names."""
