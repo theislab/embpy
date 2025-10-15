@@ -20,7 +20,7 @@ try:
     _HAVE_ESMC = True
 except ImportError:
     _HAVE_ESMC = False
-# from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer
 
 
 class ESM2Wrapper(BaseModelWrapper):
