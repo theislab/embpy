@@ -447,7 +447,7 @@ class BorzoiWrapper(BaseModelWrapper):
             pad_right = pad_total - pad_left
             # pad with zero-vectors → value=0.0
             oh = F.pad(oh, (pad_left, pad_right), mode="constant", value=0.0)
-            logging.debug(f"Padded Borzoi indices from {L_in}→{L_tar} with 'N' (4).")
+            logging.debug(f"Padded Borzoi indices from {L_in}→{L_tar} with zeros.")
         elif L_in > L_tar:
             trim = (L_in - L_tar) // 2
             oh = oh[:, :, trim : trim + L_tar]

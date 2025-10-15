@@ -4,8 +4,8 @@ from typing import Any
 
 import numpy as np
 import torch
-from transformers import AutoModel, AutoTokenizer, BatchEncoding
 
+# from transformers import AutoModel, AutoTokenizer, BatchEncoding
 from .base import BaseModelWrapper
 
 # TODO: If we use the transformers library we can access to other hidden states, since we are using it here for molecules we can add this option to the package

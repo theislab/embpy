@@ -307,3 +307,128 @@ class GeneResolver:
         except Exception as e:  # noqa: BLE001
             logging.error(f"Unexpected error constructing gene description: {e}")
             return None
+
+    def symbol_to_ensembl(
+        self,
+        symbol: str,
+        organism: str = "human",
+    ) -> str | None:
+        """
+        Resolve a gene symbol to an Ensembl *gene* ID (e.g., 'TP53' -> 'ENSG00000141510').
+
+        Tries pyensembl -> MyGene.info -> Ensembl REST API.
+        """
+        sym = symbol.strip()
+        # 1) pyensembl (offline once cached)
+        if self.ensembl is not None and organism.lower() in {"human", "homo_sapiens"}:
+            try:
+                # pyensembl is case-sensitive for symbols; use exact first, then case-insensitive fallback
+                genes = self.ensembl.genes_by_name(sym)
+                if not genes and sym.upper() != sym:
+                    genes = self.ensembl.genes_by_name(sym.upper())
+                if genes:
+                    # If multiple, prefer canonical-looking ID (first is fine: Ensembl keeps them stable)
+                    return genes[0].gene_id
+            except Exception as e:  # noqa: BLE001
+                logging.debug(f"pyensembl failed for {sym}: {e}")
+
+        # 2) MyGene.info (good with synonyms)
+        try:
+            resp = requests.get(
+                "https://mygene.info/v3/query",
+                params={
+                    "q": sym,
+                    "scopes": "symbol,alias,name",
+                    "species": organism,
+                    "fields": "ensembl.gene",
+                    "size": 1,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            hits = resp.json().get("hits", [])
+            if hits:
+                ens = hits[0].get("ensembl", {})
+                if isinstance(ens, dict) and "gene" in ens:
+                    return ens["gene"]
+                if isinstance(ens, list) and ens:
+                    # pick the first gene field in the list
+                    for item in ens:
+                        if "gene" in item:
+                            return item["gene"]
+        except Exception as e:  # noqa: BLE001
+            logging.debug(f"MyGene.info failed for {sym}: {e}")
+
+        # 3) Ensembl REST
+        try:
+            url = f"https://rest.ensembl.org/lookup/symbol/{organism}/{sym}"
+            r = requests.get(url, headers={"Content-Type": "application/json"}, timeout=10)
+            if r.ok:
+                return r.json().get("id")
+        except Exception as e:  # noqa: BLE001
+            logging.debug(f"Ensembl REST symbol->id failed for {sym}: {e}")
+
+        logging.warning(f"Could not resolve Ensembl ID for symbol '{symbol}'")
+        return None
+
+    # -------- Ensembl gene ID -> Symbol --------
+    def ensembl_to_symbol(
+        self,
+        ensembl_gene_id: str,
+        organism: str = "human",
+    ) -> str | None:
+        """
+        Resolve an Ensembl gene ID (e.g., 'ENSG00000141510') to a preferred gene symbol (e.g., 'TP53').
+
+        Tries pyensembl -> MyGene.info -> Ensembl REST API.
+        """
+        ens = ensembl_gene_id.strip().split(".")[0]  # drop version if provided
+        # 1) pyensembl
+        if self.ensembl is not None and organism.lower() in {"human", "homo_sapiens"}:
+            try:
+                g = self.ensembl.gene_by_id(ens)
+                if g and getattr(g, "gene_name", None):
+                    return g.gene_name
+            except Exception as e:  # noqa: BLE001
+                logging.debug(f"pyensembl failed for {ens}: {e}")
+
+        # 2) MyGene.info
+        try:
+            resp = requests.get(
+                "https://mygene.info/v3/query",
+                params={
+                    "q": ens,
+                    "scopes": "ensembl.gene",
+                    "species": organism,
+                    "fields": "symbol,name",
+                    "size": 1,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            hits = resp.json().get("hits", [])
+            if hits:
+                return hits[0].get("symbol") or hits[0].get("name")
+        except Exception as e:  # noqa: BLE001
+            logging.debug(f"MyGene.info failed for {ens}: {e}")
+
+        # 3) Ensembl REST
+        try:
+            url = f"https://rest.ensembl.org/lookup/id/{ens}"
+            r = requests.get(url, headers={"Content-Type": "application/json"}, timeout=10)
+            if r.ok:
+                return r.json().get("display_name")
+        except Exception as e:  # noqa: BLE001
+            logging.debug(f"Ensembl REST id->symbol failed for {ens}: {e}")
+
+        logging.warning(f"Could not resolve symbol for Ensembl ID '{ensembl_gene_id}'")
+        return None
+
+    # -------- Batch helpers (optional) --------
+    def symbols_to_ensembl_batch(self, symbols: list[str], organism: str = "human") -> dict[str, str | None]:
+        """Map many symbols → Ensembl IDs."""
+        return {s: self.symbol_to_ensembl(s, organism=organism) for s in symbols}
+
+    def ensembl_to_symbols_batch(self, ensembl_ids: list[str], organism: str = "human") -> dict[str, str | None]:
+        """Map many Ensembl IDs → symbols."""
+        return {e: self.ensembl_to_symbol(e, organism=organism) for e in ensembl_ids}
