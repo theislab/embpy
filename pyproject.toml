@@ -24,22 +24,23 @@ classifiers = [
 ]
 dependencies = [
   "anndata",
-  "biopython",
-  "borzoi-pytorch",
-  "enformer-pytorch",
-  "esm",
+  "biopython==1.85",
+  "borzoi-pytorch==0.4.3",
+  "enformer-pytorch==0.8.10",
+  "esm==3.2.0",
   "ipywidgets",
-  "matplotlib",
-  "numpy",
-  "pandas",
-  "pyarrow",
-  "pyensembl",
+  "matplotlib==3.10.5",
+  "numpy==1.26.4",
+  "pandas==2.3.0",
+  "pyarrow==14.0.2",
+  "pyensembl==2.3.13",
   "pytest",
   "rdkit",
   "seaborn",
   "session-info",
-  "torch",
-  "transformers",
+  "torch==2.5.1",
+  "transformers==4.34.1",
+  "huggingface-hub==0.35.3"
 ]
 optional-dependencies.dev = [
   "pre-commit",
@@ -47,7 +48,6 @@ optional-dependencies.dev = [
 ]
 optional-dependencies.doc = [
   "docutils>=0.8,!=0.18.*,!=0.19.*",
-  "huggingface-hub",
   "ipykernel",
   "ipython",
   "myst-nb>=1.1",
@@ -60,8 +60,7 @@ optional-dependencies.doc = [
   "sphinxcontrib-bibtex>=1",
   "sphinxext-opengraph",
 ]
-optional-dependencies.molecule = [ "transformers>=4" ] # If ChemBERTa uses transformers
-optional-dependencies.protein = [ "transformers>=4" ] # If ESM uses transformers
+
 optional-dependencies.sentence_transformers = [ "sentence-transformers>=2" ]
 optional-dependencies.test = [
   "coverage",
