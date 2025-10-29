@@ -514,7 +514,7 @@ class BorzoiWrapper(BaseModelWrapper):
         else:
             pooled = trunk.max(dim=1).values  # (hidden_dim,)
 
-        return pooled.cpu().numpy()
+        return pooled.to(torch.float32).cpu().numpy()
 
     def embed_batch(
         self,
@@ -602,7 +602,7 @@ class BorzoiWrapper(BaseModelWrapper):
             raise RuntimeError("Batch pooling failed.") from e
 
         # 5. Convert each row to a NumPy array and return as a list
-        pooled = pooled.cpu()
+        pooled = pooled.to(torch.float32).cpu()
         result_list = [pooled[i].numpy() for i in range(pooled.size(0))]
 
         if len(result_list) != len(inputs):

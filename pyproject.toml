@@ -14,7 +14,7 @@ maintainers = [
 authors = [
   { name = "Goncalo Rei Pinto" },
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
@@ -24,23 +24,25 @@ classifiers = [
 ]
 dependencies = [
   "anndata",
-  "biopython==1.85",
-  "borzoi-pytorch==0.4.3",
-  "enformer-pytorch==0.8.10",
-  "esm==3.2.0",
+  "biopython",
+  "borzoi-pytorch>=0.4.3",
+  "enformer-pytorch>=0.8.10",
+  "esm>=3.2.0",
   "ipywidgets",
-  "matplotlib==3.10.5",
+  "matplotlib>=3.10.5",
   "numpy==1.26.4",
-  "pandas==2.3.0",
-  "pyarrow==14.0.2",
-  "pyensembl==2.3.13",
+  "pandas>=2.3.0",
+  "pyarrow>=14.0.2",
+  "pyensembl>=2.3.13",
   "pytest",
   "rdkit",
   "seaborn",
   "session-info",
-  "torch==2.5.1",
-  "transformers==4.34.1",
-  "huggingface-hub==0.35.3"
+  "transformers>=4.45.0,<5.0.0",
+  "huggingface-hub>=0.35,<1.0.0",
+]
+optional-dependencies.torch = [
+  "torch>=2.5.1",
 ]
 optional-dependencies.dev = [
   "pre-commit",
@@ -61,15 +63,10 @@ optional-dependencies.doc = [
   "sphinxext-opengraph",
 ]
 
-optional-dependencies.sentence_transformers = [ "sentence-transformers>=2" ]
 optional-dependencies.test = [
   "coverage",
   "pytest",
 ]
-# You could create combined extras
-optional-dependencies.text = [ "sentence-transformers>=2", "transformers>=4" ]
-# Add optional dependencies for specific model types
-optional-dependencies.transformers = [ "transformers>=4" ]
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://embpy.readthedocs.io/"
 urls.Homepage = "https://github.com/grpinto/embpy"
