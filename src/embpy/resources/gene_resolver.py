@@ -14,6 +14,8 @@ from Bio import SeqIO
 # - UniProt API client
 # Consider caching results.
 
+# TODO: we should add an option to get only the full genome, not only the specific genes
+
 
 class GeneResolver:
     """

@@ -10,21 +10,26 @@
 #SBATCH --partition=gpu_p
 #SBATCH --qos=gpu_normal
 #SBATCH --nice=0
-# If you want arrays later:
-# #SBATCH --array=0-2
 
 # ------- paths & knobs (edit if needed) -------
-INPUT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/missing_genes_per_embeddings"
+INPUT_DIR="/lustre/groups/ml01/workspace/goncalo/pinto/embpy/data/missing_genes_per_embeddings"
 OUT_DIR_BASE="${INPUT_DIR}/embeddings_out"
-BATCH_SIZE=8
 DEVICE="cuda"     # use the GPU you requested
 ENV_NAME="embpy"
 
-# HF model ids (your wrappers accept these)
+# --- Model-specific knobs ---
+
+# Enformer/Borzoi
 ENFORMER_ID="EleutherAI/enformer-official-rough"
 BORZOI_ID="johahi/borzoi-replicate-0"
 
-# Which model to run: enformer | borzoi (default enformer)
+# ESMC
+ESMC_SCRIPT_PATH="submission_scripts/embed_all_genes.py" 
+ESMC_POOLING="mean"               # Pooling for --pooling
+
+# ----------------------------------------------
+
+# Which model to run: enformer | borzoi | esmc_300m | esmc_600m (default enformer)
 MODEL="${1:-enformer}"
 
 # ----------------------------------------------
@@ -50,12 +55,16 @@ if torch.cuda.is_available():
 PY
 
 # Pick input glob by model
+# Note: ESMC does not use a GLOB
 if [[ "$MODEL" == "enformer" ]]; then
   GLOB="*enformer*.fasta"
 elif [[ "$MODEL" == "borzoi" ]]; then
   GLOB="*borzoi*.fasta"
+elif [[ "$MODEL" == "esmc_300m" || "$MODEL" == "esmc_600m" ]]; then
+  echo "→ ESMC model selected, no input FASTA glob needed (uses pyensembl)."
+  GLOB="N/A" # Set to N/A
 else
-  echo "ERROR: Unknown MODEL '$MODEL'. Use 'enformer' or 'borzoi'." >&2
+  echo "ERROR: Unknown MODEL '$MODEL'. Use 'enformer', 'borzoi', 'esmc_300m', or 'esmc_600m'." >&2
   exit 2
 fi
 
@@ -64,17 +73,20 @@ OUT_DIR="${OUT_DIR_BASE}/${MODEL}"
 mkdir -p "$OUT_DIR"
 
 # Quick sanity: list files that match
-echo "→ Looking for FASTA files in: $INPUT_DIR with pattern: $GLOB"
-MATCH_COUNT=$(ls -1 ${INPUT_DIR}/${GLOB} 2>/dev/null | wc -l)
-echo "   Matching files: $MATCH_COUNT"
-if [[ "$MATCH_COUNT" -eq 0 ]]; then
-  echo "ERROR: No input FASTA files found matching '${GLOB}' in ${INPUT_DIR}" >&2
-  exit 3
+# --- MODIFIED: Skip this check for ESMC ---
+if [[ "$MODEL" != "esmc_300m" && "$MODEL" != "esmc_600m" ]]; then
+  echo "→ Looking for FASTA files in: $INPUT_DIR with pattern: $GLOB"
+  MATCH_COUNT=$(ls -1 ${INPUT_DIR}/${GLOB} 2>/dev/null | wc -l)
+  echo "   Matching files: $MATCH_COUNT"
+  if [[ "$MATCH_COUNT" -eq 0 ]]; then
+    echo "ERROR: No input FASTA files found matching '${GLOB}' in ${INPUT_DIR}" >&2
+    exit 3
+  fi
 fi
 
 # Run
 if [[ "$MODEL" == "enformer" ]]; then
-  echo "→ Running Enformer (pooling auto-inferred from FASTA filename: mean/max/median)"
+  echo "→ Running Enformer"
   python -u submission_scripts/enformer_embed.py \
     --input_dir "$INPUT_DIR" \
     --out_dir   "$OUT_DIR" \
@@ -83,13 +95,34 @@ if [[ "$MODEL" == "enformer" ]]; then
     --glob "$GLOB"
 
 elif [[ "$MODEL" == "borzoi" ]]; then
-  echo "→ Running Borzoi (pooling auto-inferred from FASTA filename: mean/max/median)"
+  echo "→ Running Borzoi"
   python -u submission_scripts/borzoi_embed.py \
     --input_dir "$INPUT_DIR" \
     --out_dir   "$OUT_DIR" \
     --device    "$DEVICE" \
     --borzoi_id "$BORZOI_ID" \
     --glob "$GLOB"
+
+# --- NEW BLOCKS FOR ESMC ---
+elif [[ "$MODEL" == "esmc_300m" ]]; then
+  echo "→ Running ESMC 300M (all human genes from pyensembl)"
+  OUTPUT_FILENAME="${OUT_DIR}/esmc_gene_embeddings.csv"
+  echo "   Output File: ${OUTPUT_FILENAME}"
+
+  python -u "$ESMC_SCRIPT_PATH" \
+    --models "esmc_300m" \
+    --pooling "$ESMC_POOLING" \
+    --output "${OUTPUT_FILENAME}"
+
+elif [[ "$MODEL" == "esmc_600m" ]]; then
+  echo "→ Running ESMC 600M (all human genes from pyensembl)"
+  OUTPUT_FILENAME="${OUT_DIR}/esmc_gene_embeddings.csv"
+  echo "   Output File: ${OUTPUT_FILENAME}"
+
+  python -u "$ESMC_SCRIPT_PATH" \
+    --models "esmc_600m" \
+    --pooling "$ESMC_POOLING" \
+    --output "${OUTPUT_FILENAME}"
 fi
 
 echo "✅ Finished at $(date)"
