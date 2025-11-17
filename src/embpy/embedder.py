@@ -1,4 +1,5 @@
 import logging
+import traceback
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -153,7 +154,7 @@ class BioEmbedder:
     def _get_model(self, model_name: str) -> BaseModelWrapper:
         """Loads a model or retrieves it from the cache using the registry or direct HF loading for text models."""
         # Return from cache if already loaded
-        if model_name in self.model_cache:
+        if model_name in self.model_cache:]
             return self.model_cache[model_name]
 
         # Check if it's in the registry first
@@ -273,31 +274,76 @@ class BioEmbedder:
         organism: str = "human",
         pooling_strategy: str = "mean",
         gene_description_format: str | None = None,
+        fetch_all_dna: bool = False,
+        biotype: str = "protein_coding",
         **kwargs: Any,
     ) -> list[np.ndarray | None]:
         """
         Generates embeddings in batch.
 
-        Generates embeddings for a batch of genes using DNA, protein, text, or molecule models.
-        Honors the resolver_backend for DNA lookups.
+        Args:
+            identifiers (Sequence[str]): List of gene identifiers.
+            model (str): Model name.
+            id_type (Literal): Identifier type.
+            organism (str): Organism name.
+            pooling_strategy (str): Pooling strategy.
+            gene_description_format (str, optional): Format for text models.
+            fetch_all_dna (bool): If True and backend is 'api', pre-fetches ALL sequences via API
+                                before processing the batch. Useful for large batches.
+            biotype (str): Biotype to filter by when fetch_all_dna is True.
+            **kwargs: Additional arguments.
 
-        Returns list of embeddings or None, preserving original order.
+        Returns
+        -------
+            list[np.ndarray | None]: List of embeddings or None.
         """
         inst = self._get_model(model)
         mtype = inst.model_type
+
+        # Optimization: Pre-fetch all DNA sequences ONLY if using API backend
+        prefetched_dna_dict: dict[str, str] = {}
+
+        # Only pre-fetch if the model requires DNA input
+        if mtype == "dna" and fetch_all_dna:
+            if self.resolver_backend == "api":
+                logging.info(f"fetch_all_dna=True: Pre-fetching all '{biotype}' DNA sequences via API...")
+                # This returns a dict {ensembl_id: sequence}
+                result = self.gene_resolver.get_gene_sequences(biotype=biotype)
+                if result:
+                    prefetched_dna_dict = result
+            else:
+                logging.warning("fetch_all_dna=True is ignored when resolver_backend='local'.")
+
         input_data_list: list[str | None] = []
         logging.info(f"Batch: {len(identifiers)} items for '{model}' ({mtype})...")
+
         for ident in identifiers:
             data = None
             try:
                 if mtype == "dna":
-                    data = (
-                        self.gene_resolver.get_local_dna_sequence(ident, id_type)
-                        if self.resolver_backend == "local"
-                        else self.gene_resolver.get_dna_sequence(ident, id_type, organism)
-                    )
+                    # 1. Try to use pre-fetched data (API mode only)
+                    if prefetched_dna_dict:
+                        if id_type == "ensembl_id":
+                            data = prefetched_dna_dict.get(ident)
+                        elif id_type == "symbol":
+                            # We need to map symbol -> ID to check the dict
+                            ens_id = self.gene_resolver.symbol_to_ensembl(ident, organism)
+                            if ens_id:
+                                data = prefetched_dna_dict.get(ens_id)
+
+                    # 2. Fallback to standard single lookup if data not found in pre-fetch
+                    if data is None:
+                        if self.resolver_backend == "local":
+                            data = self.gene_resolver.get_local_dna_sequence(ident, id_type)
+                        else:
+                            # Only call API individual fetch if we didn't just try to fetch everything
+                            # (to avoid re-fetching if it wasn't in the bulk download)
+                            if not fetch_all_dna:
+                                data = self.gene_resolver.get_dna_sequence(ident, id_type, organism)
+
                 elif mtype == "protein":
                     data = self.gene_resolver.get_protein_sequence(ident, id_type, organism)
+                    print(data)
                 elif mtype == "text":
                     fmt = gene_description_format or "Gene: {identifier}. Type: {id_type}. Organism: {organism}."
                     data = self.gene_resolver.get_gene_description(ident, id_type, organism, format_string=fmt)
@@ -305,24 +351,31 @@ class BioEmbedder:
                     data = ident
                 else:
                     logging.error(f"Unsupported model type '{mtype}' in batch.")
+
                 if data is None:
                     logging.warning(f"No data for {ident}; skipping.")
             except Exception as e:  # noqa: BLE001
                 logging.warning(f"Error fetching {ident}: {e}")
             input_data_list.append(data)
-        # Filter and embed
+
+        # Filter valid inputs and keep track of their original indices
         valid_inputs = [d for d in input_data_list if d is not None]
         valid_indices = [i for i, d in enumerate(input_data_list) if d is not None]
+
         if not valid_inputs:
             return [None] * len(identifiers)
+
         try:
             batch_results = inst.embed_batch(inputs=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             logging.error(f"Batch embed failed: {e}")
+            traceback.print_exc()  # <--- ADD THIS LINE
             return [None] * len(identifiers)
+
         results: list[np.ndarray | None] = [None] * len(identifiers)
         for idx, emb in zip(valid_indices, batch_results, strict=False):
             results[idx] = emb
+
         return results
 
     def embed_molecule(

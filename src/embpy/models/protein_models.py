@@ -296,7 +296,7 @@ class ESMCWrapper(BaseModelWrapper):
 
     def embed(
         self,
-        input: str,
+        inputs: str,
         pooling_strategy: str = "mean",
         return_hidden_states: bool = False,
         hidden_layers: Sequence[int] | None = None,
@@ -336,7 +336,7 @@ class ESMCWrapper(BaseModelWrapper):
             raise ValueError(f"Invalid pooling '{pooling_strategy}'")
 
         # 1) Prepare input
-        prot = ESMProtein(sequence=input)
+        prot = ESMProtein(sequence=inputs)
         tensor = self.client.encode(prot)
 
         # 2) Configure and run logits call
@@ -380,7 +380,7 @@ class ESMCWrapper(BaseModelWrapper):
 
     def embed_batch(
         self,
-        sequences: list[str],
+        inputs: list[str],
         pooling_strategy: str = "mean",
         return_hidden_states: bool = False,
         hidden_layers: Sequence[int] | None = None,
@@ -408,12 +408,12 @@ class ESMCWrapper(BaseModelWrapper):
         """
         return [
             self.embed(
-                seq,
+                inputs=seq,
                 pooling_strategy=pooling_strategy,
                 return_hidden_states=return_hidden_states,
                 hidden_layers=hidden_layers,
             )
-            for seq in sequences
+            for seq in inputs
         ]
 
 
