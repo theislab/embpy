@@ -29,7 +29,7 @@ dependencies = [
   "enformer-pytorch>=0.8.10",
   "esm>=3.2.0",
   "ipywidgets",
-  "matplotlib>=3.10.5",
+  "matplotlib",
   "numpy==1.26.4",
   "pandas>=2.3.0",
   "pyarrow>=14.0.2",

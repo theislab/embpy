@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from typing import Literal
 
 import pandas as pd
@@ -24,31 +25,73 @@ class GeneResolver:
     Placeholder implementation. Needs actual backend logic.
     """
 
+
+class GeneResolver:
+    """
+    Handles mapping gene identifiers to DNA or protein sequences.
+    Uses pyensembl for local genomic data and APIs (Ensembl, MyGene, UniProt) for remote lookups.
+    """
+
     def __init__(
         self,
+        ensembl_release: int = 109,
+        species: str = "human",
+        auto_download: bool = True,
         mart_file: str | None = None,
         chromosome_folder: str | None = None,
     ):
-        # API-based resolver initialization
-        logging.info("GeneResolver initialized.")
+        """
+        Initialize the GeneResolver.
+
+        Parameters
+        ----------
+        ensembl_release : int
+            The Ensembl release version to use (default: 109).
+        species : str
+            The species name (e.g., "human", "mouse"). Default is "human".
+        auto_download : bool
+            If True, checks if pyensembl data is missing and downloads/indexes it automatically.
+            (Warning: First run may take time and require internet).
+        mart_file : str, optional
+            Path to a local Biomart CSV file (legacy/offline mode).
+        chromosome_folder : str, optional
+            Path to a folder containing chromosome FASTA files (legacy/offline mode).
+        """
+        logging.info(f"GeneResolver initialized for {species} (Release {ensembl_release}).")
+
         self.mart_file = mart_file
         self.chrom_folder = chromosome_folder
+        self.release_version = ensembl_release
+        self.species = species
+        self.ensembl = None
 
-        # Attempt to load pyensembl for optional offline queries
+        # Attempt to initialize pyensembl
         try:
             import pyensembl
 
-            self.ensembl = pyensembl.EnsemblRelease(109)
-            logging.info("pyensembl found. Downloading and indexing if necessary...")
-            self.ensembl.download()
-            self.ensembl.index()
-            logging.info("pyensembl data ready.")
+            # 1. Configure the release object
+            self.ensembl = pyensembl.EnsemblRelease(release=ensembl_release, species=species)
+
+            # 2. Programmatically install data if requested
+            # This replaces the need for 'pyensembl install ...' in the terminal
+            if auto_download:
+                try:
+                    # Check if data is downloaded; if not, download it.
+                    # This checks the cache directory implicitly.
+                    logging.info("Checking if Ensembl data needs downloading/indexing...")
+                    self.ensembl.download()
+                    self.ensembl.index()
+                    logging.info("pyensembl data is ready.")
+                except Exception as e:
+                    logging.warning(f"Automatic download/indexing failed: {e}")
+                    logging.warning("You may need to run 'pyensembl install' manually or check internet connection.")
+
         except ImportError:
+            logging.warning("pyensembl library not found. Running in API-only mode.")
             self.ensembl = None
-            logging.warning("pyensembl not found. API-only mode.")
-        except Exception as e:  # noqa: BLE001
-            self.ensembl = None
+        except Exception as e:
             logging.warning(f"Failed to initialize pyensembl: {e}")
+            self.ensembl = None
 
     def get_local_dna_sequence(
         self,
@@ -434,3 +477,74 @@ class GeneResolver:
     def ensembl_to_symbols_batch(self, ensembl_ids: list[str], organism: str = "human") -> dict[str, str | None]:
         """Map many Ensembl IDs → symbols."""
         return {e: self.ensembl_to_symbol(e, organism=organism) for e in ensembl_ids}
+
+    # TODO: the user should be able to select the species
+    # TODO: we can use merge this function with the previous ones and clean it up
+
+    def get_gene_sequences(self, biotype: str = "protein_coding") -> dict[str, str] | None:
+        """
+        Fetches genomic DNA sequences via Ensembl REST API.
+
+        Parameters
+        ----------
+        biotype : str, optional
+            The gene biotype to filter by (e.g., "protein_coding", "lncRNA").
+            Defaults to "protein_coding".
+            Pass "all" to disable filtering and fetch every gene.
+        """
+        if self.ensembl is None:
+            logging.error("pyensembl is not initialized.")
+            return None
+
+        logging.info(f"Querying metadata from Release {self.ensembl.release}...")
+
+        try:
+            # 1. Fetch metadata for ALL genes locally (Fast)
+            all_genes = self.ensembl.genes()
+
+            # --- FILTERING LOGIC ---
+            if biotype.lower() != "all":
+                logging.info(f"Filtering for biotype: '{biotype}'")
+                # Filter the list based on the .biotype attribute
+                all_genes = [g for g in all_genes if g.biotype == biotype]
+            else:
+                logging.info("Fetching ALL biotypes (no filter applied).")
+            # -----------------------
+
+            total_genes = len(all_genes)
+
+            # Debug print to confirm filtering worked
+            if total_genes > 0:
+                print(f"First 5 genes after filtering: {all_genes[:5]}")
+
+            if total_genes == 0:
+                logging.warning(f"No genes found with biotype='{biotype}'.")
+                return {}
+
+            logging.info(f"Found {total_genes} genes. Starting REST API downloads...")
+            logging.warning(f"⚠️ This involves ~{total_genes} network requests.")
+
+            gene_sequences = {}
+
+            # 2. Iterate and fetch sequence via API (Slow)
+            for i, gene in enumerate(all_genes):
+                # Log progress more frequently because API is slower
+                if i > 0 and i % 100 == 0:
+                    logging.info(f"Fetched {i}/{total_genes} sequences...")
+
+                # Call your helper function
+                seq = self.get_dna_sequence(identifier=gene.gene_id, id_type="ensembl_id", organism="human")
+
+                if seq:
+                    gene_sequences[gene.gene_id] = seq
+
+                # CRITICAL: Rate limiting to respect Ensembl API (15 req/sec max)
+                # We sleep 0.1s to stay safe (approx 10 req/sec)
+                time.sleep(0.1)
+
+            logging.info(f"Successfully extracted {len(gene_sequences)} gene sequences.")
+            return gene_sequences
+
+        except Exception as e:
+            logging.error(f"Error in get_gene_sequences loop: {e}")
+            return None

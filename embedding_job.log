@@ -1,0 +1,27 @@
+2025-11-13 11:14:08,887 [INFO] ==================================================
+2025-11-13 11:14:08,888 [INFO] Starting embedding job with parameters:
+2025-11-13 11:14:08,888 [INFO]   Models:  ['esmc_300m']
+2025-11-13 11:14:08,888 [INFO]   Pooling: mean
+2025-11-13 11:14:08,888 [INFO]   Output:  /lustre/groups/ml01/workspace/goncalo/pinto/embpy/data/missing_genes_per_embeddings/embeddings_out/esmc_300m/esmc_gene_embeddings.csv
+2025-11-13 11:14:08,888 [INFO] ==================================================
+2025-11-13 11:14:08,998 [INFO] Using device: cuda
+2025-11-13 11:14:08,998 [INFO] Initializing ESMCWrapper (esmc_300m)...
+2025-11-13 11:14:08,999 [INFO] Loading ESMC client 'esmc_300m' onto cuda …
+2025-11-13 11:14:11,834 [INFO] ESMC client loaded successfully.
+2025-11-13 11:14:11,834 [INFO] 'esmc_300m' loaded successfully onto cuda.
+2025-11-13 11:14:11,834 [INFO] Successfully loaded 1 models.
+2025-11-13 11:14:11,834 [INFO] Initializing GeneResolver...
+2025-11-13 11:14:11,834 [INFO] GeneResolver initialized.
+2025-11-13 11:14:11,834 [INFO] pyensembl found. Downloading and indexing if necessary...
+2025-11-13 11:14:12,310 [INFO] Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.cdna.all.fa.gz.pickle
+2025-11-13 11:14:12,547 [INFO] Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.ncrna.fa.gz.pickle
+2025-11-13 11:14:12,739 [INFO] Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.pep.all.fa.gz.pickle
+2025-11-13 11:14:12,740 [INFO] pyensembl data ready.
+2025-11-13 11:14:12,740 [INFO] GeneResolver initialized.
+2025-11-13 11:14:12,740 [INFO] Initializing PyEnsembl (Species: human, Release: 109)...
+2025-11-13 11:14:12,741 [ERROR] Failed to initialize PyEnsembl: Genome.__init__() got an unexpected keyword argument 'species'
+Traceback (most recent call last):
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts/esmc_embed.py", line 139, in main
+    genome = pyensembl.Genome(species=GENOME_SPECIES, release=GENOME_RELEASE)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: Genome.__init__() got an unexpected keyword argument 'species'
