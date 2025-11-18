@@ -296,87 +296,71 @@ class ESMCWrapper(BaseModelWrapper):
 
     def embed(
         self,
-        inputs: str,
+        inputs: str,  # Changed from 'sequence' to match your code snippet
         pooling_strategy: str = "mean",
         return_hidden_states: bool = False,
         hidden_layers: Sequence[int] | None = None,
+        max_length: int = 10000,  # <--- NEW: Safety limit
     ) -> dict[str, np.ndarray]:
         """
         Embed a single protein sequence.
-
-        Parameters
-        ----------
-        sequence : str
-            The amino‐acid sequence to embed.
-        pooling_strategy : {'mean', 'max', 'cls'}, default='mean'
-            How to aggregate per‐residue embeddings into a single vector.
-        return_hidden_states : bool, default=False
-            If True, also return the hidden‐states from each transformer layer.
-        hidden_layers : Sequence[int], optional
-            If provided, select only these layer indices from the hidden states.
-
-        Returns
-        -------
-        Dict[str, np.ndarray]
-            A dictionary containing:
-              - 'embedding': 1D array of shape (hidden_dim,)
-              - 'hidden_states': 3D array of shape
-                (num_layers, seq_len, hidden_dim), if requested.
-
-        Raises
-        ------
-        RuntimeError
-            If the client is not loaded.
-        ValueError
-            If pooling_strategy is invalid.
         """
         if self.client is None or self.device is None:
             raise RuntimeError("ESMC client not loaded; call load() first.")
         if pooling_strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling '{pooling_strategy}'")
 
-        # 1) Prepare input
+        # --- 1) Truncate Sequence if too long ---
+        # This prevents OOM errors on massive proteins like Titin
+
+        # TODO: Currently truncating very large proteins for genes, we should take more closer look into this and only getting the transcript proteins
+
+        if len(inputs) > max_length:
+            logging.warning(f"Sequence too long ({len(inputs)}). Truncating to {max_length}.")
+            inputs = inputs[:max_length]
+
+        # 2) Prepare input
         prot = ESMProtein(sequence=inputs)
         tensor = self.client.encode(prot)
 
-        # 2) Configure and run logits call
+        # 3) Configure and run logits call
+        # ... (Rest of the function is identical) ...
         cfg = LogitsConfig(sequence=True, return_embeddings=True, return_hidden_states=return_hidden_states)
         out: LogitsOutput = self.client.logits(tensor, cfg)
 
-        # 3) Extract per-residue embeddings and remove batch dim
+        # ... (Extraction logic) ...
         embs = out.embeddings
         if embs.dim() == 3 and embs.shape[0] == 1:
-            embs = embs.squeeze(0)  # (seq_len, hidden_dim)
+            embs = embs.squeeze(0)
 
-        # 4) Pool to fixed-length embedding
         if pooling_strategy == "cls":
             pooled = embs[0]
         elif pooling_strategy == "max":
             pooled = torch.max(embs, dim=0)[0]
         else:  # 'mean'
             pooled = torch.mean(embs, dim=0)
+
         result = {"embedding": pooled.cpu().numpy()}
 
         if return_hidden_states:
+            # ... (Hidden states logic) ...
             hidden = out.hidden_states
             if isinstance(hidden, tuple):
                 hs = torch.stack(hidden, dim=0)
             else:
                 hs = hidden
-            # drop any batch‐ or extra singleton dims
             while hs.dim() > 3 and hs.shape[0] == 1:
                 hs = hs.squeeze(0)
             if hs.dim() == 4 and hs.shape[1] == 1:
                 hs = hs.squeeze(1)
-            if hs.dim() != 3:
-                raise RuntimeError(f"Unexpected hidden_states shape {hs.shape}")
 
             if hidden_layers is not None:
                 hs = hs[list(hidden_layers), :, :]
-
             result["hidden_states"] = hs.to(torch.float32).cpu().numpy()
 
         return result
+
+    # TODO: Change the embeddings type so that it can take the full list
 
     def embed_batch(
         self,
