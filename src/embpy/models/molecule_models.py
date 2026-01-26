@@ -1,9 +1,12 @@
 # Placeholder for small molecule models (e.g., ChemBERTa, MolFormer)
 import logging
-from typing import Any
+from collections.abc import Sequence
+from typing import Any, Literal
 
 import numpy as np
 import torch
+from rdkit import Chem, DataStructs
+from rdkit.Chem import AllChem
 from transformers import AutoModel, AutoTokenizer, BatchEncoding
 
 from .base import BaseModelWrapper
@@ -331,3 +334,122 @@ class MolformerWrapper(BaseModelWrapper):
                 embeddings.append(vec.cpu().numpy())
 
         return embeddings
+
+
+class RDKitWrapper(BaseModelWrapper):
+    """
+    Wrapper for RDKit molecular fingerprints.
+
+    This generates fixed-length bit vectors (fingerprints) often used as
+    baselines for molecular embedding tasks.
+
+    Implements:
+      - embed(smiles) → np.ndarray (size: n_bits)
+      - embed_batch([...]) → list[np.ndarray]
+
+    Pooling strategies:
+      • "flat" (default) → Returns the static fingerprint vector.
+        (Note: 'mean'/'max' are ignored as RDKit does not produce token-level embeddings).
+    """
+
+    model_type = "molecule"
+    available_pooling_strategies = ["flat"]
+
+    def __init__(
+        self,
+        model_path_or_name: str = "morgan_fingerprint",
+        fingerprint_type: Literal["morgan", "rdkit"] = "morgan",
+        radius: int = 2,
+        n_bits: int = 2048,
+        **kwargs,
+    ):
+        """
+        Initialize the RDKit wrapper.
+
+        Args:
+            model_path_or_name: Arbitrary identifier for logging (default: "morgan_fingerprint").
+            fingerprint_type: "morgan" (ECFP-like) or "rdkit" (topological).
+            radius: Radius for Morgan fingerprints (default: 2, approx ECFP4).
+            n_bits: Length of the bit vector (default: 2048).
+        """
+        super().__init__(model_path_or_name, **kwargs)
+        self.fingerprint_type = fingerprint_type
+        self.radius = radius
+        self.n_bits = n_bits
+        self._loaded = False
+
+    def load(self, device: torch.device):
+        """
+        Marks the wrapper as loaded.
+
+        Note: RDKit runs entirely on the CPU. The `device` argument is
+        stored for consistency but ignored during computation.
+        """
+        if self._loaded:
+            return
+
+        logging.info(
+            f"Loading RDKit Wrapper (Type={self.fingerprint_type}, Radius={self.radius}, Bits={self.n_bits})..."
+        )
+        self.device = device
+        self._loaded = True
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "flat",
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """
+        Computes the fingerprint for a single SMILES string.
+
+        Args:
+            input: SMILES string.
+            pooling_strategy: Ignored (kept for compatibility).
+
+        Returns
+        -------
+            np.ndarray: A 1D float32 array of 0s and 1s.
+
+        Raises
+        ------
+            ValueError: If the SMILES string is invalid.
+        """
+        if not self._loaded:
+            raise RuntimeError("RDKit model not loaded. Call load() first.")
+
+        # 1. Parse Molecule
+        mol = Chem.MolFromSmiles(input)
+        if mol is None:
+            # You might prefer to return a zero-vector here depending on your pipeline
+            raise ValueError(f"RDKit failed to parse SMILES: {input}")
+
+        # 2. Generate Fingerprint (Bit Vector)
+        if self.fingerprint_type == "morgan":
+            # ECFP-like fingerprint
+            fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=self.radius, nBits=self.n_bits)
+        elif self.fingerprint_type == "rdkit":
+            # RDKit topological fingerprint
+            fp = Chem.RDKitFingerprint(mol, fpSize=self.n_bits)
+        else:
+            raise ValueError(f"Unknown fingerprint type: {self.fingerprint_type}")
+
+        # 3. Convert to Numpy
+        # We use float32 to be compatible with typical PyTorch/Transformer embeddings
+        arr = np.zeros((self.n_bits,), dtype=np.float32)
+        DataStructs.ConvertToNumpyArray(fp, arr)
+
+        return arr
+
+    def embed_batch(
+        self,
+        inputs: Sequence[str],
+        pooling_strategy: str = "flat",
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        """
+        Computes fingerprints for a batch of SMILES.
+        """
+        # RDKit is CPU-bound and releases the GIL well for heavy ops,
+        # but a simple loop is standard unless you need multiprocessing.
+        return [self.embed(s, pooling_strategy=pooling_strategy, **kwargs) for s in inputs]

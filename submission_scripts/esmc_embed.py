@@ -9,7 +9,7 @@ from embpy import BioEmbedder
 # --- Configuration ---
 MODEL_NAME = "esmc_300m"
 OUTPUT_DIR = "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/output/genes"
-OUTPUT_CSV = os.path.join(OUTPUT_DIR, "esmc_human_proteome.csv")
+OUTPUT_CSV = os.path.join(OUTPUT_DIR, "esmc_human_proteome_max.csv")
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
 
@@ -47,7 +47,7 @@ def main():
         model=MODEL_NAME,
         fetch_all_dna=True,  # <--- Triggers discovery
         biotype="protein_coding",  # <--- Filter
-        pooling_strategy="mean",
+        pooling_strategy="max",
     )
 
     # The embedder internally resolved the list of genes.
