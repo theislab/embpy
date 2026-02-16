@@ -36,6 +36,8 @@ dependencies = [
   "pyensembl>=2.3.13",
   "rdkit",
   "requests",
+  "scikit-learn>=1.3",
+  "scipy>=1.11",
   "seaborn",
   "session-info",
   "transformers>=4.45.0,<5.0.0",
@@ -47,8 +49,12 @@ optional-dependencies.torch = [
 optional-dependencies.evo2 = [
   "evo2",
 ]
+optional-dependencies.ppi = [
+  "embpy[torch]",
+  "torch-geometric>=2.5",
+]
 optional-dependencies.all = [
-  "embpy[torch,evo2]",
+  "embpy[torch,evo2,ppi]",
 ]
 optional-dependencies.dev = [
   "pre-commit",

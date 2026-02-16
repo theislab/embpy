@@ -32,8 +32,8 @@ from .base import BaseModelWrapper
 
 # torch_geometric is an optional dependency
 try:
-    from torch_geometric.nn import GATConv, GCNConv, SAGEConv
-    from torch_geometric.utils import negative_sampling
+    from torch_geometric.nn import GATConv, GCNConv, SAGEConv  # pyright: ignore[reportMissingImports]
+    from torch_geometric.utils import negative_sampling  # pyright: ignore[reportMissingImports]
 
     _HAVE_PYG = True
 except ImportError:
@@ -86,14 +86,9 @@ class GNNEncoder(nn.Module):
     ) -> None:
         super().__init__()
         if not _HAVE_PYG:
-            raise ImportError(
-                "torch_geometric is required for GNNEncoder. "
-                "Install with: pip install torch-geometric"
-            )
+            raise ImportError("torch_geometric is required for GNNEncoder. Install with: pip install torch-geometric")
         if gnn_type not in _CONV_REGISTRY:
-            raise ValueError(
-                f"Unknown gnn_type '{gnn_type}'. Choose from {list(_CONV_REGISTRY)}"
-            )
+            raise ValueError(f"Unknown gnn_type '{gnn_type}'. Choose from {list(_CONV_REGISTRY)}")
         if num_layers < 2:
             raise ValueError("num_layers must be >= 2")
 
@@ -277,8 +272,7 @@ class PPIGNNWrapper(BaseModelWrapper):
     ) -> None:
         if not _HAVE_PYG:
             raise ImportError(
-                "torch_geometric is required for PPIGNNWrapper. "
-                "Install with: pip install torch-geometric"
+                "torch_geometric is required for PPIGNNWrapper. Install with: pip install torch-geometric"
             )
         super().__init__(model_path_or_name, **kwargs)
         self.gnn_type = gnn_type
@@ -315,8 +309,7 @@ class PPIGNNWrapper(BaseModelWrapper):
             logging.info("Loaded PPI GNN checkpoint from %s", self.model_name)
         else:
             logging.info(
-                "No pre-trained PPI GNN checkpoint found. "
-                "Call build_graph() then train_embeddings() before embedding."
+                "No pre-trained PPI GNN checkpoint found. Call build_graph() then train_embeddings() before embedding."
             )
 
     def embed(
@@ -394,9 +387,7 @@ class PPIGNNWrapper(BaseModelWrapper):
         """
         n_sources = sum(x is not None for x in (interactions_df, string_links_file, gene_ids))
         if n_sources != 1:
-            raise ValueError(
-                "Provide exactly one of: interactions_df, string_links_file, gene_ids"
-            )
+            raise ValueError("Provide exactly one of: interactions_df, string_links_file, gene_ids")
 
         if interactions_df is not None:
             df = interactions_df
@@ -404,19 +395,14 @@ class PPIGNNWrapper(BaseModelWrapper):
             df = load_string_links_file(string_links_file)
         else:
             assert gene_ids is not None
-            df = _fetch_string_network(
-                gene_ids, species=self.species, score_threshold=self.score_threshold
-            )
+            df = _fetch_string_network(gene_ids, species=self.species, score_threshold=self.score_threshold)
 
         # Filter by score
         if "combined_score" in df.columns:
             df = df[df["combined_score"] >= self.score_threshold]
 
         if df.empty:
-            raise ValueError(
-                "No edges remain after score filtering. "
-                "Lower score_threshold or provide more genes."
-            )
+            raise ValueError("No edges remain after score filtering. Lower score_threshold or provide more genes.")
 
         # Node mapping
         all_nodes = sorted(set(df["protein1"].tolist() + df["protein2"].tolist()))
@@ -595,14 +581,13 @@ class PPIGNNWrapper(BaseModelWrapper):
         if self._embeddings_cache is not None:
             return self._embeddings_cache
         if self.encoder is None or self.edge_index is None:
-            raise RuntimeError(
-                "Model not ready. Call build_graph() and train_embeddings() first."
-            )
+            raise RuntimeError("Model not ready. Call build_graph() and train_embeddings() first.")
         self.encoder.eval()
         with torch.no_grad():
             z = self.encoder(self.edge_index)
-        self._embeddings_cache = z.cpu().numpy().astype(np.float32)
-        return self._embeddings_cache
+        result = z.cpu().numpy().astype(np.float32)
+        self._embeddings_cache = result
+        return result
 
     @property
     def graph_genes(self) -> list[str]:
