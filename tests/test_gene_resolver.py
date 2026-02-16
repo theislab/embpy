@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from unittest.mock import MagicMock, patch
 
+import numpy as np
+import pandas as pd
 import pytest
 
-from embpy.resources.gene_resolver import GeneResolver
+from embpy.resources.gene_resolver import GeneResolver, _looks_like_smiles, detect_identifier_type
 
 
 @pytest.fixture
@@ -220,3 +224,226 @@ class TestGetLocalDnaSequence:
     def test_requires_mart_file(self, resolver):
         with pytest.raises(ValueError, match="mart_file"):
             resolver.get_local_dna_sequence("TP53", "symbol")
+
+
+# =====================================================================
+# _looks_like_smiles  (private helper, tested here since it lives in gene_resolver)
+# =====================================================================
+class TestLooksLikeSmiles:
+    def test_true_for_special_chars(self):
+        assert _looks_like_smiles("CC(=O)O") is True
+        assert _looks_like_smiles("CC[O-]") is True
+        assert _looks_like_smiles("C/C=C/C") is True
+
+    def test_true_for_ring_closure(self):
+        assert _looks_like_smiles("c1ccccc1") is True
+
+    def test_false_for_simple_letters(self):
+        assert _looks_like_smiles("CCO") is False
+
+    def test_false_for_gene_symbols(self):
+        assert _looks_like_smiles("TP53") is False
+        assert _looks_like_smiles("BRCA1") is False
+
+    def test_false_for_short(self):
+        assert _looks_like_smiles("CC") is False
+
+    def test_false_for_ensembl(self):
+        assert _looks_like_smiles("ENSG00000141510") is False
+
+
+# =====================================================================
+# detect_identifier_type  (unified: DNA, Ensembl, symbol, SMILES, protein)
+# =====================================================================
+class TestDetectIdentifierType:
+    def test_ensembl_id(self):
+        assert detect_identifier_type("ENSG00000141510") == "ensembl_id"
+
+    def test_ensembl_id_with_version(self):
+        assert detect_identifier_type("ENSG00000141510.12") == "ensembl_id"
+
+    def test_dna_sequence(self):
+        assert detect_identifier_type("ACGTACGTACGTACGTACGTACGT") == "dna_sequence"
+
+    def test_short_dna_is_symbol(self):
+        assert detect_identifier_type("ACGT") == "symbol"
+
+    def test_gene_symbol(self):
+        assert detect_identifier_type("TP53") == "symbol"
+
+    def test_gene_symbol_brca1(self):
+        assert detect_identifier_type("BRCA1") == "symbol"
+
+    def test_mixed_case_dna(self):
+        assert detect_identifier_type("acgtACGTacgtACGTnnnn") == "dna_sequence"
+
+    def test_smiles_with_special_chars(self):
+        assert detect_identifier_type("CC(=O)O") == "smiles"
+
+    def test_smiles_with_ring(self):
+        assert detect_identifier_type("c1ccccc1") == "smiles"
+
+    def test_protein_sequence(self):
+        assert detect_identifier_type("MTEYKLVVVGAGGVGKSALT") == "protein_sequence"
+
+    def test_short_protein_is_symbol(self):
+        assert detect_identifier_type("MTEYK") == "symbol"
+
+    def test_simple_letters_no_special_is_symbol(self):
+        # "CCO" – no SMILES special chars, too short for protein/DNA
+        assert detect_identifier_type("CCO") == "symbol"
+
+
+# =====================================================================
+# load_sequences_from_biomart
+# =====================================================================
+class TestLoadSequencesFromBiomart:
+    def _make_mart_csv(self, tmpdir):
+        df = pd.DataFrame(
+            {
+                "Gene stable ID": ["ENSG001", "ENSG002"],
+                "Chromosome/scaffold name": ["1", "1"],
+                "Gene start (bp)": [10, 50],
+                "Gene end (bp)": [20, 60],
+                "Gene type": ["protein_coding", "lncRNA"],
+            }
+        )
+        path = os.path.join(tmpdir, "mart.csv")
+        df.to_csv(path, index=False)
+        return path
+
+    def _make_chr_fasta(self, tmpdir):
+        chrom_dir = os.path.join(tmpdir, "genome")
+        os.makedirs(chrom_dir, exist_ok=True)
+        fasta_path = os.path.join(chrom_dir, "chr1.fa")
+        with open(fasta_path, "w") as f:
+            f.write(">chr1\n")
+            f.write("A" * 100 + "\n")
+        return chrom_dir
+
+    def test_loads_all_genes(self, resolver):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mart = self._make_mart_csv(tmpdir)
+            genome = self._make_chr_fasta(tmpdir)
+            seqs = resolver.load_sequences_from_biomart(mart_file=mart, chrom_folder=genome)
+            assert len(seqs) == 2
+            assert "ENSG001" in seqs
+            assert len(seqs["ENSG001"]) == 11  # 10..20 inclusive → 1-based [9:20] = 11 chars
+
+    def test_filters_by_biotype(self, resolver):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mart = self._make_mart_csv(tmpdir)
+            genome = self._make_chr_fasta(tmpdir)
+            seqs = resolver.load_sequences_from_biomart(mart_file=mart, chrom_folder=genome, biotype="protein_coding")
+            assert len(seqs) == 1
+            assert "ENSG001" in seqs
+
+    def test_raises_without_mart_file(self, resolver):
+        with pytest.raises(ValueError, match="mart_file"):
+            resolver.load_sequences_from_biomart()
+
+    def test_missing_chr_skips(self, resolver):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            df = pd.DataFrame(
+                {
+                    "Gene stable ID": ["ENSG999"],
+                    "Chromosome/scaffold name": ["99"],
+                    "Gene start (bp)": [10],
+                    "Gene end (bp)": [20],
+                }
+            )
+            mart = os.path.join(tmpdir, "mart.csv")
+            df.to_csv(mart, index=False)
+            genome = os.path.join(tmpdir, "genome")
+            os.makedirs(genome, exist_ok=True)
+            seqs = resolver.load_sequences_from_biomart(mart_file=mart, chrom_folder=genome)
+            assert len(seqs) == 0
+
+
+# =====================================================================
+# load_genes_from_adata
+# =====================================================================
+class TestLoadGenesFromAdata:
+    def test_explicit_column(self, resolver):
+        import anndata as ad
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            var = pd.DataFrame({"my_genes": ["TP53", "BRCA1"]}, index=["g0", "g1"])
+            adata = ad.AnnData(np.zeros((3, 2)), var=var)
+            path = os.path.join(tmpdir, "test.h5ad")
+            adata.write_h5ad(path)
+            genes = resolver.load_genes_from_adata(path, column="my_genes")
+            assert genes == ["TP53", "BRCA1"]
+
+    def test_auto_detects_ensembl_id(self, resolver):
+        import anndata as ad
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            var = pd.DataFrame({"ensembl_id": ["ENSG001", "ENSG002"]}, index=["g0", "g1"])
+            adata = ad.AnnData(np.zeros((3, 2)), var=var)
+            path = os.path.join(tmpdir, "test.h5ad")
+            adata.write_h5ad(path)
+            genes = resolver.load_genes_from_adata(path)
+            assert genes == ["ENSG001", "ENSG002"]
+
+    def test_auto_detects_gene_name(self, resolver):
+        import anndata as ad
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            var = pd.DataFrame({"gene_name": ["TP53", "BRCA1"]}, index=["g0", "g1"])
+            adata = ad.AnnData(np.zeros((3, 2)), var=var)
+            path = os.path.join(tmpdir, "test.h5ad")
+            adata.write_h5ad(path)
+            genes = resolver.load_genes_from_adata(path)
+            assert genes == ["TP53", "BRCA1"]
+
+    def test_falls_back_to_index(self, resolver):
+        import anndata as ad
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            var = pd.DataFrame(index=["GeneA", "GeneB"])
+            adata = ad.AnnData(np.zeros((3, 2)), var=var)
+            path = os.path.join(tmpdir, "test.h5ad")
+            adata.write_h5ad(path)
+            genes = resolver.load_genes_from_adata(path)
+            assert genes == ["GeneA", "GeneB"]
+
+
+# =====================================================================
+# get_protein_sequences_batch
+# =====================================================================
+class TestGetProteinSequencesBatch:
+    def test_batch_returns_dict(self, resolver):
+        resolver.get_protein_sequence = MagicMock(side_effect=["MSEQ1", "MSEQ2", None])
+        result = resolver.get_protein_sequences_batch(["A", "B", "C"], id_type="ensembl_id")
+        assert result == {"A": "MSEQ1", "B": "MSEQ2"}
+        assert "C" not in result
+
+    def test_empty_input(self, resolver):
+        resolver.get_protein_sequence = MagicMock()
+        result = resolver.get_protein_sequences_batch([])
+        assert result == {}
+
+
+# =====================================================================
+# get_all_local_protein_sequences
+# =====================================================================
+class TestGetAllLocalProteinSequences:
+    def test_reads_from_mart_and_batches(self, resolver):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            df = pd.DataFrame(
+                {
+                    "Gene stable ID": ["ENSG001", "ENSG002"],
+                    "Gene type": ["protein_coding", "protein_coding"],
+                }
+            )
+            mart = os.path.join(tmpdir, "mart.csv")
+            df.to_csv(mart, index=False)
+
+            resolver.get_protein_sequence = MagicMock(side_effect=["MSEQ1", "MSEQ2"])
+            result = resolver.get_all_local_protein_sequences(mart_file=mart)
+            assert len(result) == 2
+
+    def test_raises_without_mart(self, resolver):
+        with pytest.raises(ValueError, match="mart_file"):
+            resolver.get_all_local_protein_sequences()

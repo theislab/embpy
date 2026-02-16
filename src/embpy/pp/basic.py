@@ -1,54 +1,78 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
 from anndata import AnnData
+from scipy.sparse import issparse
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+
+from embpy.resources.gene_resolver import GeneResolver, detect_identifier_type
 
 
 class PerturbationProcessor:
-    """
-    Preprocessor for perturbation experimental data.
+    """Preprocessor for perturbation experimental data.
 
     Provides utilities to normalize identifiers (gene symbols, SMILES, etc.),
-    resolve them to canonical forms, and build embedding matrices from
-    BioEmbedder results, ready for downstream analysis.
+    resolve them to canonical forms, build embedding matrices from
+    BioEmbedder results, and run dimensionality reduction.
 
     Parameters
     ----------
     embedder : BioEmbedder, optional
-        An initialized BioEmbedder instance. If provided, used for
+        An initialized BioEmbedder instance.  If provided, used for
         resolving identifiers and computing embeddings.
+    gene_resolver : GeneResolver, optional
+        Explicit GeneResolver instance.  If *embedder* is given this is
+        taken from ``embedder.gene_resolver`` automatically.
     """
 
-    def __init__(self, embedder=None):
+    def __init__(self, embedder=None, gene_resolver: GeneResolver | None = None):
         self.embedder = embedder
+        if gene_resolver is not None:
+            self.gene_resolver = gene_resolver
+        elif embedder is not None and hasattr(embedder, "gene_resolver"):
+            self.gene_resolver = embedder.gene_resolver
+        else:
+            self.gene_resolver = GeneResolver()
+
+    # ------------------------------------------------------------------
+    # Identifier helpers
+    # ------------------------------------------------------------------
 
     def normalize_gene_names(
         self,
         identifiers: Sequence[str],
         organism: str = "human",
     ) -> dict[str, str | None]:
-        """
-        Normalize gene identifiers to canonical Ensembl IDs.
-
-        Handles common issues: case normalization, alias resolution,
-        deprecated symbol mapping.
+        """Normalize gene identifiers to canonical Ensembl IDs.
 
         Parameters
         ----------
         identifiers
             List of gene symbols or Ensembl IDs to normalize.
         organism
-            Target organism for resolution. Defaults to "human".
+            Target organism for resolution.
 
         Returns
         -------
         dict mapping input identifiers to canonical Ensembl gene IDs,
-        or None where resolution failed.
+        or ``None`` where resolution failed.
         """
-        raise NotImplementedError("normalize_gene_names will be implemented in a future release.")
+        result: dict[str, str | None] = {}
+        for ident in identifiers:
+            kind = detect_identifier_type(ident)
+            if kind == "ensembl_id":
+                result[ident] = ident.split(".")[0].strip()
+            elif kind == "symbol":
+                ens = self.gene_resolver.symbol_to_ensembl(ident, organism=organism)
+                result[ident] = ens
+            else:
+                result[ident] = None
+        return result
 
     def resolve_identifiers(
         self,
@@ -56,26 +80,64 @@ class PerturbationProcessor:
         id_type: str = "auto",
         organism: str = "human",
     ) -> pd.DataFrame:
-        """
-        Resolve a mixed list of identifiers to a structured DataFrame.
-
-        Auto-detects identifier types (gene symbol, Ensembl ID, SMILES, etc.)
-        and resolves each to its canonical form with metadata.
+        """Resolve a mixed list of identifiers to a structured DataFrame.
 
         Parameters
         ----------
         identifiers
             List of identifiers to resolve.
         id_type
-            Type hint: "auto", "gene_symbol", "ensembl_id", "smiles", "drug_name".
+            Type hint: ``"auto"``, ``"gene_symbol"``, ``"ensembl_id"``,
+            ``"smiles"``, ``"drug_name"``.
         organism
             Target organism for gene resolution.
 
         Returns
         -------
-        DataFrame with columns: original_id, canonical_id, id_type, resolved (bool).
+        DataFrame with columns ``original_id``, ``canonical_id``,
+        ``id_type``, ``resolved``.
         """
-        raise NotImplementedError("resolve_identifiers will be implemented in a future release.")
+        rows: list[dict] = []
+        for ident in identifiers:
+            detected = detect_identifier_type(ident) if id_type == "auto" else id_type
+
+            canonical: str | None = None
+            resolved = False
+
+            if detected == "ensembl_id":
+                canonical = ident.split(".")[0].strip()
+                resolved = True
+            elif detected == "symbol":
+                ens = self.gene_resolver.symbol_to_ensembl(ident, organism=organism)
+                if ens:
+                    canonical = ens
+                    resolved = True
+            elif detected == "smiles":
+                canonical = ident
+                resolved = True
+            elif detected == "dna_sequence":
+                canonical = ident[:40]
+                resolved = True
+            elif detected == "protein_sequence":
+                canonical = ident[:40]
+                resolved = True
+            else:
+                canonical = ident
+
+            rows.append(
+                {
+                    "original_id": ident,
+                    "canonical_id": canonical,
+                    "id_type": detected,
+                    "resolved": resolved,
+                }
+            )
+
+        return pd.DataFrame(rows)
+
+    # ------------------------------------------------------------------
+    # Embedding matrix construction
+    # ------------------------------------------------------------------
 
     def build_embedding_matrix(
         self,
@@ -84,87 +146,262 @@ class PerturbationProcessor:
         id_type: str = "symbol",
         organism: str = "human",
         pooling_strategy: str = "mean",
+        obsm_key: str | None = None,
     ) -> AnnData:
-        """
-        Build an AnnData object with embeddings for a list of perturbations.
+        """Build an AnnData with embeddings stored in ``.obsm``.
 
-        Resolves identifiers, computes embeddings via BioEmbedder, and
-        returns a structured AnnData where obs are perturbations and
-        X contains embedding vectors.
+        For every identifier the ``BioEmbedder`` is used to compute an
+        embedding.  Successful embeddings are stored as a 2-D numpy array
+        in ``adata.obsm[obsm_key]``.  A boolean column
+        ``adata.obs["embedded"]`` records which perturbations succeeded.
 
         Parameters
         ----------
         identifiers
-            List of perturbation identifiers (genes, molecules, etc.).
+            Perturbation identifiers (genes, molecules, etc.).
         model
-            Model name to use for embedding (e.g., "esm2_650M", "chemberta2MTR").
+            Model name (e.g. ``"esm2_650M"``, ``"chemberta2MTR"``).
         id_type
-            Type of identifiers provided.
+            Identifier type (``"symbol"``, ``"ensembl_id"``, …).
         organism
             Target organism.
         pooling_strategy
-            Pooling strategy for the embedding model.
+            Pooling strategy for the model.
+        obsm_key
+            Key under which the matrix is stored in ``.obsm``.
+            Defaults to ``"X_{model}"``.
 
         Returns
         -------
-        AnnData with shape (n_perturbations, embedding_dim).
-        obs contains metadata about each perturbation.
+        AnnData of shape ``(n_identifiers, 0)`` with the embedding
+        matrix in ``adata.obsm[obsm_key]`` and metadata in ``adata.obs``.
         """
-        raise NotImplementedError("build_embedding_matrix will be implemented in a future release.")
+        if self.embedder is None:
+            raise ValueError("An initialized BioEmbedder is required for build_embedding_matrix.")
+
+        key = obsm_key or f"X_{model}"
+        n = len(identifiers)
+        id_list = list(identifiers)
+
+        embeddings: list[np.ndarray | None] = []
+        for ident in id_list:
+            try:
+                emb = self.embedder.embed_gene(
+                    identifier=ident,
+                    model=model,
+                    id_type=id_type,
+                    organism=organism,
+                    pooling_strategy=pooling_strategy,
+                )
+                embeddings.append(np.asarray(emb, dtype=np.float32).ravel())
+            except Exception:  # noqa: BLE001
+                logging.warning(f"Embedding failed for '{ident}'; marking as failed.")
+                embeddings.append(None)
+
+        embedded_mask = [e is not None for e in embeddings]
+
+        # Determine embedding dimension from the first successful entry
+        emb_dim = 0
+        for e in embeddings:
+            if e is not None:
+                emb_dim = e.shape[0]
+                break
+
+        matrix = np.zeros((n, emb_dim), dtype=np.float32)
+        for i, e in enumerate(embeddings):
+            if e is not None:
+                matrix[i] = e
+
+        obs = pd.DataFrame(
+            {
+                "identifier": id_list,
+                "id_type": id_type,
+                "model": model,
+                "pooling": pooling_strategy,
+                "embedded": embedded_mask,
+            }
+        )
+        obs.index = obs.index.astype(str)
+
+        adata = AnnData(obs=obs)
+        adata.obsm[key] = matrix
+        logging.info(
+            f"Built embedding matrix: {sum(embedded_mask)}/{n} succeeded, dim={emb_dim}, stored in .obsm['{key}']."
+        )
+        return adata
+
+    # ------------------------------------------------------------------
+    # Filtering & combining
+    # ------------------------------------------------------------------
 
     def filter_failed_embeddings(
         self,
         adata: AnnData,
+        obsm_key: str | None = None,
     ) -> AnnData:
-        """
-        Remove perturbations that failed to embed from an AnnData object.
+        """Remove perturbations that failed to embed.
 
         Parameters
         ----------
         adata
-            AnnData returned by build_embedding_matrix.
+            AnnData returned by :meth:`build_embedding_matrix`.
+        obsm_key
+            The ``.obsm`` key to filter on.  If ``None`` the first key
+            found in ``.obsm`` is used.
 
         Returns
         -------
-        Filtered AnnData with failed entries removed.
+        Filtered AnnData with only the successfully embedded rows.
         """
-        raise NotImplementedError("filter_failed_embeddings will be implemented in a future release.")
+        if "embedded" not in adata.obs.columns:
+            raise ValueError("adata.obs must contain an 'embedded' column (from build_embedding_matrix).")
+
+        mask = adata.obs["embedded"].values.astype(bool)
+        return adata[mask].copy()
 
     def combine_perturbation_spaces(
         self,
-        genetic: AnnData | None = None,
-        molecular: AnnData | None = None,
+        *adatas: AnnData,
+        labels: Sequence[str] | None = None,
+        obsm_key: str | None = None,
     ) -> AnnData:
-        """
-        Combine genetic and molecular perturbation embedding spaces.
+        """Combine multiple perturbation embedding AnnData objects.
 
-        Concatenates embedding matrices and adds metadata to distinguish
-        perturbation types, enabling joint analysis.
+        Concatenates rows and stores the unioned ``.obsm`` matrices.
+        A ``perturbation_type`` column is added to ``obs``.
 
         Parameters
         ----------
-        genetic
-            AnnData of gene perturbation embeddings.
-        molecular
-            AnnData of small molecule perturbation embeddings.
+        *adatas
+            One or more AnnData objects (e.g. genetic, molecular).
+        labels
+            Per-AnnData labels written to ``obs["perturbation_type"]``.
+            Defaults to ``["set_0", "set_1", …]``.
+        obsm_key
+            If given, only this key is kept in ``.obsm`` across all
+            inputs (they must share the same key and dimensionality).
 
         Returns
         -------
-        Combined AnnData with a 'perturbation_type' column in obs.
+        Combined AnnData.
         """
-        raise NotImplementedError("combine_perturbation_spaces will be implemented in a future release.")
+        import anndata as ad
+
+        if not adatas:
+            raise ValueError("At least one AnnData must be provided.")
+
+        if labels is None:
+            labels = [f"set_{i}" for i in range(len(adatas))]
+        if len(labels) != len(adatas):
+            raise ValueError("Number of labels must match number of AnnData objects.")
+
+        for a, label in zip(adatas, labels, strict=True):
+            a.obs["perturbation_type"] = label
+
+        combined = ad.concat(list(adatas), join="outer")
+        logging.info(f"Combined {len(adatas)} perturbation spaces → {combined.n_obs} observations.")
+        return combined
+
+    # ------------------------------------------------------------------
+    # Dimensionality reduction
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def reduce_embeddings(
+        adata: AnnData,
+        obsm_key: str,
+        n_components: int = 50,
+        scale: bool = True,
+        output_key: str | None = None,
+    ) -> AnnData:
+        """Reduce embedding dimensionality via PCA.
+
+        The pipeline is:
+
+        1. Optionally standardise features with ``StandardScaler``
+           (zero-mean, unit-variance).
+        2. Fit PCA and transform.
+        3. Store the reduced matrix back in ``.obsm``.
+
+        Parameters
+        ----------
+        adata
+            AnnData whose ``.obsm[obsm_key]`` contains the embedding
+            matrix to reduce.
+        obsm_key
+            Key in ``.obsm`` holding the full-dimensional embeddings.
+        n_components
+            Number of principal components to keep.
+        scale
+            If ``True`` (default), apply ``StandardScaler`` before PCA.
+            This is recommended when combining embeddings from different
+            models, as their scales can differ significantly.
+        output_key
+            Key under which the reduced matrix is stored.
+            Defaults to ``"{obsm_key}_pca"``.
+
+        Returns
+        -------
+        The same AnnData (modified **in-place**) with the reduced
+        matrix in ``.obsm[output_key]`` and the fitted ``PCA`` and
+        ``StandardScaler`` objects stored in ``.uns``.
+        """
+        if obsm_key not in adata.obsm:
+            raise KeyError(f"'{obsm_key}' not found in adata.obsm. Available: {list(adata.obsm.keys())}")
+
+        X_raw = adata.obsm[obsm_key]
+        if issparse(X_raw):
+            X = np.asarray(X_raw.todense(), dtype=np.float64)
+        else:
+            X = np.asarray(X_raw, dtype=np.float64)
+
+        n_samples, n_features = X.shape
+        actual_components = min(n_components, n_samples, n_features)
+
+        if scale:
+            scaler = StandardScaler()
+            X_scaled = scaler.fit_transform(X)
+        else:
+            scaler = None
+            X_scaled = X
+
+        pca = PCA(n_components=actual_components, random_state=0)
+        X_reduced = pca.fit_transform(X_scaled).astype(np.float32)
+
+        out_key = output_key or f"{obsm_key}_pca"
+        adata.obsm[out_key] = X_reduced
+
+        uns_key = f"{out_key}_params"
+        adata.uns[uns_key] = {
+            "n_components": actual_components,
+            "explained_variance_ratio": pca.explained_variance_ratio_,
+            "total_variance_explained": float(pca.explained_variance_ratio_.sum()),
+            "scaled": scale,
+        }
+
+        logging.info(
+            f"PCA: {n_features} → {actual_components} components "
+            f"({pca.explained_variance_ratio_.sum():.1%} variance explained), "
+            f"stored in .obsm['{out_key}']."
+        )
+        return adata
 
 
-def basic_preproc(adata: AnnData) -> int:
-    """Run a basic preprocessing on the AnnData object.
+def reduce_embeddings(
+    adata: AnnData,
+    obsm_key: str,
+    n_components: int = 50,
+    scale: bool = True,
+    output_key: str | None = None,
+) -> AnnData:
+    """Convenience wrapper around :meth:`PerturbationProcessor.reduce_embeddings`.
 
-    Parameters
-    ----------
-    adata
-        The AnnData object to preprocess.
-
-    Returns
-    -------
-    Some integer value.
+    See :meth:`PerturbationProcessor.reduce_embeddings` for full docs.
     """
-    raise NotImplementedError("basic_preproc is a placeholder.")
+    return PerturbationProcessor.reduce_embeddings(
+        adata=adata,
+        obsm_key=obsm_key,
+        n_components=n_components,
+        scale=scale,
+        output_key=output_key,
+    )

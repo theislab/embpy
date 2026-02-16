@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import time
 from typing import Literal
 
@@ -7,15 +8,59 @@ import pandas as pd
 import requests
 from Bio import SeqIO
 
-# --- Placeholder Implementation ---
-# This needs to be replaced with actual logic using libraries like:
-# - pyensembl (for local data)
-# - biopython (Entrez, etc.)
-# - Ensembl REST API client
-# - UniProt API client
-# Consider caching results.
 
-# TODO: we should add an option to get only the full genome, not only the specific genes
+def _looks_like_smiles(s: str) -> bool:
+    """Heuristic check for a SMILES string.
+
+    Looks for special SMILES characters (bonds, brackets, ring-closure
+    digits, charges, etc.).
+    """
+    if len(s) < 3 or s.startswith("ENS"):
+        return False
+    smiles_special = set("=()[]#@+\\/-.")
+    if smiles_special & set(s):
+        return True
+    if re.search(r"[A-Za-z]\d", s) and not re.fullmatch(r"[A-Z][A-Za-z0-9]+", s):
+        return True
+    return False
+
+
+_AA_CHARS = frozenset("ACDEFGHIKLMNPQRSTVWYXacdefghiklmnpqrstvwyx")
+
+
+def detect_identifier_type(
+    identifier: str,
+) -> Literal["dna_sequence", "ensembl_id", "symbol", "smiles", "protein_sequence"]:
+    """Classify a biological identifier string.
+
+    Checks are applied in the following order:
+
+    1. SMILES (presence of special bond / ring characters).
+    2. Raw DNA sequence (only ``ACGTNacgtn``, length >= 20).
+    3. Ensembl gene ID (``ENSG…`` pattern).
+    4. Amino-acid sequence (only standard AA letters, length >= 10).
+    5. Falls back to ``"symbol"`` (gene symbol / name).
+
+    Parameters
+    ----------
+    identifier
+        The input string to classify.
+
+    Returns
+    -------
+    One of ``"smiles"``, ``"dna_sequence"``, ``"ensembl_id"``,
+    ``"protein_sequence"``, or ``"symbol"``.
+    """
+    s = identifier.strip()
+    if _looks_like_smiles(s):
+        return "smiles"
+    if re.fullmatch(r"[ACGTNacgtn]+", s) and len(s) >= 20:
+        return "dna_sequence"
+    if re.match(r"^ENS[A-Z]*G\d{11}(\.\d+)?$", s, re.IGNORECASE):
+        return "ensembl_id"
+    if len(s) >= 10 and all(c in _AA_CHARS for c in s):
+        return "protein_sequence"
+    return "symbol"
 
 
 class GeneResolver:
@@ -474,8 +519,7 @@ class GeneResolver:
     # TODO: we can use merge this function with the previous ones and clean it up
 
     def get_gene_sequences(self, biotype: str = "protein_coding") -> dict[str, str] | None:
-        """
-        Fetches genomic DNA sequences via Ensembl REST API.
+        """Fetch genomic DNA sequences via Ensembl REST API.
 
         Parameters
         ----------
@@ -491,17 +535,13 @@ class GeneResolver:
         logging.info(f"Querying metadata from Release {self.ensembl.release}...")
 
         try:
-            # 1. Fetch metadata for ALL genes locally (Fast)
             all_genes = self.ensembl.genes()
 
-            # --- FILTERING LOGIC ---
             if biotype.lower() != "all":
                 logging.info(f"Filtering for biotype: '{biotype}'")
-                # Filter the list based on the .biotype attribute
                 all_genes = [g for g in all_genes if g.biotype == biotype]
             else:
                 logging.info("Fetching ALL biotypes (no filter applied).")
-            # -----------------------
 
             total_genes = len(all_genes)
 
@@ -513,24 +553,19 @@ class GeneResolver:
                 return {}
 
             logging.info(f"Found {total_genes} genes. Starting REST API downloads...")
-            logging.warning(f"⚠️ This involves ~{total_genes} network requests.")
+            logging.warning(f"This involves ~{total_genes} network requests.")
 
             gene_sequences = {}
 
-            # 2. Iterate and fetch sequence via API (Slow)
             for i, gene in enumerate(all_genes):
-                # Log progress more frequently because API is slower
                 if i > 0 and i % 100 == 0:
                     logging.info(f"Fetched {i}/{total_genes} sequences...")
 
-                # Call your helper function
                 seq = self.get_dna_sequence(identifier=gene.gene_id, id_type="ensembl_id", organism="human")
 
                 if seq:
                     gene_sequences[gene.gene_id] = seq
 
-                # CRITICAL: Rate limiting to respect Ensembl API (15 req/sec max)
-                # We sleep 0.1s to stay safe (approx 10 req/sec)
                 time.sleep(0.1)
 
             logging.info(f"Successfully extracted {len(gene_sequences)} gene sequences.")
@@ -539,3 +574,192 @@ class GeneResolver:
         except Exception as e:
             logging.error(f"Error in get_gene_sequences loop: {e}")
             return None
+
+    # ------------------------------------------------------------------
+    # Bulk / batch methods for submission-script support
+    # ------------------------------------------------------------------
+
+    def load_sequences_from_biomart(
+        self,
+        mart_file: str | None = None,
+        chrom_folder: str | None = None,
+        biotype: str | None = None,
+    ) -> dict[str, str]:
+        """Load DNA sequences for every gene in a BioMart annotation file.
+
+        Reads the BioMart CSV, optionally filters by ``Gene type`` column, then
+        extracts DNA from the per-chromosome FASTA files.
+
+        Parameters
+        ----------
+        mart_file
+            Path to the BioMart CSV.  Falls back to ``self.mart_file``.
+        chrom_folder
+            Path to the directory with ``chr<N>.fa`` files.  Falls back to
+            ``self.chrom_folder``.
+        biotype
+            If given, only rows whose ``Gene type`` column equals this value
+            are kept (e.g. ``"protein_coding"``).  ``None`` keeps all rows.
+
+        Returns
+        -------
+        dict mapping Ensembl gene IDs to DNA strings.
+        """
+        mf = mart_file or self.mart_file
+        cf = chrom_folder or self.chrom_folder
+        if not mf or not cf:
+            raise ValueError("mart_file and chrom_folder are required for local bulk loading.")
+
+        df = pd.read_csv(mf)
+        if biotype is not None and "Gene type" in df.columns:
+            df = df[df["Gene type"] == biotype]
+        elif biotype is not None and "Gene type" not in df.columns:
+            logging.warning("'Gene type' column not found in BioMart file; ignoring biotype filter.")
+
+        required_cols = {"Gene stable ID", "Chromosome/scaffold name", "Gene start (bp)", "Gene end (bp)"}
+        if not required_cols.issubset(df.columns):
+            raise ValueError(f"BioMart CSV must contain columns: {required_cols}")
+
+        chrom_cache: dict[str, str] = {}
+        sequences: dict[str, str] = {}
+        n_skipped = 0
+
+        for _, row in df.iterrows():
+            gene_id = str(row["Gene stable ID"])
+            chrom = str(row["Chromosome/scaffold name"])
+            start = int(row["Gene start (bp)"])
+            end = int(row["Gene end (bp)"])
+
+            if chrom not in chrom_cache:
+                fasta_path = os.path.join(cf, f"chr{chrom}.fa")
+                if not os.path.isfile(fasta_path):
+                    n_skipped += 1
+                    continue
+                rec = SeqIO.read(fasta_path, "fasta")
+                chrom_cache[chrom] = str(rec.seq).upper()
+
+            full_seq = chrom_cache[chrom]
+            sequences[gene_id] = full_seq[start - 1 : end]
+
+        logging.info(f"Loaded {len(sequences)} local sequences ({n_skipped} skipped due to missing chr files).")
+        return sequences
+
+    def load_genes_from_adata(
+        self,
+        adata_path: str,
+        column: str | None = None,
+    ) -> list[str]:
+        """Extract gene identifiers from an AnnData ``.h5ad`` file.
+
+        Searches for a usable column in this priority order:
+
+        1. Explicitly provided *column* name in ``adata.var``.
+        2. ``"ensembl_id"`` in ``adata.var``.
+        3. ``"gene_name"`` or ``"gene_symbol"`` in ``adata.var``.
+        4. ``adata.var_names`` (the index).
+
+        Parameters
+        ----------
+        adata_path
+            Path to the ``.h5ad`` file.
+        column
+            Explicit column name to use from ``adata.var``.
+
+        Returns
+        -------
+        List of gene identifier strings.
+        """
+        import anndata as ad
+
+        adata = ad.read_h5ad(adata_path)
+        var = adata.var
+
+        if column and column in var.columns:
+            genes = var[column].dropna().astype(str).tolist()
+            logging.info(f"Loaded {len(genes)} genes from adata.var['{column}'].")
+            return genes
+
+        for candidate in ("ensembl_id", "gene_id", "ensembl_gene_id"):
+            if candidate in var.columns:
+                genes = var[candidate].dropna().astype(str).tolist()
+                logging.info(f"Auto-detected column '{candidate}'; loaded {len(genes)} genes.")
+                return genes
+
+        for candidate in ("gene_name", "gene_symbol", "symbol"):
+            if candidate in var.columns:
+                genes = var[candidate].dropna().astype(str).tolist()
+                logging.info(f"Auto-detected column '{candidate}'; loaded {len(genes)} genes.")
+                return genes
+
+        genes = var.index.astype(str).tolist()
+        logging.info(f"Using var_names index; loaded {len(genes)} genes.")
+        return genes
+
+    def get_protein_sequences_batch(
+        self,
+        identifiers: list[str],
+        id_type: Literal["symbol", "ensembl_id", "uniprot_id"] = "ensembl_id",
+        organism: str = "human",
+    ) -> dict[str, str]:
+        """Fetch protein sequences for a list of gene identifiers.
+
+        Parameters
+        ----------
+        identifiers
+            List of gene identifiers.
+        id_type
+            Type of the identifiers.
+        organism
+            Target organism.
+
+        Returns
+        -------
+        dict mapping identifier to amino-acid sequence string.
+        """
+        results: dict[str, str] = {}
+        total = len(identifiers)
+        for i, ident in enumerate(identifiers):
+            if i > 0 and i % 100 == 0:
+                logging.info(f"Fetched protein {i}/{total}...")
+            seq = self.get_protein_sequence(ident, id_type=id_type, organism=organism)
+            if seq:
+                results[ident] = seq
+            time.sleep(0.07)
+        logging.info(f"Fetched {len(results)}/{total} protein sequences.")
+        return results
+
+    def get_all_local_protein_sequences(
+        self,
+        mart_file: str | None = None,
+        biotype: str | None = "protein_coding",
+        organism: str = "human",
+    ) -> dict[str, str]:
+        """Get protein sequences for all genes listed in a BioMart file.
+
+        Reads Ensembl gene IDs from the BioMart CSV and then fetches
+        protein sequences from UniProt via the API.
+
+        Parameters
+        ----------
+        mart_file
+            Path to the BioMart CSV.  Falls back to ``self.mart_file``.
+        biotype
+            If given, filters BioMart rows by ``Gene type``.
+        organism
+            Organism for UniProt queries.
+
+        Returns
+        -------
+        dict mapping Ensembl gene IDs to amino-acid sequence strings.
+        """
+        mf = mart_file or self.mart_file
+        if not mf:
+            raise ValueError("mart_file is required.")
+
+        df = pd.read_csv(mf)
+        if biotype and "Gene type" in df.columns:
+            df = df[df["Gene type"] == biotype]
+
+        gene_ids = df["Gene stable ID"].dropna().unique().tolist()
+        logging.info(f"Fetching protein sequences for {len(gene_ids)} genes from BioMart...")
+        return self.get_protein_sequences_batch(gene_ids, id_type="ensembl_id", organism=organism)
