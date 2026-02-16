@@ -5,8 +5,8 @@ from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
+import scipy.sparse as sp
 from anndata import AnnData
-from scipy.sparse import issparse
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
@@ -290,23 +290,16 @@ class PerturbationProcessor:
         SMILES in ``adata.obs["smiles"]``.
         """
         if self.embedder is None:
-            raise ValueError(
-                "An initialized BioEmbedder is required for "
-                "build_molecule_embedding_matrix."
-            )
+            raise ValueError("An initialized BioEmbedder is required for build_molecule_embedding_matrix.")
 
         # ---- Resolve the identifier list --------------------------------
         if adata is not None:
             if column is None:
                 raise ValueError(
-                    "When passing an AnnData, 'column' must specify the "
-                    ".obs column containing drug identifiers."
+                    "When passing an AnnData, 'column' must specify the .obs column containing drug identifiers."
                 )
             if column not in adata.obs.columns:
-                raise KeyError(
-                    f"Column '{column}' not found in adata.obs. "
-                    f"Available: {list(adata.obs.columns)}"
-                )
+                raise KeyError(f"Column '{column}' not found in adata.obs. Available: {list(adata.obs.columns)}")
             id_list: list[str] = adata.obs[column].astype(str).tolist()
             result_adata = adata.copy()
         elif identifiers is not None:
@@ -317,9 +310,7 @@ class PerturbationProcessor:
             )
             result_adata.obs.index = result_adata.obs.index.astype(str)
         else:
-            raise ValueError(
-                "Provide either 'adata' (+ column) or 'identifiers'."
-            )
+            raise ValueError("Provide either 'adata' (+ column) or 'identifiers'.")
 
         key = obsm_key or f"X_{model}"
         n = len(id_list)
@@ -354,9 +345,7 @@ class PerturbationProcessor:
                     model=model,
                     pooling_strategy=pooling_strategy,
                 )
-                embeddings.append(
-                    np.asarray(emb, dtype=np.float32).ravel()
-                )
+                embeddings.append(np.asarray(emb, dtype=np.float32).ravel())
             except Exception:  # noqa: BLE001
                 logging.warning(
                     "Embedding failed for SMILES '%s'; marking as failed.",
@@ -386,8 +375,7 @@ class PerturbationProcessor:
         result_adata.obsm[key] = matrix
 
         logging.info(
-            "Built molecule embedding matrix: %d/%d succeeded, dim=%d, "
-            "stored in .obsm['%s'].",
+            "Built molecule embedding matrix: %d/%d succeeded, dim=%d, stored in .obsm['%s'].",
             sum(embedded_mask),
             n,
             emb_dim,
@@ -515,8 +503,8 @@ class PerturbationProcessor:
             raise KeyError(f"'{obsm_key}' not found in adata.obsm. Available: {list(adata.obsm.keys())}")
 
         X_raw = adata.obsm[obsm_key]
-        if issparse(X_raw):
-            X = np.asarray(X_raw.todense(), dtype=np.float64)
+        if sp.issparse(X_raw):
+            X = np.asarray(sp.csr_matrix(X_raw).toarray(), dtype=np.float64)
         else:
             X = np.asarray(X_raw, dtype=np.float64)
 
