@@ -177,6 +177,14 @@ def _fetch_string_network(
     if rename:
         df = df.rename(columns=rename)
 
+    # The STRING REST API returns scores on a 0–1 decimal scale, but the
+    # bulk download files and score_threshold convention use 0–1000 integers.
+    # Rescale so filtering in build_graph() works uniformly.
+    if "combined_score" in df.columns and not df.empty:
+        max_score = df["combined_score"].max()
+        if max_score <= 1.0:
+            df["combined_score"] = (df["combined_score"] * 1000).astype(int)
+
     # Fall back to stringId columns
     if "protein1" not in df.columns and "stringId_A" in df.columns:
         df["protein1"] = df["stringId_A"].str.split(".").str[-1]

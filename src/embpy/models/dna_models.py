@@ -11,12 +11,24 @@ import torch.nn.functional as F
 # ——————————————————————————————————————————————————————————————————————————
 
 try:
-    from evo2 import Evo2
+    from evo2 import Evo2  # pyright: ignore[reportMissingImports]
 
     _HAVE_EVO2 = True
 except ImportError:
     _HAVE_EVO2 = False
     Evo2 = None  # type: ignore
+
+# ——————————————————————————————————————————————————————————————————————————
+#                       EVO (v1 / v1.5) WRAPPER
+# ——————————————————————————————————————————————————————————————————————————
+
+try:
+    from evo import Evo as EvoModel  # type: ignore[import-untyped]
+
+    _HAVE_EVO = True
+except ImportError:
+    _HAVE_EVO = False
+    EvoModel = None  # type: ignore
 
 # ——————————————————————————————————————————————————————————————————————————
 #                       ENFORMER WRAPPER
@@ -105,8 +117,8 @@ class EnformerWrapper(BaseModelWrapper):
 
         logging.info(f"Loading Enformer model '{self.model_name}' …")
         try:
-            self.model = from_pretrained(self.model_name, use_tf_gamma=self.use_tf_gamma)
-            self.model = self.model.to(device).eval()
+            enformer_model: Any = from_pretrained(self.model_name, use_tf_gamma=self.use_tf_gamma)
+            self.model = enformer_model.to(device).eval()
             self.device = device
             logging.info(f"Enformer '{self.model_name}' loaded on {device}.")
         except Exception as e:
@@ -398,9 +410,10 @@ class BorzoiWrapper(BaseModelWrapper):
 
         logging.info(f"Loading Borzoi '{self.model_name}' …")
         try:
-            self.model = Borzoi.from_pretrained(self.model_name).to(device).eval()
+            borzoi_model: Any = Borzoi.from_pretrained(self.model_name)
+            self.model = borzoi_model.to(device).eval()
             self.device = device
-            hidden_dim = getattr(self.model.config, "dim", None)
+            hidden_dim = getattr(borzoi_model.config, "dim", None)
             if hidden_dim is None:
                 hidden_dim = 512
                 logging.warning("Could not detect Borzoi config.dim; defaulting to 512.")
@@ -514,7 +527,8 @@ class BorzoiWrapper(BaseModelWrapper):
 
         with torch.no_grad():
             logging.debug("Running Borzoi model forward pass…")
-            embs = self.model.get_embs_after_crop(one_hot)
+            model: Any = self.model
+            embs = model.get_embs_after_crop(one_hot)
             if not isinstance(embs, torch.Tensor) or embs.dim() != 3:
                 raise RuntimeError(f"Unexpected Borzoi output: {type(embs)}, shape={getattr(embs, 'shape', None)}")
 
@@ -593,7 +607,8 @@ class BorzoiWrapper(BaseModelWrapper):
 
         # 3. Run Borzoi’s forward up to cropping: get_embs_after_crop → Tensor (B, hidden_dim, num_bins)
         with torch.no_grad():
-            emb_tensor = self.model.get_embs_after_crop(batch_tensor)
+            batch_model: Any = self.model
+            emb_tensor = batch_model.get_embs_after_crop(batch_tensor)
             if not isinstance(emb_tensor, torch.Tensor) or emb_tensor.dim() != 3:
                 raise TypeError(
                     f"Unexpected Borzoi output from get_embs_after_crop: type={type(emb_tensor)}, "
@@ -620,6 +635,334 @@ class BorzoiWrapper(BaseModelWrapper):
             raise RuntimeError("Output count does not match input count in embed_batch().")
 
         return result_list
+
+
+# ——————————————————————————————————————————————————————————————————————————
+#                       EVO (v1 / v1.5) WRAPPER
+# ——————————————————————————————————————————————————————————————————————————
+
+
+class EvoWrapper(BaseModelWrapper):
+    """
+    Wrapper for the Evo (v1 / v1.5) DNA language model.
+
+    Evo is a biological foundation model based on the StripedHyena architecture,
+    a hybrid of attention and gated convolutions. It supports long-context
+    modeling at single-nucleotide, byte-level resolution with near-linear
+    scaling of compute and memory.
+
+    This wrapper handles:
+      1. Loading Evo checkpoints (v1 8k, v1 131k, v1.5 8k, and fine-tuned variants).
+      2. Tokenizing DNA sequences via Evo's CharLevelTokenizer.
+      3. Extracting embeddings from an intermediate StripedHyena block using
+         a forward hook (Evo's forward pass returns logits, not embeddings).
+      4. Pooling over the sequence length dimension.
+
+    Attributes
+    ----------
+    AVAILABLE_MODELS : list[str]
+        Supported Evo checkpoint names.
+    model_type : Literal["dna"]
+        Indicates that this wrapper expects DNA sequence inputs.
+    available_pooling_strategies : list[str]
+        Supported pooling strategies ("mean", "max", "cls").
+
+    Notes
+    -----
+    Evo requires FlashAttention-2 (≤ 2.7.4) and a compatible GPU.
+    Install with: ``pip install evo-model``
+
+    See Also
+    --------
+    Evo2Wrapper : Wrapper for the successor model (Evo 2).
+    """
+
+    model_type = "dna"
+    available_pooling_strategies = ["mean", "max", "cls"]
+
+    AVAILABLE_MODELS: list[str] = [
+        "evo-1-8k-base",
+        "evo-1-131k-base",
+        "evo-1.5-8k-base",
+        "evo-1-8k-crispr",
+        "evo-1-8k-transposon",
+    ]
+
+    def __init__(
+        self,
+        model_path_or_name: str = "evo-1-8k-base",
+        embedding_layer: int | None = None,
+        **kwargs: Any,
+    ):
+        """
+        Initialize the EvoWrapper.
+
+        Parameters
+        ----------
+        model_path_or_name : str, optional
+            Evo checkpoint name. One of ``'evo-1-8k-base'``, ``'evo-1-131k-base'``,
+            ``'evo-1.5-8k-base'``, ``'evo-1-8k-crispr'``, ``'evo-1-8k-transposon'``.
+            Defaults to ``'evo-1-8k-base'``.
+        embedding_layer : int, optional
+            Index of the StripedHyena block from which to extract hidden states.
+            If None, defaults to the middle block (``num_blocks // 2``),
+            which typically produces the best general-purpose representations.
+        **kwargs : Any
+            Additional configuration passed to BaseModelWrapper.
+        """
+        super().__init__(model_path_or_name, **kwargs)
+        self.embedding_layer = embedding_layer
+        self._evo_model: Any | None = None
+        self._tokenizer: Any | None = None
+
+    def load(self, device: torch.device) -> None:
+        """
+        Load the Evo model onto the specified device.
+
+        Internally uses the ``evo`` package's ``Evo`` class to download and
+        instantiate the StripedHyena model and character-level tokenizer.
+
+        Parameters
+        ----------
+        device : torch.device
+            The target device for model inference.
+
+        Raises
+        ------
+        ImportError
+            If the ``evo-model`` package is not installed.
+        RuntimeError
+            If the model fails to load.
+        """
+        if self._evo_model is not None:
+            logging.warning(f"Evo '{self.model_name}' already loaded.")
+            return
+        if not _HAVE_EVO or EvoModel is None:
+            raise ImportError("evo-model package is not installed. Install with: pip install evo-model")
+
+        self.device = device
+        logging.info(f"Loading Evo model '{self.model_name}'...")
+
+        try:
+            evo_instance = EvoModel(self.model_name, device=str(device))
+            sh_model: Any = evo_instance.model
+            self._evo_model = sh_model
+            self._tokenizer = evo_instance.tokenizer
+            self.model = sh_model
+            sh_model.eval()
+
+            num_blocks = len(sh_model.blocks)
+            if self.embedding_layer is None:
+                self.embedding_layer = num_blocks // 2
+            elif self.embedding_layer < 0 or self.embedding_layer >= num_blocks:
+                raise ValueError(
+                    f"embedding_layer={self.embedding_layer} is out of range "
+                    f"for a model with {num_blocks} blocks (valid: 0–{num_blocks - 1})."
+                )
+
+            logging.info(
+                f"Evo '{self.model_name}' loaded on {device} "
+                f"({num_blocks} blocks, extracting embeddings from block {self.embedding_layer})."
+            )
+        except Exception as e:
+            logging.error(f"Failed to load Evo '{self.model_name}': {e}")
+            self._evo_model = None
+            self._tokenizer = None
+            self.model = None
+            raise RuntimeError(f"Could not load Evo '{self.model_name}'.") from e
+
+    def _extract_hidden_state(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Extract the hidden state from the configured block via a forward hook.
+
+        The StripedHyena blocks return ``(output_tensor, inference_params)``
+        tuples; only the output tensor is captured.
+
+        Parameters
+        ----------
+        input_ids : torch.Tensor
+            Tokenised input of shape ``(1, seq_len)``.
+
+        Returns
+        -------
+        torch.Tensor
+            Hidden state tensor of shape ``(1, seq_len, hidden_size)``.
+        """
+        captured: dict[str, torch.Tensor] = {}
+
+        evo_model: Any = self._evo_model
+        target_block = evo_model.blocks[self.embedding_layer]
+
+        def hook_fn(module: Any, input: Any, output: Any) -> None:
+            if isinstance(output, tuple):
+                captured["hidden"] = output[0]
+            else:
+                captured["hidden"] = output
+
+        handle = target_block.register_forward_hook(hook_fn)
+        try:
+            with torch.no_grad():
+                evo_model(input_ids)
+        finally:
+            handle.remove()
+
+        return captured["hidden"]
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "mean",
+        embedding_layer: int | None = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """
+        Compute an embedding for a single DNA sequence using Evo.
+
+        Steps:
+          1. Tokenize the sequence with Evo's CharLevelTokenizer.
+          2. Run the forward pass and capture the hidden state from an
+             intermediate StripedHyena block via a forward hook.
+          3. Pool over the sequence length dimension.
+
+        Parameters
+        ----------
+        input : str
+            The DNA sequence string (e.g., ``"ACGTACGT..."``).
+        pooling_strategy : str, default "mean"
+            ``"mean"``, ``"max"``, or ``"cls"`` (first token).
+        embedding_layer : int, optional
+            Override the default embedding layer for this call only.
+        **kwargs : Any
+            Currently unused but accepted for interface consistency.
+
+        Returns
+        -------
+        np.ndarray
+            A 1D NumPy array representing the pooled Evo embedding.
+
+        Raises
+        ------
+        RuntimeError
+            If the model hasn't been loaded.
+        ValueError
+            If the pooling strategy is invalid.
+        """
+        if self._evo_model is None or self._tokenizer is None:
+            raise RuntimeError("Evo model not loaded. Call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(
+                f"Invalid pooling strategy '{pooling_strategy}'. Available: {self.available_pooling_strategies}"
+            )
+
+        target_device = self.device if self.device is not None else torch.device("cuda:0")
+        input_ids = (
+            torch.tensor(
+                self._tokenizer.tokenize(input),
+                dtype=torch.int,
+            )
+            .unsqueeze(0)
+            .to(target_device)
+        )
+
+        orig_layer = self.embedding_layer
+        if embedding_layer is not None:
+            self.embedding_layer = embedding_layer
+
+        try:
+            hidden = self._extract_hidden_state(input_ids)
+        finally:
+            self.embedding_layer = orig_layer
+
+        if hidden.dim() == 3 and hidden.shape[0] == 1:
+            hidden = hidden.squeeze(0)  # (seq_len, hidden_dim)
+
+        if pooling_strategy == "cls":
+            pooled = hidden[0]
+        elif pooling_strategy == "max":
+            pooled = hidden.max(dim=0).values
+        else:
+            pooled = hidden.mean(dim=0)
+
+        return pooled.float().cpu().numpy()
+
+    def embed_from_layer(
+        self,
+        input: str,
+        layer: int,
+        pooling_strategy: str = "mean",
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """
+        Extract an Evo embedding from a specific StripedHyena block.
+
+        Overrides the base class to use Evo's ``embedding_layer`` parameter
+        instead of the HF ``target_layer`` convention.
+
+        Parameters
+        ----------
+        input : str
+            DNA sequence string.
+        layer : int
+            StripedHyena block index to extract from.
+        pooling_strategy : str
+            Pooling strategy.
+        **kwargs : Any
+            Forwarded to :meth:`embed`.
+
+        Returns
+        -------
+        np.ndarray
+            Pooled 1D embedding from the specified layer.
+        """
+        return self.embed(input, pooling_strategy=pooling_strategy, embedding_layer=layer, **kwargs)
+
+    def embed_batch(
+        self,
+        inputs: Sequence[str],
+        pooling_strategy: str = "mean",
+        embedding_layer: int | None = None,
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        """
+        Compute Evo embeddings for a batch of DNA sequences.
+
+        Processes each sequence individually since Evo's tokenizer and the
+        StripedHyena inference pipeline are oriented toward single sequences.
+
+        Parameters
+        ----------
+        inputs : Sequence[str]
+            List of DNA sequence strings.
+        pooling_strategy : str, default "mean"
+            Pooling strategy to apply per sequence.
+        embedding_layer : int, optional
+            Override the default embedding layer for this call.
+        **kwargs : Any
+            Currently unused.
+
+        Returns
+        -------
+        list[np.ndarray]
+            A list of 1D NumPy arrays, one per input sequence.
+        """
+        if self._evo_model is None:
+            raise RuntimeError("Evo model not loaded. Call load() first.")
+        if not inputs:
+            return []
+
+        results: list[np.ndarray] = []
+        for i, seq in enumerate(inputs):
+            if i > 0 and i % 10 == 0:
+                logging.info(f"Evo batch: processed {i}/{len(inputs)} sequences...")
+            emb = self.embed(
+                seq,
+                pooling_strategy=pooling_strategy,
+                embedding_layer=embedding_layer,
+                **kwargs,
+            )
+            results.append(emb)
+
+        return results
 
 
 # ——————————————————————————————————————————————————————————————————————————
@@ -730,8 +1073,9 @@ class Evo2Wrapper(BaseModelWrapper):
         self.device = device
 
         if self.layer_name is None:
-            self.layer_name = self.LAYER_DEFAULTS.get(self.model_name, "blocks.28.mlp.l3")
-            logging.info(f"Using default embedding layer '{self.layer_name}' for model '{self.model_name}'.")
+            name = self.model_name or "evo2_7b"
+            self.layer_name = self.LAYER_DEFAULTS.get(name, "blocks.28.mlp.l3")
+            logging.info(f"Using default embedding layer '{self.layer_name}' for model '{name}'.")
 
         logging.info(f"Loading Evo2 model '{self.model_name}'...")
         try:
@@ -793,10 +1137,14 @@ class Evo2Wrapper(BaseModelWrapper):
         target_layer = layer_name or self.layer_name
 
         target_device = self.device if self.device is not None else torch.device("cuda:0")
-        input_ids = torch.tensor(
-            self._evo2_model.tokenizer.tokenize(input),
-            dtype=torch.int,
-        ).unsqueeze(0).to(target_device)
+        input_ids = (
+            torch.tensor(
+                self._evo2_model.tokenizer.tokenize(input),
+                dtype=torch.int,
+            )
+            .unsqueeze(0)
+            .to(target_device)
+        )
 
         with torch.no_grad():
             _, embeddings = self._evo2_model(
@@ -807,9 +1155,7 @@ class Evo2Wrapper(BaseModelWrapper):
 
         if target_layer not in embeddings:
             available_layers = list(embeddings.keys())
-            raise ValueError(
-                f"Layer '{target_layer}' not found in model output. Available: {available_layers}"
-            )
+            raise ValueError(f"Layer '{target_layer}' not found in model output. Available: {available_layers}")
 
         emb_tensor = embeddings[target_layer]
 
@@ -824,6 +1170,43 @@ class Evo2Wrapper(BaseModelWrapper):
             pooled = emb_tensor.mean(dim=0)
 
         return pooled.float().cpu().numpy()
+
+    def embed_from_layer(
+        self,
+        input: str,
+        layer: int | str,
+        pooling_strategy: str = "mean",
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """
+        Extract an Evo2 embedding from a specific layer.
+
+        Overrides the base class to accept either an integer block index
+        (converted to the Evo2 layer-name convention ``blocks.<i>.mlp.l3``)
+        or an explicit layer name string.
+
+        Parameters
+        ----------
+        input : str
+            DNA sequence string.
+        layer : int or str
+            If ``int``, converted to ``"blocks.<layer>.mlp.l3"``.
+            If ``str``, used directly as the Evo2 layer name.
+        pooling_strategy : str
+            Pooling strategy.
+        **kwargs : Any
+            Forwarded to :meth:`embed`.
+
+        Returns
+        -------
+        np.ndarray
+            Pooled 1D embedding from the specified layer.
+        """
+        if isinstance(layer, int):
+            layer_name = f"blocks.{layer}.mlp.l3"
+        else:
+            layer_name = layer
+        return self.embed(input, pooling_strategy=pooling_strategy, layer_name=layer_name, **kwargs)
 
     def embed_batch(
         self,

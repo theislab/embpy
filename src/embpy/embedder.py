@@ -17,6 +17,15 @@ from .models.protein_models import ESM2Wrapper, ESMCWrapper
 from .models.text_models import TextLLMWrapper
 from .resources.gene_resolver import GeneResolver
 
+# Evo (v1/v1.5) is an optional dependency - import conditionally
+try:
+    from .models.dna_models import EvoWrapper
+
+    _HAVE_EVO = True
+except ImportError:
+    _HAVE_EVO = False
+    EvoWrapper = None  # type: ignore
+
 # Evo2 is an optional dependency - import conditionally
 try:
     from .models.dna_models import Evo2Wrapper
@@ -49,6 +58,12 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     "enformer_human_rough": (EnformerWrapper, "EleutherAI/enformer-official-rough"),
     "borzoi_v0": (BorzoiWrapper, "johahi/borzoi-replicate-0"),
     "borzoi_v1": (BorzoiWrapper, "johani/borzoi-replicate-1"),
+    # Evo models (requires optional `evo-model` dependency: pip install embpy[evo])
+    "evo1_8k": (EvoWrapper if _HAVE_EVO else None, "evo-1-8k-base"),
+    "evo1_131k": (EvoWrapper if _HAVE_EVO else None, "evo-1-131k-base"),
+    "evo1.5_8k": (EvoWrapper if _HAVE_EVO else None, "evo-1.5-8k-base"),
+    "evo1_crispr": (EvoWrapper if _HAVE_EVO else None, "evo-1-8k-crispr"),
+    "evo1_transposon": (EvoWrapper if _HAVE_EVO else None, "evo-1-8k-transposon"),
     # Evo2 models (requires optional `evo2` dependency: pip install embpy[evo2])
     "evo2_7b": (Evo2Wrapper if _HAVE_EVO2 else None, "evo2_7b"),
     "evo2_40b": (Evo2Wrapper if _HAVE_EVO2 else None, "evo2_40b"),
