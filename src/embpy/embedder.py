@@ -267,6 +267,9 @@ class BioEmbedder:
             if not desc:
                 raise IdentifierError(f"Description not found for {id_type}='{identifier}'")
             input_data = desc
+        elif mtype == "ppi":
+            # PPI models take the gene identifier directly (no sequence needed)
+            input_data = identifier
         else:
             raise ValueError(f"Unsupported model type '{mtype}' for embedding.")
         # Embed

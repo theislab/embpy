@@ -9,6 +9,13 @@ try:
 except ImportError:
     Evo2Wrapper = None  # type: ignore
 
+# PPI GNN is optional (requires: pip install torch-geometric)
+try:
+    from .ppi_models import GNNEncoder, PPIGNNWrapper
+except ImportError:
+    GNNEncoder = None  # type: ignore
+    PPIGNNWrapper = None  # type: ignore
+
 __all__ = [
     "BorzoiWrapper",
     "EnformerWrapper",
@@ -16,7 +23,9 @@ __all__ = [
     "ChembertaWrapper",
     "ESM2Wrapper",
     "ESMCWrapper",
+    "GNNEncoder",
     "MolformerWrapper",
+    "PPIGNNWrapper",
     "RDKitWrapper",
     "STRINGWrapper",
     "TextLLMWrapper",

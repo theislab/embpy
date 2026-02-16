@@ -13,7 +13,7 @@ class BaseModelWrapper(ABC):
     Defines the common interface for loading models and computing embeddings.
     """
 
-    model_type: Literal["dna", "protein", "molecule", "text", "unknown"] = "unknown"
+    model_type: Literal["dna", "protein", "molecule", "text", "ppi", "unknown"] = "unknown"
     available_pooling_strategies: list[str] = ["mean", "max", "median"]  # Common defaults
 
     def __init__(self, model_path_or_name: str | None = None, **kwargs):
