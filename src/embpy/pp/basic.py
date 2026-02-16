@@ -10,6 +10,7 @@ from scipy.sparse import issparse
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
+from embpy.resources.drug_resolver import DrugResolver
 from embpy.resources.gene_resolver import GeneResolver, detect_identifier_type
 
 
@@ -30,7 +31,12 @@ class PerturbationProcessor:
         taken from ``embedder.gene_resolver`` automatically.
     """
 
-    def __init__(self, embedder=None, gene_resolver: GeneResolver | None = None):
+    def __init__(
+        self,
+        embedder=None,
+        gene_resolver: GeneResolver | None = None,
+        drug_resolver: DrugResolver | None = None,
+    ):
         self.embedder = embedder
         if gene_resolver is not None:
             self.gene_resolver = gene_resolver
@@ -38,6 +44,7 @@ class PerturbationProcessor:
             self.gene_resolver = embedder.gene_resolver
         else:
             self.gene_resolver = GeneResolver()
+        self.drug_resolver = drug_resolver or DrugResolver()
 
     # ------------------------------------------------------------------
     # Identifier helpers
@@ -229,6 +236,164 @@ class PerturbationProcessor:
             f"Built embedding matrix: {sum(embedded_mask)}/{n} succeeded, dim={emb_dim}, stored in .obsm['{key}']."
         )
         return adata
+
+    def build_molecule_embedding_matrix(
+        self,
+        adata: AnnData | None = None,
+        identifiers: Sequence[str] | None = None,
+        column: str | None = None,
+        id_type: str = "auto",
+        model: str = "chemberta2MTR",
+        pooling_strategy: str = "mean",
+        obsm_key: str | None = None,
+    ) -> AnnData:
+        """Build an AnnData with molecule embeddings stored in ``.obsm``.
+
+        Accepts **either** an existing ``AnnData`` whose ``.obs`` contains a
+        column with drug identifiers, **or** a plain list of identifier
+        strings.  When an ``AnnData`` is provided, the embeddings are added
+        to a *copy* of it; when a list is provided a fresh ``AnnData`` is
+        created.
+
+        Drug names are automatically resolved to canonical SMILES via the
+        ``DrugResolver`` before embedding.
+
+        Parameters
+        ----------
+        adata
+            An existing ``AnnData`` object.  If given, identifiers are read
+            from ``adata.obs[column]``.
+        identifiers
+            Explicit list of drug identifiers (names or SMILES).  Ignored
+            when *adata* is provided.
+        column
+            Column in ``adata.obs`` that contains the drug identifiers.
+            Required when *adata* is given.  When *identifiers* is used
+            instead, this column name is stored in the resulting ``.obs``
+            as the identifier column (defaults to ``"drug_id"``).
+        id_type
+            ``"auto"`` (detect per identifier), ``"smiles"``, or
+            ``"drug_name"``.
+        model
+            Model name from the registry (e.g. ``"chemberta2MTR"``,
+            ``"molformer_base"``).
+        pooling_strategy
+            Pooling applied by the model wrapper.
+        obsm_key
+            Key under which the embedding matrix is stored in ``.obsm``.
+            Defaults to ``"X_{model}"``.
+
+        Returns
+        -------
+        AnnData with the embedding matrix in ``adata.obsm[obsm_key]``,
+        a boolean ``adata.obs["embedded"]`` column, and the resolved
+        SMILES in ``adata.obs["smiles"]``.
+        """
+        if self.embedder is None:
+            raise ValueError(
+                "An initialized BioEmbedder is required for "
+                "build_molecule_embedding_matrix."
+            )
+
+        # ---- Resolve the identifier list --------------------------------
+        if adata is not None:
+            if column is None:
+                raise ValueError(
+                    "When passing an AnnData, 'column' must specify the "
+                    ".obs column containing drug identifiers."
+                )
+            if column not in adata.obs.columns:
+                raise KeyError(
+                    f"Column '{column}' not found in adata.obs. "
+                    f"Available: {list(adata.obs.columns)}"
+                )
+            id_list: list[str] = adata.obs[column].astype(str).tolist()
+            result_adata = adata.copy()
+        elif identifiers is not None:
+            id_list = list(identifiers)
+            col_name = column or "drug_id"
+            result_adata = AnnData(
+                obs=pd.DataFrame({col_name: id_list}),
+            )
+            result_adata.obs.index = result_adata.obs.index.astype(str)
+        else:
+            raise ValueError(
+                "Provide either 'adata' (+ column) or 'identifiers'."
+            )
+
+        key = obsm_key or f"X_{model}"
+        n = len(id_list)
+
+        # ---- Resolve identifiers to SMILES ------------------------------
+        smiles_list: list[str | None] = []
+        for ident in id_list:
+            ident = ident.strip()
+            if id_type == "smiles":
+                smiles_list.append(ident)
+            elif id_type == "drug_name":
+                smiles_list.append(self.drug_resolver.name_to_smiles(ident))
+            else:
+                # auto-detect
+                detected = detect_identifier_type(ident)
+                if detected == "smiles":
+                    smiles_list.append(ident)
+                else:
+                    # Treat as a drug name and resolve
+                    smi = self.drug_resolver.name_to_smiles(ident)
+                    smiles_list.append(smi)
+
+        # ---- Embed each resolved SMILES ---------------------------------
+        embeddings: list[np.ndarray | None] = []
+        for smi in smiles_list:
+            if smi is None:
+                embeddings.append(None)
+                continue
+            try:
+                emb = self.embedder.embed_molecule(
+                    identifier=smi,
+                    model=model,
+                    pooling_strategy=pooling_strategy,
+                )
+                embeddings.append(
+                    np.asarray(emb, dtype=np.float32).ravel()
+                )
+            except Exception:  # noqa: BLE001
+                logging.warning(
+                    "Embedding failed for SMILES '%s'; marking as failed.",
+                    smi,
+                )
+                embeddings.append(None)
+
+        embedded_mask = [e is not None for e in embeddings]
+
+        # Determine embedding dimension
+        emb_dim = 0
+        for e in embeddings:
+            if e is not None:
+                emb_dim = e.shape[0]
+                break
+
+        matrix = np.zeros((n, emb_dim), dtype=np.float32)
+        for i, e in enumerate(embeddings):
+            if e is not None:
+                matrix[i] = e
+
+        # ---- Store results in AnnData -----------------------------------
+        result_adata.obs["smiles"] = [s or "" for s in smiles_list]
+        result_adata.obs["embedded"] = embedded_mask
+        result_adata.obs["model"] = model
+        result_adata.obs["pooling"] = pooling_strategy
+        result_adata.obsm[key] = matrix
+
+        logging.info(
+            "Built molecule embedding matrix: %d/%d succeeded, dim=%d, "
+            "stored in .obsm['%s'].",
+            sum(embedded_mask),
+            n,
+            emb_dim,
+            key,
+        )
+        return result_adata
 
     # ------------------------------------------------------------------
     # Filtering & combining

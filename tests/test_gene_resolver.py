@@ -368,7 +368,7 @@ class TestLoadGenesFromAdata:
         import anndata as ad
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            var = pd.DataFrame({"my_genes": ["TP53", "BRCA1"]}, index=["g0", "g1"])
+            var = pd.DataFrame({"my_genes": ["TP53", "BRCA1"]}, index=pd.Index(["g0", "g1"]))
             adata = ad.AnnData(np.zeros((3, 2)), var=var)
             path = os.path.join(tmpdir, "test.h5ad")
             adata.write_h5ad(path)
@@ -379,7 +379,7 @@ class TestLoadGenesFromAdata:
         import anndata as ad
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            var = pd.DataFrame({"ensembl_id": ["ENSG001", "ENSG002"]}, index=["g0", "g1"])
+            var = pd.DataFrame({"ensembl_id": ["ENSG001", "ENSG002"]}, index=pd.Index(["g0", "g1"]))
             adata = ad.AnnData(np.zeros((3, 2)), var=var)
             path = os.path.join(tmpdir, "test.h5ad")
             adata.write_h5ad(path)
@@ -390,7 +390,7 @@ class TestLoadGenesFromAdata:
         import anndata as ad
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            var = pd.DataFrame({"gene_name": ["TP53", "BRCA1"]}, index=["g0", "g1"])
+            var = pd.DataFrame({"gene_name": ["TP53", "BRCA1"]}, index=pd.Index(["g0", "g1"]))
             adata = ad.AnnData(np.zeros((3, 2)), var=var)
             path = os.path.join(tmpdir, "test.h5ad")
             adata.write_h5ad(path)
@@ -401,7 +401,7 @@ class TestLoadGenesFromAdata:
         import anndata as ad
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            var = pd.DataFrame(index=["GeneA", "GeneB"])
+            var = pd.DataFrame(index=pd.Index(["GeneA", "GeneB"]))
             adata = ad.AnnData(np.zeros((3, 2)), var=var)
             path = os.path.join(tmpdir, "test.h5ad")
             adata.write_h5ad(path)
