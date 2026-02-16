@@ -42,10 +42,8 @@ class ESM2Wrapper(BaseModelWrapper):
             model_path_or_name (str): Model identifier or path for the ESM2 model.
             **kwargs: Additional configuration parameters.
         """
-        self.model_name = model_path_or_name
-        self.model = None
+        super().__init__(model_path_or_name, **kwargs)
         self.tokenizer = None
-        self.device = None
 
     def load(self, device: torch.device) -> None:
         """
@@ -296,39 +294,46 @@ class ESMCWrapper(BaseModelWrapper):
 
     def embed(
         self,
-        inputs: str,  # Changed from 'sequence' to match your code snippet
+        input: str,
         pooling_strategy: str = "mean",
-        return_hidden_states: bool = False,
-        hidden_layers: Sequence[int] | None = None,
-        max_length: int = 10000,  # <--- NEW: Safety limit
-    ) -> dict[str, np.ndarray]:
+        max_length: int = 10000,
+        **kwargs: Any,
+    ) -> np.ndarray:
         """
         Embed a single protein sequence.
+
+        Parameters
+        ----------
+        input : str
+            Amino acid sequence string.
+        pooling_strategy : str
+            One of 'mean', 'max', 'cls'.
+        max_length : int
+            Safety truncation limit to prevent OOM on very large proteins.
+        **kwargs : Any
+            Additional arguments (unused, for interface consistency).
+
+        Returns
+        -------
+        np.ndarray
+            1D embedding vector.
         """
         if self.client is None or self.device is None:
             raise RuntimeError("ESMC client not loaded; call load() first.")
         if pooling_strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling '{pooling_strategy}'")
 
-        # --- 1) Truncate Sequence if too long ---
-        # This prevents OOM errors on massive proteins like Titin
+        sequence = input
+        if len(sequence) > max_length:
+            logging.warning(f"Sequence too long ({len(sequence)}). Truncating to {max_length}.")
+            sequence = sequence[:max_length]
 
-        # TODO: Currently truncating very large proteins for genes, we should take more closer look into this and only getting the transcript proteins
-
-        if len(inputs) > max_length:
-            logging.warning(f"Sequence too long ({len(inputs)}). Truncating to {max_length}.")
-            inputs = inputs[:max_length]
-
-        # 2) Prepare input
-        prot = ESMProtein(sequence=inputs)
+        prot = ESMProtein(sequence=sequence)
         tensor = self.client.encode(prot)
 
-        # 3) Configure and run logits call
-        # ... (Rest of the function is identical) ...
-        cfg = LogitsConfig(sequence=True, return_embeddings=True, return_hidden_states=return_hidden_states)
+        cfg = LogitsConfig(sequence=True, return_embeddings=True, return_hidden_states=False)
         out: LogitsOutput = self.client.logits(tensor, cfg)
 
-        # ... (Extraction logic) ...
         embs = out.embeddings
         if embs.dim() == 3 and embs.shape[0] == 1:
             embs = embs.squeeze(0)
@@ -337,65 +342,110 @@ class ESMCWrapper(BaseModelWrapper):
             pooled = embs[0]
         elif pooling_strategy == "max":
             pooled = torch.max(embs, dim=0)[0]
-        else:  # 'mean'
+        else:
             pooled = torch.mean(embs, dim=0)
 
-        result = {"embedding": pooled.cpu().numpy()}
+        return pooled.cpu().numpy()
 
-        if return_hidden_states:
-            # ... (Hidden states logic) ...
-            hidden = out.hidden_states
-            if isinstance(hidden, tuple):
-                hs = torch.stack(hidden, dim=0)
-            else:
-                hs = hidden
-            while hs.dim() > 3 and hs.shape[0] == 1:
-                hs = hs.squeeze(0)
-            if hs.dim() == 4 and hs.shape[1] == 1:
-                hs = hs.squeeze(1)
+    def embed_with_hidden_states(
+        self,
+        input: str,
+        pooling_strategy: str = "mean",
+        hidden_layers: Sequence[int] | None = None,
+        max_length: int = 10000,
+    ) -> dict[str, np.ndarray]:
+        """
+        Embed a single protein sequence and return hidden states.
 
-            if hidden_layers is not None:
-                hs = hs[list(hidden_layers), :, :]
-            result["hidden_states"] = hs.to(torch.float32).cpu().numpy()
+        Parameters
+        ----------
+        input : str
+            Amino acid sequence string.
+        pooling_strategy : str
+            One of 'mean', 'max', 'cls'.
+        hidden_layers : Sequence[int], optional
+            Specific layer indices to return. If None, returns all.
+        max_length : int
+            Safety truncation limit.
+
+        Returns
+        -------
+        dict[str, np.ndarray]
+            Dictionary with 'embedding' (1D) and 'hidden_states' (3D) arrays.
+        """
+        if self.client is None or self.device is None:
+            raise RuntimeError("ESMC client not loaded; call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(f"Invalid pooling '{pooling_strategy}'")
+
+        sequence = input
+        if len(sequence) > max_length:
+            logging.warning(f"Sequence too long ({len(sequence)}). Truncating to {max_length}.")
+            sequence = sequence[:max_length]
+
+        prot = ESMProtein(sequence=sequence)
+        tensor = self.client.encode(prot)
+
+        cfg = LogitsConfig(sequence=True, return_embeddings=True, return_hidden_states=True)
+        out: LogitsOutput = self.client.logits(tensor, cfg)
+
+        embs = out.embeddings
+        if embs.dim() == 3 and embs.shape[0] == 1:
+            embs = embs.squeeze(0)
+
+        if pooling_strategy == "cls":
+            pooled = embs[0]
+        elif pooling_strategy == "max":
+            pooled = torch.max(embs, dim=0)[0]
+        else:
+            pooled = torch.mean(embs, dim=0)
+
+        result: dict[str, np.ndarray] = {"embedding": pooled.cpu().numpy()}
+
+        hidden = out.hidden_states
+        if isinstance(hidden, tuple):
+            hs = torch.stack(hidden, dim=0)
+        else:
+            hs = hidden
+        while hs.dim() > 3 and hs.shape[0] == 1:
+            hs = hs.squeeze(0)
+        if hs.dim() == 4 and hs.shape[1] == 1:
+            hs = hs.squeeze(1)
+
+        if hidden_layers is not None:
+            hs = hs[list(hidden_layers), :, :]
+        result["hidden_states"] = hs.to(torch.float32).cpu().numpy()
 
         return result
-
-    # TODO: Change the embeddings type so that it can take the full list
 
     def embed_batch(
         self,
         inputs: list[str],
         pooling_strategy: str = "mean",
-        return_hidden_states: bool = False,
-        hidden_layers: Sequence[int] | None = None,
-    ) -> list[dict[str, np.ndarray]]:
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
         """
         Embed a batch of protein sequences.
 
         Parameters
         ----------
-        sequences : List[str]
-            A list of amino‐acid sequences.
+        inputs : list[str]
+            A list of amino-acid sequences.
         pooling_strategy : {'mean', 'max', 'cls'}, default='mean'
             Pooling to apply per sequence.
-        return_hidden_states : bool, default=False
-            Whether to return hidden states for each sequence.
-        hidden_layers : Sequence[int], optional
-            If provided, select only these layer indices.
+        **kwargs : Any
+            Additional arguments forwarded to embed().
 
         Returns
         -------
-        List[Dict[str, np.ndarray]]
-            A list of dictionaries, one per sequence, each containing:
-              - 'embedding': array of shape (hidden_dim,)
-              - 'hidden_states': array (num_layers, seq_len, hidden_dim), if requested.
+        list[np.ndarray]
+            A list of 1D embedding arrays, one per sequence.
         """
         return [
             self.embed(
-                inputs=seq,
+                input=seq,
                 pooling_strategy=pooling_strategy,
-                return_hidden_states=return_hidden_states,
-                hidden_layers=hidden_layers,
+                **kwargs,
             )
             for seq in inputs
         ]

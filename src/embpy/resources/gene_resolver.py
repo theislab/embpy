@@ -21,14 +21,6 @@ from Bio import SeqIO
 class GeneResolver:
     """
     Handles mapping gene identifiers to DNA or protein sequences.
-
-    Placeholder implementation. Needs actual backend logic.
-    """
-
-
-class GeneResolver:
-    """
-    Handles mapping gene identifiers to DNA or protein sequences.
     Uses pyensembl for local genomic data and APIs (Ensembl, MyGene, UniProt) for remote lookups.
     """
 
@@ -513,9 +505,8 @@ class GeneResolver:
 
             total_genes = len(all_genes)
 
-            # Debug print to confirm filtering worked
             if total_genes > 0:
-                print(f"First 5 genes after filtering: {all_genes[:5]}")
+                logging.debug(f"First 5 genes after filtering: {all_genes[:5]}")
 
             if total_genes == 0:
                 logging.warning(f"No genes found with biotype='{biotype}'.")

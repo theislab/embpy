@@ -289,7 +289,7 @@ class MolformerWrapper(BaseModelWrapper):
 
     def embed_batch(
         self,
-        input: str,
+        inputs: Sequence[str],
         pooling_strategy: str = "cls",
         **kwargs: Any,
     ) -> list[np.ndarray]:
@@ -313,7 +313,7 @@ class MolformerWrapper(BaseModelWrapper):
         if pooling_strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling '{pooling_strategy}'. Choose from {self.available_pooling_strategies}")
 
-        tokens = self._preprocess_smiles(input)
+        tokens = self._preprocess_smiles(list(inputs))
         tokens = {k: v.to(self.device) for k, v in tokens.items()}
 
         with torch.no_grad():
@@ -358,7 +358,7 @@ class RDKitWrapper(BaseModelWrapper):
     def __init__(
         self,
         model_path_or_name: str = "morgan_fingerprint",
-        fingerprint_type: Literal["morgan", "rdkit"] = "morgan",
+        fingerprint_type: Literal["morgan", "rdkit"] = "rdkit",
         radius: int = 2,
         n_bits: int = 2048,
         **kwargs,
@@ -430,7 +430,7 @@ class RDKitWrapper(BaseModelWrapper):
             fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=self.radius, nBits=self.n_bits)
         elif self.fingerprint_type == "rdkit":
             # RDKit topological fingerprint
-            fp = Chem.RDKitFingerprint(mol, fpSize=self.n_bits)
+            fp = Chem.RDKFingerprint(mol, fpSize=self.n_bits)
         else:
             raise ValueError(f"Unknown fingerprint type: {self.fingerprint_type}")
 

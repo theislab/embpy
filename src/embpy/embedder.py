@@ -17,6 +17,15 @@ from .models.protein_models import ESM2Wrapper, ESMCWrapper
 from .models.text_models import TextLLMWrapper
 from .resources.gene_resolver import GeneResolver
 
+# Evo2 is an optional dependency - import conditionally
+try:
+    from .models.dna_models import Evo2Wrapper
+
+    _HAVE_EVO2 = True
+except ImportError:
+    _HAVE_EVO2 = False
+    Evo2Wrapper = None  # type: ignore
+
 
 # Helper function (can be moved to utils later)
 def get_device() -> torch.device:
@@ -37,13 +46,15 @@ def get_device() -> torch.device:
 MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # User-facing name: (WrapperClass, HuggingFace_or_Path_Identifier)
     # --- DNA Models ---
-    # Use specific, descriptive names users will provide
     "enformer_human_rough": (EnformerWrapper, "EleutherAI/enformer-official-rough"),
     "borzoi_v0": (BorzoiWrapper, "johahi/borzoi-replicate-0"),
     "borzoi_v1": (BorzoiWrapper, "johani/borzoi-replicate-1"),
-    # consider adding flashzoi
+    # Evo2 models (requires optional `evo2` dependency: pip install embpy[evo2])
+    "evo2_7b": (Evo2Wrapper if _HAVE_EVO2 else None, "evo2_7b"),
+    "evo2_40b": (Evo2Wrapper if _HAVE_EVO2 else None, "evo2_40b"),
+    "evo2_7b_base": (Evo2Wrapper if _HAVE_EVO2 else None, "evo2_7b_base"),
+    "evo2_1b_base": (Evo2Wrapper if _HAVE_EVO2 else None, "evo2_1b_base"),
     # --- Protein Models ---
-    # Add specific ESM models you want to support by default
     "esm2_8M": (ESM2Wrapper, "facebook/esm2_t6_8M_UR50D"),
     "esm2_35M": (ESM2Wrapper, "facebook/esm2_t12_35M_UR50D"),
     "esm2_150M": (ESM2Wrapper, "facebook/esm2_t30_150M_UR50D"),
@@ -55,10 +66,10 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # --- Molecule Models ---
     "chemberta2MTR": (ChembertaWrapper, "DeepChem/ChemBERTa-77M-MTR"),
     "chemberta2MLM": (ChembertaWrapper, "DeepChem/ChemBERTa-100M-MLM"),
-    "molformer_base": (MolformerWrapper, "ibm/MoLFormer-XL-both-10pct"),  # Hypothetical Molformer
+    "molformer_base": (MolformerWrapper, "ibm/MoLFormer-XL-both-10pct"),
     # --- Text Models ---
     "minilm_l6_v2": (TextLLMWrapper, "sentence-transformers/all-MiniLM-L6-v2"),
-    "bert_base_uncased": (TextLLMWrapper, "bert-base-uncased"),  # Example standard HF model
+    "bert_base_uncased": (TextLLMWrapper, "bert-base-uncased"),
 }
 
 
@@ -532,7 +543,7 @@ class BioEmbedder:
             logging.error(f"Error during text embedding generation for model '{model}': {e}")
             raise RuntimeError(f"Text embedding failed for input '{text[:50]}...'.") from e
 
-    def last_(
+    def embed_texts_batch(
         self,
         texts: Sequence[str],
         model: str,

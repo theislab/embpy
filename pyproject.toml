@@ -5,7 +5,7 @@ requires = [ "hatchling" ]
 [project]
 name = "embpy"
 version = "0.0.1"
-description = "A package for embeddings in python"
+description = "A package for biological embeddings in the perturbation experimental space"
 readme = "README.md"
 license = { file = "LICENSE" }
 maintainers = [
@@ -17,7 +17,6 @@ authors = [
 requires-python = ">=3.11"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -28,21 +27,28 @@ dependencies = [
   "borzoi-pytorch>=0.4.3",
   "enformer-pytorch>=0.8.10",
   "esm>=3.2.0",
+  "huggingface-hub>=0.35,<1.0.0",
   "ipywidgets",
   "matplotlib",
-  "numpy==1.26.4",
+  "numpy>=1.26,<2.0",
   "pandas>=2.3.0",
   "pyarrow>=14.0.2",
   "pyensembl>=2.3.13",
-  "pytest",
   "rdkit",
+  "requests",
   "seaborn",
   "session-info",
   "transformers>=4.45.0,<5.0.0",
-  "huggingface-hub>=0.35,<1.0.0",
 ]
+
 optional-dependencies.torch = [
   "torch>=2.5.1",
+]
+optional-dependencies.evo2 = [
+  "evo2",
+]
+optional-dependencies.all = [
+  "embpy[torch,evo2]",
 ]
 optional-dependencies.dev = [
   "pre-commit",
@@ -62,11 +68,12 @@ optional-dependencies.doc = [
   "sphinxcontrib-bibtex>=1",
   "sphinxext-opengraph",
 ]
-
 optional-dependencies.test = [
   "coverage",
   "pytest",
+  "pytest-mock",
 ]
+
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://embpy.readthedocs.io/"
 urls.Homepage = "https://github.com/grpinto/embpy"
@@ -129,7 +136,7 @@ lint.pydocstyle.convention = "numpy"
 testpaths = [ "tests" ]
 xfail_strict = true
 addopts = [
-  "--import-mode=importlib", # allow using test files with same name
+  "--import-mode=importlib",
 ]
 
 [tool.coverage.run]
