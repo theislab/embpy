@@ -1,6 +1,6 @@
 from .dna_models import BorzoiWrapper, EnformerWrapper
 from .molecule_models import ChembertaWrapper, MolformerWrapper, RDKitWrapper
-from .protein_models import ESM2Wrapper, ESMCWrapper, STRINGWrapper
+from .protein_models import ESM2Wrapper, ESMCWrapper, ProtT5Wrapper, STRINGWrapper
 from .text_models import TextLLMWrapper
 
 # Evo (v1/v1.5) is optional (requires: pip install evo-model)
@@ -33,6 +33,7 @@ __all__ = [
     "GNNEncoder",
     "MolformerWrapper",
     "PPIGNNWrapper",
+    "ProtT5Wrapper",
     "RDKitWrapper",
     "STRINGWrapper",
     "TextLLMWrapper",

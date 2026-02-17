@@ -20,7 +20,6 @@ from embpy.models.ppi_models import (
     load_string_links_file,
 )
 
-
 # =====================================================================
 # Fixtures
 # =====================================================================
@@ -70,8 +69,12 @@ def trained_wrapper(wrapper: PPIGNNWrapper) -> PPIGNNWrapper:
 class TestGNNEncoder:
     def test_forward_shape(self) -> None:
         enc = GNNEncoder(
-            num_nodes=5, input_dim=8, hidden_dim=16, output_dim=8,
-            num_layers=2, gnn_type="gcn",
+            num_nodes=5,
+            input_dim=8,
+            hidden_dim=16,
+            output_dim=8,
+            num_layers=2,
+            gnn_type="gcn",
         )
         edge_index = torch.tensor([[0, 1, 2], [1, 2, 3]], dtype=torch.long)
         out = enc(edge_index)
@@ -80,8 +83,12 @@ class TestGNNEncoder:
     def test_gnn_types(self) -> None:
         for gnn_type in ("gcn", "sage", "gat"):
             enc = GNNEncoder(
-                num_nodes=4, input_dim=8, hidden_dim=16, output_dim=8,
-                num_layers=2, gnn_type=gnn_type,
+                num_nodes=4,
+                input_dim=8,
+                hidden_dim=16,
+                output_dim=8,
+                num_layers=2,
+                gnn_type=gnn_type,
             )
             edge_index = torch.tensor([[0, 1], [1, 2]], dtype=torch.long)
             out = enc(edge_index)
@@ -89,25 +96,32 @@ class TestGNNEncoder:
 
     def test_invalid_gnn_type(self) -> None:
         with pytest.raises(ValueError, match="Unknown gnn_type"):
-            GNNEncoder(num_nodes=4, input_dim=8, hidden_dim=8, output_dim=8,
-                       num_layers=2, gnn_type="invalid")
+            GNNEncoder(num_nodes=4, input_dim=8, hidden_dim=8, output_dim=8, num_layers=2, gnn_type="invalid")
 
     def test_min_layers(self) -> None:
         with pytest.raises(ValueError, match="num_layers must be >= 2"):
-            GNNEncoder(num_nodes=4, input_dim=8, hidden_dim=8, output_dim=8,
-                       num_layers=1, gnn_type="gcn")
+            GNNEncoder(num_nodes=4, input_dim=8, hidden_dim=8, output_dim=8, num_layers=1, gnn_type="gcn")
 
     def test_three_layers(self) -> None:
         enc = GNNEncoder(
-            num_nodes=5, input_dim=8, hidden_dim=16, output_dim=8,
-            num_layers=3, gnn_type="gcn",
+            num_nodes=5,
+            input_dim=8,
+            hidden_dim=16,
+            output_dim=8,
+            num_layers=3,
+            gnn_type="gcn",
         )
         assert len(enc.convs) == 3
 
     def test_dropout_in_training(self) -> None:
         enc = GNNEncoder(
-            num_nodes=5, input_dim=8, hidden_dim=16, output_dim=8,
-            num_layers=2, gnn_type="gcn", dropout=0.5,
+            num_nodes=5,
+            input_dim=8,
+            hidden_dim=16,
+            output_dim=8,
+            num_layers=2,
+            gnn_type="gcn",
+            dropout=0.5,
         )
         edge_index = torch.tensor([[0, 1], [1, 2]], dtype=torch.long)
         enc.train()
@@ -126,8 +140,11 @@ class TestGNNEncoder:
 class TestBuildGraph:
     def test_from_dataframe(self, small_interactions: pd.DataFrame) -> None:
         w = PPIGNNWrapper(
-            input_dim=8, hidden_dim=16, output_dim=8,
-            num_layers=2, score_threshold=0,
+            input_dim=8,
+            hidden_dim=16,
+            output_dim=8,
+            num_layers=2,
+            score_threshold=0,
         )
         w.load(torch.device("cpu"))
         w.build_graph(interactions_df=small_interactions)
@@ -139,14 +156,19 @@ class TestBuildGraph:
         assert w.encoder is not None
 
     def test_score_filtering(self) -> None:
-        df = pd.DataFrame({
-            "protein1": ["A", "B", "C"],
-            "protein2": ["B", "C", "D"],
-            "combined_score": [900, 300, 100],
-        })
+        df = pd.DataFrame(
+            {
+                "protein1": ["A", "B", "C"],
+                "protein2": ["B", "C", "D"],
+                "combined_score": [900, 300, 100],
+            }
+        )
         w = PPIGNNWrapper(
-            input_dim=8, hidden_dim=16, output_dim=8,
-            num_layers=2, score_threshold=500,
+            input_dim=8,
+            hidden_dim=16,
+            output_dim=8,
+            num_layers=2,
+            score_threshold=500,
         )
         w.load(torch.device("cpu"))
         w.build_graph(interactions_df=df)
@@ -157,14 +179,19 @@ class TestBuildGraph:
         assert "C" not in w.node_to_idx
 
     def test_empty_after_filter_raises(self) -> None:
-        df = pd.DataFrame({
-            "protein1": ["A"],
-            "protein2": ["B"],
-            "combined_score": [100],
-        })
+        df = pd.DataFrame(
+            {
+                "protein1": ["A"],
+                "protein2": ["B"],
+                "combined_score": [100],
+            }
+        )
         w = PPIGNNWrapper(
-            input_dim=8, hidden_dim=16, output_dim=8,
-            num_layers=2, score_threshold=999,
+            input_dim=8,
+            hidden_dim=16,
+            output_dim=8,
+            num_layers=2,
+            score_threshold=999,
         )
         w.load(torch.device("cpu"))
         with pytest.raises(ValueError, match="No edges remain"):
@@ -192,8 +219,11 @@ class TestBuildGraph:
         fpath.write_text(links)
 
         w = PPIGNNWrapper(
-            input_dim=8, hidden_dim=16, output_dim=8,
-            num_layers=2, score_threshold=0,
+            input_dim=8,
+            hidden_dim=16,
+            output_dim=8,
+            num_layers=2,
+            score_threshold=0,
         )
         w.load(torch.device("cpu"))
         w.build_graph(string_links_file=str(fpath))
@@ -256,9 +286,7 @@ class TestEmbed:
         for emb in embs:
             assert emb.shape == (16,)
 
-    def test_embed_batch_missing_gene_returns_zeros(
-        self, trained_wrapper: PPIGNNWrapper
-    ) -> None:
+    def test_embed_batch_missing_gene_returns_zeros(self, trained_wrapper: PPIGNNWrapper) -> None:
         embs = trained_wrapper.embed_batch(["TP53", "NONEXISTENT"])
         assert embs[0].shape == (16,)
         assert np.allclose(embs[1], 0.0)
@@ -268,16 +296,12 @@ class TestEmbed:
         emb2 = trained_wrapper.embed("TP53")
         np.testing.assert_array_equal(emb1, emb2)
 
-    def test_embed_before_train_uses_random_init(
-        self, wrapper: PPIGNNWrapper
-    ) -> None:
+    def test_embed_before_train_uses_random_init(self, wrapper: PPIGNNWrapper) -> None:
         # Embedding before training should still work (uses random init)
         emb = wrapper.embed("TP53")
         assert emb.shape == (16,)
 
-    def test_different_genes_different_embeddings(
-        self, trained_wrapper: PPIGNNWrapper
-    ) -> None:
+    def test_different_genes_different_embeddings(self, trained_wrapper: PPIGNNWrapper) -> None:
         emb_tp53 = trained_wrapper.embed("TP53")
         emb_myc = trained_wrapper.embed("MYC")
         assert not np.allclose(emb_tp53, emb_myc)
@@ -367,3 +391,255 @@ class TestFetchStringNetwork:
         assert "protein2" in df.columns
         assert df["protein1"].iloc[0] == "TP53"
         assert df["protein2"].iloc[0] == "BRCA1"
+
+    @patch("embpy.models.ppi_models.requests.post")
+    def test_decimal_scores_rescaled_to_1000(self, mock_post: MagicMock) -> None:
+        """STRING API returns scores on 0-1 scale; they should be rescaled to 0-1000."""
+        tsv_data = (
+            "stringId_A\tstringId_B\tpreferredName_A\tpreferredName_B\tscore\n"
+            "9606.ENSP001\t9606.ENSP002\tTP53\tBRCA1\t0.900\n"
+            "9606.ENSP001\t9606.ENSP003\tTP53\tEGFR\t0.500\n"
+        )
+        mock_resp = MagicMock()
+        mock_resp.text = tsv_data
+        mock_resp.raise_for_status = MagicMock()
+        mock_post.return_value = mock_resp
+
+        df = _fetch_string_network(["TP53", "BRCA1", "EGFR"], species=9606)
+        # Scores should now be on the 0-1000 integer scale
+        assert df["combined_score"].max() == 900
+        assert df["combined_score"].min() == 500
+
+
+# =====================================================================
+# GNNEncoder – pre-computed node features
+# =====================================================================
+
+
+class TestGNNEncoderNodeFeatures:
+    """Tests for GNNEncoder with pre-computed (e.g. ProtT5) node features."""
+
+    def test_external_features_shape(self) -> None:
+        feats = torch.randn(5, 1024)
+        enc = GNNEncoder(
+            num_nodes=5,
+            input_dim=128,
+            hidden_dim=64,
+            output_dim=32,
+            num_layers=2,
+            gnn_type="gcn",
+            node_features=feats,
+        )
+        edge_index = torch.tensor([[0, 1, 2], [1, 2, 3]], dtype=torch.long)
+        out = enc(edge_index)
+        assert out.shape == (5, 32)
+
+    def test_external_features_uses_projection(self) -> None:
+        feats = torch.randn(4, 1024)
+        enc = GNNEncoder(
+            num_nodes=4,
+            input_dim=64,
+            hidden_dim=32,
+            output_dim=16,
+            num_layers=2,
+            gnn_type="gcn",
+            node_features=feats,
+        )
+        assert enc.feature_proj is not None
+        assert enc.node_emb is None
+        assert enc._use_external_features is True
+
+    def test_learnable_features_when_none(self) -> None:
+        enc = GNNEncoder(
+            num_nodes=4,
+            input_dim=64,
+            hidden_dim=32,
+            output_dim=16,
+            num_layers=2,
+            gnn_type="gcn",
+            node_features=None,
+        )
+        assert enc.node_emb is not None
+        assert enc.feature_proj is None
+        assert enc._use_external_features is False
+
+    def test_wrong_num_nodes_raises(self) -> None:
+        feats = torch.randn(3, 128)
+        with pytest.raises(ValueError, match="node_features has 3 rows"):
+            GNNEncoder(
+                num_nodes=5,
+                input_dim=64,
+                hidden_dim=32,
+                output_dim=16,
+                num_layers=2,
+                gnn_type="gcn",
+                node_features=feats,
+            )
+
+    def test_all_gnn_types_with_features(self) -> None:
+        feats = torch.randn(4, 256)
+        edge_index = torch.tensor([[0, 1], [1, 2]], dtype=torch.long)
+        for gnn_type in ("gcn", "sage", "gat"):
+            enc = GNNEncoder(
+                num_nodes=4,
+                input_dim=64,
+                hidden_dim=32,
+                output_dim=16,
+                num_layers=2,
+                gnn_type=gnn_type,
+                node_features=feats,
+            )
+            out = enc(edge_index)
+            assert out.shape == (4, 16), f"Failed for gnn_type={gnn_type}"
+
+
+# =====================================================================
+# PPIGNNWrapper – build_graph with node_features
+# =====================================================================
+
+
+class TestBuildGraphWithNodeFeatures:
+    """Tests for PPIGNNWrapper.build_graph() with pre-computed node features."""
+
+    def test_dict_node_features(self, small_interactions: pd.DataFrame) -> None:
+        """Dict mapping gene names → feature vectors."""
+        features = {
+            "TP53": np.random.randn(64).astype(np.float32),
+            "BRCA1": np.random.randn(64).astype(np.float32),
+            "EGFR": np.random.randn(64).astype(np.float32),
+            "KRAS": np.random.randn(64).astype(np.float32),
+            "MYC": np.random.randn(64).astype(np.float32),
+        }
+        w = PPIGNNWrapper(
+            input_dim=16,
+            hidden_dim=32,
+            output_dim=16,
+            num_layers=2,
+            score_threshold=0,
+        )
+        w.load(torch.device("cpu"))
+        w.build_graph(interactions_df=small_interactions, node_features=features)
+        assert w.encoder is not None
+        assert w.encoder._use_external_features is True
+        assert w.encoder.feature_proj is not None
+
+    def test_ndarray_node_features(self, small_interactions: pd.DataFrame) -> None:
+        """NumPy array of shape (num_nodes, feature_dim)."""
+        w = PPIGNNWrapper(
+            input_dim=16,
+            hidden_dim=32,
+            output_dim=16,
+            num_layers=2,
+            score_threshold=0,
+        )
+        w.load(torch.device("cpu"))
+        w.build_graph(interactions_df=small_interactions)
+        num_nodes = w.num_nodes
+
+        # Rebuild with ndarray features
+        feats = np.random.randn(num_nodes, 128).astype(np.float32)
+        w2 = PPIGNNWrapper(
+            input_dim=16,
+            hidden_dim=32,
+            output_dim=16,
+            num_layers=2,
+            score_threshold=0,
+        )
+        w2.load(torch.device("cpu"))
+        w2.build_graph(interactions_df=small_interactions, node_features=feats)
+        assert w2.encoder is not None
+        assert w2.encoder._use_external_features is True
+
+    def test_tensor_node_features(self, small_interactions: pd.DataFrame) -> None:
+        """Torch tensor of shape (num_nodes, feature_dim)."""
+        feats = torch.randn(5, 256)
+        w = PPIGNNWrapper(
+            input_dim=16,
+            hidden_dim=32,
+            output_dim=16,
+            num_layers=2,
+            score_threshold=0,
+        )
+        w.load(torch.device("cpu"))
+        w.build_graph(interactions_df=small_interactions, node_features=feats)
+        assert w.encoder is not None
+        assert w.encoder._use_external_features is True
+
+    def test_dict_partial_match_fills_zeros(self, small_interactions: pd.DataFrame) -> None:
+        """Dict with only some genes → missing ones get zero vectors."""
+        features = {
+            "TP53": np.random.randn(64).astype(np.float32),
+            "BRCA1": np.random.randn(64).astype(np.float32),
+            # EGFR, KRAS, MYC are missing
+        }
+        w = PPIGNNWrapper(
+            input_dim=16,
+            hidden_dim=32,
+            output_dim=16,
+            num_layers=2,
+            score_threshold=0,
+        )
+        w.load(torch.device("cpu"))
+        w.build_graph(interactions_df=small_interactions, node_features=features)
+        assert w.encoder is not None
+
+    def test_wrong_ndarray_rows_raises(self, small_interactions: pd.DataFrame) -> None:
+        feats = np.random.randn(3, 128).astype(np.float32)
+        w = PPIGNNWrapper(
+            input_dim=16,
+            hidden_dim=32,
+            output_dim=16,
+            num_layers=2,
+            score_threshold=0,
+        )
+        w.load(torch.device("cpu"))
+        with pytest.raises(ValueError, match="node_features has 3 rows"):
+            w.build_graph(interactions_df=small_interactions, node_features=feats)
+
+    def test_train_with_external_features(self, small_interactions: pd.DataFrame) -> None:
+        """Full pipeline: build graph with features → train → embed."""
+        features = {name: np.random.randn(128).astype(np.float32) for name in ["TP53", "BRCA1", "EGFR", "KRAS", "MYC"]}
+        w = PPIGNNWrapper(
+            input_dim=16,
+            hidden_dim=32,
+            output_dim=16,
+            num_layers=2,
+            score_threshold=0,
+        )
+        w.load(torch.device("cpu"))
+        w.build_graph(interactions_df=small_interactions, node_features=features)
+        losses = w.train_embeddings(epochs=10, lr=0.01, log_every=100)
+        assert len(losses) == 10
+
+        emb = w.embed("TP53")
+        assert emb.shape == (16,)
+        assert emb.dtype == np.float32
+
+    def test_checkpoint_with_external_features(self, small_interactions: pd.DataFrame) -> None:
+        """Save and reload a checkpoint that used external features."""
+        features = {name: np.random.randn(128).astype(np.float32) for name in ["TP53", "BRCA1", "EGFR", "KRAS", "MYC"]}
+        w = PPIGNNWrapper(
+            input_dim=16,
+            hidden_dim=32,
+            output_dim=16,
+            num_layers=2,
+            score_threshold=0,
+        )
+        w.load(torch.device("cpu"))
+        w.build_graph(interactions_df=small_interactions, node_features=features)
+        w.train_embeddings(epochs=5, lr=0.01, log_every=100)
+
+        emb_before = w.embed("TP53").copy()
+
+        with tempfile.NamedTemporaryFile(suffix=".pt", delete=False) as f:
+            path = f.name
+        w.save_checkpoint(path)
+
+        loaded = PPIGNNWrapper()
+        loaded.load(torch.device("cpu"))
+        loaded._load_checkpoint(path)
+
+        emb_after = loaded.embed("TP53")
+        np.testing.assert_array_almost_equal(emb_before, emb_after)
+        assert loaded.encoder is not None
+        assert loaded.encoder._use_external_features is True

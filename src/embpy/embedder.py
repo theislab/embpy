@@ -12,8 +12,8 @@ from .models.base import BaseModelWrapper
 
 # Import all potential wrappers - handle ImportErrors later if deps are missing
 from .models.dna_models import BorzoiWrapper, EnformerWrapper
-from .models.molecule_models import ChembertaWrapper, MolformerWrapper
-from .models.protein_models import ESM2Wrapper, ESMCWrapper
+from .models.molecule_models import ChembertaWrapper, MolformerWrapper, RDKitWrapper
+from .models.protein_models import ESM2Wrapper, ESMCWrapper, ProtT5Wrapper
 from .models.text_models import TextLLMWrapper
 from .resources.gene_resolver import GeneResolver
 
@@ -78,10 +78,22 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # ESMC Models
     "esmc_300m": (ESMCWrapper, "esmc_300m"),
     "esmc_600m": (ESMCWrapper, "esmc_600m"),
+    # ProtT5 Models (ProtTrans)
+    "prot_t5_xl": (ProtT5Wrapper, "Rostlab/prot_t5_xl_uniref50"),
+    "prot_t5_xl_half": (ProtT5Wrapper, "Rostlab/prot_t5_xl_half_uniref50-enc"),
     # --- Molecule Models ---
     "chemberta2MTR": (ChembertaWrapper, "DeepChem/ChemBERTa-77M-MTR"),
     "chemberta2MLM": (ChembertaWrapper, "DeepChem/ChemBERTa-100M-MLM"),
     "molformer_base": (MolformerWrapper, "ibm/MoLFormer-XL-both-10pct"),
+    # RDKit Fingerprints (CPU-only, no download needed)
+    "rdkit_fp": (RDKitWrapper, "rdkit"),
+    "morgan_fp": (RDKitWrapper, "morgan"),
+    "morgan_count_fp": (RDKitWrapper, "morgan_count"),
+    "maccs_fp": (RDKitWrapper, "maccs"),
+    "atom_pair_fp": (RDKitWrapper, "atom_pair"),
+    "atom_pair_count_fp": (RDKitWrapper, "atom_pair_count"),
+    "torsion_fp": (RDKitWrapper, "topological_torsion"),
+    "torsion_count_fp": (RDKitWrapper, "topological_torsion_count"),
     # --- Text Models ---
     "minilm_l6_v2": (TextLLMWrapper, "sentence-transformers/all-MiniLM-L6-v2"),
     "bert_base_uncased": (TextLLMWrapper, "bert-base-uncased"),
@@ -263,10 +275,15 @@ class BioEmbedder:
         mtype = inst.model_type
         # Fetch input data
         if mtype == "dna":
+            if id_type not in ("symbol", "ensembl_id"):
+                raise IdentifierError(
+                    f"DNA models require id_type 'symbol' or 'ensembl_id', got '{id_type}'."
+                )
+            dna_id_type: Literal["symbol", "ensembl_id"] = id_type  # type: ignore[assignment]
             if self.resolver_backend == "local":
-                seq = self.gene_resolver.get_local_dna_sequence(identifier, id_type)
+                seq = self.gene_resolver.get_local_dna_sequence(identifier, dna_id_type)
             else:
-                seq = self.gene_resolver.get_dna_sequence(identifier, id_type, organism)
+                seq = self.gene_resolver.get_dna_sequence(identifier, dna_id_type, organism)
             if not seq:
                 raise IdentifierError(f"DNA not found for {id_type}='{identifier}'")
             input_data = seq
@@ -324,8 +341,10 @@ class BioEmbedder:
         if fetch_all_dna or identifiers is None:
             if self.resolver_backend == "api":
                 logging.info(f"Fetching list of all '{biotype}' genes via API...")
-                # This returns {ensembl_id: dna_sequence}
-                prefetched_data = self.gene_resolver.get_gene_sequences(biotype=biotype)
+                # This returns {ensembl_id: dna_sequence} or None
+                fetched = self.gene_resolver.get_gene_sequences(biotype=biotype)
+                if fetched is not None:
+                    prefetched_data = fetched
 
                 if identifiers is None:
                     # USE DISCOVERED GENES
@@ -349,6 +368,11 @@ class BioEmbedder:
         input_data_list: list[str | None] = []
         logging.info(f"Batch: {len(identifiers)} items for '{model}' ({mtype})...")
 
+        # Narrow id_type for DNA resolver methods (only accept symbol/ensembl_id)
+        dna_id: Literal["symbol", "ensembl_id"] | None = (
+            id_type if id_type in ("symbol", "ensembl_id") else None  # type: ignore[assignment]
+        )
+
         for ident in identifiers:
             data = None
             try:
@@ -357,14 +381,20 @@ class BioEmbedder:
                     if prefetched_data:
                         if id_type == "ensembl_id":
                             data = prefetched_data.get(ident)
-                        # (Symbol mapping logic omitted for brevity, assumes Ensembl IDs for bulk)
 
                     # Fallback
                     if data is None:
-                        if self.resolver_backend == "local":
-                            data = self.gene_resolver.get_local_dna_sequence(ident, id_type)
+                        if dna_id is None:
+                            logging.warning(
+                                "DNA models require id_type 'symbol' or 'ensembl_id', "
+                                "got '%s'; skipping %s.",
+                                id_type,
+                                ident,
+                            )
+                        elif self.resolver_backend == "local":
+                            data = self.gene_resolver.get_local_dna_sequence(ident, dna_id)
                         else:
-                            data = self.gene_resolver.get_dna_sequence(ident, id_type, organism)
+                            data = self.gene_resolver.get_dna_sequence(ident, dna_id, organism)
 
                 elif mtype == "protein":
                     # ESMC: Resolves Ensembl ID -> Protein Sequence via API
@@ -601,7 +631,7 @@ class BioEmbedder:
                 )
                 return [None] * len(texts)
             logging.info("Batch text embedding successful.")
-            results: list[np.ndarray | None] = batch_results
+            results: list[np.ndarray | None] = list(batch_results)
 
         except (ValueError, KeyError) as e:
             logging.error(f"Error during batch text embedding generation for model '{model}': {e}")

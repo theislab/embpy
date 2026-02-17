@@ -50,18 +50,28 @@ if _HAVE_PYG:
 
 
 class GNNEncoder(nn.Module):
-    """Multi-layer GNN encoder with learnable node features.
+    """Multi-layer GNN encoder with learnable or pre-computed node features.
 
     The encoder stacks several graph-convolution layers and applies ReLU
-    activations + dropout between them.  Initial node representations are
-    **learnable** ``nn.Embedding`` vectors (no external features required).
+    activations + dropout between them.
+
+    **Node initialisation** (two modes):
+
+    * **Learnable** (default): an ``nn.Embedding`` is created so that every
+      node gets a trainable vector of size *input_dim*.
+    * **Pre-computed**: external node features (e.g. ProtT5 embeddings) are
+      passed as *node_features*, a ``(num_nodes, feature_dim)`` tensor.
+      A learnable linear projection maps *feature_dim* → *input_dim*
+      before the first GNN layer.  This is the approach used in the
+      STRING-GNN framework (Hu et al., 2024).
 
     Parameters
     ----------
     num_nodes
         Number of nodes in the graph.
     input_dim
-        Dimension of the learnable initial node embeddings.
+        Dimension fed into the first GNN layer (also the learnable
+        embedding size when no external features are given).
     hidden_dim
         Hidden layer width.
     output_dim
@@ -72,6 +82,11 @@ class GNNEncoder(nn.Module):
         One of ``"gcn"``, ``"sage"``, or ``"gat"``.
     dropout
         Dropout rate applied between layers during training.
+    node_features
+        Optional pre-computed node features of shape
+        ``(num_nodes, feature_dim)``.  When provided, a linear projection
+        ``feature_dim → input_dim`` is used instead of a learnable
+        ``nn.Embedding``.
     """
 
     def __init__(
@@ -83,6 +98,7 @@ class GNNEncoder(nn.Module):
         num_layers: int = 3,
         gnn_type: str = "gcn",
         dropout: float = 0.2,
+        node_features: torch.Tensor | None = None,
     ) -> None:
         super().__init__()
         if not _HAVE_PYG:
@@ -94,9 +110,23 @@ class GNNEncoder(nn.Module):
 
         self.num_nodes = num_nodes
         self.dropout = dropout
+        self._use_external_features = node_features is not None
 
-        # Learnable initial node features
-        self.node_emb = nn.Embedding(num_nodes, input_dim)
+        if node_features is not None:
+            # Pre-computed features with a learnable linear projection
+            if node_features.shape[0] != num_nodes:
+                raise ValueError(
+                    f"node_features has {node_features.shape[0]} rows but "
+                    f"expected {num_nodes} (one per node)."
+                )
+            feature_dim = node_features.shape[1]
+            self.register_buffer("_node_features", node_features)
+            self.feature_proj = nn.Linear(feature_dim, input_dim)
+            self.node_emb = None  # type: ignore[assignment]
+        else:
+            # Learnable initial node features
+            self.node_emb = nn.Embedding(num_nodes, input_dim)
+            self.feature_proj = None  # type: ignore[assignment]
 
         ConvClass = _CONV_REGISTRY[gnn_type]
         self.convs = nn.ModuleList()
@@ -117,7 +147,12 @@ class GNNEncoder(nn.Module):
         -------
         torch.Tensor of shape ``(num_nodes, output_dim)``.
         """
-        x = self.node_emb.weight
+        if self._use_external_features and self.feature_proj is not None:
+            x = self.feature_proj(self._node_features)
+        elif self.node_emb is not None:
+            x = self.node_emb.weight
+        else:
+            raise RuntimeError("GNNEncoder has neither node_emb nor feature_proj initialised.")
         for conv in self.convs[:-1]:
             x = conv(x, edge_index)
             x = F.relu(x)
@@ -378,10 +413,12 @@ class PPIGNNWrapper(BaseModelWrapper):
         interactions_df: pd.DataFrame | None = None,
         string_links_file: str | None = None,
         gene_ids: Sequence[str] | None = None,
+        node_features: dict[str, np.ndarray] | np.ndarray | torch.Tensor | None = None,
     ) -> None:
         """Build the PPI graph from one of three sources.
 
-        Exactly one argument must be provided.
+        Exactly one of *interactions_df*, *string_links_file*, or
+        *gene_ids* must be provided.
 
         Parameters
         ----------
@@ -392,6 +429,18 @@ class PPIGNNWrapper(BaseModelWrapper):
             Path to a STRING ``protein.links`` bulk-download file.
         gene_ids
             Gene symbols to fetch interactively from the STRING REST API.
+        node_features
+            Optional pre-computed node features (e.g. ProtT5 1024-dim
+            embeddings) used to initialise the GNN instead of random
+            learnable embeddings.  Accepted formats:
+
+            * ``dict[str, np.ndarray]`` — mapping from gene/protein name
+              to its feature vector.  Only genes present in the graph
+              are used; missing genes get zero vectors.
+            * ``np.ndarray`` or ``torch.Tensor`` of shape
+              ``(num_nodes, feature_dim)`` — rows must be in the same
+              order as the sorted node list (i.e. the order returned
+              by :attr:`graph_genes`).
         """
         n_sources = sum(x is not None for x in (interactions_df, string_links_file, gene_ids))
         if n_sources != 1:
@@ -434,6 +483,18 @@ class PPIGNNWrapper(BaseModelWrapper):
             self.species,
         )
 
+        # Resolve optional pre-computed node features into a tensor
+        feat_tensor: torch.Tensor | None = None
+        if node_features is not None:
+            feat_tensor = self._resolve_node_features(node_features, all_nodes)
+            if self.device is not None:
+                feat_tensor = feat_tensor.to(self.device)
+            logging.info(
+                "Using pre-computed node features: shape %s → projected to %d dims.",
+                tuple(feat_tensor.shape),
+                self.input_dim,
+            )
+
         # Initialise encoder
         self.encoder = GNNEncoder(
             num_nodes=num_nodes,
@@ -443,11 +504,65 @@ class PPIGNNWrapper(BaseModelWrapper):
             num_layers=self.num_layers,
             gnn_type=self.gnn_type,
             dropout=self.dropout,
+            node_features=feat_tensor,
         )
         if self.device is not None:
             self.encoder = self.encoder.to(self.device)
 
         self._embeddings_cache = None
+
+    # ------------------------------------------------------------------
+    # Node feature helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_node_features(
+        features: dict[str, np.ndarray] | np.ndarray | torch.Tensor,
+        node_list: list[str],
+    ) -> torch.Tensor:
+        """Convert *features* to a ``(num_nodes, feature_dim)`` Tensor.
+
+        * If *features* is a dict, build the matrix by looking up each
+          node in *node_list*.  Missing entries are filled with zeros.
+        * If *features* is an ndarray or Tensor, it must already have
+          shape ``(num_nodes, feature_dim)``.
+        """
+        num_nodes = len(node_list)
+        if isinstance(features, dict):
+            # Infer feature_dim from the first value
+            sample = next(iter(features.values()))
+            feature_dim = sample.shape[0]
+            matrix = np.zeros((num_nodes, feature_dim), dtype=np.float32)
+            n_found = 0
+            for i, gene in enumerate(node_list):
+                if gene in features:
+                    matrix[i] = features[gene]
+                    n_found += 1
+            logging.info(
+                "Matched %d / %d graph nodes to provided node features.",
+                n_found,
+                num_nodes,
+            )
+            return torch.from_numpy(matrix)
+        elif isinstance(features, np.ndarray):
+            if features.shape[0] != num_nodes:
+                raise ValueError(
+                    f"node_features has {features.shape[0]} rows but graph "
+                    f"has {num_nodes} nodes."
+                )
+            return torch.from_numpy(features.astype(np.float32))
+        elif isinstance(features, torch.Tensor):
+            if features.shape[0] != num_nodes:
+                raise ValueError(
+                    f"node_features has {features.shape[0]} rows but graph "
+                    f"has {num_nodes} nodes."
+                )
+            return features.float()
+        else:
+            raise TypeError(
+                f"node_features must be a dict, np.ndarray, or torch.Tensor, "
+                f"got {type(features)}"
+            )
 
     # ------------------------------------------------------------------
     # Training
@@ -526,7 +641,7 @@ class PPIGNNWrapper(BaseModelWrapper):
         """Persist the trained encoder, graph, and node mapping."""
         if self.encoder is None:
             raise RuntimeError("No trained model to save.")
-        checkpoint = {
+        checkpoint: dict[str, Any] = {
             "encoder_state": self.encoder.state_dict(),
             "edge_index": self.edge_index.cpu() if self.edge_index is not None else None,
             "node_to_idx": self.node_to_idx,
@@ -540,8 +655,12 @@ class PPIGNNWrapper(BaseModelWrapper):
                 "dropout": self.dropout,
                 "species": self.species,
                 "num_nodes": self.encoder.num_nodes,
+                "use_external_features": self.encoder._use_external_features,
             },
         }
+        # Save external node features if present (needed for reconstruction)
+        if self.encoder._use_external_features:
+            checkpoint["node_features"] = self.encoder._node_features.cpu()
         torch.save(checkpoint, path)
         logging.info("Saved PPI GNN checkpoint to %s", path)
 
@@ -561,6 +680,9 @@ class PPIGNNWrapper(BaseModelWrapper):
         self.node_to_idx = checkpoint["node_to_idx"]
         self.idx_to_node = checkpoint["idx_to_node"]
 
+        # Restore external node features if the encoder was built with them
+        node_feat: torch.Tensor | None = checkpoint.get("node_features")
+
         self.encoder = GNNEncoder(
             num_nodes=cfg["num_nodes"],
             input_dim=self.input_dim,
@@ -569,6 +691,7 @@ class PPIGNNWrapper(BaseModelWrapper):
             num_layers=self.num_layers,
             gnn_type=self.gnn_type,
             dropout=self.dropout,
+            node_features=node_feat,
         )
         self.encoder.load_state_dict(checkpoint["encoder_state"])
         if self.device is not None:

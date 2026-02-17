@@ -1,6 +1,7 @@
 # embpy/models/protein_models.py
 import io
 import logging
+import re
 import time
 from collections.abc import Sequence
 from typing import Any
@@ -20,7 +21,7 @@ try:
     _HAVE_ESMC = True
 except ImportError:
     _HAVE_ESMC = False
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer, T5EncoderModel, T5Tokenizer
 
 
 class ESM2Wrapper(BaseModelWrapper):
@@ -445,6 +446,213 @@ class ESMCWrapper(BaseModelWrapper):
             self.embed(
                 input=seq,
                 pooling_strategy=pooling_strategy,
+                **kwargs,
+            )
+            for seq in inputs
+        ]
+
+
+class ProtT5Wrapper(BaseModelWrapper):
+    """Wrapper for ProtTrans ProtT5-XL-UniRef50 protein language model.
+
+    Produces **1024-dimensional** per-protein embeddings by extracting
+    residue-level representations from the T5 *encoder* and mean-pooling
+    over the sequence length.
+
+    This is the same embedding used as initial node features in the
+    STRING-SPACE (sequence) and STRING-GNN frameworks (Hu et al., 2024).
+
+    Supported model identifiers (Hugging Face):
+
+    * ``Rostlab/prot_t5_xl_uniref50``  – full-precision (float32)
+    * ``Rostlab/prot_t5_xl_half_uniref50-enc``  – half-precision encoder-only
+
+    Parameters
+    ----------
+    model_path_or_name
+        Hugging Face model name or local path.
+    """
+
+    model_type = "protein"
+    available_pooling_strategies = ["mean", "max", "cls"]
+
+    # ProtT5-XL hidden dimension
+    EMBEDDING_DIM = 1024
+
+    def __init__(
+        self,
+        model_path_or_name: str = "Rostlab/prot_t5_xl_half_uniref50-enc",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model_path_or_name, **kwargs)
+        self.tokenizer: T5Tokenizer | None = None
+
+    # ------------------------------------------------------------------
+    # Loading
+    # ------------------------------------------------------------------
+
+    def load(self, device: torch.device) -> None:
+        """Load the ProtT5 encoder and tokenizer onto *device*."""
+        if self.model is not None:
+            logging.debug("ProtT5 model already loaded.")
+            return
+
+        if not self.model_name:
+            raise ValueError("model_path_or_name must be provided for ProtT5Wrapper.")
+
+        logging.info("Loading ProtT5 model '%s' …", self.model_name)
+        try:
+            self.tokenizer = T5Tokenizer.from_pretrained(
+                self.model_name, do_lower_case=False
+            )
+            # Use T5EncoderModel to avoid decoder overhead
+            self.model = T5EncoderModel.from_pretrained(self.model_name)
+            self.model.to(device).eval()  # type: ignore[union-attr]
+            self.device = device
+            logging.info("ProtT5 model loaded successfully (dim=%d).", self.EMBEDDING_DIM)
+        except Exception as e:
+            logging.error("Failed to load ProtT5 model: %s", e)
+            raise RuntimeError(f"Could not load ProtT5 model '{self.model_name}'") from e
+
+    # ------------------------------------------------------------------
+    # Preprocessing
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _prepare_sequence(sequence: str) -> str:
+        """Prepare a protein sequence for ProtT5 tokenization.
+
+        ProtT5 expects **spaces between each amino acid** and all rare /
+        ambiguous residues (B, J, O, U, X, Z) mapped to ``X``.
+        """
+        # Remove whitespace
+        sequence = sequence.strip().upper()
+        # Replace rare amino acids with X
+        sequence = re.sub(r"[UZOB]", "X", sequence)
+        # Insert spaces between every amino acid
+        return " ".join(list(sequence))
+
+    # ------------------------------------------------------------------
+    # Embedding
+    # ------------------------------------------------------------------
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "mean",
+        target_layer: int | None = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Embed a single protein sequence.
+
+        Parameters
+        ----------
+        input
+            Amino-acid sequence (e.g. ``"MTEYKLVVVG..."``).
+        pooling_strategy
+            One of ``"mean"`` (default), ``"max"``, or ``"cls"``.
+        target_layer
+            If given, extract hidden states from a specific encoder layer
+            instead of the last one.
+
+        Returns
+        -------
+        np.ndarray
+            1-D array of shape ``(1024,)`` (or model hidden dim).
+        """
+        if self.model is None or self.device is None or self.tokenizer is None:
+            raise RuntimeError("ProtT5 model not loaded. Call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(
+                f"Invalid pooling '{pooling_strategy}'. "
+                f"Choose from {self.available_pooling_strategies}"
+            )
+
+        prepared = self._prepare_sequence(input)
+        ids = self.tokenizer(
+            prepared,
+            add_special_tokens=True,
+            padding="longest",
+            return_tensors="pt",
+        )
+        input_ids = ids["input_ids"].to(self.device)
+        attention_mask = ids.get("attention_mask")
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(self.device)
+
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=(target_layer is not None),
+            )
+
+            if target_layer is not None:
+                hidden_states = outputs.hidden_states
+                if not hidden_states:
+                    raise ValueError("Model did not return hidden states.")
+                if not (-len(hidden_states) <= target_layer < len(hidden_states)):
+                    raise ValueError(f"Invalid target_layer {target_layer}.")
+                emb = hidden_states[target_layer]
+            else:
+                emb = outputs.last_hidden_state  # (1, seq_len, 1024)
+
+        # Squeeze batch dim
+        if emb.dim() == 3 and emb.shape[0] == 1:
+            emb = emb.squeeze(0)  # (seq_len, 1024)
+
+        # Mask out padding tokens for mean/max pooling
+        if attention_mask is not None and pooling_strategy != "cls":
+            mask = attention_mask.squeeze(0).unsqueeze(-1).bool()  # (seq_len, 1)
+            emb = emb.masked_fill(~mask, 0.0)
+
+        if pooling_strategy == "cls":
+            pooled = emb[0]
+        elif pooling_strategy == "max":
+            if attention_mask is not None:
+                emb = emb.masked_fill(~mask, float("-inf"))
+            pooled = torch.max(emb, dim=0)[0]
+        else:  # mean
+            if attention_mask is not None:
+                pooled = emb.sum(dim=0) / mask.sum(dim=0).clamp(min=1)
+            else:
+                pooled = emb.mean(dim=0)
+
+        return pooled.float().cpu().numpy()
+
+    def embed_batch(
+        self,
+        inputs: list[str],
+        pooling_strategy: str = "mean",
+        target_layer: int | None = None,
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        """Embed multiple protein sequences.
+
+        Parameters
+        ----------
+        inputs
+            List of amino-acid sequence strings.
+        pooling_strategy
+            One of ``"mean"`` (default), ``"max"``, ``"cls"``.
+        target_layer
+            Optional encoder layer index.
+
+        Returns
+        -------
+        list[np.ndarray]
+            One 1-D array of shape ``(1024,)`` per input sequence.
+        """
+        if self.model is None or self.device is None:
+            raise RuntimeError("ProtT5 model not loaded. Call load() first.")
+        if not inputs:
+            return []
+
+        return [
+            self.embed(
+                input=seq,
+                pooling_strategy=pooling_strategy,
+                target_layer=target_layer,
                 **kwargs,
             )
             for seq in inputs

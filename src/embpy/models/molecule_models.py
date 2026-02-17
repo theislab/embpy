@@ -1,7 +1,7 @@
 # Placeholder for small molecule models (e.g., ChemBERTa, MolFormer)
 import logging
 from collections.abc import Sequence
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 import torch
@@ -35,8 +35,8 @@ class ChembertaWrapper(BaseModelWrapper):
 
     def __init__(self, model_path_or_name: str = "DeepChem/ChemBERTa-77M-MTR", **kwargs):
         super().__init__(model_path_or_name, **kwargs)
-        self.tokenizer: AutoTokenizer | None = None
-        self.model: AutoModel | None = None
+        self.tokenizer: Any = None
+        self.model: Any = None
         self.device: torch.device | None = None
         self.max_len: int | None = None
 
@@ -60,7 +60,9 @@ class ChembertaWrapper(BaseModelWrapper):
 
     def _token_length(self, smiles: str) -> int:
         """Tokenized length incl. special tokens, without truncation/padding."""
-        toks = self.tokenizer(
+        if self.tokenizer is None:
+            raise RuntimeError("Call load() first.")
+        toks: BatchEncoding = self.tokenizer(  # type: ignore[operator]
             smiles,
             add_special_tokens=True,
             padding=False,
@@ -68,13 +70,14 @@ class ChembertaWrapper(BaseModelWrapper):
             return_attention_mask=False,
             return_token_type_ids=False,
         )
-        return len(toks["input_ids"])
+        input_ids: list[int] = toks["input_ids"]  # type: ignore[assignment]
+        return len(input_ids)
 
     def _preprocess_smiles(self, smiles: str) -> dict[str, torch.Tensor]:
         if self.tokenizer is None:
             raise RuntimeError("Call load() first.")
         # we’ll still pass max_length for safety even though we pre-check length
-        return self.tokenizer(
+        return self.tokenizer(  # type: ignore[operator]
             smiles,
             return_tensors="pt",
             padding=False,
@@ -97,7 +100,7 @@ class ChembertaWrapper(BaseModelWrapper):
 
         # --- Skip too-long SMILES ---
         L = self._token_length(input)
-        if L > self.max_len:
+        if self.max_len is not None and L > self.max_len:
             logging.warning(f"Skipping SMILES ({L} tokens > max {self.max_len}): {input[:80]}...")
             return None
 
@@ -140,11 +143,11 @@ class ChembertaWrapper(BaseModelWrapper):
         pooling_strategy: str = "mean",
         use_pooler: bool = False,
         **kwargs: Any,
-    ) -> list[np.ndarray]:
+    ) -> list[np.ndarray | None]:
         """
         Embed a batch of SMILES strings.
 
-        Returns a list of 1D numpy arrays.
+        Returns a list of 1D numpy arrays (or None for skipped SMILES).
         """
         return [self.embed(s, pooling_strategy=pooling_strategy, use_pooler=use_pooler) for s in input]
 
@@ -198,19 +201,19 @@ class MolformerWrapper(BaseModelWrapper):
         try:
             # need trust_remote_code to pick up custom classes in the repo
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
-            self.model = AutoModel.from_pretrained(
+            model = AutoModel.from_pretrained(
                 self.model_name,
                 deterministic_eval=True,
                 trust_remote_code=True,
             )
-            self.model.to(device).eval()
+            self.model = model.to(device).eval()  # type: ignore[union-attr]
             self.device = device
             logging.info("MolFormer loaded successfully.")
         except Exception as e:
             logging.error(f"MolFormer load error: {e}")
             raise RuntimeError(f"Could not load MolFormer '{self.model_name}'") from e
 
-    def _preprocess_smiles(self, smiles: str) -> BatchEncoding:
+    def _preprocess_smiles(self, smiles: str | list[str]) -> BatchEncoding:
         """
         Tokenize one or more SMILES strings into model-ready input tensors.
 
@@ -337,59 +340,81 @@ class MolformerWrapper(BaseModelWrapper):
 
 
 class RDKitWrapper(BaseModelWrapper):
-    """
-    Wrapper for RDKit molecular fingerprints.
+    """RDKit molecular fingerprint wrapper.
 
-    This generates fixed-length bit vectors (fingerprints) often used as
-    baselines for molecular embedding tasks.
+    Generates fixed-length fingerprint vectors from SMILES strings.
+    Supports both **binary** (0/1 bit vectors) and **count-based**
+    (continuous integer) representations.
 
-    Implements:
-      - embed(smiles) → np.ndarray (size: n_bits)
-      - embed_batch([...]) → list[np.ndarray]
-
-    Pooling strategies:
-      • "flat" (default) → Returns the static fingerprint vector.
-        (Note: 'mean'/'max' are ignored as RDKit does not produce token-level embeddings).
+    Fingerprint types
+    -----------------
+    * ``"rdkit"``  -- RDKit topological (Daylight-like), binary
+    * ``"morgan"`` -- Morgan / ECFP bit vector, binary
+    * ``"morgan_count"`` -- Morgan / ECFP **count** vector, continuous
+    * ``"maccs"``  -- MACCS keys (166 public keys), binary
+    * ``"atom_pair"`` -- Atom-pair bit fingerprint, binary
+    * ``"atom_pair_count"`` -- Atom-pair count fingerprint, continuous
+    * ``"topological_torsion"`` -- Topological torsion bits, binary
+    * ``"topological_torsion_count"`` -- Topological torsion counts, continuous
     """
 
     model_type = "molecule"
     available_pooling_strategies = ["flat"]
 
+    _VALID_FP_TYPES = (
+        "morgan",
+        "morgan_count",
+        "rdkit",
+        "maccs",
+        "atom_pair",
+        "atom_pair_count",
+        "topological_torsion",
+        "topological_torsion_count",
+    )
+
     def __init__(
         self,
-        model_path_or_name: str = "morgan_fingerprint",
-        fingerprint_type: Literal["morgan", "rdkit"] = "rdkit",
+        model_path_or_name: str = "rdkit_fingerprint",
+        fingerprint_type: str | None = None,
         radius: int = 2,
         n_bits: int = 2048,
-        **kwargs,
+        **kwargs: Any,
     ):
-        """
-        Initialize the RDKit wrapper.
-
-        Args:
-            model_path_or_name: Arbitrary identifier for logging (default: "morgan_fingerprint").
-            fingerprint_type: "morgan" (ECFP-like) or "rdkit" (topological).
-            radius: Radius for Morgan fingerprints (default: 2, approx ECFP4).
-            n_bits: Length of the bit vector (default: 2048).
-        """
         super().__init__(model_path_or_name, **kwargs)
+        # Auto-detect: when model_path_or_name is itself a valid fingerprint
+        # type (e.g. loaded from MODEL_REGISTRY), use it as fingerprint_type.
+        if fingerprint_type is None:
+            if model_path_or_name in self._VALID_FP_TYPES:
+                fingerprint_type = model_path_or_name
+            else:
+                fingerprint_type = "rdkit"
+        if fingerprint_type not in self._VALID_FP_TYPES:
+            raise ValueError(f"Unknown fingerprint_type '{fingerprint_type}'. Choose from {self._VALID_FP_TYPES}")
         self.fingerprint_type = fingerprint_type
         self.radius = radius
-        self.n_bits = n_bits
+        # MACCS keys always have a fixed size (167 bits)
+        self.n_bits = 167 if fingerprint_type == "maccs" else n_bits
         self._loaded = False
 
-    def load(self, device: torch.device):
-        """
-        Marks the wrapper as loaded.
+    @property
+    def is_count_fingerprint(self) -> bool:
+        """``True`` when the fingerprint produces continuous counts."""
+        return self.fingerprint_type.endswith("_count")
 
-        Note: RDKit runs entirely on the CPU. The `device` argument is
-        stored for consistency but ignored during computation.
-        """
+    @property
+    def is_binary_fingerprint(self) -> bool:
+        """``True`` when the fingerprint produces binary 0/1 vectors."""
+        return not self.is_count_fingerprint
+
+    def load(self, device: torch.device) -> None:
+        """Mark the wrapper as loaded (RDKit is CPU-only)."""
         if self._loaded:
             return
-
         logging.info(
-            f"Loading RDKit Wrapper (Type={self.fingerprint_type}, Radius={self.radius}, Bits={self.n_bits})..."
+            "Loading RDKit wrapper (type=%s, radius=%d, n_bits=%d)",
+            self.fingerprint_type,
+            self.radius,
+            self.n_bits,
         )
         self.device = device
         self._loaded = True
@@ -400,46 +425,23 @@ class RDKitWrapper(BaseModelWrapper):
         pooling_strategy: str = "flat",
         **kwargs: Any,
     ) -> np.ndarray:
-        """
-        Computes the fingerprint for a single SMILES string.
-
-        Args:
-            input: SMILES string.
-            pooling_strategy: Ignored (kept for compatibility).
+        """Compute the fingerprint for a single SMILES string.
 
         Returns
         -------
-            np.ndarray: A 1D float32 array of 0s and 1s.
-
-        Raises
-        ------
-            ValueError: If the SMILES string is invalid.
+        np.ndarray
+            1-D ``float32`` array of length :attr:`n_bits`.
+            Binary fingerprints contain only 0.0 / 1.0.
+            Count fingerprints contain non-negative integers (as float32).
         """
         if not self._loaded:
             raise RuntimeError("RDKit model not loaded. Call load() first.")
 
-        # 1. Parse Molecule
         mol = Chem.MolFromSmiles(input)
         if mol is None:
-            # You might prefer to return a zero-vector here depending on your pipeline
             raise ValueError(f"RDKit failed to parse SMILES: {input}")
 
-        # 2. Generate Fingerprint (Bit Vector)
-        if self.fingerprint_type == "morgan":
-            # ECFP-like fingerprint
-            fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=self.radius, nBits=self.n_bits)
-        elif self.fingerprint_type == "rdkit":
-            # RDKit topological fingerprint
-            fp = Chem.RDKFingerprint(mol, fpSize=self.n_bits)
-        else:
-            raise ValueError(f"Unknown fingerprint type: {self.fingerprint_type}")
-
-        # 3. Convert to Numpy
-        # We use float32 to be compatible with typical PyTorch/Transformer embeddings
-        arr = np.zeros((self.n_bits,), dtype=np.float32)
-        DataStructs.ConvertToNumpyArray(fp, arr)
-
-        return arr
+        return self._compute_fingerprint(mol)
 
     def embed_batch(
         self,
@@ -447,9 +449,96 @@ class RDKitWrapper(BaseModelWrapper):
         pooling_strategy: str = "flat",
         **kwargs: Any,
     ) -> list[np.ndarray]:
-        """
-        Computes fingerprints for a batch of SMILES.
-        """
-        # RDKit is CPU-bound and releases the GIL well for heavy ops,
-        # but a simple loop is standard unless you need multiprocessing.
+        """Compute fingerprints for a batch of SMILES strings."""
         return [self.embed(s, pooling_strategy=pooling_strategy, **kwargs) for s in inputs]
+
+    # ------------------------------------------------------------------
+    # Internal fingerprint computation
+    # ------------------------------------------------------------------
+
+    def _compute_fingerprint(self, mol: Any) -> np.ndarray:
+        """Dispatch to the correct RDKit fingerprint generator."""
+        fp_type = self.fingerprint_type
+
+        # --- Morgan (ECFP-like) ---
+        if fp_type == "morgan":
+            fp = AllChem.GetMorganFingerprintAsBitVect(  # type: ignore[attr-defined]
+                mol,
+                radius=self.radius,
+                nBits=self.n_bits,
+            )
+            return self._bitvect_to_array(fp)
+
+        if fp_type == "morgan_count":
+            fp = AllChem.GetHashedMorganFingerprint(  # type: ignore[attr-defined]
+                mol,
+                radius=self.radius,
+                nBits=self.n_bits,
+            )
+            return self._sparse_intvect_to_array(fp)
+
+        # --- RDKit topological ---
+        if fp_type == "rdkit":
+            fp = Chem.RDKFingerprint(mol, fpSize=self.n_bits)
+            return self._bitvect_to_array(fp)
+
+        # --- MACCS keys (167 bits) ---
+        if fp_type == "maccs":
+            from rdkit.Chem import MACCSkeys
+
+            fp = MACCSkeys.GenMACCSKeys(mol)  # type: ignore[attr-defined]
+            return self._bitvect_to_array(fp)
+
+        # --- Atom pair ---
+        if fp_type == "atom_pair":
+            from rdkit.Chem import rdMolDescriptors
+
+            fp = rdMolDescriptors.GetHashedAtomPairFingerprintAsBitVect(
+                mol,
+                nBits=self.n_bits,
+            )
+            return self._bitvect_to_array(fp)
+
+        if fp_type == "atom_pair_count":
+            from rdkit.Chem import rdMolDescriptors
+
+            return self._sparse_intvect_to_array(rdMolDescriptors.GetHashedAtomPairFingerprint(mol, nBits=self.n_bits))
+
+        # --- Topological torsion ---
+        if fp_type == "topological_torsion":
+            from rdkit.Chem import rdMolDescriptors
+
+            fp = rdMolDescriptors.GetHashedTopologicalTorsionFingerprintAsBitVect(
+                mol,
+                nBits=self.n_bits,
+            )
+            return self._bitvect_to_array(fp)
+
+        if fp_type == "topological_torsion_count":
+            from rdkit.Chem import rdMolDescriptors
+
+            return self._sparse_intvect_to_array(
+                rdMolDescriptors.GetHashedTopologicalTorsionFingerprint(
+                    mol,
+                    nBits=self.n_bits,
+                )
+            )
+
+        raise ValueError(f"Unknown fingerprint type: {fp_type}")
+
+    # ------------------------------------------------------------------
+    # Conversion helpers
+    # ------------------------------------------------------------------
+
+    def _bitvect_to_array(self, fp: Any) -> np.ndarray:
+        """Convert an RDKit ``ExplicitBitVect`` to a float32 numpy array."""
+        arr = np.zeros(self.n_bits, dtype=np.float32)
+        DataStructs.ConvertToNumpyArray(fp, arr)
+        return arr
+
+    def _sparse_intvect_to_array(self, fp: Any) -> np.ndarray:
+        """Convert an RDKit ``(U)IntSparseIntVect`` to a dense float32 array."""
+        arr = np.zeros(self.n_bits, dtype=np.float32)
+        for idx, count in fp.GetNonzeroElements().items():
+            arr[idx % self.n_bits] += count
+        return arr
