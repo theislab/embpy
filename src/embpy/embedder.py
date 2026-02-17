@@ -12,7 +12,14 @@ from .models.base import BaseModelWrapper
 
 # Import all potential wrappers - handle ImportErrors later if deps are missing
 from .models.dna_models import BorzoiWrapper, EnformerWrapper
-from .models.molecule_models import ChembertaWrapper, MolformerWrapper, RDKitWrapper
+from .models.molecule_models import (
+    ChembertaWrapper,
+    MHGGNNWrapper,
+    MiniMolWrapper,
+    MolEWrapper,
+    MolformerWrapper,
+    RDKitWrapper,
+)
 from .models.protein_models import ESM2Wrapper, ESMCWrapper, ProtT5Wrapper
 from .models.text_models import TextLLMWrapper
 from .resources.gene_resolver import GeneResolver
@@ -94,6 +101,10 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     "atom_pair_count_fp": (RDKitWrapper, "atom_pair_count"),
     "torsion_fp": (RDKitWrapper, "topological_torsion"),
     "torsion_count_fp": (RDKitWrapper, "topological_torsion_count"),
+    # GNN-based molecule models (optional dependencies)
+    "minimol": (MiniMolWrapper, "minimol"),
+    "mhg_gnn": (MHGGNNWrapper, "ibm-research/materials.mhg-ged"),
+    "mole": (MolEWrapper, "mole"),
     # --- Text Models ---
     "minilm_l6_v2": (TextLLMWrapper, "sentence-transformers/all-MiniLM-L6-v2"),
     "bert_base_uncased": (TextLLMWrapper, "bert-base-uncased"),

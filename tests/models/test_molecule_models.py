@@ -1,4 +1,4 @@
-"""Tests for molecule model wrappers (ChemBERTa, MolFormer, RDKit) using mocks."""
+"""Tests for molecule model wrappers (ChemBERTa, MolFormer, RDKit, MiniMol, MHG-GNN, MolE) using mocks."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import torch
 
-from embpy.models.molecule_models import RDKitWrapper
+from embpy.models.molecule_models import MHGGNNWrapper, MiniMolWrapper, MolEWrapper, RDKitWrapper
 
 
 class TestChembertaWrapper:
@@ -370,3 +370,383 @@ class TestRDKitWrapper:
         assert result.shape == (expected_bits,)
         assert result.dtype == np.float32
         assert not np.isnan(result).any()
+
+
+# ============================================================
+# MiniMol tests (mocked – minimol is an optional dependency)
+# ============================================================
+
+
+class TestMiniMolWrapper:
+    """Tests for MiniMolWrapper using mocked minimol dependency."""
+
+    def test_init_defaults(self):
+        w = MiniMolWrapper()
+        assert w.model_name == "minimol"
+        assert w.model_type == "molecule"
+        assert w._batch_size == 100
+        assert w._loaded is False
+
+    def test_init_custom_batch_size(self):
+        w = MiniMolWrapper(batch_size=50)
+        assert w._batch_size == 50
+
+    def test_embed_without_load_raises(self):
+        w = MiniMolWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed("CCO")
+
+    def test_embed_batch_without_load_raises(self):
+        w = MiniMolWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed_batch(["CCO", "CCC"])
+
+    def test_load_raises_when_minimol_not_installed(self):
+        w = MiniMolWrapper()
+        with patch.dict("sys.modules", {"minimol": None}):
+            with pytest.raises(ImportError, match="MiniMol is not installed"):
+                w.load(torch.device("cpu"))
+
+    def test_load_creates_minimol_instance(self):
+        mock_minimol_cls = MagicMock()
+        mock_minimol_instance = MagicMock()
+        mock_minimol_cls.return_value = mock_minimol_instance
+
+        mock_module = MagicMock()
+        mock_module.Minimol = mock_minimol_cls
+
+        w = MiniMolWrapper(batch_size=64)
+        with patch.dict("sys.modules", {"minimol": mock_module}):
+            w.load(torch.device("cpu"))
+
+        assert w._loaded is True
+        mock_minimol_cls.assert_called_once_with(batch_size=64)
+
+    def test_load_idempotent(self):
+        mock_minimol_cls = MagicMock()
+        mock_module = MagicMock()
+        mock_module.Minimol = mock_minimol_cls
+
+        w = MiniMolWrapper()
+        with patch.dict("sys.modules", {"minimol": mock_module}):
+            w.load(torch.device("cpu"))
+            w.load(torch.device("cpu"))
+
+        mock_minimol_cls.assert_called_once()
+
+    def test_embed_single(self):
+        emb_dim = 512
+        mock_tensor = torch.randn(emb_dim)
+
+        mock_minimol = MagicMock()
+        mock_minimol.return_value = [mock_tensor]
+
+        w = MiniMolWrapper()
+        w._minimol = mock_minimol
+        w._loaded = True
+        w.device = torch.device("cpu")
+
+        result = w.embed("CCO")
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (emb_dim,)
+        assert result.dtype == np.float32
+        mock_minimol.assert_called_once_with(["CCO"])
+
+    def test_embed_raises_on_empty_results(self):
+        mock_minimol = MagicMock()
+        mock_minimol.return_value = []
+
+        w = MiniMolWrapper()
+        w._minimol = mock_minimol
+        w._loaded = True
+        w.device = torch.device("cpu")
+
+        with pytest.raises(ValueError, match="no results"):
+            w.embed("INVALID")
+
+    def test_embed_batch(self):
+        emb_dim = 512
+        mock_minimol = MagicMock()
+        mock_minimol.return_value = [torch.randn(emb_dim), torch.randn(emb_dim), torch.randn(emb_dim)]
+
+        w = MiniMolWrapper()
+        w._minimol = mock_minimol
+        w._loaded = True
+        w.device = torch.device("cpu")
+
+        results = w.embed_batch(["CCO", "CCC", "c1ccccc1"])
+        assert len(results) == 3
+        for r in results:
+            assert isinstance(r, np.ndarray)
+            assert r.shape == (emb_dim,)
+            assert r.dtype == np.float32
+        mock_minimol.assert_called_once_with(["CCO", "CCC", "c1ccccc1"])
+
+    def test_pooling_strategies(self):
+        assert MiniMolWrapper.available_pooling_strategies == ["flat"]
+
+    def test_embedding_dim_constant(self):
+        assert MiniMolWrapper.EMBEDDING_DIM == 512
+
+    def test_model_type(self):
+        assert MiniMolWrapper.model_type == "molecule"
+
+
+# ============================================================
+# MHG-GNN tests (mocked – mhg_model is an optional dependency)
+# ============================================================
+
+
+class TestMHGGNNWrapper:
+    """Tests for MHGGNNWrapper using mocked mhg-gnn dependency."""
+
+    def test_init_defaults(self):
+        w = MHGGNNWrapper()
+        assert w.model_name == "ibm-research/materials.mhg-ged"
+        assert w.model_type == "molecule"
+        assert w._loaded is False
+
+    def test_embed_without_load_raises(self):
+        w = MHGGNNWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed("CCO")
+
+    def test_embed_batch_without_load_raises(self):
+        w = MHGGNNWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed_batch(["CCO"])
+
+    def test_decode_without_load_raises(self):
+        w = MHGGNNWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.decode([np.zeros(64)])
+
+    def test_load_raises_when_not_installed(self):
+        w = MHGGNNWrapper()
+        with patch("importlib.import_module", side_effect=ImportError("no module")):
+            with pytest.raises(ImportError, match="MHG-GNN model code not found"):
+                w.load(torch.device("cpu"))
+
+    def test_load_with_mocked_module(self):
+        mock_wrapper = MagicMock()
+        mock_load_fn = MagicMock(return_value=mock_wrapper)
+        mock_module = MagicMock()
+        mock_module.load = mock_load_fn
+
+        w = MHGGNNWrapper()
+        with patch("importlib.import_module", return_value=mock_module):
+            w.load(torch.device("cpu"))
+
+        assert w._loaded is True
+        mock_load_fn.assert_called_once()
+        mock_wrapper.to.assert_called_once_with(torch.device("cpu"))
+
+    def test_load_idempotent(self):
+        mock_wrapper = MagicMock()
+        mock_load_fn = MagicMock(return_value=mock_wrapper)
+        mock_module = MagicMock()
+        mock_module.load = mock_load_fn
+
+        w = MHGGNNWrapper()
+        with patch("importlib.import_module", return_value=mock_module):
+            w.load(torch.device("cpu"))
+            w.load(torch.device("cpu"))
+
+        mock_load_fn.assert_called_once()
+
+    def test_embed_single(self):
+        latent_dim = 64
+        mock_wrapper = MagicMock()
+        mock_wrapper.encode.return_value = [torch.randn(latent_dim)]
+
+        w = MHGGNNWrapper()
+        w._wrapper = mock_wrapper
+        w._loaded = True
+        w.device = torch.device("cpu")
+
+        result = w.embed("CCO")
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (latent_dim,)
+        assert result.dtype == np.float32
+        mock_wrapper.encode.assert_called_once_with(["CCO"])
+
+    def test_embed_raises_on_empty_results(self):
+        mock_wrapper = MagicMock()
+        mock_wrapper.encode.return_value = []
+
+        w = MHGGNNWrapper()
+        w._wrapper = mock_wrapper
+        w._loaded = True
+        w.device = torch.device("cpu")
+
+        with pytest.raises(ValueError, match="no embeddings"):
+            w.embed("INVALID")
+
+    def test_embed_batch(self):
+        latent_dim = 64
+        mock_wrapper = MagicMock()
+        mock_wrapper.encode.return_value = [torch.randn(latent_dim) for _ in range(3)]
+
+        w = MHGGNNWrapper()
+        w._wrapper = mock_wrapper
+        w._loaded = True
+        w.device = torch.device("cpu")
+
+        results = w.embed_batch(["CCO", "CCC", "c1ccccc1"])
+        assert len(results) == 3
+        for r in results:
+            assert isinstance(r, np.ndarray)
+            assert r.shape == (latent_dim,)
+            assert r.dtype == np.float32
+        mock_wrapper.encode.assert_called_once_with(["CCO", "CCC", "c1ccccc1"])
+
+    def test_decode(self):
+        latent_dim = 64
+        mock_wrapper = MagicMock()
+        mock_wrapper.decode.return_value = ["CCO", "CCC", None]
+
+        w = MHGGNNWrapper()
+        w._wrapper = mock_wrapper
+        w._loaded = True
+        w.device = torch.device("cpu")
+
+        embeddings = [np.random.randn(latent_dim).astype(np.float32) for _ in range(3)]
+        decoded = w.decode(embeddings)
+        assert decoded == ["CCO", "CCC", None]
+
+    def test_pooling_strategies(self):
+        assert MHGGNNWrapper.available_pooling_strategies == ["flat"]
+
+
+# ============================================================
+# MolE tests (mocked – mole is an optional dependency)
+# ============================================================
+
+
+class TestMolEWrapper:
+    """Tests for MolEWrapper using mocked mole dependency."""
+
+    def test_init_defaults(self):
+        w = MolEWrapper()
+        assert w.model_name == "mole"
+        assert w.model_type == "molecule"
+        assert w._checkpoint_path is None
+        assert w._loaded is False
+
+    def test_init_with_checkpoint(self):
+        w = MolEWrapper(checkpoint_path="/path/to/checkpoint.ckpt")
+        assert w._checkpoint_path == "/path/to/checkpoint.ckpt"
+
+    def test_embed_without_load_raises(self):
+        w = MolEWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed("CCO")
+
+    def test_embed_batch_without_load_raises(self):
+        w = MolEWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed_batch(["CCO"])
+
+    def test_load_raises_when_not_installed(self):
+        w = MolEWrapper(checkpoint_path="/path/to/ckpt")
+        with patch("importlib.import_module", side_effect=ImportError("no module")):
+            with pytest.raises(ImportError, match="MolE is not installed"):
+                w.load(torch.device("cpu"))
+
+    def test_load_raises_without_checkpoint(self):
+        mock_module = MagicMock()
+        w = MolEWrapper()  # No checkpoint_path
+        with patch("importlib.import_module", return_value=mock_module):
+            with pytest.raises(ValueError, match="requires a pretrained checkpoint"):
+                w.load(torch.device("cpu"))
+
+    def test_load_success(self):
+        mock_module = MagicMock()
+        w = MolEWrapper(checkpoint_path="/path/to/checkpoint.ckpt")
+        with patch("importlib.import_module", return_value=mock_module):
+            w.load(torch.device("cpu"))
+
+        assert w._loaded is True
+        assert w._mole_predict is mock_module
+
+    def test_load_idempotent(self):
+        mock_module = MagicMock()
+        w = MolEWrapper(checkpoint_path="/path/to/checkpoint.ckpt")
+
+        with patch("importlib.import_module", return_value=mock_module) as mock_import:
+            w.load(torch.device("cpu"))
+            w.load(torch.device("cpu"))
+
+        # import_module called only once (second load() is short-circuited)
+        assert mock_import.call_count == 1
+
+    def test_embed_single(self):
+        emb_dim = 256
+        mock_predict = MagicMock()
+        mock_predict.encode.return_value = [np.random.randn(emb_dim)]
+
+        w = MolEWrapper(checkpoint_path="/path/to/ckpt")
+        w._mole_predict = mock_predict
+        w._loaded = True
+        w._checkpoint_path = "/path/to/ckpt"
+        w.device = torch.device("cpu")
+
+        result = w.embed("CCO")
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (emb_dim,)
+        assert result.dtype == np.float32
+        mock_predict.encode.assert_called_once_with(
+            smiles=["CCO"],
+            pretrained_model="/path/to/ckpt",
+            batch_size=32,
+            num_workers=0,
+        )
+
+    def test_embed_batch(self):
+        emb_dim = 256
+        mock_predict = MagicMock()
+        mock_predict.encode.return_value = [np.random.randn(emb_dim) for _ in range(3)]
+
+        w = MolEWrapper(checkpoint_path="/path/to/ckpt")
+        w._mole_predict = mock_predict
+        w._loaded = True
+        w._checkpoint_path = "/path/to/ckpt"
+        w.device = torch.device("cpu")
+
+        results = w.embed_batch(["CCO", "CCC", "c1ccccc1"])
+        assert len(results) == 3
+        for r in results:
+            assert isinstance(r, np.ndarray)
+            assert r.shape == (emb_dim,)
+            assert r.dtype == np.float32
+        mock_predict.encode.assert_called_once_with(
+            smiles=["CCO", "CCC", "c1ccccc1"],
+            pretrained_model="/path/to/ckpt",
+            batch_size=32,
+            num_workers=4,
+        )
+
+    def test_embed_custom_batch_kwargs(self):
+        emb_dim = 128
+        mock_predict = MagicMock()
+        mock_predict.encode.return_value = [np.random.randn(emb_dim)]
+
+        w = MolEWrapper(checkpoint_path="/ckpt")
+        w._mole_predict = mock_predict
+        w._loaded = True
+        w._checkpoint_path = "/ckpt"
+        w.device = torch.device("cpu")
+
+        w.embed("CCO", batch_size=16, num_workers=2)
+        mock_predict.encode.assert_called_once_with(
+            smiles=["CCO"],
+            pretrained_model="/ckpt",
+            batch_size=16,
+            num_workers=2,
+        )
+
+    def test_pooling_strategies(self):
+        assert MolEWrapper.available_pooling_strategies == ["cls"]
+
+    def test_model_type(self):
+        assert MolEWrapper.model_type == "molecule"

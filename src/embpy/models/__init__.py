@@ -1,5 +1,12 @@
 from .dna_models import BorzoiWrapper, EnformerWrapper
-from .molecule_models import ChembertaWrapper, MolformerWrapper, RDKitWrapper
+from .molecule_models import (
+    ChembertaWrapper,
+    MHGGNNWrapper,
+    MiniMolWrapper,
+    MolEWrapper,
+    MolformerWrapper,
+    RDKitWrapper,
+)
 from .protein_models import ESM2Wrapper, ESMCWrapper, ProtT5Wrapper, STRINGWrapper
 from .text_models import TextLLMWrapper
 
@@ -31,6 +38,9 @@ __all__ = [
     "ESM2Wrapper",
     "ESMCWrapper",
     "GNNEncoder",
+    "MHGGNNWrapper",
+    "MiniMolWrapper",
+    "MolEWrapper",
     "MolformerWrapper",
     "PPIGNNWrapper",
     "ProtT5Wrapper",

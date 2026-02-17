@@ -542,3 +542,377 @@ class RDKitWrapper(BaseModelWrapper):
         for idx, count in fp.GetNonzeroElements().items():
             arr[idx % self.n_bits] += count
         return arr
+
+
+# ============================================================
+# MiniMol wrapper (Message-Passing GNN – GINE)
+# ============================================================
+
+
+class MiniMolWrapper(BaseModelWrapper):
+    """MiniMol pre-trained GINE molecular fingerprint wrapper.
+
+    MiniMol is a 10M-parameter message-passing GNN (GIN with edge features)
+    pre-trained on 6M molecules across 3,300+ bio/quantum tasks from the
+    Graphium LargeMix dataset.  It produces fixed **512-dimensional**
+    molecular fingerprints from SMILES strings.
+
+    The model and weights ship together in the ``minimol`` pip package,
+    so no separate download step is required.
+
+    Requires
+    --------
+    ``pip install minimol``
+    (also installs ``graphium`` and ``torch-geometric`` automatically)
+
+    References
+    ----------
+    * Repository: https://github.com/graphcore-research/minimol
+    * MiniMol outperforms models 10x its size on 17/22 TDC ADMET tasks.
+
+    Notes
+    -----
+    MiniMol manages its own device selection (CUDA if available, else CPU).
+    The ``device`` parameter in :meth:`load` is stored for interface
+    consistency but does not override MiniMol's internal device selection.
+    """
+
+    model_type: str = "molecule"  # type: ignore[assignment]
+    available_pooling_strategies: list[str] = ["flat"]
+    EMBEDDING_DIM: int = 512
+
+    def __init__(
+        self,
+        model_path_or_name: str = "minimol",
+        batch_size: int = 100,
+        **kwargs: Any,
+    ):
+        super().__init__(model_path_or_name, **kwargs)
+        self._batch_size = batch_size
+        self._minimol: Any = None
+        self._loaded = False
+
+    def load(self, device: torch.device) -> None:
+        """Load the MiniMol model.
+
+        Weights are bundled with the ``minimol`` package.  The first call
+        initialises the underlying Graphium predictor and loads the
+        pre-trained checkpoint.
+        """
+        if self._loaded:
+            return
+
+        try:
+            from minimol import Minimol  # type: ignore[import-not-found]
+        except ImportError as e:
+            raise ImportError(
+                "MiniMol is not installed.  Install with:\n"
+                "  pip install minimol\n"
+                "See: https://github.com/graphcore-research/minimol"
+            ) from e
+
+        logging.info("Loading MiniMol (GINE, 512-dim fingerprints)…")
+        self._minimol = Minimol(batch_size=self._batch_size)
+        self.device = device
+        self._loaded = True
+        logging.info("MiniMol loaded successfully.")
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "flat",
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Compute a 512-dim fingerprint for a single SMILES string."""
+        if not self._loaded or self._minimol is None:
+            raise RuntimeError("MiniMol not loaded. Call load() first.")
+
+        results = self._minimol([input])
+        if not results:
+            raise ValueError(f"MiniMol returned no results for SMILES: {input}")
+        return results[0].detach().cpu().numpy().astype(np.float32)
+
+    def embed_batch(
+        self,
+        inputs: Sequence[str],
+        pooling_strategy: str = "flat",
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        """Compute 512-dim fingerprints for a batch of SMILES strings."""
+        if not self._loaded or self._minimol is None:
+            raise RuntimeError("MiniMol not loaded. Call load() first.")
+
+        smiles_list = list(inputs)
+        results = self._minimol(smiles_list)
+        return [r.detach().cpu().numpy().astype(np.float32) for r in results]
+
+
+# ============================================================
+# MHG-GNN wrapper (Molecular Hypergraph Grammar + GNN)
+# ============================================================
+
+
+class MHGGNNWrapper(BaseModelWrapper):
+    """MHG-GNN molecular hypergraph autoencoder wrapper.
+
+    MHG-GNN combines a GIN-based graph encoder with a sequential decoder
+    based on Molecular Hypergraph Grammar (MHG).  It was pre-trained on
+    ~1.34M molecules from PubChem.
+
+    The **encoder** produces latent-space embeddings from SMILES strings.
+    The **decoder** can reconstruct structurally valid SMILES from those
+    latent vectors, which is unique among molecular GNN models.
+
+    Requires
+    --------
+    * ``mhg-gnn`` model package (from IBM Research / GT4SD)
+    * ``torch-geometric``
+    * ``huggingface-hub``
+
+    Install::
+
+        pip install torch-geometric huggingface-hub
+        pip install git+https://github.com/GT4SD/mhg-gnn.git
+
+    HuggingFace model: ``ibm-research/materials.mhg-ged``
+
+    References
+    ----------
+    * Paper: https://arxiv.org/abs/2309.16374
+    * HF: https://huggingface.co/ibm-research/materials.mhg-ged
+    """
+
+    model_type: str = "molecule"  # type: ignore[assignment]
+    available_pooling_strategies: list[str] = ["flat"]
+
+    def __init__(
+        self,
+        model_path_or_name: str = "ibm-research/materials.mhg-ged",
+        **kwargs: Any,
+    ):
+        super().__init__(model_path_or_name, **kwargs)
+        self._wrapper: Any = None
+        self._loaded = False
+
+    def load(self, device: torch.device) -> None:
+        """Load MHG-GNN pretrained weights from HuggingFace Hub.
+
+        The model package's built-in ``load()`` function is used, which
+        downloads the pretrained pickle from HuggingFace Hub and
+        constructs the ``GrammarGINVAE`` model automatically.
+        """
+        if self._loaded:
+            return
+
+        import importlib
+
+        _load_fn: Any = None
+        for mod_path in ("mhg_model.load", "mhg_gnn.load"):
+            try:
+                mod = importlib.import_module(mod_path)
+                _load_fn = getattr(mod, "load", None)
+                if _load_fn is not None:
+                    break
+            except ImportError:
+                continue
+
+        if _load_fn is None:
+            raise ImportError(
+                "MHG-GNN model code not found.  Install one of:\n"
+                "  pip install git+https://github.com/GT4SD/mhg-gnn.git\n"
+                "  (or from the IBM internal mhg-gnn repository)\n"
+                "Also requires: pip install torch-geometric huggingface-hub\n"
+                "See: https://huggingface.co/ibm-research/materials.mhg-ged"
+            )
+
+        logging.info(f"Loading MHG-GNN from HuggingFace: {self.model_name}…")
+        self._wrapper = _load_fn()
+        self._wrapper.to(device)
+        self.device = device
+        self._loaded = True
+        logging.info("MHG-GNN loaded successfully.")
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "flat",
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Encode a single SMILES string into its latent representation."""
+        if not self._loaded or self._wrapper is None:
+            raise RuntimeError("MHG-GNN not loaded. Call load() first.")
+
+        with torch.no_grad():
+            embeddings = self._wrapper.encode([input])
+        if not embeddings:
+            raise ValueError(f"MHG-GNN returned no embeddings for SMILES: {input}")
+        return embeddings[0].detach().cpu().numpy().astype(np.float32)
+
+    def embed_batch(
+        self,
+        inputs: Sequence[str],
+        pooling_strategy: str = "flat",
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        """Encode a batch of SMILES strings into latent representations."""
+        if not self._loaded or self._wrapper is None:
+            raise RuntimeError("MHG-GNN not loaded. Call load() first.")
+
+        with torch.no_grad():
+            embeddings = self._wrapper.encode(list(inputs))
+        return [e.detach().cpu().numpy().astype(np.float32) for e in embeddings]
+
+    def decode(self, embeddings: list[np.ndarray]) -> list[str | None]:
+        """Decode latent vectors back to SMILES strings.
+
+        This leverages MHG-GNN's decoder, which is guaranteed to produce
+        structurally valid molecules.
+
+        Parameters
+        ----------
+        embeddings : list[np.ndarray]
+            Latent vectors (e.g. from :meth:`embed` or :meth:`embed_batch`).
+
+        Returns
+        -------
+        list[str | None]
+            Reconstructed SMILES strings (``None`` for failed decodings).
+        """
+        if not self._loaded or self._wrapper is None:
+            raise RuntimeError("MHG-GNN not loaded. Call load() first.")
+
+        tensors = [torch.tensor(e, dtype=torch.float32) for e in embeddings]
+        dev = self.device if self.device is not None else torch.device("cpu")
+        tensors = [t.to(dev) for t in tensors]
+
+        with torch.no_grad():
+            decoded: list[str | None] = self._wrapper.decode(tensors)
+        return decoded
+
+
+# ============================================================
+# MolE wrapper (Graph Transformer – DeBERTa-based)
+# ============================================================
+
+
+class MolEWrapper(BaseModelWrapper):
+    """MolE (Molecular Embeddings) graph transformer wrapper.
+
+    MolE is a DeBERTa-based graph transformer with disentangled attention,
+    pre-trained on ~842M molecules via a two-step strategy:
+
+    1. **Self-supervised** pre-training on molecular graph representations.
+    2. **Multi-task supervised** training to assimilate biological information.
+
+    It produces CLS-pooled embeddings from molecular graphs and achieves
+    SOTA on 9/22 ADMET tasks in the TDC benchmark.
+
+    .. note::
+
+       Pretrained weights are **not** yet publicly released.  You must
+       provide a ``checkpoint_path`` obtained through your own training
+       or directly from the authors.
+
+    Requires
+    --------
+    ``pip install git+https://github.com/recursionpharma/mole_public.git``
+
+    References
+    ----------
+    * Repository: https://github.com/recursionpharma/mole_public
+    * Published in *Nature Communications* (2024).
+    """
+
+    model_type: str = "molecule"  # type: ignore[assignment]
+    available_pooling_strategies: list[str] = ["cls"]
+
+    def __init__(
+        self,
+        model_path_or_name: str = "mole",
+        checkpoint_path: str | None = None,
+        **kwargs: Any,
+    ):
+        super().__init__(model_path_or_name, **kwargs)
+        self._checkpoint_path = checkpoint_path
+        self._mole_predict: Any = None
+        self._loaded = False
+
+    def load(self, device: torch.device) -> None:
+        """Load the MolE model.
+
+        Uses the ``mole.mole_predict`` high-level API internally.  Requires
+        a valid ``checkpoint_path`` pointing to a pre-trained ``.ckpt`` file.
+        """
+        if self._loaded:
+            return
+
+        _mole_predict: Any = None
+        for mod_path in ("mole.mole_predict", "mole.cli.mole_predict"):
+            try:
+                import importlib
+
+                _mole_predict = importlib.import_module(mod_path)
+                break
+            except ImportError:
+                continue
+
+        if _mole_predict is None:
+            raise ImportError(
+                "MolE is not installed.  Install with:\n"
+                "  pip install git+https://github.com/recursionpharma/mole_public.git\n"
+                "See: https://github.com/recursionpharma/mole_public"
+            )
+
+        if self._checkpoint_path is None:
+            raise ValueError(
+                "MolE requires a pretrained checkpoint path.  Pass "
+                "checkpoint_path='path/to/checkpoint.ckpt' to the constructor.\n"
+                "Note: pretrained weights are not yet publicly released."
+            )
+
+        self._mole_predict = _mole_predict
+        self.device = device
+        self._loaded = True
+        logging.info(f"MolE wrapper ready (checkpoint: {self._checkpoint_path}).")
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "cls",
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Compute the CLS-pooled embedding for a single SMILES string."""
+        if not self._loaded or self._mole_predict is None:
+            raise RuntimeError("MolE not loaded. Call load() first.")
+
+        batch_size: int = kwargs.get("batch_size", 32)  # type: ignore[assignment]
+        num_workers: int = kwargs.get("num_workers", 0)  # type: ignore[assignment]
+
+        embeddings = self._mole_predict.encode(
+            smiles=[input],
+            pretrained_model=self._checkpoint_path,
+            batch_size=batch_size,
+            num_workers=num_workers,
+        )
+        return np.asarray(embeddings[0], dtype=np.float32)
+
+    def embed_batch(
+        self,
+        inputs: Sequence[str],
+        pooling_strategy: str = "cls",
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        """Compute CLS-pooled embeddings for a batch of SMILES strings."""
+        if not self._loaded or self._mole_predict is None:
+            raise RuntimeError("MolE not loaded. Call load() first.")
+
+        batch_size: int = kwargs.get("batch_size", 32)  # type: ignore[assignment]
+        num_workers: int = kwargs.get("num_workers", 4)  # type: ignore[assignment]
+
+        embeddings = self._mole_predict.encode(
+            smiles=list(inputs),
+            pretrained_model=self._checkpoint_path,
+            batch_size=batch_size,
+            num_workers=num_workers,
+        )
+        return [np.asarray(e, dtype=np.float32) for e in embeddings]
