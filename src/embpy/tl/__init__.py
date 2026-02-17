@@ -1,9 +1,13 @@
 from .basic import (
     basic_tool,
     cluster_embeddings,
+    compute_distance_matrix,
+    compute_knn_overlap,
     compute_similarity,
+    compute_tsne,
     compute_umap,
     find_nearest_neighbors,
+    leiden,
     rank_perturbations,
 )
 from .metadata import (

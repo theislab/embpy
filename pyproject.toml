@@ -71,8 +71,11 @@ optional-dependencies.mole = [
 optional-dependencies.pertpy = [
   "pertpy",
 ]
+optional-dependencies.scanpy = [
+  "scanpy>=1.10",
+]
 optional-dependencies.all = [
-  "embpy[torch,evo,evo2,ppi,minimol,mhg-gnn,mole,pertpy]",
+  "embpy[torch,evo,evo2,ppi,minimol,mhg-gnn,mole,pertpy,scanpy]",
 ]
 optional-dependencies.dev = [
   "pre-commit",
