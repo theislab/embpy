@@ -13,3 +13,4 @@ from .basic import (
     plot_perturbation_ranking,
     plot_similarity_heatmap,
 )
+from .benchmark import plot_benchmark, plot_benchmark_comparison

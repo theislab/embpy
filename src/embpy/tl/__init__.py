@@ -10,6 +10,7 @@ from .basic import (
     leiden,
     rank_perturbations,
 )
+from .benchmark import benchmark_embeddings
 from .metadata import (
     annotate_bulk_rna,
     annotate_cell_lines,
