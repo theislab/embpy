@@ -22,12 +22,12 @@ import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 from anndata import AnnData
-from scipy.stats import pearsonr, spearmanr
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression, Ridge
-from sklearn.metrics import mean_squared_error, r2_score
 from sklearn.model_selection import KFold, RandomizedSearchCV, train_test_split
 from sklearn.neighbors import KNeighborsRegressor
+
+from embpy.tl.metrics import compute_metrics as _compute_metrics
 
 if TYPE_CHECKING:
     from sklearn.base import RegressorMixin
@@ -112,84 +112,6 @@ def _build_param_grid(name: str) -> dict[str, list[Any]]:
             "min_samples_split": [2, 5, 10],
         }
     raise ValueError(f"Unknown model '{name}'.")
-
-
-def _compute_metrics(
-    y_true: np.ndarray,
-    y_pred: np.ndarray,
-    mean_control: np.ndarray | None = None,
-) -> dict[str, float]:
-    """Compute evaluation metrics for a single regressor.
-
-    Parameters
-    ----------
-    y_true
-        Ground-truth target (1-D or 2-D).
-    y_pred
-        Predicted target (same shape as *y_true*).
-    mean_control
-        Mean control expression vector (only used for delta-L2 when
-        *y_true* is 2-D).
-
-    Returns
-    -------
-    Dictionary mapping metric names to float values.
-    """
-    is_multi = y_true.ndim == 2
-    metrics: dict[str, float] = {}
-
-    # -- MSE --
-    metrics["mse"] = float(mean_squared_error(y_true, y_pred))
-
-    # -- R² --
-    if is_multi:
-        r2_per_output = []
-        for j in range(y_true.shape[1]):
-            if np.std(y_true[:, j]) == 0:
-                continue
-            r2_per_output.append(r2_score(y_true[:, j], y_pred[:, j]))
-        metrics["r2"] = float(np.mean(r2_per_output)) if r2_per_output else 0.0
-    else:
-        metrics["r2"] = float(r2_score(y_true, y_pred))
-
-    # -- Pearson & Spearman --
-    if is_multi:
-        pearson_per_sample = []
-        spearman_per_sample = []
-        for i in range(y_true.shape[0]):
-            if np.std(y_true[i]) == 0 or np.std(y_pred[i]) == 0:
-                continue
-            r_p, _ = pearsonr(y_true[i], y_pred[i])
-            r_s, _ = spearmanr(y_true[i], y_pred[i])
-            pearson_per_sample.append(r_p)
-            spearman_per_sample.append(r_s)
-        metrics["pearson"] = float(np.mean(pearson_per_sample)) if pearson_per_sample else 0.0
-        metrics["spearman"] = float(np.mean(spearman_per_sample)) if spearman_per_sample else 0.0
-    else:
-        if np.std(y_true) > 0 and np.std(y_pred) > 0:
-            r_p, _ = pearsonr(y_true.ravel(), y_pred.ravel())
-            r_s, _ = spearmanr(y_true.ravel(), y_pred.ravel())
-            metrics["pearson"] = float(r_p)
-            metrics["spearman"] = float(r_s)
-        else:
-            metrics["pearson"] = 0.0
-            metrics["spearman"] = 0.0
-
-    # -- Delta L2 (expression + controls only) --
-    if is_multi and mean_control is not None:
-        delta_actual = np.linalg.norm(y_true - mean_control, axis=1)
-        delta_pred = np.linalg.norm(y_pred - mean_control, axis=1)
-        metrics["delta_l2_mae"] = float(np.mean(np.abs(delta_pred - delta_actual)))
-        if np.std(delta_actual) > 0 and np.std(delta_pred) > 0:
-            r_delta, _ = pearsonr(delta_actual, delta_pred)
-            metrics["delta_l2_pearson"] = float(r_delta)
-        else:
-            metrics["delta_l2_pearson"] = 0.0
-    else:
-        metrics["delta_l2_mae"] = float("nan")
-        metrics["delta_l2_pearson"] = float("nan")
-
-    return metrics
 
 
 def _generate_embeddings(

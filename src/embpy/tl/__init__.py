@@ -25,3 +25,17 @@ from .metadata import (
     lookup_moa,
     lookup_protein_expression,
 )
+from .metrics import (
+    compare_deg,
+    compute_metrics,
+    deg_direction_agreement,
+    deg_overlap,
+    delta_l2,
+    frac_correct_direction,
+    gene_r2,
+    get_deg_dataframe,
+    mean_correlation,
+    mse,
+    r2,
+    rank_genes_groups,
+)
