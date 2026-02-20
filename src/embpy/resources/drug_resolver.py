@@ -57,15 +57,38 @@ class DrugResolver:
         if self.sleep_sec:
             time.sleep(self.sleep_sec)
 
-    def _rdkit_canonical(self, smiles: str) -> str | None:
+    def _clean_and_canonicalise_smiles(self, smiles: str) -> str | None:
+        """Standardise a SMILES string by removing isotope labels, cleaning, and stripping salts.
+
+        Parameters
+        ----------
+        smiles:
+            Input SMILES string to clean.
+
+        Returns
+        -------
+        str | None
+            Canonical SMILES after standardisation, the original ``smiles`` if RDKit is
+            unavailable, or ``None`` if the input is invalid or empty.
+        """
+        if not smiles:
+            return None
         if not self._rdkit_available:
+            logging.warning("RDKit not available; returning SMILES unchanged.")
             return smiles
         from rdkit import Chem
+        from rdkit.Chem.MolStandardize import rdMolStandardize
 
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return None
-        return Chem.MolToSmiles(mol, canonical=True)
+
+        rdMolStandardize.IsotopeParentInPlace(mol)                         # removes isotope labels
+        rdMolStandardize.CleanupInPlace(mol)                               # normalize, sanitize, remove explicit Hs
+        rdMolStandardize.RemoveFragmentsInPlace(mol)                       # strip known solvents/salts
+        rdMolStandardize.FragmentParentInPlace(mol, skipStandardize=True)  # keep largest remaining fragment
+        rdMolStandardize.Uncharger().unchargeInPlace(mol)                  # neutralize charges
+        return Chem.MolToSmiles(mol)
 
     # ---------- Public API ----------
     def name_to_smiles(self, name: str) -> str | None:
@@ -83,7 +106,7 @@ class DrugResolver:
             props = js.get("PropertyTable", {}).get("Properties", [])
             if props and "CanonicalSMILES" in props[0]:
                 smi = props[0]["CanonicalSMILES"]
-                return self._rdkit_canonical(smi) or smi
+                return self._clean_and_canonicalise_smiles(smi) or smi
         except Exception:
             pass
 
@@ -100,7 +123,7 @@ class DrugResolver:
                 props = js.get("PropertyTable", {}).get("Properties", [])
                 if props and "CanonicalSMILES" in props[0]:
                     smi = props[0]["CanonicalSMILES"]
-                    return self._rdkit_canonical(smi) or smi
+                    return self._clean_and_canonicalise_smiles(smi) or smi
             else:
                 logging.warning("No PubChem CID for name=%r", name)
         except Exception:
@@ -111,7 +134,7 @@ class DrugResolver:
             url = f"https://cactus.nci.nih.gov/chemical/structure/{q}/smiles"
             smi = _get_text(url).strip()
             if smi and "Error" not in smi:
-                return self._rdkit_canonical(smi) or smi
+                return self._clean_and_canonicalise_smiles(smi) or smi
         except Exception:
             pass
 
@@ -124,7 +147,7 @@ class DrugResolver:
 
         Order: Preferred title (if available), then synonyms.
         """
-        smi = self._rdkit_canonical(smiles) or smiles
+        smi = self._clean_and_canonicalise_smiles(smiles) or smiles
 
         # 1) SMILES -> CID
         try:
