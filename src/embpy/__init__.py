@@ -1,18 +1,44 @@
 from importlib.metadata import version
 
-from . import models, pl, pp, tl
+from . import models, pl, pp, resources, tl
 from .embedder import BioEmbedder
-from .errors import ConfigError, IdentifierError, ModelNotFoundError
+from .errors import (
+    ConfigError,
+    DataError,
+    DependencyError,
+    EmbeddingError,
+    EmbpyError,
+    GeneNotInGraphError,
+    GraphNotBuiltError,
+    IdentifierError,
+    InvalidPoolingError,
+    InvalidSMILESError,
+    ModelNotFoundError,
+    ModelNotLoadedError,
+)
+from .resources import DrugResolver, GeneResolver
 
 __all__ = [
     "models",
     "pl",
     "pp",
     "tl",
+    "resources",
     "BioEmbedder",
-    "ModelNotFoundError",
-    "IdentifierError",
+    "GeneResolver",
+    "DrugResolver",
+    "EmbpyError",
     "ConfigError",
+    "IdentifierError",
+    "InvalidSMILESError",
+    "ModelNotFoundError",
+    "ModelNotLoadedError",
+    "InvalidPoolingError",
+    "EmbeddingError",
+    "GraphNotBuiltError",
+    "GeneNotInGraphError",
+    "DependencyError",
+    "DataError",
 ]
 
 __version__ = version("embpy")

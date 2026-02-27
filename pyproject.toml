@@ -5,7 +5,7 @@ requires = [ "hatchling" ]
 [project]
 name = "embpy"
 version = "0.0.1"
-description = "A package for embeddings in python"
+description = "A package for biological embeddings in the perturbation experimental space"
 readme = "README.md"
 license = { file = "LICENSE" }
 maintainers = [
@@ -14,10 +14,9 @@ maintainers = [
 authors = [
   { name = "Goncalo Rei Pinto" },
 ]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 classifiers = [
   "Programming Language :: Python :: 3 :: Only",
-  "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
@@ -25,21 +24,59 @@ classifiers = [
 dependencies = [
   "anndata",
   "biopython",
-  "borzoi-pytorch",
-  "enformer-pytorch",
-  "esm",
+  "cirpy",
+  "borzoi-pytorch>=0.4.3",
+  "enformer-pytorch>=0.8.10",
+  "esm>=3.2.0",
+  "huggingface-hub>=0.35,<1.0.0",
   "ipywidgets",
   "matplotlib",
-  "numpy",
-  "pandas",
-  "pyarrow",
-  "pyensembl",
-  "pytest",
+  "numpy>=1.26,<2.0",
+  "pandas>=2.3.0",
+  "pyarrow>=14.0.2",
+  "pyensembl>=2.3.13",
   "rdkit",
+  "requests",
+  "scikit-learn>=1.3",
+  "scipy>=1.11",
   "seaborn",
   "session-info",
-  "torch",
-  "transformers",
+  "transformers>=4.45.0,<5.0.0",
+]
+
+optional-dependencies.torch = [
+  "torch>=2.5.1",
+]
+optional-dependencies.evo = [
+  "evo-model>=0.3",
+]
+optional-dependencies.evo2 = [
+  "evo2",
+]
+optional-dependencies.ppi = [
+  "embpy[torch]",
+  "torch-geometric>=2.5",
+]
+optional-dependencies.minimol = [
+  "minimol",
+]
+optional-dependencies.mhg-gnn = [
+  "embpy[torch]",
+  "torch-geometric>=2.5",
+  "huggingface-hub>=0.35,<1.0.0",
+]
+optional-dependencies.mole = [
+  "embpy[torch]",
+  "torch-geometric>=2.5",
+]
+optional-dependencies.pertpy = [
+  "pertpy",
+]
+optional-dependencies.scanpy = [
+  "scanpy>=1.10",
+]
+optional-dependencies.all = [
+  "embpy[torch,evo,evo2,ppi,minimol,mhg-gnn,mole,pertpy,scanpy]",
 ]
 optional-dependencies.dev = [
   "pre-commit",
@@ -47,7 +84,6 @@ optional-dependencies.dev = [
 ]
 optional-dependencies.doc = [
   "docutils>=0.8,!=0.18.*,!=0.19.*",
-  "huggingface-hub",
   "ipykernel",
   "ipython",
   "myst-nb>=1.1",
@@ -60,17 +96,12 @@ optional-dependencies.doc = [
   "sphinxcontrib-bibtex>=1",
   "sphinxext-opengraph",
 ]
-optional-dependencies.molecule = [ "transformers>=4" ] # If ChemBERTa uses transformers
-optional-dependencies.protein = [ "transformers>=4" ] # If ESM uses transformers
-optional-dependencies.sentence_transformers = [ "sentence-transformers>=2" ]
 optional-dependencies.test = [
   "coverage",
   "pytest",
+  "pytest-mock",
 ]
-# You could create combined extras
-optional-dependencies.text = [ "sentence-transformers>=2", "transformers>=4" ]
-# Add optional dependencies for specific model types
-optional-dependencies.transformers = [ "transformers>=4" ]
+
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://embpy.readthedocs.io/"
 urls.Homepage = "https://github.com/grpinto/embpy"
@@ -133,7 +164,7 @@ lint.pydocstyle.convention = "numpy"
 testpaths = [ "tests" ]
 xfail_strict = true
 addopts = [
-  "--import-mode=importlib", # allow using test files with same name
+  "--import-mode=importlib",
 ]
 
 [tool.coverage.run]

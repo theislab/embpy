@@ -37,4 +37,5 @@ buck-out/
 # Job outputs & logs
 /output/
 /err/
+/logs/
 

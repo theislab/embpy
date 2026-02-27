@@ -1,6 +1,7 @@
 # embpy/models/protein_models.py
 import io
 import logging
+import re
 import time
 from collections.abc import Sequence
 from typing import Any
@@ -20,7 +21,7 @@ try:
     _HAVE_ESMC = True
 except ImportError:
     _HAVE_ESMC = False
-from transformers import AutoModel, AutoTokenizer
+from transformers import AutoModel, AutoTokenizer, T5EncoderModel, T5Tokenizer
 
 
 class ESM2Wrapper(BaseModelWrapper):
@@ -42,10 +43,8 @@ class ESM2Wrapper(BaseModelWrapper):
             model_path_or_name (str): Model identifier or path for the ESM2 model.
             **kwargs: Additional configuration parameters.
         """
-        self.model_name = model_path_or_name
-        self.model = None
+        super().__init__(model_path_or_name, **kwargs)
         self.tokenizer = None
-        self.device = None
 
     def load(self, device: torch.device) -> None:
         """
@@ -298,122 +297,365 @@ class ESMCWrapper(BaseModelWrapper):
         self,
         input: str,
         pooling_strategy: str = "mean",
-        return_hidden_states: bool = False,
-        hidden_layers: Sequence[int] | None = None,
-    ) -> dict[str, np.ndarray]:
+        max_length: int = 10000,
+        **kwargs: Any,
+    ) -> np.ndarray:
         """
         Embed a single protein sequence.
 
         Parameters
         ----------
-        sequence : str
-            The amino‐acid sequence to embed.
-        pooling_strategy : {'mean', 'max', 'cls'}, default='mean'
-            How to aggregate per‐residue embeddings into a single vector.
-        return_hidden_states : bool, default=False
-            If True, also return the hidden‐states from each transformer layer.
-        hidden_layers : Sequence[int], optional
-            If provided, select only these layer indices from the hidden states.
+        input : str
+            Amino acid sequence string.
+        pooling_strategy : str
+            One of 'mean', 'max', 'cls'.
+        max_length : int
+            Safety truncation limit to prevent OOM on very large proteins.
+        **kwargs : Any
+            Additional arguments (unused, for interface consistency).
 
         Returns
         -------
-        Dict[str, np.ndarray]
-            A dictionary containing:
-              - 'embedding': 1D array of shape (hidden_dim,)
-              - 'hidden_states': 3D array of shape
-                (num_layers, seq_len, hidden_dim), if requested.
-
-        Raises
-        ------
-        RuntimeError
-            If the client is not loaded.
-        ValueError
-            If pooling_strategy is invalid.
+        np.ndarray
+            1D embedding vector.
         """
         if self.client is None or self.device is None:
             raise RuntimeError("ESMC client not loaded; call load() first.")
         if pooling_strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling '{pooling_strategy}'")
 
-        # 1) Prepare input
-        prot = ESMProtein(sequence=input)
+        sequence = input
+        if len(sequence) > max_length:
+            logging.warning(f"Sequence too long ({len(sequence)}). Truncating to {max_length}.")
+            sequence = sequence[:max_length]
+
+        prot = ESMProtein(sequence=sequence)
         tensor = self.client.encode(prot)
 
-        # 2) Configure and run logits call
-        cfg = LogitsConfig(sequence=True, return_embeddings=True, return_hidden_states=return_hidden_states)
+        cfg = LogitsConfig(sequence=True, return_embeddings=True, return_hidden_states=False)
         out: LogitsOutput = self.client.logits(tensor, cfg)
 
-        # 3) Extract per-residue embeddings and remove batch dim
         embs = out.embeddings
         if embs.dim() == 3 and embs.shape[0] == 1:
-            embs = embs.squeeze(0)  # (seq_len, hidden_dim)
+            embs = embs.squeeze(0)
 
-        # 4) Pool to fixed-length embedding
         if pooling_strategy == "cls":
             pooled = embs[0]
         elif pooling_strategy == "max":
             pooled = torch.max(embs, dim=0)[0]
-        else:  # 'mean'
+        else:
             pooled = torch.mean(embs, dim=0)
-        result = {"embedding": pooled.cpu().numpy()}
 
-        if return_hidden_states:
-            hidden = out.hidden_states
-            if isinstance(hidden, tuple):
-                hs = torch.stack(hidden, dim=0)
-            else:
-                hs = hidden
-            # drop any batch‐ or extra singleton dims
-            while hs.dim() > 3 and hs.shape[0] == 1:
-                hs = hs.squeeze(0)
-            if hs.dim() == 4 and hs.shape[1] == 1:
-                hs = hs.squeeze(1)
-            if hs.dim() != 3:
-                raise RuntimeError(f"Unexpected hidden_states shape {hs.shape}")
+        return pooled.cpu().numpy()
 
-            if hidden_layers is not None:
-                hs = hs[list(hidden_layers), :, :]
+    def embed_with_hidden_states(
+        self,
+        input: str,
+        pooling_strategy: str = "mean",
+        hidden_layers: Sequence[int] | None = None,
+        max_length: int = 10000,
+    ) -> dict[str, np.ndarray]:
+        """
+        Embed a single protein sequence and return hidden states.
 
-            result["hidden_states"] = hs.to(torch.float32).cpu().numpy()
+        Parameters
+        ----------
+        input : str
+            Amino acid sequence string.
+        pooling_strategy : str
+            One of 'mean', 'max', 'cls'.
+        hidden_layers : Sequence[int], optional
+            Specific layer indices to return. If None, returns all.
+        max_length : int
+            Safety truncation limit.
+
+        Returns
+        -------
+        dict[str, np.ndarray]
+            Dictionary with 'embedding' (1D) and 'hidden_states' (3D) arrays.
+        """
+        if self.client is None or self.device is None:
+            raise RuntimeError("ESMC client not loaded; call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(f"Invalid pooling '{pooling_strategy}'")
+
+        sequence = input
+        if len(sequence) > max_length:
+            logging.warning(f"Sequence too long ({len(sequence)}). Truncating to {max_length}.")
+            sequence = sequence[:max_length]
+
+        prot = ESMProtein(sequence=sequence)
+        tensor = self.client.encode(prot)
+
+        cfg = LogitsConfig(sequence=True, return_embeddings=True, return_hidden_states=True)
+        out: LogitsOutput = self.client.logits(tensor, cfg)
+
+        embs = out.embeddings
+        if embs.dim() == 3 and embs.shape[0] == 1:
+            embs = embs.squeeze(0)
+
+        if pooling_strategy == "cls":
+            pooled = embs[0]
+        elif pooling_strategy == "max":
+            pooled = torch.max(embs, dim=0)[0]
+        else:
+            pooled = torch.mean(embs, dim=0)
+
+        result: dict[str, np.ndarray] = {"embedding": pooled.cpu().numpy()}
+
+        hidden = out.hidden_states
+        if isinstance(hidden, tuple):
+            hs = torch.stack(hidden, dim=0)
+        else:
+            hs = hidden
+        while hs.dim() > 3 and hs.shape[0] == 1:
+            hs = hs.squeeze(0)
+        if hs.dim() == 4 and hs.shape[1] == 1:
+            hs = hs.squeeze(1)
+
+        if hidden_layers is not None:
+            hs = hs[list(hidden_layers), :, :]
+        result["hidden_states"] = hs.to(torch.float32).cpu().numpy()
 
         return result
 
     def embed_batch(
         self,
-        sequences: list[str],
+        inputs: list[str],
         pooling_strategy: str = "mean",
-        return_hidden_states: bool = False,
-        hidden_layers: Sequence[int] | None = None,
-    ) -> list[dict[str, np.ndarray]]:
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
         """
         Embed a batch of protein sequences.
 
         Parameters
         ----------
-        sequences : List[str]
-            A list of amino‐acid sequences.
+        inputs : list[str]
+            A list of amino-acid sequences.
         pooling_strategy : {'mean', 'max', 'cls'}, default='mean'
             Pooling to apply per sequence.
-        return_hidden_states : bool, default=False
-            Whether to return hidden states for each sequence.
-        hidden_layers : Sequence[int], optional
-            If provided, select only these layer indices.
+        **kwargs : Any
+            Additional arguments forwarded to embed().
 
         Returns
         -------
-        List[Dict[str, np.ndarray]]
-            A list of dictionaries, one per sequence, each containing:
-              - 'embedding': array of shape (hidden_dim,)
-              - 'hidden_states': array (num_layers, seq_len, hidden_dim), if requested.
+        list[np.ndarray]
+            A list of 1D embedding arrays, one per sequence.
         """
         return [
             self.embed(
-                seq,
+                input=seq,
                 pooling_strategy=pooling_strategy,
-                return_hidden_states=return_hidden_states,
-                hidden_layers=hidden_layers,
+                **kwargs,
             )
-            for seq in sequences
+            for seq in inputs
+        ]
+
+
+class ProtT5Wrapper(BaseModelWrapper):
+    """Wrapper for ProtTrans ProtT5-XL-UniRef50 protein language model.
+
+    Produces **1024-dimensional** per-protein embeddings by extracting
+    residue-level representations from the T5 *encoder* and mean-pooling
+    over the sequence length.
+
+    This is the same embedding used as initial node features in the
+    STRING-SPACE (sequence) and STRING-GNN frameworks (Hu et al., 2024).
+
+    Supported model identifiers (Hugging Face):
+
+    * ``Rostlab/prot_t5_xl_uniref50``  – full-precision (float32)
+    * ``Rostlab/prot_t5_xl_half_uniref50-enc``  – half-precision encoder-only
+
+    Parameters
+    ----------
+    model_path_or_name
+        Hugging Face model name or local path.
+    """
+
+    model_type = "protein"
+    available_pooling_strategies = ["mean", "max", "cls"]
+
+    # ProtT5-XL hidden dimension
+    EMBEDDING_DIM = 1024
+
+    def __init__(
+        self,
+        model_path_or_name: str = "Rostlab/prot_t5_xl_half_uniref50-enc",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model_path_or_name, **kwargs)
+        self.tokenizer: T5Tokenizer | None = None
+
+    # ------------------------------------------------------------------
+    # Loading
+    # ------------------------------------------------------------------
+
+    def load(self, device: torch.device) -> None:
+        """Load the ProtT5 encoder and tokenizer onto *device*."""
+        if self.model is not None:
+            logging.debug("ProtT5 model already loaded.")
+            return
+
+        if not self.model_name:
+            raise ValueError("model_path_or_name must be provided for ProtT5Wrapper.")
+
+        logging.info("Loading ProtT5 model '%s' …", self.model_name)
+        try:
+            self.tokenizer = T5Tokenizer.from_pretrained(
+                self.model_name, do_lower_case=False
+            )
+            # Use T5EncoderModel to avoid decoder overhead
+            self.model = T5EncoderModel.from_pretrained(self.model_name)
+            self.model.to(device).eval()  # type: ignore[union-attr]
+            self.device = device
+            logging.info("ProtT5 model loaded successfully (dim=%d).", self.EMBEDDING_DIM)
+        except Exception as e:
+            logging.error("Failed to load ProtT5 model: %s", e)
+            raise RuntimeError(f"Could not load ProtT5 model '{self.model_name}'") from e
+
+    # ------------------------------------------------------------------
+    # Preprocessing
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _prepare_sequence(sequence: str) -> str:
+        """Prepare a protein sequence for ProtT5 tokenization.
+
+        ProtT5 expects **spaces between each amino acid** and all rare /
+        ambiguous residues (B, J, O, U, X, Z) mapped to ``X``.
+        """
+        # Remove whitespace
+        sequence = sequence.strip().upper()
+        # Replace rare amino acids with X
+        sequence = re.sub(r"[UZOB]", "X", sequence)
+        # Insert spaces between every amino acid
+        return " ".join(list(sequence))
+
+    # ------------------------------------------------------------------
+    # Embedding
+    # ------------------------------------------------------------------
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "mean",
+        target_layer: int | None = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Embed a single protein sequence.
+
+        Parameters
+        ----------
+        input
+            Amino-acid sequence (e.g. ``"MTEYKLVVVG..."``).
+        pooling_strategy
+            One of ``"mean"`` (default), ``"max"``, or ``"cls"``.
+        target_layer
+            If given, extract hidden states from a specific encoder layer
+            instead of the last one.
+
+        Returns
+        -------
+        np.ndarray
+            1-D array of shape ``(1024,)`` (or model hidden dim).
+        """
+        if self.model is None or self.device is None or self.tokenizer is None:
+            raise RuntimeError("ProtT5 model not loaded. Call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(
+                f"Invalid pooling '{pooling_strategy}'. "
+                f"Choose from {self.available_pooling_strategies}"
+            )
+
+        prepared = self._prepare_sequence(input)
+        ids = self.tokenizer(
+            prepared,
+            add_special_tokens=True,
+            padding="longest",
+            return_tensors="pt",
+        )
+        input_ids = ids["input_ids"].to(self.device)
+        attention_mask = ids.get("attention_mask")
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(self.device)
+
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=(target_layer is not None),
+            )
+
+            if target_layer is not None:
+                hidden_states = outputs.hidden_states
+                if not hidden_states:
+                    raise ValueError("Model did not return hidden states.")
+                if not (-len(hidden_states) <= target_layer < len(hidden_states)):
+                    raise ValueError(f"Invalid target_layer {target_layer}.")
+                emb = hidden_states[target_layer]
+            else:
+                emb = outputs.last_hidden_state  # (1, seq_len, 1024)
+
+        # Squeeze batch dim
+        if emb.dim() == 3 and emb.shape[0] == 1:
+            emb = emb.squeeze(0)  # (seq_len, 1024)
+
+        # Mask out padding tokens for mean/max pooling
+        if attention_mask is not None and pooling_strategy != "cls":
+            mask = attention_mask.squeeze(0).unsqueeze(-1).bool()  # (seq_len, 1)
+            emb = emb.masked_fill(~mask, 0.0)
+
+        if pooling_strategy == "cls":
+            pooled = emb[0]
+        elif pooling_strategy == "max":
+            if attention_mask is not None:
+                emb = emb.masked_fill(~mask, float("-inf"))
+            pooled = torch.max(emb, dim=0)[0]
+        else:  # mean
+            if attention_mask is not None:
+                pooled = emb.sum(dim=0) / mask.sum(dim=0).clamp(min=1)
+            else:
+                pooled = emb.mean(dim=0)
+
+        return pooled.float().cpu().numpy()
+
+    def embed_batch(
+        self,
+        inputs: list[str],
+        pooling_strategy: str = "mean",
+        target_layer: int | None = None,
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        """Embed multiple protein sequences.
+
+        Parameters
+        ----------
+        inputs
+            List of amino-acid sequence strings.
+        pooling_strategy
+            One of ``"mean"`` (default), ``"max"``, ``"cls"``.
+        target_layer
+            Optional encoder layer index.
+
+        Returns
+        -------
+        list[np.ndarray]
+            One 1-D array of shape ``(1024,)`` per input sequence.
+        """
+        if self.model is None or self.device is None:
+            raise RuntimeError("ProtT5 model not loaded. Call load() first.")
+        if not inputs:
+            return []
+
+        return [
+            self.embed(
+                input=seq,
+                pooling_strategy=pooling_strategy,
+                target_layer=target_layer,
+                **kwargs,
+            )
+            for seq in inputs
         ]
 
 
