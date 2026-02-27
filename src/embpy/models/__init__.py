@@ -22,6 +22,22 @@ try:
 except ImportError:
     Evo2Wrapper = None  # type: ignore
 
+# HuggingFace-based DNA models (requires: pip install transformers)
+try:
+    from .dna_models import (
+        CaduceusWrapper,
+        GENALMWrapper,
+        HyenaDNAWrapper,
+        NucleotideTransformerWrapper,
+        NucleotideTransformerV3Wrapper,
+    )
+except ImportError:
+    CaduceusWrapper = None  # type: ignore
+    GENALMWrapper = None  # type: ignore
+    HyenaDNAWrapper = None  # type: ignore
+    NucleotideTransformerWrapper = None  # type: ignore
+    NucleotideTransformerV3Wrapper = None  # type: ignore
+
 # PPI GNN is optional (requires: pip install torch-geometric)
 try:
     from .ppi_models import GNNEncoder, PPIGNNWrapper
@@ -34,6 +50,11 @@ __all__ = [
     "EnformerWrapper",
     "EvoWrapper",
     "Evo2Wrapper",
+    "CaduceusWrapper",
+    "GENALMWrapper",
+    "HyenaDNAWrapper",
+    "NucleotideTransformerWrapper",
+    "NucleotideTransformerV3Wrapper",
     "ChembertaWrapper",
     "ESM2Wrapper",
     "ESMCWrapper",
