@@ -11,7 +11,15 @@ from .errors import ConfigError, IdentifierError, ModelNotFoundError
 from .models.base import BaseModelWrapper
 
 # Import all potential wrappers - handle ImportErrors later if deps are missing
-from .models.dna_models import BorzoiWrapper, EnformerWrapper
+from .models.dna_models import (
+    BorzoiWrapper, 
+    EnformerWrapper,
+    GENALMWrapper,
+    NucleotideTransformerWrapper,
+    NucleotideTransformerV3Wrapper,
+    HyenaDNAWrapper,
+    CaduceusWrapper,
+)
 from .models.molecule_models import (
     ChembertaWrapper,
     MHGGNNWrapper,
@@ -108,6 +116,35 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # --- Text Models ---
     "minilm_l6_v2": (TextLLMWrapper, "sentence-transformers/all-MiniLM-L6-v2"),
     "bert_base_uncased": (TextLLMWrapper, "bert-base-uncased"),
+    # GENA-LM (AIRI-Institute) — pip install transformers
+    "gena_lm_bert_base": (GENALMWrapper,   "AIRI-Institute/gena-lm-bert-base-t2t"),
+    "gena_lm_bert_large": (GENALMWrapper,   "AIRI-Institute/gena-lm-bert-large-t2t"),
+    "gena_lm_bert_base_multi": (GENALMWrapper,   "AIRI-Institute/gena-lm-bert-base-t2t-multi"),
+    "gena_lm_bigbird_base": (GENALMWrapper,   "AIRI-Institute/gena-lm-bigbird-base-t2t"),
+    # Nucleotide Transformer v1/v2 (InstaDeep) — pip install transformers
+    "nt_500m_human_ref": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-500m-human-ref"),
+    "nt_500m_1000g": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-500m-1000g"),
+    "nt_2b5_1000g": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-2.5b-1000g"),
+    "nt_2b5_multi": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-2.5b-multi-species"),
+    "nt_v2_50m": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-v2-50m-multi-species"),
+    "nt_v2_100m": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-v2-100m-multi-species"),
+    "nt_v2_250m": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-v2-250m-multi-species"),
+    "nt_v2_500m": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"),
+    # Nucleotide Transformer v3 (InstaDeep) — pip install transformers
+    "ntv3_8m_pre":   (NucleotideTransformerV3Wrapper, "InstaDeepAI/NTv3_8M_pre"),
+    "ntv3_100m_pre": (NucleotideTransformerV3Wrapper, "InstaDeepAI/NTv3_100M_pre"),
+    "ntv3_100m_pos": (NucleotideTransformerV3Wrapper, "InstaDeepAI/NTv3_100M_pos"),
+    "ntv3_650m_pre": (NucleotideTransformerV3Wrapper, "InstaDeepAI/NTv3_650M_pre"),
+    "ntv3_650m_pos": (NucleotideTransformerV3Wrapper, "InstaDeepAI/NTv3_650M_pos"),
+    # HyenaDNA (HazyResearch) — pip install transformers
+    "hyenadna_tiny_1k": (HyenaDNAWrapper, "LongSafari/hyenadna-tiny-1k-seqlen-hf"),
+    "hyenadna_small_32k": (HyenaDNAWrapper, "LongSafari/hyenadna-small-32k-seqlen-hf"),
+    "hyenadna_medium_160k": (HyenaDNAWrapper, "LongSafari/hyenadna-medium-160k-seqlen-hf"),
+    "hyenadna_medium_450k": (HyenaDNAWrapper, "LongSafari/hyenadna-medium-450k-seqlen-hf"),
+    "hyenadna_large_1m": (HyenaDNAWrapper, "LongSafari/hyenadna-large-1m-seqlen-hf"),
+    # Caduceus (kuleshov-group) — pip install embpy[caduceus]
+    "caduceus_ph_131k": (CaduceusWrapper, "kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16"),
+    "caduceus_ps_131k": (CaduceusWrapper, "kuleshov-group/caduceus-ps_seqlen-131k_d_model-256_n_layer-16"),
 }
 
 

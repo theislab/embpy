@@ -44,6 +44,21 @@ dependencies = [
   "transformers>=4.45.0,<5.0.0",
 ]
 
+torch-cpu = [
+  "torch>=2.5.1",
+]
+torch-cu121 = [
+  "torch>=2.5.1+cu121",
+]
+torch-cu124 = [
+  "torch>=2.5.1+cu124",
+]
+torch-cu128 = [
+  "torch>=2.5.1+cu128",
+]
+torch-cu130 = [
+  "torch>=2.5.1+cu130",
+]
 optional-dependencies.torch = [
   "torch>=2.5.1",
 ]
@@ -52,6 +67,17 @@ optional-dependencies.evo = [
 ]
 optional-dependencies.evo2 = [
   "evo2",
+]
+# Caduceus — requires mamba-ssm, a CUDA extension compiled against your torch.
+# Install the matching torch-cu* extra FIRST, then:
+#   pip install embpy[caduceus]
+# If the build fails, try:
+#   pip install mamba-ssm --no-build-isolation
+optional-dependencies.caduceus = [
+  "mamba-ssm>=2.0",
+]
+optional-dependencies.ntv3 = [
+  "transformers>=5.0.0",
 ]
 optional-dependencies.ppi = [
   "embpy[torch]",
@@ -106,6 +132,9 @@ optional-dependencies.test = [
 urls.Documentation = "https://embpy.readthedocs.io/"
 urls.Homepage = "https://github.com/grpinto/embpy"
 urls.Source = "https://github.com/grpinto/embpy"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.envs.default]
 installer = "uv"

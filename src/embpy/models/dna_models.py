@@ -44,6 +44,19 @@ except ImportError:
     from_pretrained = None  # type: ignore
     seq_indices_to_one_hot = None  # type: ignore
 
+try:
+    from transformers import AutoModel, AutoTokenizer  
+    _HAVE_TRANSFORMERS = True
+    from transformers import AutoModelForCausalLM  
+    from transformers import AutoModelForMaskedLM
+except ImportError:
+    _HAVE_TRANSFORMERS = False
+    AutoModel = None 
+    AutoTokenizer = None  
+    AutoModelForCausalLM = None  
+    AutoModelForMaskedLM = None  
+
+
 from .base import BaseModelWrapper
 
 
@@ -1250,3 +1263,629 @@ class Evo2Wrapper(BaseModelWrapper):
             results.append(emb)
 
         return results
+
+
+class GENALMWrapper(BaseModelWrapper):
+    """Wrapper for GENA-LM BERT-style DNA language models.
+
+    GENA-LM models are masked-language-model transformers trained on the
+    human T2T genome assembly with BPE tokenization.  They accept sequences
+    up to ~4,500 bp (BERT-base) or ~36,000 bp (BigBird-base).
+
+    Available model identifiers (``AIRI-Institute/<name>``):
+
+    * ``gena-lm-bert-base-t2t``          - 110 M params, 4.5 kb context
+    * ``gena-lm-bert-large-t2t``         - 336 M params, 4.5 kb context
+    * ``gena-lm-bert-base-lastln-t2t``   - 110 M params, 4.5 kb context
+    * ``gena-lm-bert-base-t2t-multi``    - 110 M params, multi-species
+    * ``gena-lm-bigbird-base-t2t``       - 110 M params, 36 kb context
+    * ``gena-lm-bigbird-base-sparse-t2t``- 110 M params, 36 kb (requires DeepSpeed)
+
+    Install:  ``pip install transformers``
+
+    Parameters
+    ----------
+    model_path_or_name
+        Full HuggingFace identifier, e.g.
+        ``"AIRI-Institute/gena-lm-bert-base-t2t"``.
+    """
+
+    model_type = "dna"
+    available_pooling_strategies = ["mean", "max", "cls"]
+
+    def __init__(
+        self,
+        model_path_or_name: str = "AIRI-Institute/gena-lm-bert-base-t2t",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model_path_or_name, **kwargs)
+        self.tokenizer: Any = None
+
+    def load(self, device: torch.device) -> None:
+        if self.model is not None:
+            logging.warning(f"GENA-LM '{self.model_name}' already loaded.")
+            return
+        if not _HAVE_TRANSFORMERS:
+            raise ImportError("transformers package required: pip install transformers")
+
+        logging.info(f"Loading GENA-LM '{self.model_name}' …")
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name, trust_remote_code=True
+            )
+            self.model = (
+                AutoModel.from_pretrained(self.model_name, trust_remote_code=True)
+                .to(device)
+                .eval()
+            )
+            self.device = device
+            logging.info(f"GENA-LM '{self.model_name}' loaded on {device}.")
+        except Exception as e:
+            self.model = None
+            raise RuntimeError(f"Could not load GENA-LM '{self.model_name}'.") from e
+
+    def _tokenize(self, sequence: str) -> dict[str, torch.Tensor]:
+        assert self.tokenizer is not None
+        return self.tokenizer(
+            sequence,
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+        )
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "mean",
+        target_layer: int | None = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        if self.model is None or self.device is None:
+            raise RuntimeError("GENA-LM not loaded. Call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(f"Invalid pooling '{pooling_strategy}'")
+
+        enc = self._tokenize(input)
+        input_ids = enc["input_ids"].to(self.device)
+        attention_mask = enc.get("attention_mask")
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(self.device)
+
+        with torch.no_grad():
+            out = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+            )
+            if target_layer is not None:
+                emb = out.hidden_states[target_layer]
+            elif hasattr(out, "last_hidden_state") and out.last_hidden_state is not None:
+                emb = out.last_hidden_state
+            else:
+                emb = out.hidden_states[-1]  # (1, L, H)
+
+        if emb.dim() == 3 and emb.shape[0] == 1:
+            emb = emb.squeeze(0)  # (L, H)
+
+        if pooling_strategy == "cls":
+            return emb[0].cpu().numpy()
+        elif pooling_strategy == "max":
+            return emb.max(dim=0).values.cpu().numpy()
+        else:
+            if attention_mask is not None:
+                mask = attention_mask.squeeze(0).unsqueeze(-1).float()
+                return (emb * mask).sum(0).div(mask.sum(0).clamp(min=1)).cpu().numpy()
+            return emb.mean(dim=0).cpu().numpy()
+
+    def embed_batch(
+        self,
+        inputs: Sequence[str],
+        pooling_strategy: str = "mean",
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        if not inputs:
+            return []
+        return [self.embed(s, pooling_strategy=pooling_strategy, **kwargs) for s in inputs]
+
+
+class NucleotideTransformerWrapper(BaseModelWrapper):
+    """Wrapper for Nucleotide Transformer v1/v2 models (InstaDeep / NVIDIA / TUM).
+
+    NT models are large transformer encoders pre-trained on human and multi-species
+    DNA using 6-mer tokenization (NT-v1) or BPE-like tokenization with RoPE (NT-v2).
+
+    Available model identifiers (``InstaDeepAI/<name>``):
+
+    NT-v1 (6-mer, 6 kb context):
+    * ``nucleotide-transformer-500m-human-ref``
+    * ``nucleotide-transformer-500m-1000g``
+    * ``nucleotide-transformer-2.5b-1000g``
+    * ``nucleotide-transformer-2.5b-multi-species``
+
+    NT-v2 (RoPE, 12 kb context):
+    * ``nucleotide-transformer-v2-50m-multi-species``
+    * ``nucleotide-transformer-v2-100m-multi-species``
+    * ``nucleotide-transformer-v2-250m-multi-species``
+    * ``nucleotide-transformer-v2-500m-multi-species``
+
+    Install:  ``pip install transformers``
+
+    Notes
+    -----
+    NT models use trust_remote_code because the tokenizer/model config is
+    hosted on the HuggingFace Hub, not shipped with transformers.
+    """
+
+    model_type = "dna"
+    available_pooling_strategies = ["mean", "max", "cls"]
+
+    def __init__(
+        self,
+        model_path_or_name: str = "InstaDeepAI/nucleotide-transformer-v2-100m-multi-species",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model_path_or_name, **kwargs)
+        self.tokenizer: Any = None
+
+    def load(self, device: torch.device) -> None:
+        if self.model is not None:
+            logging.warning(f"NT '{self.model_name}' already loaded.")
+            return
+        if not _HAVE_TRANSFORMERS:
+            raise ImportError("transformers package required: pip install transformers")
+
+        logging.info(f"Loading Nucleotide Transformer '{self.model_name}' …")
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name, trust_remote_code=True
+            )
+
+            from transformers import AutoConfig, AutoModelForMaskedLM  # type: ignore
+
+            config = AutoConfig.from_pretrained(
+                self.model_name, trust_remote_code=True
+            )
+            self.model = (
+                AutoModelForMaskedLM.from_pretrained(
+                    self.model_name,
+                    config=config,
+                    trust_remote_code=True,
+                )
+                .to(device)
+                .eval()
+            )
+            self.device = device
+            logging.info(f"NT '{self.model_name}' loaded via AutoModelForMaskedLM on {device}.")
+        except Exception as e:
+            self.model = None
+            raise RuntimeError(f"Could not load NT '{self.model_name}'.") from e
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "mean",
+        target_layer: int | None = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        if self.model is None or self.device is None:
+            raise RuntimeError("NT model not loaded. Call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(f"Invalid pooling '{pooling_strategy}'")
+
+        enc = self.tokenizer(
+            input,
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+        )
+        input_ids = enc["input_ids"].to(self.device)
+        attention_mask = enc.get("attention_mask")
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(self.device)
+
+        with torch.no_grad():
+
+            out = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+            )
+            if target_layer is not None:
+                emb = out.hidden_states[target_layer]
+            elif hasattr(out, "last_hidden_state") and out.last_hidden_state is not None:
+                emb = out.last_hidden_state
+            else:
+                emb = out.hidden_states[-1]  # (1, L, H)
+
+        if emb.dim() == 3 and emb.shape[0] == 1:
+            emb = emb.squeeze(0)
+
+        if pooling_strategy == "cls":
+            return emb[0].cpu().numpy()
+        elif pooling_strategy == "max":
+            return emb.max(dim=0).values.cpu().numpy()
+        else:
+            if attention_mask is not None:
+                mask = attention_mask.squeeze(0).unsqueeze(-1).float()
+                return (emb * mask).sum(0).div(mask.sum(0).clamp(min=1)).cpu().numpy()
+            return emb.mean(dim=0).cpu().numpy()
+
+    def embed_batch(
+        self,
+        inputs: Sequence[str],
+        pooling_strategy: str = "mean",
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        if not inputs:
+            return []
+        return [self.embed(s, pooling_strategy=pooling_strategy, **kwargs) for s in inputs]
+
+
+class NucleotideTransformerV3Wrapper(BaseModelWrapper):
+    """Wrapper for Nucleotide Transformer v3 (NTv3) by InstaDeep.
+
+    NTv3 is a U-Net–style genomic foundation model with single-base tokenisation
+    supporting sequences up to 1 Mb.  It is pre-trained on ~9T bp from OpenGenome2
+    across >128k species and post-trained on ~16k functional tracks.
+
+    Unlike earlier JAX-based NTv3, the HuggingFace release uses standard PyTorch
+    and loads via ``AutoModelForMaskedLM``.
+
+    Available model identifiers (``InstaDeepAI/<n>``):
+
+    * ``NTv3_8M_pre``   -   8 M params, pre-trained only
+    * ``NTv3_100M_pre`` - 100 M params, pre-trained
+    * ``NTv3_100M_pos`` - 100 M params, post-trained (tracks + annotation)
+    * ``NTv3_650M_pre`` - 650 M params, pre-trained
+    * ``NTv3_650M_pos`` - 650 M params, post-trained (best accuracy)
+
+    Install:  ``pip install transformers``
+
+    Notes
+    -----
+    * Input sequence length **must be a multiple of 128** (U-Net downsampling).
+      Sequences are padded with ``N`` automatically.
+    * Embeddings are extracted from ``output.hidden_states[-1]`` (final encoder
+      layer before the MLM head).  Use ``target_layer`` to extract intermediate
+      representations.
+    * ``add_special_tokens=False`` and ``pad_to_multiple_of=128`` are set
+      automatically to match the model's requirements.
+    """
+
+    model_type = "dna"
+    available_pooling_strategies = ["mean", "max", "cls"]
+    _PAD_MULTIPLE = 128
+
+    def __init__(
+        self,
+        model_path_or_name: str = "InstaDeepAI/NTv3_100M_pre",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model_path_or_name, **kwargs)
+        self.tokenizer: Any = None
+
+    def load(self, device: torch.device) -> None:
+        if self.model is not None:
+            logging.warning(f"NTv3 '{self.model_name}' already loaded.")
+            return
+        if not _HAVE_TRANSFORMERS:
+            raise ImportError("transformers package required: pip install transformers")
+
+        logging.info(f"Loading NTv3 '{self.model_name}' (PyTorch) …")
+        try:
+            from transformers import AutoModelForMaskedLM  # type: ignore
+
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name, trust_remote_code=True
+            )
+            self.model = (
+                AutoModelForMaskedLM.from_pretrained(
+                    self.model_name, trust_remote_code=True
+                )
+                .to(device)
+                .eval()
+            )
+            self.device = device
+            logging.info(f"NTv3 '{self.model_name}' loaded on {device}.")
+        except Exception as e:
+            self.model = None
+            raise RuntimeError(f"Could not load NTv3 '{self.model_name}'.") from e
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "mean",
+        target_layer: int | None = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        if self.model is None or self.device is None:
+            raise RuntimeError("NTv3 not loaded. Call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(f"Invalid pooling '{pooling_strategy}'")
+
+        enc = self.tokenizer(
+            input.upper(),
+            return_tensors="pt",
+            add_special_tokens=False,
+            padding=True,
+            pad_to_multiple_of=self._PAD_MULTIPLE,
+        )
+        input_ids = enc["input_ids"].to(self.device)
+        attention_mask = enc.get("attention_mask")
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(self.device)
+
+        with torch.no_grad():
+            out = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+            )
+            if target_layer is not None:
+                emb = out.hidden_states[target_layer]
+            else:
+                # hidden_states[-1] is the final encoder state before MLM head
+                emb = out.hidden_states[-1]  # (1, L, H)
+
+        if emb.dim() == 3 and emb.shape[0] == 1:
+            emb = emb.squeeze(0)  # (L, H)
+
+        if pooling_strategy == "cls":
+            return emb[0].float().cpu().numpy()
+        elif pooling_strategy == "max":
+            return emb.max(dim=0).values.float().cpu().numpy()
+        else:
+            if attention_mask is not None:
+                mask = attention_mask.squeeze(0).unsqueeze(-1).float()
+                return (emb * mask).sum(0).div(mask.sum(0).clamp(min=1)).float().cpu().numpy()
+            return emb.mean(dim=0).float().cpu().numpy()
+
+    def embed_batch(
+        self,
+        inputs: Sequence[str],
+        pooling_strategy: str = "mean",
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        if not inputs:
+            return []
+        return [self.embed(s, pooling_strategy=pooling_strategy, **kwargs) for s in inputs]
+
+
+class HyenaDNAWrapper(BaseModelWrapper):
+    """Wrapper for HyenaDNA long-range genomic foundation models (HazyResearch).
+
+    HyenaDNA is a causal language model based on the Hyena (implicit long
+    convolution) operator, supporting context lengths up to 1 M tokens at
+    single-nucleotide resolution.  Weights are hosted on the HuggingFace Hub
+    under ``LongSafari/hyenadna-*-seqlen-hf``.
+
+    Available identifiers:
+
+    * ``LongSafari/hyenadna-tiny-1k-seqlen-hf``
+    * ``LongSafari/hyenadna-tiny-1k-d256-seqlen-hf``
+    * ``LongSafari/hyenadna-tiny-16k-d128-seqlen-hf``
+    * ``LongSafari/hyenadna-small-32k-seqlen-hf``
+    * ``LongSafari/hyenadna-medium-160k-seqlen-hf``
+    * ``LongSafari/hyenadna-medium-450k-seqlen-hf``
+    * ``LongSafari/hyenadna-large-1m-seqlen-hf``
+
+    Install:  ``pip install transformers``
+
+    Notes
+    -----
+    Embeddings are extracted from the hidden states of the causal LM backbone
+    (``output_hidden_states=True``).  By default the last hidden state is used.
+    Set ``target_layer`` to extract intermediate representations.
+    """
+
+    model_type = "dna"
+    available_pooling_strategies = ["mean", "max", "cls", "last"]
+
+    _CHAR_TO_ID: dict[str, int] = {
+        "A": 7, "C": 8, "G": 9, "T": 10, "N": 11,
+        "a": 7, "c": 8, "g": 9, "t": 10, "n": 11,
+    }
+    _DEFAULT_TOKEN_ID = 11  # N
+
+    def __init__(
+        self,
+        model_path_or_name: str = "LongSafari/hyenadna-small-32k-seqlen-hf",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model_path_or_name, **kwargs)
+        self.tokenizer: Any = None
+
+    def load(self, device: torch.device) -> None:
+        if self.model is not None:
+            logging.warning(f"HyenaDNA '{self.model_name}' already loaded.")
+            return
+        if not _HAVE_TRANSFORMERS or AutoModelForCausalLM is None:
+            raise ImportError("transformers package required: pip install transformers")
+
+        logging.info(f"Loading HyenaDNA '{self.model_name}' …")
+        try:
+            # HyenaDNA uses character-level tokenisation; the AutoTokenizer from
+            # the HF repo handles this via trust_remote_code
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name, trust_remote_code=True
+            )
+            self.model = (
+                AutoModelForCausalLM.from_pretrained(
+                    self.model_name, trust_remote_code=True
+                )
+                .to(device)
+                .eval()
+            )
+            self.device = device
+            logging.info(f"HyenaDNA '{self.model_name}' loaded on {device}.")
+        except Exception as e:
+            self.model = None
+            raise RuntimeError(f"Could not load HyenaDNA '{self.model_name}'.") from e
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "mean",
+        target_layer: int | None = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        if self.model is None or self.device is None:
+            raise RuntimeError("HyenaDNA not loaded. Call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(f"Invalid pooling '{pooling_strategy}'")
+
+        enc = self.tokenizer(
+            input,
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+        )
+        input_ids = enc["input_ids"].to(self.device)
+
+        with torch.no_grad():
+            out = self.model(input_ids=input_ids, output_hidden_states=True)
+            hs = out.hidden_states  
+            if target_layer is not None:
+                emb = hs[target_layer]
+            else:
+                emb = hs[-1]  # last hidden state
+
+        if emb.dim() == 3 and emb.shape[0] == 1:
+            emb = emb.squeeze(0) 
+
+        if pooling_strategy == "cls":
+            return emb[0].float().cpu().numpy()
+        elif pooling_strategy == "last":
+            return emb[-1].float().cpu().numpy()
+        elif pooling_strategy == "max":
+            return emb.max(dim=0).values.float().cpu().numpy()
+        else:
+            return emb.mean(dim=0).float().cpu().numpy()
+
+    def embed_batch(
+        self,
+        inputs: Sequence[str],
+        pooling_strategy: str = "mean",
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        if not inputs:
+            return []
+        return [self.embed(s, pooling_strategy=pooling_strategy, **kwargs) for s in inputs]
+
+
+class CaduceusWrapper(BaseModelWrapper):
+    """Wrapper for Caduceus bi-directional equivariant DNA language models.
+
+    Caduceus extends the Mamba/SSM architecture with reverse-complement (RC)
+    equivariance for long-range DNA modelling (up to 131 k bp context).
+
+    Available model identifiers:
+
+    * ``kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16``
+      - RC-*augmented* (PhiH) variant; standard MLM pre-training.
+    * ``kuleshov-group/caduceus-ps_seqlen-131k_d_model-256_n_layer-16``
+      - RC-*equivariant* (PhiS) variant; no RC augmentation needed.
+
+    Install:  ``pip install transformers``
+
+    Notes
+    -----
+    * Caduceus is an MLM model.  We extract hidden states from the backbone
+      rather than the MLM head.
+    * For the PS variant, embedding dimensions may be doubled (RC complement
+      is modelled jointly); mean-pooling collapses this correctly.
+    """
+
+    model_type = "dna"
+    available_pooling_strategies = ["mean", "max", "cls"]
+
+    def __init__(
+        self,
+        model_path_or_name: str = "kuleshov-group/caduceus-ps_seqlen-131k_d_model-256_n_layer-16",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model_path_or_name, **kwargs)
+        self.tokenizer: Any = None
+
+    def load(self, device: torch.device) -> None:
+        if self.model is not None:
+            logging.warning(f"Caduceus '{self.model_name}' already loaded.")
+            return
+        if not _HAVE_TRANSFORMERS:
+            raise ImportError("transformers package required: pip install transformers")
+
+        logging.info(f"Loading Caduceus '{self.model_name}' …")
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name, trust_remote_code=True
+            )
+
+            try:
+                m = AutoModelForMaskedLM.from_pretrained(
+                    self.model_name, trust_remote_code=True
+                )
+            except Exception:
+                m = AutoModel.from_pretrained(self.model_name, trust_remote_code=True)
+            self.model = m.to(device).eval()
+            self.device = device
+            logging.info(f"Caduceus '{self.model_name}' loaded on {device}.")
+        except Exception as e:
+            self.model = None
+            raise RuntimeError(f"Could not load Caduceus '{self.model_name}'.") from e
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "mean",
+        target_layer: int | None = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        if self.model is None or self.device is None:
+            raise RuntimeError("Caduceus not loaded. Call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(f"Invalid pooling '{pooling_strategy}'")
+
+        enc = self.tokenizer(
+            input,
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+        )
+        input_ids = enc["input_ids"].to(self.device)
+        attention_mask = enc.get("attention_mask")
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(self.device)
+
+        with torch.no_grad():
+            out = self.model(
+                input_ids=input_ids,
+                output_hidden_states=True,
+            )
+            hs = out.hidden_states
+            if target_layer is not None:
+                emb = hs[target_layer]
+            else:
+                emb = hs[-1] 
+
+        if emb.dim() == 3 and emb.shape[0] == 1:
+            emb = emb.squeeze(0)
+
+        if pooling_strategy == "cls":
+            return emb[0].float().cpu().numpy()
+        elif pooling_strategy == "max":
+            return emb.max(dim=0).values.float().cpu().numpy()
+        else:
+            if attention_mask is not None:
+                mask = attention_mask.squeeze(0).unsqueeze(-1).float()
+                return (emb * mask).sum(0).div(mask.sum(0).clamp(min=1)).float().cpu().numpy()
+            return emb.mean(dim=0).float().cpu().numpy()
+
+    def embed_batch(
+        self,
+        inputs: Sequence[str],
+        pooling_strategy: str = "mean",
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        if not inputs:
+            return []
+        return [self.embed(s, pooling_strategy=pooling_strategy, **kwargs) for s in inputs]
