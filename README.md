@@ -6,7 +6,7 @@
 [badge-tests]: https://img.shields.io/github/actions/workflow/status/grpinto/embpy/test.yaml?branch=main
 [badge-docs]: https://img.shields.io/readthedocs/embpy
 
-A package for biological embeddings in Python — DNA, protein, and molecule
+A package for biological embeddings in Python — DNA, protein, molecule and text
 foundation models with a unified interface.
 
 ## Getting started
