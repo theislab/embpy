@@ -9,8 +9,43 @@ import numpy as np
 import pytest
 import torch
 
-from embpy.models.dna_models import BorzoiWrapper, EnformerWrapper, EvoWrapper
+from embpy.models.dna_models import (
+    BorzoiWrapper,
+    EnformerWrapper,
+    EvoWrapper,
+    CaduceusWrapper,
+    GENALMWrapper,
+    HyenaDNAWrapper,
+    NucleotideTransformerWrapper,
+)
 
+
+def _mlm_output(hidden_dim: int, seq_len: int = 20) -> MagicMock:
+    """Mimic MaskedLMOutput: hidden_states tuple, no last_hidden_state."""
+    h = torch.randn(1, seq_len, hidden_dim)
+    out = MagicMock()
+    out.hidden_states = (h, h)   # (layer0, layer1); [-1] is last
+    out.last_hidden_state = None
+    return out
+
+
+def _base_output(hidden_dim: int, seq_len: int = 20) -> MagicMock:
+    """Mimic BaseModelOutput: last_hidden_state present."""
+    h = torch.randn(1, seq_len, hidden_dim)
+    out = MagicMock()
+    out.last_hidden_state = h
+    out.hidden_states = (h, h)
+    return out
+
+
+def _tok(seq_len: int = 20, has_mask: bool = True) -> MagicMock:
+    """Return a mock tokeniser that returns fixed-size tensors."""
+    enc: dict = {"input_ids": torch.ones(1, seq_len, dtype=torch.long)}
+    if has_mask:
+        enc["attention_mask"] = torch.ones(1, seq_len, dtype=torch.long)
+    mock = MagicMock()
+    mock.return_value = enc
+    return mock
 
 class TestEnformerWrapper:
     def test_init_defaults(self):
@@ -606,3 +641,476 @@ class TestEvoWrapper:
         input_ids = torch.randn(1, seq_len, hidden_dim)
         result = w._extract_hidden_state(input_ids)
         assert isinstance(result, torch.Tensor)
+
+
+class TestGENALMWrapper:
+
+    def test_init_defaults(self):
+        w = GENALMWrapper()
+        assert "gena-lm" in w.model_name
+        assert w.model_type == "dna"
+        assert w.model is None
+        assert w.tokenizer is None
+
+    def test_init_custom_name(self):
+        w = GENALMWrapper(model_path_or_name="AIRI-Institute/gena-lm-bert-large-t2t")
+        assert w.model_name == "AIRI-Institute/gena-lm-bert-large-t2t"
+
+    def test_available_pooling_strategies(self):
+        assert set(GENALMWrapper.available_pooling_strategies) >= {"mean", "max", "cls"}
+
+    def test_embed_without_load_raises(self):
+        w = GENALMWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed("ACGT")
+
+    def test_embed_batch_without_load_raises(self):
+        w = GENALMWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed_batch(["ACGT"])
+
+    def test_embed_batch_empty_returns_empty(self):
+        w = GENALMWrapper()
+        w.model = MagicMock()
+        w.device = torch.device("cpu")
+        assert w.embed_batch([]) == []
+
+    def test_invalid_pooling_raises(self):
+        w = GENALMWrapper()
+        w.model = MagicMock()
+        w.device = torch.device("cpu")
+        with pytest.raises(ValueError, match="Invalid pooling"):
+            w.embed("ACGT", pooling_strategy="invalid")
+
+    def test_load_without_transformers_raises(self):
+        w = GENALMWrapper()
+        with patch("embpy.models.dna_models._HAVE_TRANSFORMERS", False):
+            with pytest.raises(ImportError, match="transformers"):
+                w.load(torch.device("cpu"))
+
+    def _loaded(self, hidden_dim: int = 768, seq_len: int = 20) -> GENALMWrapper:
+        w = GENALMWrapper()
+        w.device = torch.device("cpu")
+        w.tokenizer = _tok(seq_len)
+        w.model = MagicMock(return_value=_mlm_output(hidden_dim, seq_len))
+        return w
+
+    def test_embed_mean_returns_correct_shape(self):
+        hidden_dim = 768
+        result = self._loaded(hidden_dim).embed("ACGTACGT", pooling_strategy="mean")
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (hidden_dim,)
+        assert not np.isnan(result).any()
+
+    def test_embed_cls_returns_correct_shape(self):
+        hidden_dim = 768
+        result = self._loaded(hidden_dim).embed("ACGT", pooling_strategy="cls")
+        assert result.shape == (hidden_dim,)
+
+    def test_embed_max_returns_correct_shape(self):
+        hidden_dim = 768
+        result = self._loaded(hidden_dim).embed("ACGT", pooling_strategy="max")
+        assert result.shape == (hidden_dim,)
+
+    def test_embed_uses_hidden_states_when_no_last_hidden_state(self):
+        hidden_dim = 768
+        seq_len = 20
+        w = self._loaded(hidden_dim, seq_len)
+
+        # last layer is all-ones so we can verify it was used (not zero layer)
+        zero_layer = torch.zeros(1, seq_len, hidden_dim)
+        real_layer = torch.ones(1, seq_len, hidden_dim)
+        out = MagicMock()
+        out.last_hidden_state = None
+        out.hidden_states = (zero_layer, real_layer)
+        w.model = MagicMock(return_value=out)
+
+        result = w.embed("ACGT", pooling_strategy="mean")
+        assert result.shape == (hidden_dim,)
+        assert np.allclose(result, 1.0, atol=1e-4), (
+            "Should have used hidden_states[-1] (all-ones), not hidden_states[0] (zeros)"
+        )
+
+    def test_embed_target_layer(self):
+        hidden_dim = 768
+        seq_len = 20
+        w = self._loaded(hidden_dim, seq_len)
+
+        layer0 = torch.randn(1, seq_len, hidden_dim)
+        layer1 = torch.randn(1, seq_len, hidden_dim)
+        out = MagicMock()
+        out.hidden_states = (layer0, layer1)
+        out.last_hidden_state = None
+        w.model = MagicMock(return_value=out)
+
+        result = w.embed("ACGT", target_layer=0)
+        assert result.shape == (hidden_dim,)
+
+    def test_embed_batch_multiple(self):
+        hidden_dim = 768
+        w = self._loaded(hidden_dim)
+        results = w.embed_batch(["ACGT", "GCTA", "TTTT"])
+        assert len(results) == 3
+        assert all(r.shape == (hidden_dim,) for r in results)
+
+    def test_embed_output_is_float32(self):
+        result = self._loaded().embed("ACGT")
+        assert result.dtype == np.float32
+
+
+class TestNucleotideTransformerWrapper:
+
+    def test_init_defaults(self):
+        w = NucleotideTransformerWrapper()
+        assert "nucleotide-transformer" in w.model_name
+        assert w.model_type == "dna"
+        assert w.model is None
+
+    def test_init_v2_name(self):
+        w = NucleotideTransformerWrapper(
+            model_path_or_name="InstaDeepAI/nucleotide-transformer-v2-50m-multi-species"
+        )
+        assert "v2-50m" in w.model_name
+
+    def test_init_v1_name(self):
+        w = NucleotideTransformerWrapper(
+            model_path_or_name="InstaDeepAI/nucleotide-transformer-500m-human-ref"
+        )
+        assert "500m" in w.model_name
+
+    def test_available_pooling_strategies(self):
+        assert set(NucleotideTransformerWrapper.available_pooling_strategies) >= {"mean", "max", "cls"}
+
+    def test_embed_without_load_raises(self):
+        w = NucleotideTransformerWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed("ACGT")
+
+    def test_embed_batch_without_load_raises(self):
+        w = NucleotideTransformerWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed_batch(["ACGT"])
+
+    def test_embed_batch_empty_returns_empty(self):
+        w = NucleotideTransformerWrapper()
+        w.model = MagicMock()
+        w.device = torch.device("cpu")
+        assert w.embed_batch([]) == []
+
+    def test_invalid_pooling_raises(self):
+        w = NucleotideTransformerWrapper()
+        w.model = MagicMock()
+        w.device = torch.device("cpu")
+        with pytest.raises(ValueError, match="Invalid pooling"):
+            w.embed("ACGT", pooling_strategy="bad")
+
+    def test_load_without_transformers_raises(self):
+        w = NucleotideTransformerWrapper()
+        with patch("embpy.models.dna_models._HAVE_TRANSFORMERS", False):
+            with pytest.raises(ImportError, match="transformers"):
+                w.load(torch.device("cpu"))
+
+    def _loaded(self, hidden_dim: int = 512, seq_len: int = 20) -> NucleotideTransformerWrapper:
+        w = NucleotideTransformerWrapper()
+        w.device = torch.device("cpu")
+        w.tokenizer = _tok(seq_len)
+        w.model = MagicMock(return_value=_mlm_output(hidden_dim, seq_len))
+        return w
+
+    def test_embed_mean_returns_correct_shape(self):
+        hidden_dim = 512
+        result = self._loaded(hidden_dim).embed("ACGTACGT", pooling_strategy="mean")
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (hidden_dim,)
+        assert not np.isnan(result).any()
+
+    def test_embed_cls_returns_correct_shape(self):
+        result = self._loaded().embed("ACGT", pooling_strategy="cls")
+        assert result.shape == (512,)
+
+    def test_embed_max_returns_correct_shape(self):
+        result = self._loaded().embed("ACGT", pooling_strategy="max")
+        assert result.shape == (512,)
+
+    def test_embed_uses_hidden_states_for_mlm_output(self):
+        """NT v2 EsmForMaskedLM returns MaskedLMOutput — must use hidden_states[-1]."""
+        hidden_dim = 512
+        seq_len = 20
+        w = self._loaded(hidden_dim, seq_len)
+
+        out = MagicMock()
+        out.last_hidden_state = None
+        out.hidden_states = (
+            torch.zeros(1, seq_len, hidden_dim),
+            torch.ones(1, seq_len, hidden_dim),
+        )
+        w.model = MagicMock(return_value=out)
+
+        result = w.embed("ACGT", pooling_strategy="mean")
+        assert result.shape == (hidden_dim,)
+        assert np.allclose(result, 1.0, atol=1e-4), (
+            "Should use hidden_states[-1] (ones), not hidden_states[0] (zeros)"
+        )
+
+    def test_embed_target_layer(self):
+        hidden_dim = 512
+        seq_len = 20
+        w = self._loaded(hidden_dim, seq_len)
+
+        layer0 = torch.randn(1, seq_len, hidden_dim)
+        layer1 = torch.randn(1, seq_len, hidden_dim)
+        out = MagicMock()
+        out.hidden_states = (layer0, layer1)
+        out.last_hidden_state = None
+        w.model = MagicMock(return_value=out)
+
+        result = w.embed("ACGT", target_layer=0)
+        assert result.shape == (hidden_dim,)
+
+    def test_embed_batch_multiple(self):
+        w = self._loaded()
+        results = w.embed_batch(["ACGT", "GCTA", "TTTT"])
+        assert len(results) == 3
+        assert all(r.shape == (512,) for r in results)
+
+    def test_embed_output_is_float32(self):
+        result = self._loaded().embed("ACGT")
+        assert result.dtype == np.float32
+
+    def test_mask_weighted_mean_excludes_padding(self):
+        hidden_dim = 4
+        seq_len = 6
+        w = NucleotideTransformerWrapper()
+        w.device = torch.device("cpu")
+
+        mask = torch.tensor([[1, 1, 1, 1, 0, 0]], dtype=torch.long)
+        tok = MagicMock()
+        tok.return_value = {
+            "input_ids": torch.ones(1, seq_len, dtype=torch.long),
+            "attention_mask": mask,
+        }
+        w.tokenizer = tok
+
+        h = torch.ones(1, seq_len, hidden_dim)
+        h[0, 4:, :] = -9999.0
+        out = MagicMock()
+        out.hidden_states = (h, h)
+        out.last_hidden_state = None
+        w.model = MagicMock(return_value=out)
+
+        result = w.embed("ACGT", pooling_strategy="mean")
+        assert result.shape == (hidden_dim,)
+        assert np.allclose(result, 1.0, atol=1e-4), (
+            "Padding tokens should be masked out from mean pooling"
+        )
+
+
+class TestHyenaDNAWrapper:
+
+    def test_init_defaults(self):
+        w = HyenaDNAWrapper()
+        assert "hyenadna" in w.model_name
+        assert w.model_type == "dna"
+        assert w.model is None
+
+    def test_init_large_1m(self):
+        w = HyenaDNAWrapper(model_path_or_name="LongSafari/hyenadna-large-1m-seqlen-hf")
+        assert "1m" in w.model_name
+
+    def test_available_pooling_strategies(self):
+        # HyenaDNA adds "last" (natural for causal models)
+        assert set(HyenaDNAWrapper.available_pooling_strategies) >= {"mean", "max", "cls", "last"}
+
+    def test_embed_without_load_raises(self):
+        w = HyenaDNAWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed("ACGT")
+
+    def test_embed_batch_without_load_raises(self):
+        w = HyenaDNAWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed_batch(["ACGT"])
+
+    def test_embed_batch_empty_returns_empty(self):
+        w = HyenaDNAWrapper()
+        w.model = MagicMock()
+        w.device = torch.device("cpu")
+        assert w.embed_batch([]) == []
+
+    def test_invalid_pooling_raises(self):
+        w = HyenaDNAWrapper()
+        w.model = MagicMock()
+        w.device = torch.device("cpu")
+        with pytest.raises(ValueError, match="Invalid pooling"):
+            w.embed("ACGT", pooling_strategy="invalid")
+
+    def test_load_without_transformers_raises(self):
+        w = HyenaDNAWrapper()
+        with patch("embpy.models.dna_models._HAVE_TRANSFORMERS", False):
+            with pytest.raises(ImportError, match="transformers"):
+                w.load(torch.device("cpu"))
+
+    def _loaded(self, hidden_dim: int = 256, seq_len: int = 10) -> HyenaDNAWrapper:
+        w = HyenaDNAWrapper()
+        w.device = torch.device("cpu")
+
+        w.tokenizer = _tok(seq_len, has_mask=False)
+        h = torch.randn(1, seq_len, hidden_dim)
+        out = MagicMock()
+        out.hidden_states = (h, h)
+        out.last_hidden_state = None
+        w.model = MagicMock(return_value=out)
+        return w
+
+    def test_embed_mean_returns_correct_shape(self):
+        hidden_dim = 256
+        result = self._loaded(hidden_dim).embed("ACGTACGT", pooling_strategy="mean")
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (hidden_dim,)
+        assert not np.isnan(result).any()
+
+    def test_embed_cls_returns_correct_shape(self):
+        result = self._loaded().embed("ACGT", pooling_strategy="cls")
+        assert result.shape == (256,)
+
+    def test_embed_max_returns_correct_shape(self):
+        result = self._loaded().embed("ACGT", pooling_strategy="max")
+        assert result.shape == (256,)
+
+    def test_embed_last_returns_correct_shape(self):
+        result = self._loaded().embed("ACGT", pooling_strategy="last")
+        assert result.shape == (256,)
+
+    def test_embed_target_layer(self):
+        hidden_dim = 256
+        seq_len = 10
+        w = HyenaDNAWrapper()
+        w.device = torch.device("cpu")
+        w.tokenizer = _tok(seq_len, has_mask=False)
+
+        layer0 = torch.randn(1, seq_len, hidden_dim)
+        layer1 = torch.randn(1, seq_len, hidden_dim)
+        out = MagicMock()
+        out.hidden_states = (layer0, layer1)
+        out.last_hidden_state = None
+        w.model = MagicMock(return_value=out)
+
+        result = w.embed("ACGT", target_layer=0)
+        assert result.shape == (hidden_dim,)
+
+    def test_embed_batch_multiple(self):
+        w = self._loaded()
+        results = w.embed_batch(["ACGT", "GCTA", "TTTT"])
+        assert len(results) == 3
+        assert all(r.shape == (256,) for r in results)
+
+    def test_embed_output_is_float32(self):
+        result = self._loaded().embed("ACGT")
+        assert result.dtype == np.float32
+
+
+class TestCaduceusWrapper:
+
+    def test_init_defaults(self):
+        w = CaduceusWrapper()
+        assert "caduceus" in w.model_name
+        assert w.model_type == "dna"
+        assert w.model is None
+
+    def test_init_ps_variant(self):
+        w = CaduceusWrapper(
+            model_path_or_name="kuleshov-group/caduceus-ps_seqlen-131k_d_model-256_n_layer-16"
+        )
+        assert "ps" in w.model_name
+
+    def test_available_pooling_strategies(self):
+        assert set(CaduceusWrapper.available_pooling_strategies) >= {"mean", "max", "cls"}
+
+    def test_embed_without_load_raises(self):
+        w = CaduceusWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed("ACGT")
+
+    def test_embed_batch_without_load_raises(self):
+        w = CaduceusWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed_batch(["ACGT"])
+
+    def test_embed_batch_empty_returns_empty(self):
+        w = CaduceusWrapper()
+        w.model = MagicMock()
+        w.device = torch.device("cpu")
+        assert w.embed_batch([]) == []
+
+    def test_invalid_pooling_raises(self):
+        w = CaduceusWrapper()
+        w.model = MagicMock()
+        w.device = torch.device("cpu")
+        with pytest.raises(ValueError, match="Invalid pooling"):
+            w.embed("ACGT", pooling_strategy="bad")
+
+    def test_load_without_transformers_raises(self):
+        w = CaduceusWrapper()
+        with patch("embpy.models.dna_models._HAVE_TRANSFORMERS", False):
+            with pytest.raises(ImportError, match="transformers"):
+                w.load(torch.device("cpu"))
+
+    def _loaded(self, hidden_dim: int = 256, seq_len: int = 20) -> CaduceusWrapper:
+        w = CaduceusWrapper()
+        w.device = torch.device("cpu")
+
+        w.tokenizer = _tok(seq_len, has_mask=True)
+        h = torch.randn(1, seq_len, hidden_dim)
+        out = MagicMock()
+        out.hidden_states = (h, h)
+        out.last_hidden_state = None
+        w.model = MagicMock(return_value=out)
+        return w
+
+    def test_embed_mean_returns_correct_shape(self):
+        hidden_dim = 256
+        result = self._loaded(hidden_dim).embed("ACGTACGT", pooling_strategy="mean")
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (hidden_dim,)
+        assert not np.isnan(result).any()
+
+    def test_embed_cls_returns_correct_shape(self):
+        result = self._loaded().embed("ACGT", pooling_strategy="cls")
+        assert result.shape == (256,)
+
+    def test_embed_max_returns_correct_shape(self):
+        result = self._loaded().embed("ACGT", pooling_strategy="max")
+        assert result.shape == (256,)
+
+    def test_embed_target_layer(self):
+        hidden_dim = 256
+        seq_len = 20
+        w = CaduceusWrapper()
+        w.device = torch.device("cpu")
+        w.tokenizer = _tok(seq_len)
+
+        layer0 = torch.randn(1, seq_len, hidden_dim)
+        layer1 = torch.randn(1, seq_len, hidden_dim)
+        out = MagicMock()
+        out.hidden_states = (layer0, layer1)
+        out.last_hidden_state = None
+        w.model = MagicMock(return_value=out)
+
+        result = w.embed("ACGT", target_layer=0)
+        assert result.shape == (hidden_dim,)
+
+    def test_embed_batch_multiple(self):
+        w = self._loaded()
+        results = w.embed_batch(["ACGT", "GCTA", "TTTT"])
+        assert len(results) == 3
+        assert all(r.shape == (256,) for r in results)
+
+    def test_embed_output_is_float32(self):
+        result = self._loaded().embed("ACGT")
+        assert result.dtype == np.float32
+
+    def test_ph_and_ps_both_constructable(self):
+        ph = CaduceusWrapper("kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16")
+        ps = CaduceusWrapper("kuleshov-group/caduceus-ps_seqlen-131k_d_model-256_n_layer-16")
+        assert "ph" in ph.model_name
+        assert "ps" in ps.model_name

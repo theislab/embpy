@@ -39,3 +39,12 @@ from .metrics import (
     r2,
     rank_genes_groups,
 )
+from .snp_utils import (
+    SNPContext,
+    SNPEmbeddingResult,
+    SNPEmbedder,
+    SequenceProvider,
+    download_hg38_per_chrom,
+    download_hg38_single_fasta,
+    embed_vcf,
+)
