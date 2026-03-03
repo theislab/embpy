@@ -46,7 +46,7 @@ pip install "embpy[torch-cu128]" --extra-index-url https://download.pytorch.org/
 pip install "embpy[torch-cu128]" --extra-index-url https://download.pytorch.org/whl/cu129
 
 # CUDA 13.0
-pip install "embpy[torch-cu128]" --extra-index-url https://download.pytorch.org/whl/cu130
+pip install "embpy[torch-cu130]" --extra-index-url https://download.pytorch.org/whl/cu130
 
 # CPU only
 pip install "embpy[torch-cpu]"
