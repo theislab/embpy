@@ -28,17 +28,25 @@ The base install includes all HuggingFace-based models (GENA-LM, Nucleotide
 Transformer v1/v2/v3, HyenaDNA, ESM-2, ProtT5, ChemBERTa, Molformer, …) since
 `transformers` is a core dependency.
 
-### 2. GPU install — pick your CUDA version
+### 2.  GPU install — pick your CUDA version
+
+For some models, including Caduceus with Mamba-SSM, you may want to install torch using GPU. Standard installation with torch for CPU works for most models, however limits the inference speed. 
 
 ```bash
 # CUDA 12.1
 pip install "embpy[torch-cu121]" --extra-index-url https://download.pytorch.org/whl/cu121
 
-# CUDA 12.4  (most common on modern HPC clusters)
+# CUDA 12.4 
 pip install "embpy[torch-cu124]" --extra-index-url https://download.pytorch.org/whl/cu124
 
 # CUDA 12.8
 pip install "embpy[torch-cu128]" --extra-index-url https://download.pytorch.org/whl/cu128
+
+# CUDA 12.9
+pip install "embpy[torch-cu128]" --extra-index-url https://download.pytorch.org/whl/cu129
+
+# CUDA 13.0
+pip install "embpy[torch-cu128]" --extra-index-url https://download.pytorch.org/whl/cu130
 
 # CPU only
 pip install "embpy[torch-cpu]"
@@ -64,16 +72,8 @@ Install only what you need:
 | `scanpy` | scanpy integration | |
 
 ```bash
-# Example: CUDA 12.4 + Caduceus + Evo
-pip install "embpy[torch-cu124,caduceus,evo]" \
-  --extra-index-url https://download.pytorch.org/whl/cu124
-
-# Full GPU install (CUDA 12.4)
-pip install "embpy[all-cu124]" \
-  --extra-index-url https://download.pytorch.org/whl/cu124
-
-# Full GPU install (CUDA 12.8)
-pip install "embpy[all-cu128]" \
+# Example: GPU install (CUDA 12.8) CUDA 12.4 + Caduceus + Evo
+pip install "embpy[torch-cu128,caduceus,evo]" \
   --extra-index-url https://download.pytorch.org/whl/cu128
 ```
 
