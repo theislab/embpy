@@ -26,6 +26,7 @@ from .metadata import (
     lookup_protein_expression,
 )
 from .metrics import (
+    cell_eval,
     compare_deg,
     compute_metrics,
     deg_direction_agreement,
@@ -36,14 +37,17 @@ from .metrics import (
     get_deg_dataframe,
     mean_correlation,
     mse,
+    phenocopy_score,
+    phenocopy_score_adata,
     r2,
     rank_genes_groups,
 )
+from .pipeline import list_embedding_models, list_use_cases, run_pipeline
 from .snp_utils import (
-    SNPContext,
-    SNPEmbeddingResult,
-    SNPEmbedder,
     SequenceProvider,
+    SNPContext,
+    SNPEmbedder,
+    SNPEmbeddingResult,
     download_hg38_per_chrom,
     download_hg38_single_fasta,
     embed_vcf,

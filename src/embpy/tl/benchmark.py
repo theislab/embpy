@@ -32,7 +32,7 @@ from embpy.tl.metrics import compute_metrics as _compute_metrics
 if TYPE_CHECKING:
     from sklearn.base import RegressorMixin
 
-_DEFAULT_MODELS = ["linear", "ridge", "knn", "random_forest"]
+_DEFAULT_MODELS = ["linear", "ridge", "knn", "random_forest", "xgboost"]
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +88,18 @@ def _build_model(name: str) -> RegressorMixin:
         return KNeighborsRegressor(n_neighbors=5)
     if name == "random_forest":
         return RandomForestRegressor(n_estimators=100, random_state=0, n_jobs=-1)
+    if name == "xgboost":
+        try:
+            from xgboost import XGBRegressor
+        except ImportError as e:
+            raise ImportError(
+                "xgboost is required for the 'xgboost' model but is not installed. "
+                "Install it with:  pip install xgboost"
+            ) from e
+        return XGBRegressor(
+            n_estimators=100, max_depth=6, learning_rate=0.1,
+            random_state=0, n_jobs=-1, verbosity=0,
+        )
     raise ValueError(
         f"Unknown model '{name}'. Choose from: {_DEFAULT_MODELS}"
     )
@@ -110,6 +122,14 @@ def _build_param_grid(name: str) -> dict[str, list[Any]]:
             "n_estimators": [50, 100, 200],
             "max_depth": [None, 10, 20, 50],
             "min_samples_split": [2, 5, 10],
+        }
+    if name == "xgboost":
+        return {
+            "n_estimators": [50, 100, 200, 500],
+            "max_depth": [3, 6, 10],
+            "learning_rate": [0.01, 0.05, 0.1, 0.3],
+            "subsample": [0.7, 0.8, 1.0],
+            "colsample_bytree": [0.7, 0.8, 1.0],
         }
     raise ValueError(f"Unknown model '{name}'.")
 

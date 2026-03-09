@@ -21,18 +21,29 @@ evaluation tools for comparing predicted vs. observed expression.
 - :func:`deg_overlap` — Jaccard / precision / recall of top DEG lists
 - :func:`deg_direction_agreement` — fraction of shared DEGs with matching sign
 - :func:`compare_deg` — high-level function running both comparisons
+
+**cell-eval wrapper** (requires ``cell-eval`` package):
+
+- :func:`cell_eval` — thin wrapper around ``cell_eval.MetricsEvaluator``
+
+**Phenocopy metrics** (PRESAGE-inspired, cosine-similarity-based):
+
+- :func:`phenocopy_score` — low-level numpy function
+- :func:`phenocopy_score_adata` — high-level AnnData convenience wrapper
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import pandas as pd
 from anndata import AnnData
-from scipy.stats import pearsonr, spearmanr
-from sklearn.metrics import mean_squared_error, r2_score
+from scipy.stats import median_abs_deviation, pearsonr, spearmanr
+from sklearn.decomposition import PCA
+from sklearn.metrics import mean_squared_error, r2_score, roc_auc_score
+from sklearn.metrics.pairwise import cosine_similarity
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -54,6 +65,18 @@ def _require_scanpy():
     except ImportError as e:
         raise ImportError(
             "scanpy is required for this function but is not installed. Install it with:  pip install 'embpy[scanpy]'"
+        ) from e
+
+
+def _require_cell_eval():
+    """Lazily import cell_eval, raising a clear error if missing."""
+    try:
+        import cell_eval
+
+        return cell_eval
+    except ImportError as e:
+        raise ImportError(
+            "cell-eval is required for this function but is not installed. Install it with:  pip install cell-eval"
         ) from e
 
 
@@ -574,3 +597,284 @@ def compare_deg(
     adata_pred.uns.pop(key_pred, None)
 
     return pd.DataFrame(rows)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# cell-eval wrapper
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def cell_eval(
+    adata_pred: AnnData,
+    adata_real: AnnData,
+    control_pert: str = "control",
+    pert_col: str = "perturbation",
+    profile: Literal["full", "vcc", "minimal", "de", "anndata"] = "full",
+    num_threads: int = 1,
+    **kwargs: Any,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Run the ArcInstitute *cell-eval* evaluation suite.
+
+    Thin wrapper around :class:`cell_eval.MetricsEvaluator` that runs
+    differential-expression-based and AnnData-pair metrics comparing
+    predicted vs. real single-cell perturbation data.
+
+    Requires the ``cell-eval`` package (``pip install cell-eval``).
+
+    Parameters
+    ----------
+    adata_pred
+        AnnData with predicted expression (single-cell level).
+    adata_real
+        AnnData with real / observed expression (single-cell level).
+    control_pert
+        Label of control perturbation in ``adata.obs[pert_col]``.
+    pert_col
+        Column in ``.obs`` identifying perturbations.
+    profile
+        Metric profile to run.  One of ``"full"``, ``"vcc"``,
+        ``"minimal"``, ``"de"``, ``"anndata"``.
+    num_threads
+        Number of threads for parallel differential expression.
+    **kwargs
+        Forwarded to :class:`cell_eval.MetricsEvaluator`.
+
+    Returns
+    -------
+    ``(results, agg_results)`` — per-perturbation and aggregated
+    metric DataFrames (pandas).
+
+    References
+    ----------
+    ArcInstitute cell-eval: https://github.com/ArcInstitute/cell-eval
+    """
+    ce = _require_cell_eval()
+
+    evaluator = ce.MetricsEvaluator(
+        adata_pred=adata_pred,
+        adata_real=adata_real,
+        control_pert=control_pert,
+        pert_col=pert_col,
+        num_threads=num_threads,
+        **kwargs,
+    )
+    results_pl, agg_pl = evaluator.compute(profile=profile, write_csv=False)
+
+    results = results_pl.to_pandas()
+    agg_results = agg_pl.to_pandas()
+    logger.info(
+        "cell-eval finished (profile='%s'): %d perturbation rows, %d aggregate rows.",
+        profile,
+        len(results),
+        len(agg_results),
+    )
+    return results, agg_results
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Phenocopy metrics (PRESAGE-inspired)
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def phenocopy_score(
+    mean_true: np.ndarray,
+    mean_pred: np.ndarray,
+    n_pca_components: int | None = 50,
+    mad_thresholds: Sequence[int] = (1, 2, 3, 5),
+    recall_ks: Sequence[int] = (5, 10, 20, 50),
+) -> dict[str, float]:
+    """Phenocopy virtual-screen metric.
+
+    Measures whether perturbations that produce similar expression
+    changes in reality are also predicted to be similar.  This is a
+    PRESAGE-inspired metric based on cosine-similarity neighbor
+    recovery.
+
+    Algorithm
+    ---------
+    1. Optionally reduce both matrices with PCA.
+    2. Compute pairwise cosine-similarity matrices for true and
+       predicted mean expression.
+    3. For each perturbation, define *true phenocopy neighbors* as
+       those whose true cosine similarity exceeds
+       ``median + t × MAD`` (for each threshold *t*).
+    4. Evaluate whether the *predicted* similarity ranking recovers
+       these true neighbors using AUROC.
+    5. Separately compute recall@k — the fraction of the top-*k*
+       true nearest neighbors recovered in the top-*k* predicted
+       neighbors.
+
+    Parameters
+    ----------
+    mean_true
+        True mean expression matrix ``(n_perturbations, n_genes)``.
+    mean_pred
+        Predicted mean expression matrix (same shape).
+    n_pca_components
+        Number of PCA components for dimensionality reduction before
+        computing similarities.  ``None`` skips PCA.
+    mad_thresholds
+        MAD multipliers used to define phenocopy neighbor thresholds.
+    recall_ks
+        Values of *k* for recall@k computation.
+
+    Returns
+    -------
+    Dictionary with keys of the form
+    ``"phenocopy_auroc_mad_{t}"`` and ``"phenocopy_recall_{k}"``.
+
+    References
+    ----------
+    Littman *et al.* (2025), "Gene-embedding-based prediction and
+    functional evaluation of perturbation expression responses with
+    PRESAGE", *bioRxiv* 2025.06.03.657653.
+    """
+    if mean_true.shape != mean_pred.shape:
+        raise ValueError(f"Shape mismatch: mean_true {mean_true.shape} vs mean_pred {mean_pred.shape}")
+    n_perts = mean_true.shape[0]
+    if n_perts < 3:
+        raise ValueError(f"Need at least 3 perturbations, got {n_perts}.")
+
+    # --- optional PCA reduction ---
+    if n_pca_components is not None:
+        n_components = min(n_pca_components, *mean_true.shape)
+        pca = PCA(n_components=n_components, random_state=0)
+        true_emb = pca.fit_transform(mean_true)
+        pred_emb = PCA(n_components=n_components, random_state=0).fit_transform(mean_pred)
+    else:
+        true_emb = mean_true
+        pred_emb = mean_pred
+
+    # --- pairwise cosine similarity ---
+    sim_true = cosine_similarity(true_emb)
+    sim_pred = cosine_similarity(pred_emb)
+
+    metrics: dict[str, float] = {}
+
+    # --- AUROC-based phenocopy scores (MAD thresholds) ---
+    for t in mad_thresholds:
+        aurocs: list[float] = []
+        for i in range(n_perts):
+            sim_vec = sim_true[i].copy()
+            sim_vec[i] = -np.inf  # exclude self
+
+            med = np.median(sim_vec[sim_vec > -np.inf])
+            mad = median_abs_deviation(sim_vec[sim_vec > -np.inf])
+            if mad == 0:
+                continue
+
+            neighbors = sim_vec > (med + t * mad)
+            if neighbors.sum() == 0 or neighbors.sum() == (n_perts - 1):
+                continue
+
+            pred_vec = sim_pred[i].copy()
+            pred_vec[i] = -np.inf
+
+            aurocs.append(float(roc_auc_score(neighbors, pred_vec)))
+
+        metrics[f"phenocopy_auroc_mad_{t}"] = float(np.mean(aurocs)) if aurocs else float("nan")
+
+    # --- Recall@k ---
+    for k in recall_ks:
+        if k >= n_perts:
+            metrics[f"phenocopy_recall_{k}"] = float("nan")
+            continue
+        recalls: list[float] = []
+        for i in range(n_perts):
+            true_vec = sim_true[i].copy()
+            pred_vec = sim_pred[i].copy()
+            true_vec[i] = -np.inf
+            pred_vec[i] = -np.inf
+
+            true_topk = set(np.argsort(true_vec)[-k:])
+            pred_topk = set(np.argsort(pred_vec)[-k:])
+            recalls.append(len(true_topk & pred_topk) / k)
+
+        metrics[f"phenocopy_recall_{k}"] = float(np.mean(recalls))
+
+    return metrics
+
+
+def phenocopy_score_adata(
+    adata_true: AnnData,
+    adata_pred: AnnData,
+    pert_col: str = "perturbation",
+    control: str | None = "control",
+    layer: str | None = None,
+    **kwargs: Any,
+) -> dict[str, float]:
+    """Phenocopy score computed from AnnData objects.
+
+    Convenience wrapper around :func:`phenocopy_score` that computes
+    pseudobulk (mean expression per perturbation group) from single-cell
+    AnnData objects, aligns perturbation labels, and optionally subtracts
+    the control mean.
+
+    Parameters
+    ----------
+    adata_true
+        AnnData with true (observed) expression.
+    adata_pred
+        AnnData with predicted expression.  Must share the same
+        perturbation labels and gene space as *adata_true*.
+    pert_col
+        Column in ``.obs`` identifying perturbation groups.
+    control
+        Label of the control perturbation.  If provided, the control
+        mean is subtracted so that similarities reflect deviation from
+        baseline.  Set to ``None`` to skip subtraction.
+    layer
+        Layer to use for expression values.  ``None`` uses ``.X``.
+    **kwargs
+        Forwarded to :func:`phenocopy_score` (e.g.
+        ``n_pca_components``, ``mad_thresholds``, ``recall_ks``).
+
+    Returns
+    -------
+    Dictionary of phenocopy metrics (same format as
+    :func:`phenocopy_score`).
+    """
+    for name, ad_obj in [("adata_true", adata_true), ("adata_pred", adata_pred)]:
+        if pert_col not in ad_obj.obs.columns:
+            raise KeyError(f"'{pert_col}' not in {name}.obs.columns. Available: {list(ad_obj.obs.columns)}")
+
+    def _get_X(adata: AnnData) -> np.ndarray:
+        raw = adata.layers[layer] if layer else adata.X
+        if raw is None:
+            raise ValueError("Expression matrix (.X) is None.")
+        return np.asarray(raw.toarray() if hasattr(raw, "toarray") else raw, dtype=np.float64)  # type: ignore[union-attr]
+
+    def _pseudobulk(adata: AnnData) -> tuple[np.ndarray, list[str]]:
+        X = _get_X(adata)
+        labels = np.asarray(adata.obs[pert_col].values)
+        unique_labels = sorted(set(labels))
+        if control is not None and control in unique_labels:
+            unique_labels = [l for l in unique_labels if l != control]
+
+        means = np.array([X[labels == lab].mean(axis=0) for lab in unique_labels])
+        return means, unique_labels
+
+    mean_true, labels_true = _pseudobulk(adata_true)
+    mean_pred, labels_pred = _pseudobulk(adata_pred)
+
+    shared = sorted(set(labels_true) & set(labels_pred))
+    if len(shared) < 3:
+        raise ValueError(
+            f"Need at least 3 shared perturbations, found {len(shared)}. "
+            f"True has {len(labels_true)}, pred has {len(labels_pred)}."
+        )
+
+    idx_true = [labels_true.index(l) for l in shared]
+    idx_pred = [labels_pred.index(l) for l in shared]
+    mean_true = mean_true[idx_true]
+    mean_pred = mean_pred[idx_pred]
+
+    if control is not None:
+        X_true = _get_X(adata_true)
+        ctrl_mask = np.asarray(adata_true.obs[pert_col].values == control)
+        if ctrl_mask.any():
+            ctrl_mean = X_true[ctrl_mask].mean(axis=0)
+            mean_true = mean_true - ctrl_mean
+            mean_pred = mean_pred - ctrl_mean
+
+    return phenocopy_score(mean_true, mean_pred, **kwargs)
