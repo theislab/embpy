@@ -95,6 +95,9 @@ optional-dependencies.mole = [
   "embpy[torch]",
   "torch-geometric>=2.5",
 ]
+optional-dependencies.lamindb = [
+  "lamindb",
+]
 optional-dependencies.pertpy = [
   "pertpy",
 ]
@@ -102,7 +105,7 @@ optional-dependencies.scanpy = [
   "scanpy>=1.10",
 ]
 optional-dependencies.all = [
-  "embpy[torch,evo,evo2,ppi,minimol,mhg-gnn,mole,pertpy,scanpy]",
+  "embpy[torch,evo,evo2,ppi,minimol,mhg-gnn,mole,lamindb,pertpy,scanpy]",
 ]
 optional-dependencies.dev = [
   "pre-commit",

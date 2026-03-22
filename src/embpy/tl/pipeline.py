@@ -275,3 +275,68 @@ def run_pipeline(
         len(pred_models),
     )
     return combined
+
+
+# ---------------------------------------------------------------------------
+# cell-eval wrapper for the pipeline
+# ---------------------------------------------------------------------------
+
+
+def run_cell_eval(
+    adata_pred: AnnData,
+    adata_real: AnnData,
+    control_pert: str = "control",
+    pert_col: str = "perturbation",
+    profile: Literal["full", "vcc", "minimal", "de", "anndata"] = "full",
+    num_threads: int = 1,
+    **kwargs: Any,
+) -> pd.DataFrame:
+    """Run the ArcInstitute *cell-eval* suite and return a tidy DataFrame.
+
+    This is a pipeline-friendly wrapper around :func:`embpy.tl.cell_eval`
+    that returns a single DataFrame combining per-perturbation and
+    aggregate results, suitable for joining with
+    :func:`run_pipeline` output.
+
+    Parameters
+    ----------
+    adata_pred
+        AnnData with predicted expression (single-cell level).
+    adata_real
+        AnnData with real / observed expression (single-cell level).
+    control_pert
+        Label of control perturbation in ``adata.obs[pert_col]``.
+    pert_col
+        Column in ``.obs`` identifying perturbations.
+    profile
+        Metric profile to run.  One of ``"full"``, ``"vcc"``,
+        ``"minimal"``, ``"de"``, ``"anndata"``.
+    num_threads
+        Number of threads for parallel differential expression.
+    **kwargs
+        Forwarded to :func:`embpy.tl.cell_eval`.
+
+    Returns
+    -------
+    DataFrame with per-perturbation metrics.  Aggregate metrics are
+    stored in ``adata_real.uns["cell_eval_agg"]``.
+    """
+    from .metrics import cell_eval
+
+    results_per_pert, results_agg = cell_eval(
+        adata_pred=adata_pred,
+        adata_real=adata_real,
+        control_pert=control_pert,
+        pert_col=pert_col,
+        profile=profile,
+        num_threads=num_threads,
+        **kwargs,
+    )
+
+    adata_real.uns["cell_eval_agg"] = results_agg
+    logger.info(
+        "cell-eval complete (profile='%s'): %d perturbations evaluated.",
+        profile,
+        len(results_per_pert),
+    )
+    return results_per_pert

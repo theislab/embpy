@@ -42,7 +42,7 @@ from .metrics import (
     r2,
     rank_genes_groups,
 )
-from .pipeline import list_embedding_models, list_use_cases, run_pipeline
+from .pipeline import list_embedding_models, list_use_cases, run_cell_eval, run_pipeline
 from .snp_utils import (
     SequenceProvider,
     SNPContext,

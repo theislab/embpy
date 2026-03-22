@@ -18,11 +18,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from anndata import AnnData
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_LAMIN_INSTANCE = "theislab/pertmodeling"
 
 
 def _require_lamindb():  # type: ignore[no-untyped-def]
@@ -30,10 +32,7 @@ def _require_lamindb():  # type: ignore[no-untyped-def]
     try:
         import lamindb as ln
     except ModuleNotFoundError as exc:
-        raise ImportError(
-            "lamindb is required for this function. "
-            "Install it with:  pip install lamindb"
-        ) from exc
+        raise ImportError("lamindb is required for this function. Install it with:  pip install lamindb") from exc
     return ln
 
 
@@ -51,7 +50,7 @@ class LaminDatasetCard:
     description: str
     perturbation_column: str = "perturbation"
     perturbation_type: str = "genetic"
-    use_case: str = "protein"
+    use_case: Literal["protein", "gene", "small_molecule", "text"] = "protein"
     organism: str = "human"
     reference: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
@@ -76,6 +75,19 @@ _LAMIN_REGISTRY: dict[str, LaminDatasetCard] = {
         organism="human",
         reference="https://doi.org/10.1038/s41467-020-17440-w",
     ),
+    "replogle": LaminDatasetCard(
+        name="replogle",
+        uid="cdTgT79SxGj3UJGy0000",
+        description=(
+            "Genome-scale CRISPRi Perturb-seq in K562 cells "
+            "(Replogle et al., 2022)."
+        ),
+        perturbation_column="pert_target",
+        perturbation_type="genetic",
+        use_case="protein",
+        organism="human",
+        reference="https://doi.org/10.1016/j.cell.2022.05.013",
+    ),
 }
 
 
@@ -98,10 +110,7 @@ def lamin_info(dataset: str) -> LaminDatasetCard:
         Name of the dataset (e.g. ``"mcfarland"``).
     """
     if dataset not in _LAMIN_REGISTRY:
-        raise ValueError(
-            f"Unknown LaminDB dataset {dataset!r}. "
-            f"Available: {list_lamin_datasets()}"
-        )
+        raise ValueError(f"Unknown LaminDB dataset {dataset!r}. Available: {list_lamin_datasets()}")
     return _LAMIN_REGISTRY[dataset]
 
 
@@ -113,6 +122,7 @@ def lamin_info(dataset: str) -> LaminDatasetCard:
 def load_lamin(
     dataset: str,
     *,
+    instance: str | None = None,
     cache: bool = False,
 ) -> AnnData:
     """Load a benchmark dataset from LaminDB by name.
@@ -124,6 +134,10 @@ def load_lamin(
     ----------
     dataset
         Friendly name of the dataset (see :func:`list_lamin_datasets`).
+    instance
+        LaminDB instance slug (e.g. ``"theislab/pertmodeling"``).
+        Defaults to :data:`_DEFAULT_LAMIN_INSTANCE`.  Calls
+        ``ln.connect(instance)`` automatically if not already connected.
     cache
         If ``True``, call ``artifact.cache()`` instead of
         ``artifact.load()`` and read from the cached local path.
@@ -143,6 +157,9 @@ def load_lamin(
     ln = _require_lamindb()
     card = lamin_info(dataset)
 
+    instance = instance or _DEFAULT_LAMIN_INSTANCE
+    ln.connect(instance)
+
     logger.info(
         "Loading dataset '%s' (uid=%s) from LaminDB …",
         card.name,
@@ -159,10 +176,7 @@ def load_lamin(
         adata = artifact.load()
 
     if not isinstance(adata, AnnData):
-        raise TypeError(
-            f"Expected AnnData but got {type(adata).__name__} for "
-            f"dataset {card.name!r} (uid={card.uid})."
-        )
+        raise TypeError(f"Expected AnnData but got {type(adata).__name__} for dataset {card.name!r} (uid={card.uid}).")
 
     adata.uns["lamin_card"] = {
         "name": card.name,
