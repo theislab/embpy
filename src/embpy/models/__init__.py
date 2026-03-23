@@ -38,12 +38,26 @@ except ImportError:
     NucleotideTransformerWrapper = None  # type: ignore
     NucleotideTransformerV3Wrapper = None  # type: ignore
 
-# PPI GNN is optional (requires: pip install torch-geometric)
+# PPI precomputed embeddings (requires: pip install h5py)
 try:
-    from .ppi_models import GNNEncoder, PPIGNNWrapper
+    from .ppi_models import PrecomputedPPIWrapper
 except ImportError:
-    GNNEncoder = None  # type: ignore
-    PPIGNNWrapper = None  # type: ignore
+    PrecomputedPPIWrapper = None  # type: ignore
+
+# Single-cell foundation model wrappers (requires: pip install helical)
+from .singlecell_models import (
+    Cell2SentenceWrapper,
+    GeneformerWrapper,
+    SCModelCard,
+    ScGPTWrapper,
+    SingleCellWrapper,
+    TahoeWrapper,
+    TranscriptFormerWrapper,
+    UCEWrapper,
+    get_singlecell_wrapper,
+    list_singlecell_models,
+    singlecell_info,
+)
 
 __all__ = [
     "BorzoiWrapper",
@@ -51,21 +65,31 @@ __all__ = [
     "EvoWrapper",
     "Evo2Wrapper",
     "CaduceusWrapper",
+    "Cell2SentenceWrapper",
     "GENALMWrapper",
+    "GeneformerWrapper",
     "HyenaDNAWrapper",
     "NucleotideTransformerWrapper",
     "NucleotideTransformerV3Wrapper",
     "ChembertaWrapper",
     "ESM2Wrapper",
     "ESMCWrapper",
-    "GNNEncoder",
     "MHGGNNWrapper",
     "MiniMolWrapper",
     "MolEWrapper",
     "MolformerWrapper",
-    "PPIGNNWrapper",
+    "PrecomputedPPIWrapper",
     "ProtT5Wrapper",
     "RDKitWrapper",
+    "SCModelCard",
+    "ScGPTWrapper",
+    "SingleCellWrapper",
     "STRINGWrapper",
+    "TahoeWrapper",
     "TextLLMWrapper",
+    "TranscriptFormerWrapper",
+    "UCEWrapper",
+    "get_singlecell_wrapper",
+    "list_singlecell_models",
+    "singlecell_info",
 ]

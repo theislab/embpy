@@ -80,8 +80,7 @@ optional-dependencies.ntv3 = [
   "transformers>=5.0.0",
 ]
 optional-dependencies.ppi = [
-  "embpy[torch]",
-  "torch-geometric>=2.5",
+  "h5py",
 ]
 optional-dependencies.minimol = [
   "minimol",
@@ -95,6 +94,9 @@ optional-dependencies.mole = [
   "embpy[torch]",
   "torch-geometric>=2.5",
 ]
+optional-dependencies.helical = [
+  "helical",
+]
 optional-dependencies.lamindb = [
   "lamindb",
 ]
@@ -105,7 +107,7 @@ optional-dependencies.scanpy = [
   "scanpy>=1.10",
 ]
 optional-dependencies.all = [
-  "embpy[torch,evo,evo2,ppi,minimol,mhg-gnn,mole,lamindb,pertpy,scanpy]",
+  "embpy[torch,evo,evo2,ppi,minimol,mhg-gnn,mole,helical,lamindb,pertpy,scanpy]",
 ]
 optional-dependencies.dev = [
   "pre-commit",
