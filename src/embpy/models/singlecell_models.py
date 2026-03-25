@@ -438,6 +438,14 @@ class TahoeWrapper(SingleCellWrapper):
 
     def load(self, device: str = "cpu") -> None:  # noqa: D102
         _require_helical()
+        import importlib.util
+        import sys
+        import types
+
+        if importlib.util.find_spec("flash_attn") is None:
+            sys.modules["flash_attn"] = types.ModuleType("flash_attn")
+            sys.modules["flash_attn.bert_padding"] = types.ModuleType("flash_attn.bert_padding")
+
         from helical.models.tahoe import Tahoe, TahoeConfig  # type: ignore[import-not-found]
 
         self.device = device
@@ -446,6 +454,7 @@ class TahoeWrapper(SingleCellWrapper):
             model_size=model_size,
             batch_size=self.batch_size,
             device=device,
+            attn_impl="torch",
         )
         self._model = Tahoe(configurer=self._config)
         logger.info("Loaded Tahoe-x1 '%s' on %s", model_size, device)
