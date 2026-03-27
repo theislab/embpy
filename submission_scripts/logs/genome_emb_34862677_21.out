@@ -1,4 +1,0 @@
-=== Job 34862699 (array task 21) started at Fri Mar 27 09:15:15 AM CET 2026 ===
-Node: gpusrv26.scidom.de, GPU: MIG-bc057a10-2bf4-566e-a538-1a39ae589ecd
-Configuration: model=evo2_7b, pooling=max, region=full
-Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/evo2_7b/full_max.npz

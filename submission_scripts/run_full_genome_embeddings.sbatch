@@ -96,9 +96,11 @@ echo "Node: $(hostname), GPU: ${CUDA_VISIBLE_DEVICES:-none}"
 echo "Configuration: model=${MODEL}, pooling=${POOLING}, region=${REGION}"
 echo "Output: ${OUTPUT_FILE}"
 
-# Activate conda environment (adjust path as needed)
-# source /path/to/conda/bin/activate embpy
-# or: module load cuda/12.1
+# Activate conda environment (set +u needed for conda activation scripts)
+set +u
+eval "$(/ictstr01/home/icb/goncalo.pinto/tools/apps/mamba/bin/conda shell.bash hook 2>/dev/null)"
+conda activate embpy
+set -u
 
 # ---- Run Python script -----------------------------------------------------
 mkdir -p "${OUTPUT_DIR}"

@@ -1,4 +1,0 @@
-=== Job 34862682 (array task 4) started at Fri Mar 27 09:15:00 AM CET 2026 ===
-Node: gpusrv27.scidom.de, GPU: MIG-8c86a584-5026-5090-ba8b-a7b6d9908fb6
-Configuration: model=enformer_human_rough, pooling=max, region=exons
-Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/enformer_human_rough/exons_max.npz

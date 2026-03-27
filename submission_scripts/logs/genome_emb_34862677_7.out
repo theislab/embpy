@@ -1,4 +1,0 @@
-=== Job 34862685 (array task 7) started at Fri Mar 27 09:15:00 AM CET 2026 ===
-Node: gpusrv28.scidom.de, GPU: MIG-7cec222e-06e7-5eb9-99f0-49d42b008600
-Configuration: model=borzoi_v0, pooling=mean, region=exons
-Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/borzoi_v0/exons_mean.npz

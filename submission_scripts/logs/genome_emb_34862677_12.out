@@ -1,4 +1,0 @@
-=== Job 34862690 (array task 12) started at Fri Mar 27 09:15:00 AM CET 2026 ===
-Node: gpusrv32.scidom.de, GPU: MIG-780ef5d7-fd86-5787-940a-4dbc0e48bcc3
-Configuration: model=borzoi_v1, pooling=mean, region=full
-Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/borzoi_v1/full_mean.npz

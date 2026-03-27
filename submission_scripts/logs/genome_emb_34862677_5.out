@@ -1,4 +1,0 @@
-=== Job 34862683 (array task 5) started at Fri Mar 27 09:15:00 AM CET 2026 ===
-Node: gpusrv26.scidom.de, GPU: MIG-bc057a10-2bf4-566e-a538-1a39ae589ecd
-Configuration: model=enformer_human_rough, pooling=max, region=introns
-Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/enformer_human_rough/introns_max.npz

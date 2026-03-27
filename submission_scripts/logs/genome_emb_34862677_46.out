@@ -1,4 +1,0 @@
-=== Job 34862724 (array task 46) started at Fri Mar 27 09:15:45 AM CET 2026 ===
-Node: gpusrv32.scidom.de, GPU: MIG-89c33878-4dae-5de9-8a64-a06338ee6ec9
-Configuration: model=nt_v2_500m, pooling=max, region=exons
-Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/nt_v2_500m/exons_max.npz

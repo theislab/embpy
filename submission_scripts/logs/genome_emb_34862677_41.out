@@ -1,4 +1,0 @@
-=== Job 34862719 (array task 41) started at Fri Mar 27 09:15:45 AM CET 2026 ===
-Node: gpusrv35.scidom.de, GPU: MIG-f7bec6fe-16b8-510a-991f-24d2d00e9899
-Configuration: model=evo1_131k, pooling=max, region=introns
-Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/evo1_131k/introns_max.npz

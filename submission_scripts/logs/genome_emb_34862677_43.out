@@ -1,4 +1,0 @@
-=== Job 34862721 (array task 43) started at Fri Mar 27 09:15:45 AM CET 2026 ===
-Node: gpusrv32.scidom.de, GPU: MIG-e0df68bb-1411-5451-b9de-f747a79c3434
-Configuration: model=nt_v2_500m, pooling=mean, region=exons
-Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/nt_v2_500m/exons_mean.npz

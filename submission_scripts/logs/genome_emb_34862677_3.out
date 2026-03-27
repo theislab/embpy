@@ -1,4 +1,0 @@
-=== Job 34862681 (array task 3) started at Fri Mar 27 09:15:00 AM CET 2026 ===
-Node: gpusrv27.scidom.de, GPU: MIG-8262faab-d72a-5452-87ab-805cd955cc62
-Configuration: model=enformer_human_rough, pooling=max, region=full
-Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/enformer_human_rough/full_max.npz

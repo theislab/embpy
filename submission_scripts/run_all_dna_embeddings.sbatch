@@ -2,7 +2,7 @@
 #SBATCH --job-name=all-dna-emb
 #SBATCH --output=logs/all_dna_emb_%j.out
 #SBATCH --error=logs/all_dna_emb_%j.err
-#SBATCH --time=24:00:00
+#SBATCH --time=12:00:00
 #SBATCH --partition=gpu_p
 #SBATCH --gres=gpu:1
 #SBATCH --mem=250G
@@ -32,8 +32,11 @@ CHECKPOINT_DIR="${BASE_OUTPUT_DIR}/.checkpoints"
 echo "=== Job ${SLURM_JOB_ID} started at $(date) ==="
 echo "Node: $(hostname), GPU: ${CUDA_VISIBLE_DEVICES:-none}"
 
-# Activate conda environment (adjust as needed)
-# source /path/to/conda/bin/activate embpy
+# Activate conda environment (set +u needed for conda activation scripts)
+set +u
+eval "$(/ictstr01/home/icb/goncalo.pinto/tools/apps/mamba/bin/conda shell.bash hook 2>/dev/null)"
+conda activate embpy
+set -u
 
 # Define configurations
 MODELS=(
