@@ -1,0 +1,46 @@
+=== Job 34862735 (array task 6) started at Fri Mar 27 09:18:59 AM CET 2026 ===
+Node: gpusrv28.scidom.de, GPU: MIG-7cec222e-06e7-5eb9-99f0-49d42b008600
+Configuration: model=borzoi_v0, pooling=mean, region=full
+Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/borzoi_v0/full_mean.npz
+2026-03-27 09:20:48,484 [INFO] ======================================================================
+2026-03-27 09:20:48,485 [INFO] Full Genome DNA Embedding
+2026-03-27 09:20:48,485 [INFO] ======================================================================
+2026-03-27 09:20:48,485 [INFO] Model:    borzoi_v0
+2026-03-27 09:20:48,485 [INFO] Pooling:  mean
+2026-03-27 09:20:48,485 [INFO] Region:   full
+2026-03-27 09:20:48,485 [INFO] Organism: human
+2026-03-27 09:20:48,485 [INFO] Biotype:  protein_coding
+2026-03-27 09:20:48,485 [INFO] Output:   /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/borzoi_v0/full_mean.npz
+2026-03-27 09:20:48,485 [INFO] ======================================================================
+2026-03-27 09:20:48,647 [INFO] Using device: cuda
+2026-03-27 09:26:45,168 [INFO] Initializing BioEmbedder with device=cuda
+2026-03-27 09:26:45,184 [INFO] GeneResolver initialized for human (Release 109).
+2026-03-27 09:26:47,358 [INFO] Checking if Ensembl data needs downloading/indexing...
+2026-03-27 09:26:48,388 [INFO] Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.cdna.all.fa.gz.pickle
+2026-03-27 09:26:48,668 [INFO] Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.ncrna.fa.gz.pickle
+2026-03-27 09:26:48,882 [INFO] Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.pep.all.fa.gz.pickle
+2026-03-27 09:26:48,884 [INFO] pyensembl data is ready.
+2026-03-27 09:26:48,884 [INFO] BioEmbedder initialized on device cuda, backend=api
+2026-03-27 09:26:48,884 [INFO] Available models: ['atom_pair_count_fp', 'atom_pair_fp', 'bert_base_uncased', 'borzoi_v0', 'borzoi_v1', 'caduceus_ph_131k', 'caduceus_ps_131k', 'chemberta2MLM', 'chemberta2MTR', 'enformer_human_rough', 'esm2_150M', 'esm2_35M', 'esm2_3B', 'esm2_650M', 'esm2_8M', 'esmc_300m', 'esmc_600m', 'evo1.5_8k', 'evo1_131k', 'evo1_8k', 'evo1_crispr', 'evo1_transposon', 'evo2_1b_base', 'evo2_40b', 'evo2_7b', 'evo2_7b_base', 'gena_lm_bert_base', 'gena_lm_bert_base_multi', 'gena_lm_bert_large', 'gena_lm_bigbird_base', 'hyenadna_large_1m', 'hyenadna_medium_160k', 'hyenadna_medium_450k', 'hyenadna_small_32k', 'hyenadna_tiny_1k', 'maccs_fp', 'mhg_gnn', 'minilm_l6_v2', 'minimol', 'mole', 'molformer_base', 'morgan_count_fp', 'morgan_fp', 'nt_2b5_1000g', 'nt_2b5_multi', 'nt_500m_1000g', 'nt_500m_human_ref', 'nt_v2_100m', 'nt_v2_250m', 'nt_v2_500m', 'nt_v2_50m', 'ntv3_100m_pos', 'ntv3_100m_pre', 'ntv3_650m_pos', 'ntv3_650m_pre', 'ntv3_8m_pre', 'prot_t5_xl', 'prot_t5_xl_half', 'rdkit_fp', 'torsion_count_fp', 'torsion_fp']
+2026-03-27 09:26:48,884 [INFO] Fetching all protein_coding genes for human...
+2026-03-27 09:26:48,884 [INFO] Querying metadata from Release 109...
+2026-03-27 09:27:27,424 [INFO] Filtering for biotype: 'protein_coding'
+2026-03-27 09:27:27,432 [INFO] Found 20048 genes. Starting REST API downloads...
+2026-03-27 09:27:27,432 [WARNING] This involves ~20048 network requests.
+2026-03-27 09:27:41,997 [ERROR] Error fetching DNA sequence from Ensembl for 'ENSG00000000005': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/sequence/id/ENSG00000000005?type=genomic
+2026-03-27 09:28:41,702 [ERROR] Error fetching DNA sequence from Ensembl for 'ENSG00000001631': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/lookup/id/ENSG00000001631?expand=1
+2026-03-27 09:28:41,966 [ERROR] Error fetching DNA sequence from Ensembl for 'ENSG00000002016': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/lookup/id/ENSG00000002016?expand=1
+2026-03-27 09:33:03,905 [INFO] Fetched 100/20048 sequences...
+2026-03-27 09:33:05,960 [ERROR] Error fetching DNA sequence from Ensembl for 'ENSG00000005486': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/lookup/id/ENSG00000005486?expand=1
+2026-03-27 09:39:12,952 [ERROR] Error fetching DNA sequence from Ensembl for 'ENSG00000007314': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/sequence/id/ENSG00000007314?type=genomic
+2026-03-27 09:40:52,510 [INFO] Fetched 200/20048 sequences...
+2026-03-27 09:50:10,128 [INFO] Fetched 300/20048 sequences...
+2026-03-27 09:58:48,188 [INFO] Fetched 400/20048 sequences...
+2026-03-27 10:06:07,968 [INFO] Fetched 500/20048 sequences...
+2026-03-27 10:14:50,006 [INFO] Fetched 600/20048 sequences...
+2026-03-27 10:22:06,509 [INFO] Fetched 700/20048 sequences...
+2026-03-27 10:25:00,917 [ERROR] Error fetching DNA sequence from Ensembl for 'ENSG00000055483': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/sequence/id/ENSG00000055483?type=genomic
+2026-03-27 10:28:40,881 [INFO] Fetched 800/20048 sequences...
+2026-03-27 10:36:07,658 [INFO] Fetched 900/20048 sequences...
+2026-03-27 10:36:20,013 [ERROR] Error fetching DNA sequence from Ensembl for 'ENSG00000065057': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/lookup/id/ENSG00000065057?expand=1
+2026-03-27 10:42:23,469 [INFO] Fetched 1000/20048 sequences...

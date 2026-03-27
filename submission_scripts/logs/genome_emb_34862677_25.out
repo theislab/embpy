@@ -1,0 +1,4 @@
+=== Job 34862703 (array task 25) started at Fri Mar 27 09:15:15 AM CET 2026 ===
+Node: gpusrv35.scidom.de, GPU: MIG-f7bec6fe-16b8-510a-991f-24d2d00e9899
+Configuration: model=evo2_7b_base, pooling=mean, region=exons
+Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/evo2_7b_base/exons_mean.npz

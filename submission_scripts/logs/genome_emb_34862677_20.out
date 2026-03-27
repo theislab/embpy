@@ -1,0 +1,4 @@
+=== Job 34862698 (array task 20) started at Fri Mar 27 09:15:15 AM CET 2026 ===
+Node: gpusrv27.scidom.de, GPU: MIG-8c86a584-5026-5090-ba8b-a7b6d9908fb6
+Configuration: model=evo2_7b, pooling=mean, region=introns
+Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/evo2_7b/introns_mean.npz

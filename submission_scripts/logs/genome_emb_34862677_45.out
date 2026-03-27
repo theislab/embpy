@@ -1,0 +1,4 @@
+=== Job 34862723 (array task 45) started at Fri Mar 27 09:15:45 AM CET 2026 ===
+Node: gpusrv32.scidom.de, GPU: MIG-cef187a2-b5cb-57f2-8043-b227920cedf8
+Configuration: model=nt_v2_500m, pooling=max, region=full
+Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/nt_v2_500m/full_max.npz

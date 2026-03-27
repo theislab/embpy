@@ -1,0 +1,4 @@
+=== Job 34862678 (array task 0) started at Fri Mar 27 09:15:00 AM CET 2026 ===
+Node: gpusrv52.scidom.de, GPU: MIG-862461a1-f2a3-5f27-b1e1-51eda03a80de
+Configuration: model=enformer_human_rough, pooling=mean, region=full
+Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/enformer_human_rough/full_mean.npz

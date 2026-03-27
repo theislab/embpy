@@ -1,0 +1,4 @@
+=== Job 34862695 (array task 17) started at Fri Mar 27 09:15:15 AM CET 2026 ===
+Node: gpusrv52.scidom.de, GPU: MIG-c8860750-01fd-5386-9bd3-ed119bd15830
+Configuration: model=borzoi_v1, pooling=max, region=introns
+Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/borzoi_v1/introns_max.npz

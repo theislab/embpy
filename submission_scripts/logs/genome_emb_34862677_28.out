@@ -1,0 +1,4 @@
+=== Job 34862706 (array task 28) started at Fri Mar 27 09:15:15 AM CET 2026 ===
+Node: gpusrv32.scidom.de, GPU: MIG-780ef5d7-fd86-5787-940a-4dbc0e48bcc3
+Configuration: model=evo2_7b_base, pooling=max, region=exons
+Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/evo2_7b_base/exons_max.npz

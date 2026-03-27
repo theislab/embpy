@@ -1,0 +1,4 @@
+=== Job 34862701 (array task 23) started at Fri Mar 27 09:15:15 AM CET 2026 ===
+Node: gpusrv28.scidom.de, GPU: MIG-7cec222e-06e7-5eb9-99f0-49d42b008600
+Configuration: model=evo2_7b, pooling=max, region=introns
+Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/evo2_7b/introns_max.npz

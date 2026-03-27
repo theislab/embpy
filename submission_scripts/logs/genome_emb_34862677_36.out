@@ -1,0 +1,4 @@
+=== Job 34862714 (array task 36) started at Fri Mar 27 09:15:45 AM CET 2026 ===
+Node: gpusrv27.scidom.de, GPU: MIG-8c86a584-5026-5090-ba8b-a7b6d9908fb6
+Configuration: model=evo1_131k, pooling=mean, region=full
+Output: /lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings/evo1_131k/full_mean.npz
