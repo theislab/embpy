@@ -94,3 +94,7 @@ root - ERROR - Error fetching DNA sequence from Ensembl for 'ENSG00000067445': 4
 root - ERROR - Error fetching DNA sequence from Ensembl for 'ENSG00000066185': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/lookup/id/ENSG00000066185?expand=1
 root - ERROR - Error fetching DNA sequence from Ensembl for 'ENSG00000068001': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/sequence/id/ENSG00000068001?type=genomic
 root - ERROR - Error fetching DNA sequence from Ensembl for 'ENSG00000068831': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/sequence/id/ENSG00000068831?type=genomic
+root - ERROR - Error fetching DNA sequence from Ensembl for 'ENSG00000068438': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/lookup/id/ENSG00000068438?expand=1
+root - ERROR - Error fetching DNA sequence from Ensembl for 'ENSG00000070193': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/lookup/id/ENSG00000070193?expand=1
+root - ERROR - Error fetching DNA sequence from Ensembl for 'ENSG00000069696': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/sequence/id/ENSG00000069696?type=genomic
+root - ERROR - Error fetching DNA sequence from Ensembl for 'ENSG00000070423': 429 Client Error: Too Many Requests for url: https://rest.ensembl.org/sequence/id/ENSG00000070423?type=genomic
