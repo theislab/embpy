@@ -23,4 +23,10 @@ from .heatmaps import (
     knn_overlap,
     plot_similarity_heatmap,
 )
+from .comparisons import (
+    parallel_coordinates,
+    radar_chart,
+    star_coordinates,
+    tsne_feature_panel,
+)
 from .benchmark import plot_benchmark, plot_benchmark_comparison

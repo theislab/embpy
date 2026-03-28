@@ -46,7 +46,11 @@ class ChembertaWrapper(BaseModelWrapper):
             return
         logging.info(f"Loading ChemBERTa '{self.model_name}'…")
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        import transformers
+        prev_level = transformers.logging.get_verbosity()
+        transformers.logging.set_verbosity_error()
         self.model = AutoModel.from_pretrained(self.model_name).to(device).eval()
+        transformers.logging.set_verbosity(prev_level)
         self.device = device
 
         # derive a safe max sequence length (RoBERTa-style ≈512)
@@ -260,8 +264,9 @@ class MolformerWrapper(BaseModelWrapper):
 
         logging.info(f"Loading MolFormer '{self.model_name}' (trust_remote_code)…")
         try:
-            # need trust_remote_code to pick up custom classes in the repo
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name, trust_remote_code=True, model_max_length=512,
+            )
             model = AutoModel.from_pretrained(
                 self.model_name,
                 deterministic_eval=True,
@@ -519,29 +524,30 @@ class RDKitWrapper(BaseModelWrapper):
 
     def _compute_fingerprint(self, mol: Any) -> np.ndarray:
         """Dispatch to the correct RDKit fingerprint generator."""
+        from rdkit.Chem import rdFingerprintGenerator
+
         fp_type = self.fingerprint_type
 
         # --- Morgan (ECFP-like) ---
         if fp_type == "morgan":
-            fp = AllChem.GetMorganFingerprintAsBitVect(  # type: ignore[attr-defined]
-                mol,
-                radius=self.radius,
-                nBits=self.n_bits,
+            gen = rdFingerprintGenerator.GetMorganGenerator(
+                radius=self.radius, fpSize=self.n_bits,
             )
-            return self._bitvect_to_array(fp)
+            fp = gen.GetFingerprintAsNumPy(mol)
+            return fp.astype(np.float32)
 
         if fp_type == "morgan_count":
-            fp = AllChem.GetHashedMorganFingerprint(  # type: ignore[attr-defined]
-                mol,
-                radius=self.radius,
-                nBits=self.n_bits,
+            gen = rdFingerprintGenerator.GetMorganGenerator(
+                radius=self.radius, fpSize=self.n_bits,
             )
-            return self._sparse_intvect_to_array(fp)
+            fp = gen.GetCountFingerprintAsNumPy(mol)
+            return fp.astype(np.float32)
 
         # --- RDKit topological ---
         if fp_type == "rdkit":
-            fp = Chem.RDKFingerprint(mol, fpSize=self.n_bits)
-            return self._bitvect_to_array(fp)
+            gen = rdFingerprintGenerator.GetRDKitFPGenerator(fpSize=self.n_bits)
+            fp = gen.GetFingerprintAsNumPy(mol)
+            return fp.astype(np.float32)
 
         # --- MACCS keys (167 bits) ---
         if fp_type == "maccs":
@@ -552,38 +558,25 @@ class RDKitWrapper(BaseModelWrapper):
 
         # --- Atom pair ---
         if fp_type == "atom_pair":
-            from rdkit.Chem import rdMolDescriptors
-
-            fp = rdMolDescriptors.GetHashedAtomPairFingerprintAsBitVect(
-                mol,
-                nBits=self.n_bits,
-            )
-            return self._bitvect_to_array(fp)
+            gen = rdFingerprintGenerator.GetAtomPairGenerator(fpSize=self.n_bits)
+            fp = gen.GetFingerprintAsNumPy(mol)
+            return fp.astype(np.float32)
 
         if fp_type == "atom_pair_count":
-            from rdkit.Chem import rdMolDescriptors
-
-            return self._sparse_intvect_to_array(rdMolDescriptors.GetHashedAtomPairFingerprint(mol, nBits=self.n_bits))
+            gen = rdFingerprintGenerator.GetAtomPairGenerator(fpSize=self.n_bits)
+            fp = gen.GetCountFingerprintAsNumPy(mol)
+            return fp.astype(np.float32)
 
         # --- Topological torsion ---
         if fp_type == "topological_torsion":
-            from rdkit.Chem import rdMolDescriptors
-
-            fp = rdMolDescriptors.GetHashedTopologicalTorsionFingerprintAsBitVect(
-                mol,
-                nBits=self.n_bits,
-            )
-            return self._bitvect_to_array(fp)
+            gen = rdFingerprintGenerator.GetTopologicalTorsionGenerator(fpSize=self.n_bits)
+            fp = gen.GetFingerprintAsNumPy(mol)
+            return fp.astype(np.float32)
 
         if fp_type == "topological_torsion_count":
-            from rdkit.Chem import rdMolDescriptors
-
-            return self._sparse_intvect_to_array(
-                rdMolDescriptors.GetHashedTopologicalTorsionFingerprint(
-                    mol,
-                    nBits=self.n_bits,
-                )
-            )
+            gen = rdFingerprintGenerator.GetTopologicalTorsionGenerator(fpSize=self.n_bits)
+            fp = gen.GetCountFingerprintAsNumPy(mol)
+            return fp.astype(np.float32)
 
         raise ValueError(f"Unknown fingerprint type: {fp_type}")
 
