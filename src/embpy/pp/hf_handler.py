@@ -148,6 +148,44 @@ class HFHandler:
         )
         logger.info("Uploaded %s → %s", local_path, path_in_repo)
 
+    def upload_folder(
+        self,
+        local_dir: str | Path,
+        path_in_repo: str = "",
+        *,
+        commit_message: str | None = None,
+    ) -> None:
+        """Upload an entire directory tree to the repo, preserving structure.
+
+        Uses ``HfApi.upload_folder`` for efficient multi-file uploads
+        with automatic LFS handling.
+
+        Parameters
+        ----------
+        local_dir
+            Local directory to upload.
+        path_in_repo
+            Target path prefix in the repo (e.g. ``"embeddings"``).
+            An empty string uploads to the repo root.
+        commit_message
+            Git commit message for the upload.
+        """
+        local_dir = Path(local_dir)
+        if not local_dir.is_dir():
+            raise FileNotFoundError(f"Directory not found: {local_dir}")
+        msg = commit_message or f"Upload {local_dir.name}"
+        self._api.upload_folder(
+            folder_path=str(local_dir),
+            path_in_repo=path_in_repo or None,
+            repo_id=self.repo_name,
+            repo_type="dataset",
+            commit_message=msg,
+        )
+        logger.info(
+            "Uploaded folder %s -> %s/%s",
+            local_dir, self.repo_name, path_in_repo,
+        )
+
     # ── raw datasets ─────────────────────────────────────────────────
 
     def upload_datasets(
