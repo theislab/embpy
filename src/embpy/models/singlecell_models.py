@@ -212,6 +212,31 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
         default_model_name="27B",
         variants=["27B"],
     ),
+    # --- PCA (classical baseline) ---
+    "pca": SCModelCard(
+        key="pca",
+        wrapper_class_name="PCAEmbedding",
+        description="PCA on the expression matrix (classical baseline).",
+    ),
+    # --- scvi-tools ---
+    "scvi": SCModelCard(
+        key="scvi",
+        wrapper_class_name="ScVIToolsWrapper",
+        description="scVI variational autoencoder (scvi-tools).",
+        default_model_name="SCVI",
+    ),
+    "scanvi": SCModelCard(
+        key="scanvi",
+        wrapper_class_name="ScVIToolsWrapper",
+        description="scANVI semi-supervised VAE (scvi-tools).",
+        default_model_name="SCANVI",
+    ),
+    "totalvi": SCModelCard(
+        key="totalvi",
+        wrapper_class_name="ScVIToolsWrapper",
+        description="totalVI joint RNA+protein VAE (scvi-tools).",
+        default_model_name="TOTALVI",
+    ),
 }
 
 
@@ -504,6 +529,295 @@ class Cell2SentenceWrapper(SingleCellWrapper):
 
 
 # ---------------------------------------------------------------------------
+# Classical / statistical wrappers
+# ---------------------------------------------------------------------------
+
+
+class PCAEmbedding(SingleCellWrapper):
+    """PCA on the expression matrix as a classical embedding baseline.
+
+    Runs sklearn PCA (CPU) or rapids_singlecell/cuml PCA (GPU) on
+    log-normalized counts (or raw counts if no processed layer is
+    available).  Optionally restricts to highly variable genes.
+
+    Parameters
+    ----------
+    n_components : int
+        Number of principal components.
+    use_hvg : bool
+        If ``True`` and ``adata.var["highly_variable"]`` exists, restrict
+        to those genes before PCA.
+    layer : str or None
+        AnnData layer to use as input.  ``None`` uses ``.X``.
+        ``"log_normalized"`` uses the standard-pipeline output.
+    scale : bool
+        Whether to zero-center and unit-scale before PCA.
+    backend : {"cpu", "gpu"}
+        ``"cpu"`` uses sklearn PCA (default).
+        ``"gpu"`` uses ``rapids_singlecell.pp.pca`` or ``cuml`` PCA.
+
+    Example::
+
+        wrapper = PCAEmbedding(n_components=50, backend="gpu")
+        wrapper.load()
+        embs = wrapper.embed_cells(adata)  # (n_cells, 50)
+    """
+
+    def __init__(
+        self,
+        n_components: int = 50,
+        use_hvg: bool = True,
+        layer: str | None = "log_normalized",
+        scale: bool = True,
+        backend: str = "cpu",
+        model_name: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model_name=model_name or "pca", **kwargs)
+        self.n_components = n_components
+        self.use_hvg = use_hvg
+        self.layer = layer
+        self.scale = scale
+        self.backend = backend
+
+    def load(self, device: str = "cpu") -> None:  # noqa: D102
+        self.device = device
+
+    def embed_cells(self, adata: Any) -> np.ndarray:  # noqa: D102
+        import scipy.sparse as sp
+
+        if self.layer and self.layer in adata.layers:
+            X = adata.layers[self.layer]
+        else:
+            X = adata.X
+
+        if sp.issparse(X):
+            X = np.asarray(X.toarray(), dtype=np.float64)
+        else:
+            X = np.asarray(X, dtype=np.float64)
+
+        if self.use_hvg and "highly_variable" in adata.var.columns:
+            hvg_mask = adata.var["highly_variable"].values.astype(bool)
+            X = X[:, hvg_mask]
+
+        n_comp = min(self.n_components, X.shape[0], X.shape[1])
+
+        if self.backend == "gpu":
+            try:
+                from cuml.decomposition import PCA as cuPCA  # type: ignore[import-untyped]
+                from cuml.preprocessing import StandardScaler as cuScaler  # type: ignore[import-untyped]
+                if self.scale:
+                    X = cuScaler().fit_transform(X)
+                pca = cuPCA(n_components=n_comp, random_state=0)
+                result = pca.fit_transform(X)
+                result = np.asarray(result, dtype=np.float32)
+                var_explained = float(pca.explained_variance_ratio_.sum()) * 100
+            except ImportError:
+                import rapids_singlecell as rsc  # type: ignore[import-untyped]
+                import anndata as ad
+                adata_tmp = ad.AnnData(X=X.astype(np.float32))
+                if self.scale:
+                    rsc.pp.scale(adata_tmp)
+                rsc.pp.pca(adata_tmp, n_comps=n_comp)
+                result = np.asarray(adata_tmp.obsm["X_pca"], dtype=np.float32)
+                var_explained = float(
+                    adata_tmp.uns["pca"]["variance_ratio"].sum()
+                ) * 100
+        else:
+            from sklearn.decomposition import PCA
+            from sklearn.preprocessing import StandardScaler
+            if self.scale:
+                X = StandardScaler().fit_transform(X)
+            pca = PCA(n_components=n_comp, random_state=0)
+            result = pca.fit_transform(X).astype(np.float32)
+            var_explained = pca.explained_variance_ratio_.sum() * 100
+
+        logger.info(
+            "PCA (backend=%s): %d -> %d components (%.1f%% variance explained)",
+            self.backend, X.shape[1] if hasattr(X, "shape") else 0,
+            n_comp, var_explained,
+        )
+        return result
+
+    @property
+    def embedding_dim(self) -> int:  # noqa: D102
+        return self.n_components
+
+
+class ScVIToolsWrapper(SingleCellWrapper):
+    """Flexible wrapper around scvi-tools models.
+
+    Supports scVI, scANVI, totalVI, and any future scvi-tools model
+    that follows the ``setup_anndata`` / ``train`` /
+    ``get_latent_representation`` pattern.
+
+    Parameters
+    ----------
+    model_class : str
+        scvi-tools model class name: ``"SCVI"``, ``"SCANVI"``,
+        ``"TOTALVI"``.
+    n_latent : int
+        Dimensionality of the latent space.
+    n_layers : int
+        Number of hidden layers in encoder/decoder.
+    n_hidden : int
+        Number of nodes per hidden layer.
+    max_epochs : int
+        Maximum training epochs.
+    early_stopping : bool
+        Whether to use early stopping during training.
+    batch_key : str or None
+        Column in ``adata.obs`` for batch correction.
+    labels_key : str or None
+        Column in ``adata.obs`` for cell-type labels (scANVI).
+    protein_expression_obsm_key : str or None
+        Key in ``adata.obsm`` with protein counts (totalVI).
+    layer : str or None
+        AnnData layer containing raw counts for model input.
+        ``None`` uses ``.X``; ``"counts"`` uses the counts layer.
+
+    Example::
+
+        wrapper = ScVIToolsWrapper(model_class="SCVI", n_latent=30)
+        wrapper.load("cuda")
+        embs = wrapper.embed_cells(adata)  # (n_cells, 30)
+    """
+
+    def __init__(
+        self,
+        model_class: str = "SCVI",
+        n_latent: int = 30,
+        n_layers: int = 2,
+        n_hidden: int = 128,
+        max_epochs: int = 200,
+        early_stopping: bool = True,
+        batch_key: str | None = None,
+        labels_key: str | None = None,
+        protein_expression_obsm_key: str | None = None,
+        layer: str | None = "counts",
+        model_name: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model_name=model_name or model_class.lower(), **kwargs)
+        self.model_class_name = model_class.upper()
+        self.n_latent = n_latent
+        self.n_layers = n_layers
+        self.n_hidden = n_hidden
+        self.max_epochs = max_epochs
+        self.early_stopping = early_stopping
+        self.batch_key = batch_key
+        self.labels_key = labels_key
+        self.protein_expression_obsm_key = protein_expression_obsm_key
+        self.layer = layer
+        self._scvi_kwargs = kwargs
+
+    def load(self, device: str = "cpu") -> None:  # noqa: D102
+        self.device = device
+
+    def _get_model_cls(self):  # type: ignore[no-untyped-def]
+        """Import and return the scvi-tools model class."""
+        try:
+            import scvi  # type: ignore[import-untyped]
+        except ImportError as exc:
+            raise ImportError(
+                "scvi-tools is required for ScVIToolsWrapper. "
+                "Install with: pip install scvi-tools"
+            ) from exc
+
+        model_map = {
+            "SCVI": scvi.model.SCVI,
+            "SCANVI": scvi.model.SCANVI,
+            "TOTALVI": scvi.model.TOTALVI,
+        }
+        if self.model_class_name not in model_map:
+            raise ValueError(
+                f"Unknown scvi-tools model '{self.model_class_name}'. "
+                f"Available: {list(model_map.keys())}"
+            )
+        return model_map[self.model_class_name]
+
+    def embed_cells(self, adata: Any) -> np.ndarray:  # noqa: D102
+        import scvi as scvi_module  # type: ignore[import-untyped]
+
+        model_cls = self._get_model_cls()
+        adata_work = adata.copy()
+
+        # Determine which layer has raw counts
+        layer = self.layer
+        if layer and layer not in adata_work.layers:
+            logger.warning(
+                "Layer '%s' not found in adata.layers; falling back to .X",
+                layer,
+            )
+            layer = None
+
+        # Setup anndata for scvi-tools
+        setup_kwargs: dict[str, Any] = {}
+        if layer:
+            setup_kwargs["layer"] = layer
+        if self.batch_key and self.batch_key in adata_work.obs.columns:
+            setup_kwargs["batch_key"] = self.batch_key
+
+        if self.model_class_name == "SCANVI":
+            if self.labels_key and self.labels_key in adata_work.obs.columns:
+                setup_kwargs["labels_key"] = self.labels_key
+            else:
+                raise ValueError(
+                    "scANVI requires labels_key pointing to a cell-type "
+                    "column in adata.obs"
+                )
+
+        if self.model_class_name == "TOTALVI":
+            if self.protein_expression_obsm_key:
+                setup_kwargs["protein_expression_obsm_key"] = (
+                    self.protein_expression_obsm_key
+                )
+
+        model_cls.setup_anndata(adata_work, **setup_kwargs)
+
+        # Build model
+        model_kwargs: dict[str, Any] = {
+            "n_latent": self.n_latent,
+            "n_layers": self.n_layers,
+            "n_hidden": self.n_hidden,
+        }
+
+        if self.model_class_name == "SCANVI":
+            # scANVI uses a two-step approach: train SCVI first, then SCANVI
+            scvi_model = scvi_module.model.SCVI(adata_work, **model_kwargs)
+            scvi_model.train(
+                max_epochs=max(self.max_epochs // 2, 50),
+                early_stopping=self.early_stopping,
+            )
+            model = scvi_module.model.SCANVI.from_scvi_model(
+                scvi_model,
+                unlabeled_category="Unknown",
+            )
+            model.train(
+                max_epochs=self.max_epochs // 2,
+                early_stopping=self.early_stopping,
+            )
+        else:
+            model = model_cls(adata_work, **model_kwargs)
+            model.train(
+                max_epochs=self.max_epochs,
+                early_stopping=self.early_stopping,
+            )
+
+        latent = model.get_latent_representation()
+        logger.info(
+            "%s: trained %d epochs, latent shape %s",
+            self.model_class_name, model.history_["elbo_train"].shape[0],
+            latent.shape,
+        )
+        return np.asarray(latent, dtype=np.float32)
+
+    @property
+    def embedding_dim(self) -> int:  # noqa: D102
+        return self.n_latent
+
+
+# ---------------------------------------------------------------------------
 # Factory / discovery
 # ---------------------------------------------------------------------------
 
@@ -514,6 +828,8 @@ _WRAPPER_MAP: dict[str, type[SingleCellWrapper]] = {
     "TranscriptFormerWrapper": TranscriptFormerWrapper,
     "TahoeWrapper": TahoeWrapper,
     "Cell2SentenceWrapper": Cell2SentenceWrapper,
+    "PCAEmbedding": PCAEmbedding,
+    "ScVIToolsWrapper": ScVIToolsWrapper,
 }
 
 

@@ -394,3 +394,78 @@ class TestESMCWrapper:
         w.device = torch.device("cpu")
         with pytest.raises(ValueError, match="Invalid pooling"):
             w.embed("MTEYKLVVVG", pooling_strategy="invalid")
+
+
+# =====================================================================
+# ESM3Wrapper
+# =====================================================================
+
+
+class TestESM3Wrapper:
+    def test_init_defaults(self):
+        from embpy.models.protein_models import ESM3Wrapper
+
+        w = ESM3Wrapper()
+        assert w.model_name == "esm3-small-2024-08"
+        assert w.model_type == "protein"
+        assert w._client is None
+
+    def test_init_custom_model(self):
+        from embpy.models.protein_models import ESM3Wrapper
+
+        w = ESM3Wrapper("esm3-large-2024-03", forge_token="test_token")
+        assert w.model_name == "esm3-large-2024-03"
+        assert w.forge_token == "test_token"
+
+    def test_embed_without_load_raises(self):
+        from embpy.models.protein_models import ESM3Wrapper
+
+        w = ESM3Wrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.embed("MTEYKLVVVG")
+
+    def test_embed_with_mock(self):
+        from embpy.models.protein_models import ESM3Wrapper
+
+        w = ESM3Wrapper()
+        mock_client = MagicMock()
+        mock_client.encode.return_value = MagicMock()
+
+        mock_logits_output = MagicMock()
+        mock_logits_output.embeddings = torch.randn(1, 10, 64)
+        mock_client.logits.return_value = mock_logits_output
+
+        w._client = mock_client
+        w.device = torch.device("cpu")
+        w.model = mock_client
+
+        emb = w.embed("MTEYKLVVVG", pooling_strategy="mean")
+        assert isinstance(emb, np.ndarray)
+        assert emb.ndim == 1
+
+    def test_embed_batch(self):
+        from embpy.models.protein_models import ESM3Wrapper
+
+        w = ESM3Wrapper()
+        mock_client = MagicMock()
+        mock_client.encode.return_value = MagicMock()
+
+        mock_logits_output = MagicMock()
+        mock_logits_output.embeddings = torch.randn(1, 10, 64)
+        mock_client.logits.return_value = mock_logits_output
+
+        w._client = mock_client
+        w.device = torch.device("cpu")
+        w.model = mock_client
+
+        results = w.embed_batch(["MTEYKLVVVG", "ACDEFGHIK"])
+        assert len(results) == 2
+
+    def test_invalid_pooling_raises(self):
+        from embpy.models.protein_models import ESM3Wrapper
+
+        w = ESM3Wrapper()
+        w._client = MagicMock()
+        w.device = torch.device("cpu")
+        with pytest.raises(ValueError, match="Invalid pooling"):
+            w.embed("MTEYKLVVVG", pooling_strategy="invalid")

@@ -7,7 +7,7 @@ from .molecule_models import (
     MolformerWrapper,
     RDKitWrapper,
 )
-from .protein_models import ESM2Wrapper, ESMCWrapper, ProtT5Wrapper, STRINGWrapper
+from .protein_models import ESM2Wrapper, ESM3Wrapper, ESMCWrapper, ProtT5Wrapper
 from .text_models import TextLLMWrapper
 
 # Evo (v1/v1.5) is optional (requires: pip install evo-model)
@@ -48,8 +48,10 @@ except ImportError:
 from .singlecell_models import (
     Cell2SentenceWrapper,
     GeneformerWrapper,
+    PCAEmbedding,
     SCModelCard,
     ScGPTWrapper,
+    ScVIToolsWrapper,
     SingleCellWrapper,
     TahoeWrapper,
     TranscriptFormerWrapper,
@@ -73,18 +75,20 @@ __all__ = [
     "NucleotideTransformerV3Wrapper",
     "ChembertaWrapper",
     "ESM2Wrapper",
+    "ESM3Wrapper",
     "ESMCWrapper",
     "MHGGNNWrapper",
     "MiniMolWrapper",
     "MolEWrapper",
     "MolformerWrapper",
+    "PCAEmbedding",
     "PrecomputedPPIWrapper",
     "ProtT5Wrapper",
     "RDKitWrapper",
     "SCModelCard",
     "ScGPTWrapper",
+    "ScVIToolsWrapper",
     "SingleCellWrapper",
-    "STRINGWrapper",
     "TahoeWrapper",
     "TextLLMWrapper",
     "TranscriptFormerWrapper",

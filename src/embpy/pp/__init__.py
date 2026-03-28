@@ -1,4 +1,5 @@
 from .basic import PerturbationProcessor, reduce_embeddings
+from .sc_preprocessing import preprocess_counts
 from .depmap_handler import (
     DepMapDatasetCard,
     depmap_info,
@@ -24,5 +25,6 @@ __all__ = [
     "list_lamin_datasets",
     "load_depmap",
     "load_lamin",
+    "preprocess_counts",
     "reduce_embeddings",
 ]

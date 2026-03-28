@@ -1,23 +1,25 @@
-from .basic import (
-    basic_tool,
-    cluster_embeddings,
+from .clustering import cluster_embeddings, find_nearest_neighbors, leiden
+from .dimred import compute_tsne, compute_umap
+from .similarity import (
     compute_distance_matrix,
     compute_knn_overlap,
     compute_similarity,
-    compute_tsne,
-    compute_umap,
-    find_nearest_neighbors,
-    leiden,
     rank_perturbations,
 )
+
+from .basic import basic_tool
+
 from .benchmark import benchmark_embeddings
 from .metadata import (
     annotate_bulk_rna,
     annotate_cell_lines,
     annotate_drug_response,
     annotate_drugs,
+    annotate_gene_perturbations,
     annotate_genes,
+    annotate_molecules,
     annotate_perturbation,
+    annotate_proteins,
     lookup_cell_lines,
     lookup_compounds,
     lookup_drug_annotation,
@@ -43,6 +45,7 @@ from .metrics import (
     rank_genes_groups,
 )
 from .pipeline import list_embedding_models, list_use_cases, run_cell_eval, run_pipeline
+from .weighted_protein_embedding import WeightedProteinEmbedder
 from .snp_utils import (
     SequenceProvider,
     SNPContext,

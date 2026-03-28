@@ -309,3 +309,159 @@ class TestRequireHelical:
         with patch.dict("sys.modules", {"helical": None}):
             with pytest.raises(ImportError, match="helical"):
                 _require_helical()
+
+
+# =====================================================================
+# PCAEmbedding
+# =====================================================================
+
+
+class TestPCAEmbedding:
+    def _make_adata_with_layers(self):
+        """AnnData with counts and log_normalized layers."""
+        import scipy.sparse as sp
+        from anndata import AnnData as AD
+
+        rng = np.random.default_rng(42)
+        n, g = _N_CELLS, 200
+        X = np.abs(rng.standard_normal((n, g))).astype(np.float32) * 100
+        adata = AD(X=X)
+        adata.layers["counts"] = X.copy()
+        adata.layers["log_normalized"] = np.log1p(X)
+        adata.var["highly_variable"] = np.array(
+            [True] * 50 + [False] * (g - 50),
+        )
+        return adata
+
+    def test_init_defaults(self) -> None:
+        from embpy.models.singlecell_models import PCAEmbedding
+
+        wrapper = PCAEmbedding()
+        assert wrapper.n_components == 50
+        assert wrapper.use_hvg is True
+        assert wrapper.model_type == "single_cell"
+
+    def test_load_is_noop(self) -> None:
+        from embpy.models.singlecell_models import PCAEmbedding
+
+        wrapper = PCAEmbedding()
+        wrapper.load("cpu")
+        assert wrapper.device == "cpu"
+
+    def test_embed_cells_shape(self) -> None:
+        from embpy.models.singlecell_models import PCAEmbedding
+
+        adata = self._make_adata_with_layers()
+        wrapper = PCAEmbedding(n_components=10)
+        wrapper.load("cpu")
+        embs = wrapper.embed_cells(adata)
+        assert embs.shape == (_N_CELLS, 10)
+        assert embs.dtype == np.float32
+
+    def test_embed_cells_with_hvg(self) -> None:
+        from embpy.models.singlecell_models import PCAEmbedding
+
+        adata = self._make_adata_with_layers()
+        wrapper = PCAEmbedding(n_components=10, use_hvg=True)
+        wrapper.load("cpu")
+        embs = wrapper.embed_cells(adata)
+        assert embs.shape[0] == _N_CELLS
+
+    def test_embed_cells_without_hvg(self) -> None:
+        from embpy.models.singlecell_models import PCAEmbedding
+
+        adata = self._make_adata_with_layers()
+        wrapper = PCAEmbedding(n_components=10, use_hvg=False)
+        wrapper.load("cpu")
+        embs = wrapper.embed_cells(adata)
+        assert embs.shape[0] == _N_CELLS
+
+    def test_embed_cells_from_x(self) -> None:
+        from embpy.models.singlecell_models import PCAEmbedding
+
+        adata = self._make_adata_with_layers()
+        wrapper = PCAEmbedding(n_components=5, layer=None)
+        wrapper.load("cpu")
+        embs = wrapper.embed_cells(adata)
+        assert embs.shape == (_N_CELLS, 5)
+
+    def test_embedding_dim_property(self) -> None:
+        from embpy.models.singlecell_models import PCAEmbedding
+
+        wrapper = PCAEmbedding(n_components=30)
+        assert wrapper.embedding_dim == 30
+
+    def test_registry_entry(self) -> None:
+        keys = list_singlecell_models()
+        assert "pca" in keys
+
+    def test_factory(self) -> None:
+        from embpy.models.singlecell_models import PCAEmbedding
+
+        wrapper = get_singlecell_wrapper("pca")
+        assert isinstance(wrapper, PCAEmbedding)
+
+
+# =====================================================================
+# ScVIToolsWrapper
+# =====================================================================
+
+
+class TestScVIToolsWrapper:
+    def test_init_defaults(self) -> None:
+        from embpy.models.singlecell_models import ScVIToolsWrapper
+
+        wrapper = ScVIToolsWrapper()
+        assert wrapper.model_class_name == "SCVI"
+        assert wrapper.n_latent == 30
+        assert wrapper.model_type == "single_cell"
+
+    def test_init_custom_params(self) -> None:
+        from embpy.models.singlecell_models import ScVIToolsWrapper
+
+        wrapper = ScVIToolsWrapper(
+            model_class="SCANVI",
+            n_latent=20,
+            n_layers=3,
+            max_epochs=100,
+        )
+        assert wrapper.model_class_name == "SCANVI"
+        assert wrapper.n_latent == 20
+        assert wrapper.n_layers == 3
+
+    def test_load_is_noop(self) -> None:
+        from embpy.models.singlecell_models import ScVIToolsWrapper
+
+        wrapper = ScVIToolsWrapper()
+        wrapper.load("cuda")
+        assert wrapper.device == "cuda"
+
+    def test_embedding_dim_property(self) -> None:
+        from embpy.models.singlecell_models import ScVIToolsWrapper
+
+        wrapper = ScVIToolsWrapper(n_latent=15)
+        assert wrapper.embedding_dim == 15
+
+    def test_invalid_model_class(self) -> None:
+        from embpy.models.singlecell_models import ScVIToolsWrapper
+
+        wrapper = ScVIToolsWrapper(model_class="INVALID")
+        with pytest.raises((ValueError, ImportError)):
+            wrapper.embed_cells(_make_fake_adata())
+
+    def test_registry_entries(self) -> None:
+        keys = list_singlecell_models()
+        for k in ("scvi", "scanvi", "totalvi"):
+            assert k in keys, f"'{k}' missing from registry"
+
+    def test_factory_scvi(self) -> None:
+        from embpy.models.singlecell_models import ScVIToolsWrapper
+
+        wrapper = get_singlecell_wrapper("scvi")
+        assert isinstance(wrapper, ScVIToolsWrapper)
+
+    def test_factory_scanvi(self) -> None:
+        from embpy.models.singlecell_models import ScVIToolsWrapper
+
+        wrapper = get_singlecell_wrapper("scanvi")
+        assert isinstance(wrapper, ScVIToolsWrapper)
