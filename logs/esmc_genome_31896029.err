@@ -1,9 +1,0 @@
-Traceback (most recent call last):
-  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts/esmc_embed.py", line 7, in <module>
-    from embpy import BioEmbedder
-  File "/ictstr01/home/icb/goncalo.pinto/tools/apps/mamba/envs/embpy/lib/python3.12/site-packages/embpy/__init__.py", line 4, in <module>
-    from .embedder import BioEmbedder
-  File "/ictstr01/home/icb/goncalo.pinto/tools/apps/mamba/envs/embpy/lib/python3.12/site-packages/embpy/embedder.py", line 157
-    if model_name in self.model_cache:]
-                                      ^
-SyntaxError: unmatched ']'
