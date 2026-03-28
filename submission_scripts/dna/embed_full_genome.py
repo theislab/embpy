@@ -11,7 +11,7 @@ Example
         --model enformer_human_rough \\
         --pooling mean \\
         --region full \\
-        --output data/dna_embeddings/enformer_human_rough/full_mean.npz
+        --output data/embeddings/gene_embeddings/dna/enformer_human_rough/full_mean.npz
 """
 
 from __future__ import annotations

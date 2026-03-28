@@ -21,7 +21,7 @@
 #   sbatch run_protein_embeddings_array.sbatch
 #
 # Output structure:
-#   data/protein_embeddings/
+#   data/embeddings/protein_embeddings/
 #     esm2_650M/
 #       canonical_mean.npz
 #       canonical_max.npz
@@ -34,7 +34,7 @@
 
 set -eo pipefail
 
-BASE_OUTPUT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/protein_embeddings"
+BASE_OUTPUT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/embeddings/protein_embeddings"
 SCRIPT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts/protein"
 CHECKPOINT_DIR="${BASE_OUTPUT_DIR}/.checkpoints"
 LOG_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts/logs"
@@ -105,6 +105,6 @@ python -u "${SCRIPT_DIR}/embed_full_proteome.py" \
     --biotype protein_coding \
     --device auto \
     --checkpoint-dir "${CHECKPOINT_DIR}" \
-    --data-dir "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data"
+    --data-dir "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/embeddings"
 
 echo "=== Job finished at $(date) ==="

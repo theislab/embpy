@@ -21,7 +21,7 @@
 #   sbatch run_full_genome_embeddings.sbatch
 #
 # Output directory structure:
-#   data/dna_embeddings/
+#   data/embeddings/gene_embeddings/dna/
 #     enformer_human_rough/
 #       full_mean.npz
 #       full_max.npz
@@ -38,7 +38,7 @@
 set -euo pipefail
 
 # ---- Configuration ---------------------------------------------------------
-BASE_OUTPUT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings"
+BASE_OUTPUT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/embeddings/gene_embeddings/dna"
 SCRIPT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts/dna"
 LOG_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts/logs"
 
@@ -113,6 +113,6 @@ python -u "${SCRIPT_DIR}/embed_full_genome.py" \
     --organism human \
     --biotype protein_coding \
     --device auto \
-    --data-dir "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data"
+    --data-dir "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/embeddings"
 
 echo "=== Job finished at $(date) ==="
