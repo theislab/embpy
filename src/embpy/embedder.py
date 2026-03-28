@@ -75,8 +75,20 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # User-facing name: (WrapperClass, HuggingFace_or_Path_Identifier)
     # --- DNA Models ---
     "enformer_human_rough": (EnformerWrapper, "EleutherAI/enformer-official-rough"),
+    # Borzoi (johahi/borzoi-pytorch, 4 replicates + mouse variants)
     "borzoi_v0": (BorzoiWrapper, "johahi/borzoi-replicate-0"),
-    "borzoi_v1": (BorzoiWrapper, "johani/borzoi-replicate-1"),
+    "borzoi_v1": (BorzoiWrapper, "johahi/borzoi-replicate-1"),
+    "borzoi_v2": (BorzoiWrapper, "johahi/borzoi-replicate-2"),
+    "borzoi_v3": (BorzoiWrapper, "johahi/borzoi-replicate-3"),
+    "borzoi_v0_mouse": (BorzoiWrapper, "johahi/borzoi-replicate-0-mouse"),
+    "borzoi_v1_mouse": (BorzoiWrapper, "johahi/borzoi-replicate-1-mouse"),
+    "borzoi_v2_mouse": (BorzoiWrapper, "johahi/borzoi-replicate-2-mouse"),
+    "borzoi_v3_mouse": (BorzoiWrapper, "johahi/borzoi-replicate-3-mouse"),
+    # Flashzoi (3x faster Borzoi with FlashAttention-2)
+    "flashzoi_v0": (BorzoiWrapper, "johahi/flashzoi-replicate-0"),
+    "flashzoi_v1": (BorzoiWrapper, "johahi/flashzoi-replicate-1"),
+    "flashzoi_v2": (BorzoiWrapper, "johahi/flashzoi-replicate-2"),
+    "flashzoi_v3": (BorzoiWrapper, "johahi/flashzoi-replicate-3"),
     # Evo models (requires optional `evo-model` dependency: pip install embpy[evo])
     "evo1_8k": (EvoWrapper if _HAVE_EVO else None, "evo-1-8k-base"),
     "evo1_131k": (EvoWrapper if _HAVE_EVO else None, "evo-1-131k-base"),

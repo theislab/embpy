@@ -38,8 +38,16 @@ logger = logging.getLogger(__name__)
 DNA_MODELS = [
     # Genomic track models
     "enformer_human_rough",
+    # Borzoi (4 replicates)
     "borzoi_v0",
     "borzoi_v1",
+    "borzoi_v2",
+    "borzoi_v3",
+    # Flashzoi (3x faster Borzoi, requires flash-attn)
+    "flashzoi_v0",
+    "flashzoi_v1",
+    "flashzoi_v2",
+    "flashzoi_v3",
     # Evo2 models
     "evo2_7b",
     "evo2_40b",
@@ -95,6 +103,27 @@ def get_device(device_str: str) -> torch.device:
     return torch.device(device_str)
 
 
+def _try_load_predownloaded(
+    data_dir: str,
+    biotype: str,
+    region: str,
+) -> dict[str, str] | None:
+    """Try to load pre-downloaded sequences from disk."""
+    seq_dir = Path(data_dir) / "sequences"
+    if not seq_dir.exists():
+        return None
+
+    for npz_file in seq_dir.glob(f"*{biotype}*{region}*dna*.npz"):
+        logger.info("Loading pre-downloaded sequences from %s", npz_file)
+        data = np.load(npz_file, allow_pickle=True)
+        gene_ids = list(data["gene_ids"])
+        seqs = list(data["sequences"])
+        logger.info("Loaded %d sequences from disk (instant!)", len(gene_ids))
+        return dict(zip(gene_ids, seqs))
+
+    return None
+
+
 def embed_all_genes(
     model_name: str,
     pooling: str,
@@ -103,6 +132,7 @@ def embed_all_genes(
     biotype: str,
     device: torch.device,
     checkpoint_dir: Path | None = None,
+    data_dir: str | None = None,
 ) -> tuple[list[str], list[np.ndarray], list[int]]:
     """Embed all genes using the BioEmbedder.
 
@@ -122,6 +152,8 @@ def embed_all_genes(
         Device to run inference on.
     checkpoint_dir : Path, optional
         Directory to save intermediate checkpoints.
+    data_dir : str, optional
+        Base data directory to look for pre-downloaded sequences.
 
     Returns
     -------
@@ -137,10 +169,17 @@ def embed_all_genes(
     logger.info(f"Initializing BioEmbedder with device={device}")
     embedder = BioEmbedder(device=device)
 
-    logger.info(f"Fetching all {biotype} genes for {organism}...")
-    gene_resolver = embedder.gene_resolver
+    # Try loading pre-downloaded sequences first
+    sequences = None
+    if data_dir:
+        sequences = _try_load_predownloaded(data_dir, biotype, region)
 
-    sequences = gene_resolver.get_gene_sequences(biotype=biotype)
+    if sequences is None:
+        logger.info("No pre-downloaded sequences found; fetching from API...")
+        logger.info(f"Fetching all {biotype} genes for {organism}...")
+        gene_resolver = embedder.gene_resolver
+        sequences = gene_resolver.get_gene_sequences(biotype=biotype)
+
     if not sequences:
         logger.error("Failed to retrieve gene sequences")
         return [], [], []
@@ -275,6 +314,12 @@ def main() -> None:
         default=None,
         help="Directory for intermediate checkpoints (optional).",
     )
+    parser.add_argument(
+        "--data-dir",
+        type=str,
+        default=None,
+        help="Base data directory with pre-downloaded sequences (optional).",
+    )
 
     args = parser.parse_args()
 
@@ -300,6 +345,7 @@ def main() -> None:
         biotype=args.biotype,
         device=device,
         checkpoint_dir=args.checkpoint_dir,
+        data_dir=args.data_dir,
     )
 
     if not embeddings:
