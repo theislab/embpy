@@ -217,20 +217,20 @@ class TestScanpyDependentTl:
 
 class TestGetEmbeddingKeys:
     def test_auto_discovery(self, synthetic_adata):
-        from embpy.pl.basic import _get_embedding_keys
+        from embpy.pl._helpers import _get_embedding_keys
 
         keys = _get_embedding_keys(synthetic_adata)
         assert "X_emb_a" in keys
         assert "X_emb_b" in keys
 
     def test_explicit_keys(self, synthetic_adata):
-        from embpy.pl.basic import _get_embedding_keys
+        from embpy.pl._helpers import _get_embedding_keys
 
         keys = _get_embedding_keys(synthetic_adata, obsm_keys=["X_emb_a"])
         assert keys == ["X_emb_a"]
 
     def test_skip_umap_tsne(self, synthetic_adata):
-        from embpy.pl.basic import _get_embedding_keys
+        from embpy.pl._helpers import _get_embedding_keys
 
         synthetic_adata.obsm["X_umap"] = np.zeros((30, 2))
         synthetic_adata.obsm["X_tsne"] = np.zeros((30, 2))
@@ -239,7 +239,7 @@ class TestGetEmbeddingKeys:
         assert "X_tsne" not in keys
 
     def test_invalid_key_raises(self, synthetic_adata):
-        from embpy.pl.basic import _get_embedding_keys
+        from embpy.pl._helpers import _get_embedding_keys
 
         with pytest.raises(KeyError):
             _get_embedding_keys(synthetic_adata, obsm_keys=["X_nonexistent"])

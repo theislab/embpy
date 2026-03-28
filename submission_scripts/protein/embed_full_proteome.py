@@ -12,7 +12,7 @@ Example
         --model esm2_650M \\
         --pooling mean \\
         --isoform canonical \\
-        --output data/protein_embeddings/esm2_650M/canonical_mean.npz
+        --output data/embeddings/protein_embeddings/esm2_650M/canonical_mean.npz
 """
 
 from __future__ import annotations

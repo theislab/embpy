@@ -22,7 +22,7 @@
 
 set -eo pipefail
 
-DATA_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data"
+DATA_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/embeddings"
 SCRIPT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts"
 
 mkdir -p "${SCRIPT_DIR}/logs"

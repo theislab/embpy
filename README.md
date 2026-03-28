@@ -417,22 +417,22 @@ print(f"Models: {len(embedder.list_available_models())} available")
 
 | # | Topic | Notebook |
 |---|---|---|
-| 01 | Identifiers and Preprocessing | [01_identifiers_and_preprocessing.ipynb](docs/tutorials_core_tools/01_identifiers_and_preprocessing.ipynb) |
-| 02 | Gene (DNA) Embeddings | [02_gene_embeddings.ipynb](docs/tutorials_core_tools/02_gene_embeddings.ipynb) |
-| 03 | Protein Embeddings + Isoforms | [03_protein_embeddings.ipynb](docs/tutorials_core_tools/03_protein_embeddings.ipynb) |
-| 04 | Molecule Embeddings | [04_molecule_embeddings.ipynb](docs/tutorials_core_tools/04_molecule_embeddings.ipynb) |
-| 05 | Text Embeddings | [05_text_embeddings.ipynb](docs/tutorials_core_tools/05_text_embeddings.ipynb) |
-| 06 | PPI Embeddings | [06_ppi_embeddings.ipynb](docs/tutorials_core_tools/06_ppi_embeddings.ipynb) |
-| 07 | Combined Analysis | [07_combined_analysis.ipynb](docs/tutorials_core_tools/07_combined_analysis.ipynb) |
-| 08 | Visualization and Analysis | [08_visualization_and_analysis.ipynb](docs/tutorials_core_tools/08_visualization_and_analysis.ipynb) |
-| 09 | Embedding Benchmark | [09_embedding_benchmark.ipynb](docs/tutorials_core_tools/09_embedding_benchmark.ipynb) |
-| 10 | DNA Embeddings (Advanced) | [10_dna_embeddings.ipynb](docs/tutorials_core_tools/10_dna_embeddings.ipynb) |
-| 11 | DepMap Analysis | [11_depmap_analysis.ipynb](docs/tutorials_core_tools/11_depmap_analysis.ipynb) |
-| 12 | Single-Cell Foundation Models | [12_singlecell_foundation_models.ipynb](docs/tutorials_core_tools/12_singlecell_foundation_models.ipynb) |
-| 13 | JUMP Cell Painting | [13_jump_cell_painting.ipynb](docs/tutorials_core_tools/13_jump_cell_painting.ipynb) |
-| 14 | Unified Embedding (embed_adata) | [14_unified_embedding.ipynb](docs/tutorials_core_tools/14_unified_embedding.ipynb) |
-| 15 | Molecule Annotation | [15_molecule_annotation.ipynb](docs/tutorials_core_tools/15_molecule_annotation.ipynb) |
-| 16 | Gene/Protein Annotation + Weighted Embeddings | [16_gene_protein_annotation.ipynb](docs/tutorials_core_tools/16_gene_protein_annotation.ipynb) |
+| 01 | Identifiers and Preprocessing | [01_identifiers_and_preprocessing.ipynb](docs/notebooks/01_identifiers_and_preprocessing.ipynb) |
+| 02 | Gene (DNA) Embeddings | [02_gene_embeddings.ipynb](docs/notebooks/02_gene_embeddings.ipynb) |
+| 03 | Protein Embeddings + Isoforms | [03_protein_embeddings.ipynb](docs/notebooks/03_protein_embeddings.ipynb) |
+| 04 | Molecule Embeddings | [04_molecule_embeddings.ipynb](docs/notebooks/04_molecule_embeddings.ipynb) |
+| 05 | Text Embeddings | [05_text_embeddings.ipynb](docs/notebooks/05_text_embeddings.ipynb) |
+| 06 | PPI Embeddings | [06_ppi_embeddings.ipynb](docs/notebooks/06_ppi_embeddings.ipynb) |
+| 07 | Combined Analysis | [07_combined_analysis.ipynb](docs/notebooks/07_combined_analysis.ipynb) |
+| 08 | Visualization and Analysis | [08_visualization_and_analysis.ipynb](docs/notebooks/08_visualization_and_analysis.ipynb) |
+| 09 | Embedding Benchmark | [09_embedding_benchmark.ipynb](docs/notebooks/09_embedding_benchmark.ipynb) |
+| 10 | DNA Embeddings (Advanced) | [10_dna_embeddings.ipynb](docs/notebooks/10_dna_embeddings.ipynb) |
+| 11 | DepMap Analysis | [11_depmap_analysis.ipynb](docs/notebooks/11_depmap_analysis.ipynb) |
+| 12 | Single-Cell Foundation Models | [12_singlecell_foundation_models.ipynb](docs/notebooks/12_singlecell_foundation_models.ipynb) |
+| 13 | JUMP Cell Painting | [13_jump_cell_painting.ipynb](docs/notebooks/13_jump_cell_painting.ipynb) |
+| 14 | Unified Embedding (embed_adata) | [14_unified_embedding.ipynb](docs/notebooks/14_unified_embedding.ipynb) |
+| 15 | Molecule Annotation | [15_molecule_annotation.ipynb](docs/notebooks/15_molecule_annotation.ipynb) |
+| 16 | Gene/Protein Annotation + Weighted Embeddings | [16_gene_protein_annotation.ipynb](docs/notebooks/16_gene_protein_annotation.ipynb) |
 
 ## Package Structure
 
