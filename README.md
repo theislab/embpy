@@ -311,52 +311,106 @@ adata = annotate_proteins(adata, column="gene")
 
 ## Installation
 
-You need Python 3.11 or newer.
+Requires **Python 3.11+**. Choose the method that best fits your workflow.
 
-### 1. Base install (CPU)
+### Option 1: Mamba / Conda (recommended for HPC)
+
+The fastest way to get a fully working environment with GPU support, RDKit,
+and all compiled dependencies resolved automatically.
 
 ```bash
+# GPU environment (CUDA 12.4)
+git clone https://github.com/theislab/embpy.git
+cd embpy
+mamba env create -f environment.yml
+mamba activate embpy
+```
+
+```bash
+# CPU-only environment
+mamba env create -f environment-cpu.yml
+mamba activate embpy-cpu
+```
+
+The environment files install PyTorch, RDKit, and the core scientific stack
+via conda-forge, then install embpy and its Python-only dependencies via pip.
+
+To add optional extras after activation:
+
+```bash
+pip install ".[evo2,helical]"    # add Evo2 + single-cell models
+pip install ".[all]"             # everything
+```
+
+### Option 2: uv (fastest pip alternative)
+
+[uv](https://docs.astral.sh/uv/) is a drop-in pip replacement that resolves
+and installs packages 10-100x faster.
+
+```bash
+# Install uv if you don't have it
+pip install uv
+
+# CPU install
+uv pip install git+https://github.com/theislab/embpy.git@main
+
+# GPU install (CUDA 12.4)
+uv pip install "embpy[torch-cu124]" --extra-index-url https://download.pytorch.org/whl/cu124
+
+# Full GPU install with all extras
+uv pip install "embpy[all-cu124]" --extra-index-url https://download.pytorch.org/whl/cu124
+
+# Development install (editable)
+git clone https://github.com/theislab/embpy.git
+cd embpy
+uv pip install -e ".[dev,test]"
+```
+
+### Option 3: pip
+
+```bash
+# Base install (CPU) -- includes all HuggingFace models
 pip install git+https://github.com/theislab/embpy.git@main
-```
 
-The base install includes all HuggingFace-based models (GENA-LM, Nucleotide
-Transformer v1/v2/v3, HyenaDNA, ESM-2, ProtT5, ChemBERTa, Molformer, ...)
-since `transformers` is a core dependency.
-
-### 2. GPU install
-
-```bash
-# CUDA 12.1
+# GPU install -- pick your CUDA version
 pip install "embpy[torch-cu121]" --extra-index-url https://download.pytorch.org/whl/cu121
-
-# CUDA 12.4 (most common on modern HPC clusters)
 pip install "embpy[torch-cu124]" --extra-index-url https://download.pytorch.org/whl/cu124
-
-# CUDA 12.8
 pip install "embpy[torch-cu128]" --extra-index-url https://download.pytorch.org/whl/cu128
-```
-
-### 3. Optional extras
-
-| Extra | Models enabled |
-|---|---|
-| *(base)* | GENA-LM, NT v1/v2/v3, HyenaDNA, ESM-2/C, ProtT5, ChemBERTa, MolFormer, RDKit |
-| `caduceus` | Caduceus (SSM/Mamba DNA model) |
-| `evo` | Evo v1/v1.5 |
-| `evo2` | Evo 2 |
-| `helical` | Single-cell foundation models (scGPT, Geneformer, UCE, ...) |
-| `ppi` | PPI GNN encoder |
-| `pertpy` | pertpy integration |
-| `scanpy` | scanpy integration |
-
-```bash
-# Example: CUDA 12.4 + single-cell models + Evo2
-pip install "embpy[torch-cu124,helical,evo2]" \
-  --extra-index-url https://download.pytorch.org/whl/cu124
 
 # Full GPU install (CUDA 12.4)
-pip install "embpy[all-cu124]" \
+pip install "embpy[all-cu124]" --extra-index-url https://download.pytorch.org/whl/cu124
+```
+
+### Optional extras
+
+Install only what you need:
+
+| Extra | What it enables |
+|---|---|
+| *(base)* | GENA-LM, NT v1/v2/v3, HyenaDNA, ESM-2/C, ProtT5, ChemBERTa, MolFormer, RDKit |
+| `caduceus` | Caduceus (SSM/Mamba DNA model, requires CUDA) |
+| `evo` | Evo v1/v1.5 |
+| `evo2` | Evo 2 |
+| `helical` | Single-cell foundation models (scGPT, Geneformer, UCE, TranscriptFormer, Tahoe, Cell2Sentence) |
+| `ppi` | PPI GNN encoder |
+| `pertpy` | pertpy metadata annotation |
+| `scanpy` | scanpy integration |
+| `all` | Everything above |
+
+```bash
+# Mix and match
+pip install "embpy[torch-cu124,helical,evo2,pertpy]" \
   --extra-index-url https://download.pytorch.org/whl/cu124
+```
+
+### Verifying the installation
+
+```python
+from embpy.embedder import BioEmbedder
+
+embedder = BioEmbedder(device="auto")
+print(f"Device: {embedder.device}")
+print(f"Models: {len(embedder.list_available_models())} available")
 ```
 
 ## Tutorials

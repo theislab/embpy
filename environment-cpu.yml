@@ -1,0 +1,31 @@
+name: embpy-cpu
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.11,<3.14
+  - pip>=24.0
+
+  # Core scientific stack
+  - numpy>=1.26,<2.0
+  - pandas>=2.3
+  - scipy>=1.11
+  - scikit-learn>=1.3
+  - matplotlib
+  - seaborn
+
+  # AnnData / scverse ecosystem
+  - anndata
+  - scanpy>=1.10
+
+  # PyTorch (CPU only)
+  - pytorch::pytorch>=2.5.1
+  - pytorch::cpuonly
+
+  # Bioinformatics
+  - conda-forge::biopython
+  - conda-forge::pyensembl>=2.3.13
+  - conda-forge::rdkit
+
+  # Install embpy + remaining deps via pip
+  - pip:
+      - -e ".[helical,pertpy,ppi]"
