@@ -39,8 +39,8 @@ set -euo pipefail
 
 # ---- Configuration ---------------------------------------------------------
 BASE_OUTPUT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/dna_embeddings"
-SCRIPT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts"
-LOG_DIR="${SCRIPT_DIR}/logs"
+SCRIPT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts/dna"
+LOG_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts/logs"
 
 mkdir -p "${LOG_DIR}"
 
@@ -112,6 +112,7 @@ python -u "${SCRIPT_DIR}/embed_full_genome.py" \
     --output "${OUTPUT_FILE}" \
     --organism human \
     --biotype protein_coding \
-    --device auto
+    --device auto \
+    --data-dir "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data"
 
 echo "=== Job finished at $(date) ==="

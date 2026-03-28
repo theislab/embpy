@@ -35,9 +35,9 @@
 set -eo pipefail
 
 BASE_OUTPUT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/protein_embeddings"
-SCRIPT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts"
+SCRIPT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts/protein"
 CHECKPOINT_DIR="${BASE_OUTPUT_DIR}/.checkpoints"
-LOG_DIR="${SCRIPT_DIR}/logs"
+LOG_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy/submission_scripts/logs"
 
 mkdir -p "${LOG_DIR}" "${CHECKPOINT_DIR}"
 
@@ -104,6 +104,7 @@ python -u "${SCRIPT_DIR}/embed_full_proteome.py" \
     --organism human \
     --biotype protein_coding \
     --device auto \
-    --checkpoint-dir "${CHECKPOINT_DIR}"
+    --checkpoint-dir "${CHECKPOINT_DIR}" \
+    --data-dir "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data"
 
 echo "=== Job finished at $(date) ==="

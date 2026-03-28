@@ -78,6 +78,7 @@ def main() -> None:
     parser.add_argument("--device", type=str, default="auto")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--checkpoint-dir", type=Path, default=None)
+    parser.add_argument("--data-dir", type=str, default=None, help="Base data directory with pre-downloaded sequences.")
 
     args = parser.parse_args()
 
@@ -105,18 +106,67 @@ def main() -> None:
         _embed_all_isoforms(embedder, args)
 
 
+def _try_load_protein_sequences(data_dir: str | None) -> dict[str, str] | None:
+    """Try to load pre-downloaded canonical protein sequences from disk."""
+    if data_dir is None:
+        return None
+    seq_dir = Path(data_dir) / "sequences"
+    if not seq_dir.exists():
+        return None
+    for npz_file in seq_dir.glob("*canonical_proteins*.npz"):
+        logger.info("Loading pre-downloaded protein sequences from %s", npz_file)
+        data = np.load(npz_file, allow_pickle=True)
+        gene_ids = list(data["gene_ids"])
+        seqs = list(data["sequences"])
+        logger.info("Loaded %d canonical protein sequences from disk (instant!)", len(gene_ids))
+        return dict(zip(gene_ids, seqs))
+    return None
+
+
+def _try_load_isoform_sequences(data_dir: str | None) -> dict[str, dict[str, str]] | None:
+    """Try to load pre-downloaded isoform sequences from disk.
+
+    Returns {gene_id: {isoform_accession: sequence}}.
+    """
+    if data_dir is None:
+        return None
+    seq_dir = Path(data_dir) / "sequences"
+    if not seq_dir.exists():
+        return None
+    for npz_file in seq_dir.glob("*all_isoforms*.npz"):
+        logger.info("Loading pre-downloaded isoform sequences from %s", npz_file)
+        data = np.load(npz_file, allow_pickle=True)
+        gene_ids = list(data["gene_ids"])
+        isoform_ids = list(data["isoform_ids"])
+        seqs = list(data["sequences"])
+        result: dict[str, dict[str, str]] = {}
+        for gid, iso_id, seq in zip(gene_ids, isoform_ids, seqs):
+            result.setdefault(gid, {})[iso_id] = seq
+        logger.info(
+            "Loaded %d isoforms from %d genes from disk (instant!)",
+            len(seqs), len(result),
+        )
+        return result
+    return None
+
+
 def _embed_canonical(embedder, args) -> None:
     """Embed canonical protein for every gene."""
     from embpy.resources.protein_resolver import ProteinResolver
 
-    pr = ProteinResolver(organism=args.organism)
+    preloaded = _try_load_protein_sequences(getattr(args, "data_dir", None))
 
-    logger.info("Fetching all %s gene IDs...", args.biotype)
-    gene_ids = pr._get_all_gene_ids(biotype=args.biotype)
-    if not gene_ids:
-        logger.error("No genes found")
-        sys.exit(1)
-    logger.info("Found %d genes", len(gene_ids))
+    if preloaded:
+        gene_ids = list(preloaded.keys())
+        logger.info("Using %d pre-downloaded protein sequences", len(gene_ids))
+    else:
+        pr = ProteinResolver(organism=args.organism)
+        logger.info("Fetching all %s gene IDs...", args.biotype)
+        gene_ids = pr._get_all_gene_ids(biotype=args.biotype)
+        if not gene_ids:
+            logger.error("No genes found")
+            sys.exit(1)
+        logger.info("Found %d genes", len(gene_ids))
 
     checkpoint_file = None
     if args.checkpoint_dir:
@@ -141,14 +191,23 @@ def _embed_canonical(embedder, args) -> None:
             continue
 
         try:
-            emb = embedder.embed_protein(
-                identifier=gene_id,
-                model=args.model,
-                id_type="ensembl_id",
-                organism=args.organism,
-                pooling_strategy=args.pooling,
-                isoform="canonical",
-            )
+            if preloaded and gene_id in preloaded:
+                seq = preloaded[gene_id]
+                emb = embedder.embed_protein(
+                    identifier=seq,
+                    model=args.model,
+                    id_type="sequence",
+                    pooling_strategy=args.pooling,
+                )
+            else:
+                emb = embedder.embed_protein(
+                    identifier=gene_id,
+                    model=args.model,
+                    id_type="ensembl_id",
+                    organism=args.organism,
+                    pooling_strategy=args.pooling,
+                    isoform="canonical",
+                )
             if emb is not None:
                 gene_ids_done.append(gene_id)
                 embeddings_done.append(np.asarray(emb, dtype=np.float32).ravel())
@@ -203,10 +262,16 @@ def _embed_all_isoforms(embedder, args) -> None:
     """Embed all isoforms for every gene."""
     from embpy.resources.protein_resolver import ProteinResolver
 
-    pr = ProteinResolver(organism=args.organism)
+    preloaded_iso = _try_load_isoform_sequences(getattr(args, "data_dir", None))
 
-    logger.info("Fetching all %s gene IDs...", args.biotype)
-    gene_ids = pr._get_all_gene_ids(biotype=args.biotype)
+    if preloaded_iso:
+        gene_ids = list(preloaded_iso.keys())
+        logger.info("Using %d genes with pre-downloaded isoforms", len(gene_ids))
+    else:
+        pr = ProteinResolver(organism=args.organism)
+        logger.info("Fetching all %s gene IDs...", args.biotype)
+        gene_ids = pr._get_all_gene_ids(biotype=args.biotype)
+
     if not gene_ids:
         logger.error("No genes found")
         sys.exit(1)
@@ -222,20 +287,35 @@ def _embed_all_isoforms(embedder, args) -> None:
 
     for i, gene_id in enumerate(gene_ids):
         try:
-            result = embedder.embed_protein(
-                identifier=gene_id,
-                model=args.model,
-                id_type="ensembl_id",
-                organism=args.organism,
-                pooling_strategy=args.pooling,
-                isoform="all",
-            )
-            if isinstance(result, dict):
-                for iso_id, emb in result.items():
-                    all_ids.append(f"{gene_id}|{iso_id}")
-                    all_gene_ids.append(gene_id)
-                    all_isoform_ids.append(iso_id)
-                    all_embeddings.append(np.asarray(emb, dtype=np.float32).ravel())
+            if preloaded_iso and gene_id in preloaded_iso:
+                iso_seqs = preloaded_iso[gene_id]
+                for iso_id, seq in iso_seqs.items():
+                    emb = embedder.embed_protein(
+                        identifier=seq,
+                        model=args.model,
+                        id_type="sequence",
+                        pooling_strategy=args.pooling,
+                    )
+                    if emb is not None:
+                        all_ids.append(f"{gene_id}|{iso_id}")
+                        all_gene_ids.append(gene_id)
+                        all_isoform_ids.append(iso_id)
+                        all_embeddings.append(np.asarray(emb, dtype=np.float32).ravel())
+            else:
+                result = embedder.embed_protein(
+                    identifier=gene_id,
+                    model=args.model,
+                    id_type="ensembl_id",
+                    organism=args.organism,
+                    pooling_strategy=args.pooling,
+                    isoform="all",
+                )
+                if isinstance(result, dict):
+                    for iso_id, emb in result.items():
+                        all_ids.append(f"{gene_id}|{iso_id}")
+                        all_gene_ids.append(gene_id)
+                        all_isoform_ids.append(iso_id)
+                        all_embeddings.append(np.asarray(emb, dtype=np.float32).ravel())
         except Exception as e:
             logger.warning("Failed %s: %s", gene_id, e)
 
