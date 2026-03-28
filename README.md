@@ -16,43 +16,126 @@ Given a perturbation (genetic or chemical) and/or single-cell expression data, e
   <img src="docs/_static/embpy_workflow.png" alt="embpy workflow" width="800"/>
 </p>
 
+## Architecture
+
+<p align="center">
+  <img src="docs/_static/embpy_architecture_detailed.png" alt="embpy architecture" width="1000"/>
+</p>
+
+<details>
+<summary>Mermaid diagram (click to expand)</summary>
+
 ```mermaid
-flowchart LR
-    subgraph input [Input]
-        Gene["Gene Symbol / Ensembl ID"]
-        Mol["SMILES / Drug Name"]
-        Cells["AnnData with counts"]
+flowchart TD
+    subgraph inputs [Input Modalities]
+        direction TB
+        GeneInput["Genetic Perturbations\nGene Symbol | Ensembl ID\nDNA Sequence | Exons/Introns"]
+        ProtInput["Protein Targets\nUniProt ID | Canonical\nIsoforms"]
+        MolInput["Chemical Perturbations\nSMILES | InChI\nDrug Name | PubChem CID"]
+        CellInput["Single-Cell Data\nAnnData | Raw Counts\nLog-normalized"]
     end
 
-    subgraph resolve [Sequence Resolution]
-        DNASeq["DNA Sequence"]
-        ProtSeq["Protein Sequence"]
-        MolStruct["Molecular Structure"]
-        CellExpr["Expression Matrix"]
+    subgraph resolvers [Sequence Resolution]
+        direction TB
+        GeneRes["GeneResolver\nEnsembl REST | pyensembl\nMyGene.info"]
+        ProtRes["ProteinResolver\nUniProt REST\nMyGene.info"]
+        DrugRes["DrugResolver\nPubChem | NIH Cactus\nCIRpy"]
     end
 
-    subgraph models [Foundation Models]
-        DNAMod["DNA: Enformer, Borzoi, Flashzoi, Evo2, NT, HyenaDNA, Caduceus"]
-        ProtMod["Protein: ESM-2, ESM-C, ESM3, ProtT5"]
-        MolMod["Molecule: ChemBERTa, MolFormer, RDKit, MiniMol"]
-        SCMod["Single-Cell: scGPT, Geneformer, UCE, PCA, scVI"]
+    subgraph annotators [Annotation Sources]
+        direction TB
+        MolAnn["MoleculeAnnotator\nRDKit | ChEMBL | ChEBI\nKEGG | PubChem | UniChem"]
+        GeneAnn["GeneAnnotator\nMyGene | GTEx | STRING-DB\nOpen Targets | GWAS Catalog\nDoRothEA"]
+        ProtAnn["ProteinAnnotator\nUniProt JSON | InterPro\nGO Terms"]
     end
 
-    subgraph output [Output]
-        Embs["Embeddings in .obsm"]
-        Annots["Annotations in .obs/.uns"]
+    subgraph dna_models [DNA Models]
+        Enformer["Enformer 250M"]
+        Borzoi["Borzoi v0-v3 200M"]
+        Flashzoi["Flashzoi v0-v3 200M"]
+        Evo["Evo 1/1.5/2 7B-40B"]
+        NT["Nucleotide Transformer\nv1/v2/v3 50M-2.5B"]
+        HyenaDNA["HyenaDNA 1.6M-6.6M"]
+        GENALM["GENA-LM 110M-336M"]
+        Caduceus2["Caduceus 16M"]
     end
 
-    Gene --> DNASeq & ProtSeq
-    Mol --> MolStruct
-    Cells --> CellExpr
-    DNASeq --> DNAMod
-    ProtSeq --> ProtMod
-    MolStruct --> MolMod
-    CellExpr --> SCMod
-    DNAMod & ProtMod & MolMod & SCMod --> Embs
-    Gene & Mol --> Annots
+    subgraph prot_models [Protein Models]
+        ESM1["ESM-1b/1v 650M"]
+        ESM2["ESM-2 8M-15B"]
+        ESMC["ESM-C 300M-6B"]
+        ESM3M["ESM3 1.4B-98B"]
+        ProtT5["ProtT5 3B"]
+    end
+
+    subgraph mol_models [Molecule Models]
+        ChemBERTa["ChemBERTa 77M-100M"]
+        MolFormer["MolFormer XL"]
+        RDKitFP["RDKit Fingerprints\nMorgan | MACCS | Torsion"]
+        MiniMolM["MiniMol 10M"]
+        MHGGNN["MHG-GNN"]
+        MolEM["MolE"]
+    end
+
+    subgraph sc_models [Single-Cell Models]
+        scGPTM["scGPT 51M"]
+        GeneformerM["Geneformer v1/v2\n10M-316M"]
+        UCEM["UCE 1.3B"]
+        TFM["TranscriptFormer\n368M-542M"]
+        TahoeM["Tahoe-x1 70M-3B"]
+        C2SM["Cell2Sentence 2B-27B"]
+        PCAM["PCA"]
+        scVIM["scVI | scANVI | totalVI"]
+    end
+
+    subgraph strategies [Embedding Strategies]
+        StdPool["Standard: mean | max | cls"]
+        TPMWeight["TPM-Weighted Isoform Average"]
+        AnnWeight["Annotation-Weighted\nResidue Pooling"]
+        ExprCtx["Expression-Context\nConcatenation"]
+        RegionEmb["Region-Specific:\nfull | exons | introns"]
+    end
+
+    subgraph tools [Analysis Tools]
+        direction TB
+        Preproc["Preprocessing\nNormalize | Log1p | HVG | Scale\nCPU or GPU via rapids"]
+        Sim["Similarity\nCosine | Pearson | Spearman\nWasserstein"]
+        Cluster["Clustering\nLeiden | K-means | Spectral"]
+        DimRed["Dim Reduction\nUMAP | t-SNE | PCA"]
+        Bench["Benchmarking\nKNN Overlap | Ranking\nMetrics"]
+    end
+
+    subgraph outputBlock [Output]
+        ObsmOut[".obsm embeddings"]
+        ObsOut[".obs annotations"]
+        UnsOut[".uns metadata"]
+        NpzOut[".npz matrices"]
+    end
+
+    GeneInput --> GeneRes
+    GeneInput --> ProtRes
+    MolInput --> DrugRes
+    CellInput --> sc_models
+
+    GeneRes --> dna_models
+    ProtRes --> prot_models
+    DrugRes --> mol_models
+
+    GeneInput --> GeneAnn
+    MolInput --> MolAnn
+    GeneInput --> ProtAnn
+
+    dna_models --> strategies
+    prot_models --> strategies
+    mol_models --> strategies
+    sc_models --> strategies
+
+    strategies --> outputBlock
+    annotators --> ObsOut
+    outputBlock --> tools
 ```
+
+</details>
 
 ## Key Features
 
