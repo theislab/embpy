@@ -1,19 +1,15 @@
 # embpy/models/protein_models.py
-import io
 import logging
 import re
-import time
 from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
-import pandas as pd
-import requests
 import torch
 
 from .base import BaseModelWrapper
 
-# ESMC SDK import
+# EvolutionaryScale ESM SDK imports
 try:
     from esm.models.esmc import ESMC
     from esm.sdk.api import ESMProtein, LogitsConfig, LogitsOutput
@@ -21,6 +17,16 @@ try:
     _HAVE_ESMC = True
 except ImportError:
     _HAVE_ESMC = False
+
+try:
+    from esm.models.esm3 import ESM3
+    from esm.sdk.api import ESM3InferenceClient
+
+    _HAVE_ESM3 = True
+except ImportError:
+    _HAVE_ESM3 = False
+    ESM3 = None  # type: ignore
+    ESM3InferenceClient = None  # type: ignore
 from transformers import AutoModel, AutoTokenizer, T5EncoderModel, T5Tokenizer
 
 
@@ -203,7 +209,7 @@ class ESM2Wrapper(BaseModelWrapper):
         ValueError
             If `pooling_strategy` is not one of the supported strategies.
         """
-        if self.model is None or self.device is None:
+        if self.model is None or self.device is None or self.tokenizer is None:
             raise RuntimeError("ESM2 model not loaded. Please call load() first.")
         if not inputs:
             return []
@@ -212,16 +218,52 @@ class ESM2Wrapper(BaseModelWrapper):
                 f"Invalid pooling strategy '{pooling_strategy}'. Choose from {self.available_pooling_strategies}"
             )
 
-        embeddings: list[np.ndarray] = []
-        for seq in inputs:
-            emb = self.embed(
-                input=seq,
-                pooling_strategy=pooling_strategy,
-                target_layer=target_layer,
-                **kwargs,
+        batch_size = kwargs.pop("batch_size", 32)
+        all_embeddings: list[np.ndarray] = []
+
+        for start in range(0, len(inputs), batch_size):
+            chunk = inputs[start : start + batch_size]
+            tokenized = self.tokenizer(
+                chunk, return_tensors="pt", truncation=True, padding=True,
             )
-            embeddings.append(emb)
-        return embeddings
+            input_ids = tokenized["input_ids"].to(self.device)
+            attention_mask = tokenized.get("attention_mask")
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(self.device)
+
+            with torch.no_grad():
+                outputs = self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    output_hidden_states=(target_layer is not None),
+                )
+                if target_layer is not None:
+                    emb_tensor = outputs.hidden_states[target_layer]
+                else:
+                    emb_tensor = outputs.last_hidden_state
+
+            for i in range(emb_tensor.shape[0]):
+                seq_emb = emb_tensor[i]
+                if attention_mask is not None:
+                    mask = attention_mask[i].unsqueeze(-1).bool()
+                else:
+                    mask = None
+
+                if pooling_strategy == "cls":
+                    pooled = seq_emb[0]
+                elif pooling_strategy == "max":
+                    if mask is not None:
+                        seq_emb = seq_emb.masked_fill(~mask, float("-inf"))
+                    pooled = torch.max(seq_emb, dim=0)[0]
+                else:
+                    if mask is not None:
+                        pooled = (seq_emb * mask).sum(dim=0) / mask.sum(dim=0).clamp(min=1)
+                    else:
+                        pooled = seq_emb.mean(dim=0)
+
+                all_embeddings.append(pooled.cpu().numpy())
+
+        return all_embeddings
 
 
 class ESMCWrapper(BaseModelWrapper):
@@ -502,9 +544,7 @@ class ProtT5Wrapper(BaseModelWrapper):
 
         logging.info("Loading ProtT5 model '%s' …", self.model_name)
         try:
-            self.tokenizer = T5Tokenizer.from_pretrained(
-                self.model_name, do_lower_case=False
-            )
+            self.tokenizer = T5Tokenizer.from_pretrained(self.model_name, do_lower_case=False)
             # Use T5EncoderModel to avoid decoder overhead
             self.model = T5EncoderModel.from_pretrained(self.model_name)
             self.model.to(device).eval()  # type: ignore[union-attr]
@@ -563,10 +603,7 @@ class ProtT5Wrapper(BaseModelWrapper):
         if self.model is None or self.device is None or self.tokenizer is None:
             raise RuntimeError("ProtT5 model not loaded. Call load() first.")
         if pooling_strategy not in self.available_pooling_strategies:
-            raise ValueError(
-                f"Invalid pooling '{pooling_strategy}'. "
-                f"Choose from {self.available_pooling_strategies}"
-            )
+            raise ValueError(f"Invalid pooling '{pooling_strategy}'. Choose from {self.available_pooling_strategies}")
 
         prepared = self._prepare_sequence(input)
         ids = self.tokenizer(
@@ -643,205 +680,171 @@ class ProtT5Wrapper(BaseModelWrapper):
         list[np.ndarray]
             One 1-D array of shape ``(1024,)`` per input sequence.
         """
-        if self.model is None or self.device is None:
+        if self.model is None or self.device is None or self.tokenizer is None:
             raise RuntimeError("ProtT5 model not loaded. Call load() first.")
         if not inputs:
             return []
-
-        return [
-            self.embed(
-                input=seq,
-                pooling_strategy=pooling_strategy,
-                target_layer=target_layer,
-                **kwargs,
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(
+                f"Invalid pooling '{pooling_strategy}'. Choose from {self.available_pooling_strategies}"
             )
-            for seq in inputs
-        ]
+
+        batch_size = kwargs.pop("batch_size", 16)
+        all_embeddings: list[np.ndarray] = []
+
+        for start in range(0, len(inputs), batch_size):
+            chunk = inputs[start : start + batch_size]
+            prepared = [self._prepare_sequence(seq) for seq in chunk]
+            tokenized = self.tokenizer(
+                prepared,
+                add_special_tokens=True,
+                padding="longest",
+                return_tensors="pt",
+            )
+            input_ids = tokenized["input_ids"].to(self.device)
+            attention_mask = tokenized.get("attention_mask")
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(self.device)
+
+            with torch.no_grad():
+                outputs = self.model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    output_hidden_states=(target_layer is not None),
+                )
+                if target_layer is not None:
+                    emb_tensor = outputs.hidden_states[target_layer]
+                else:
+                    emb_tensor = outputs.last_hidden_state
+
+            for i in range(emb_tensor.shape[0]):
+                seq_emb = emb_tensor[i]
+                if attention_mask is not None:
+                    mask = attention_mask[i].unsqueeze(-1).bool()
+                else:
+                    mask = None
+
+                if pooling_strategy == "cls":
+                    pooled = seq_emb[0]
+                elif pooling_strategy == "max":
+                    if mask is not None:
+                        seq_emb = seq_emb.masked_fill(~mask, float("-inf"))
+                    pooled = torch.max(seq_emb, dim=0)[0]
+                else:
+                    if mask is not None:
+                        pooled = (seq_emb * mask).sum(dim=0) / mask.sum(dim=0).clamp(min=1)
+                    else:
+                        pooled = seq_emb.mean(dim=0)
+
+                all_embeddings.append(pooled.float().cpu().numpy())
+
+        return all_embeddings
 
 
-class STRINGWrapper(BaseModelWrapper):
-    """
-    STRINGWrapper API.
+class ESM3Wrapper(BaseModelWrapper):
+    """Wrapper for ESM3 protein language models (EvolutionaryScale SDK).
 
-    Wrapper for the STRING database API to retrieve protein interaction data
-    and convert it into simple embeddings (e.g., pooled interaction scores).
+    ESM3 is a multimodal generative model for proteins. This wrapper
+    uses the sequence track to produce per-residue embeddings and pools
+    them into a single vector.
 
-    Methods
-    -------
-        - load: No-op loader (stores device).
-        - embed: Fetches the interaction network for a single protein,
-          pools the combined scores, and returns a 1D numpy array.
-        - embed_batch: Inherited batch looping over embed.
+    Supported checkpoints:
+
+    * ``esm3-small-2024-08`` (1.4B, open weights)
+    * ``esm3-medium-2024-08`` (7B, Forge API)
+    * ``esm3-large-2024-03`` (98B, Forge API)
+
+    For open weights, the model runs locally. For larger models, pass
+    a Forge API token via ``forge_token``.
+
+    Requires the ``esm`` package: ``pip install esm``
     """
 
     model_type = "protein"
-    available_pooling_strategies = ["mean", "max"]
-    BASE_URL = "https://version-12-0.string-db.org/api"
+    available_pooling_strategies = ["mean", "max", "cls"]
 
     def __init__(
         self,
-        model_path_or_name: str | None = None,
-        caller_identity: str = "my_app",
+        model_path_or_name: str = "esm3-small-2024-08",
+        forge_token: str | None = None,
         **kwargs: Any,
-    ):
-        """
-        Initialize the STRINGWrapper.
-
-        Args:
-            model_path_or_name (Optional[str]): Ignored for STRING API.
-            caller_identity (str): Identifier for your application. Used by STRING for usage tracking.
-            **kwargs: Additional configuration (ignored).
-        """
+    ) -> None:
         super().__init__(model_path_or_name, **kwargs)
-        self.caller = caller_identity
+        self.forge_token = forge_token
+        self._client: Any = None
 
     def load(self, device: torch.device) -> None:
-        """
-        'Load' the wrapper by storing the device (no actual model to load).
+        """Load the ESM3 model locally or connect to Forge API."""
+        if self._client is not None:
+            logging.debug("ESM3 already loaded.")
+            return
 
-        Args:
-            device (torch.device): Device placeholder (not used).
-        """
+        if not _HAVE_ESM3:
+            raise ImportError(
+                "The 'esm' package is required for ESM3. "
+                "Install with: pip install esm"
+            )
+
+        name = self.model_name or "esm3-small-2024-08"
+
+        if self.forge_token:
+            import esm.sdk.client as esm_client
+            self._client = esm_client(name, token=self.forge_token)
+            logging.info("Connected to ESM3 Forge API: %s", name)
+        else:
+            self._client = ESM3.from_pretrained(name).to(device).eval()
+            logging.info("Loaded ESM3 '%s' locally on %s", name, device)
+
         self.device = device
-
-    def _post(self, output_format: str, method: str, params: dict[str, Any]) -> requests.Response:
-        """
-        Internal helper to perform a POST to STRING API.
-
-        Args:
-            output_format (str): 'tsv', 'json', 'xml', or 'image'.
-            method (str): API endpoint (e.g., 'get_string_ids', 'network').
-            params (dict[str, Any]): API-specific parameters.
-
-        Returns
-        -------
-            requests.Response: The HTTP response.
-
-        Raises
-        ------
-            requests.HTTPError: On bad status codes.
-        """
-        url = f"{self.BASE_URL}/{output_format}/{method}"
-        response = requests.post(
-            url,
-            data={**params, "caller_identity": self.caller},
-        )
-        # Raise on HTTP error
-        response.raise_for_status()
-        # Respect rate limits
-        time.sleep(1)
-        return response
-
-    def get_string_ids(
-        self,
-        identifiers: Sequence[str],
-        species: int | None = None,
-        echo_query: bool = False,
-    ) -> pd.DataFrame:
-        """
-        Map external IDs (gene symbols, UniProt IDs) to STRING internal IDs.
-
-        Args:
-            identifiers (Sequence[str]): Input IDs.
-            species (Optional[int]): NCBI taxonomy ID filter.
-            echo_query (bool): Include original query in output.
-
-        Returns
-        -------
-            pd.DataFrame: Columns include 'queryItem', 'stringId', etc.
-        """
-        params: dict[str, Any] = {
-            "identifiers": "\r".join(identifiers),
-            "echo_query": int(echo_query),
-        }
-        if species is not None:
-            params["species"] = species
-
-        resp = self._post("tsv", "get_string_ids", params)
-        return pd.read_csv(io.StringIO(resp.text), sep="\t", header=0)
-
-    def get_network(
-        self,
-        identifiers: Sequence[str],
-        species: int,
-        required_score: int = 400,
-        network_type: str = "functional",
-    ) -> pd.DataFrame:
-        """
-        Retrieve interaction edges for given STRING IDs.
-
-        Args:
-            identifiers (Sequence[str]): STRING or external IDs.
-            species (int): NCBI taxonomy ID.
-            required_score (int): Minimum combined score (0–1000).
-            network_type (str): 'functional', 'physical', etc.
-
-        Returns
-        -------
-            pd.DataFrame: Columns include 'protein1', 'protein2', 'combined_score'.
-        """
-        params: dict[str, Any] = {
-            "identifiers": "\r".join(identifiers),
-            "species": species,
-            "required_score": required_score,
-            "network_type": network_type,
-        }
-        resp = self._post("tsv", "network", params)
-        return pd.read_csv(io.StringIO(resp.text), sep="\t", header=0)
+        self.model = self._client
 
     def embed(
         self,
         input: str,
-        species: int = 9606,
-        required_score: int = 400,
+        pooling_strategy: str = "mean",
         **kwargs: Any,
-    ) -> pd.DataFrame:
+    ) -> np.ndarray:
+        """Embed a single protein sequence using ESM3.
+
+        Uses the ESM3 encoder to get per-residue embeddings from the
+        sequence track, then pools them.
         """
-        Retrieve the interaction network for a single protein as a DataFrame.
+        if self._client is None:
+            raise RuntimeError("ESM3 not loaded. Call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(
+                f"Invalid pooling '{pooling_strategy}'. "
+                f"Choose from {self.available_pooling_strategies}"
+            )
 
-        This method maps the input identifier to a STRING ID and retrieves
-        the full interaction network DataFrame (with columns like 'protein1',
-        'protein2', 'combined_score').
+        protein = ESMProtein(sequence=input)
+        protein_tensor = self._client.encode(protein)
+        cfg = LogitsConfig(sequence=True, return_embeddings=True)
+        out = self._client.logits(protein_tensor, cfg)
 
-        Args:
-            input (str): Gene symbol or STRING ID.
-            species (int): NCBI taxonomy ID.
-            required_score (int): Minimum combined score (0–1000).
-            **kwargs: Ignored.
+        embs = out.embeddings
+        if embs.dim() == 3 and embs.shape[0] == 1:
+            embs = embs.squeeze(0)
 
-        Returns
-        -------
-            pd.DataFrame: DataFrame of interaction edges for the given protein.
-        """
-        # Map to STRING ID
-        ids_df = self.get_string_ids([input], species=species, echo_query=False)
-        string_id = ids_df["stringId"].iloc[0]
+        if pooling_strategy == "cls":
+            pooled = embs[0]
+        elif pooling_strategy == "max":
+            pooled = torch.max(embs, dim=0)[0]
+        else:
+            pooled = torch.mean(embs, dim=0)
 
-        # Retrieve and return the full network DataFrame
-        net_df = self.get_network([string_id], species=species, required_score=required_score)
-        return net_df
+        return pooled.float().cpu().numpy()
 
     def embed_batch(
         self,
-        inputs: Sequence[str],
-        species: int = 9606,
-        required_score: int = 400,
+        inputs: list[str],
+        pooling_strategy: str = "mean",
         **kwargs: Any,
-    ) -> dict[str, pd.DataFrame]:
-        """
-        Retrieve interaction networks for multiple proteins.
-
-        Args:
-            inputs (Sequence[str]): List of gene symbols or STRING IDs.
-            species (int): NCBI taxonomy ID.
-            required_score (int): Minimum combined score (0–1000).
-            **kwargs: Ignored.
-
-        Returns
-        -------
-            Dict[str, pd.DataFrame]: Mapping from input identifier to its network DataFrame.
-        """
-        results: dict[str, pd.DataFrame] = {}
-        for inp in inputs:
-            results[inp] = self.embed(inp, species=species, required_score=required_score)
-        return results
+    ) -> list[np.ndarray]:
+        """Embed multiple protein sequences using ESM3."""
+        if self._client is None:
+            raise RuntimeError("ESM3 not loaded. Call load() first.")
+        return [
+            self.embed(seq, pooling_strategy=pooling_strategy, **kwargs)
+            for seq in inputs
+        ]

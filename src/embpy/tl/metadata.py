@@ -490,3 +490,185 @@ def _infer_perturbation_type(
     n_gene_like = sum(1 for v in unique_vals if gene_pattern.match(str(v)))
     fraction = n_gene_like / len(unique_vals)
     return "genetic" if fraction > 0.5 else "drug"
+
+
+# =====================================================================
+# Small-Molecule Annotation (beyond pertpy)
+# =====================================================================
+
+
+def annotate_molecules(
+    adata: AnnData,
+    column: str,
+    sources: str | list[str] = "all",
+    copy: bool = True,
+) -> AnnData:
+    """Annotate small molecules in an AnnData with multi-source metadata.
+
+    Reads molecule identifiers (SMILES, names, etc.) from
+    ``adata.obs[column]`` and fetches annotations from:
+
+    - **RDKit** -- physicochemical properties (MW, LogP, QED, PAINS, etc.)
+    - **ChEMBL** -- bioactivities, target proteins, mechanism of action
+    - **ChEBI** -- ontological roles and classification
+    - **KEGG** -- pathway annotations
+    - **PubChem** -- cross-database IDs, disease associations
+
+    Results are stored in ``adata.obs`` (scalar properties as ``mol_*``
+    columns) and ``adata.uns["molecule_annotations"]`` (full dicts).
+
+    .. note::
+       This function does **not** duplicate pertpy's drug-target gene
+       annotation.  Use :func:`annotate_drugs` for that.
+
+    Parameters
+    ----------
+    adata
+        AnnData with molecule identifiers in ``.obs[column]``.
+    column
+        Column in ``adata.obs`` containing SMILES, compound names, or
+        other molecule identifiers.
+    sources
+        Which data sources to query. ``"all"`` queries everything.
+        Pass a list to select: ``["structural", "bioactivity",
+        "ontology", "pathways", "xrefs", "diseases"]``.
+    copy
+        If ``True``, return a modified copy.
+
+    Returns
+    -------
+    AnnData with molecule annotations in ``adata.obs`` and ``adata.uns``.
+
+    Examples
+    --------
+    >>> adata = annotate_molecules(adata, column="drug_name")
+    >>> adata.obs["mol_logp"]           # LogP values
+    >>> adata.obs["mol_qed"]            # QED drug-likeness
+    >>> adata.uns["molecule_annotations"]["aspirin"]  # full dict
+    """
+    from embpy.resources.molecule_annotator import MoleculeAnnotator
+
+    annotator = MoleculeAnnotator()
+    return annotator.annotate_adata(
+        adata, column=column, sources=sources, copy=copy,
+    )
+
+
+def annotate_gene_perturbations(
+    adata: AnnData,
+    column: str,
+    sources: str | list[str] = "all",
+    copy: bool = True,
+) -> AnnData:
+    """Annotate gene perturbations with multi-source metadata.
+
+    Reads gene identifiers (symbols or Ensembl IDs) from
+    ``adata.obs[column]`` and fetches annotations from:
+
+    - **MyGene.info** -- pathway annotations (Reactome, KEGG, WikiPathways)
+    - **GTEx** -- tissue expression profiles
+    - **HPA** -- subcellular localization
+    - **STRING-DB** -- protein-protein interaction partners
+    - **DoRothEA** -- transcription factor regulons
+    - **Open Targets** -- disease associations
+    - **GWAS Catalog** -- genome-wide association study hits
+
+    Results are stored in ``adata.obs`` (summary columns as ``gene_*``)
+    and ``adata.uns["gene_annotations"]`` (full dicts).
+
+    .. note::
+       This function does **not** duplicate pertpy's GO term annotation.
+       Use :func:`annotate_genes` for that.
+
+    Parameters
+    ----------
+    adata
+        AnnData with gene identifiers in ``.obs[column]``.
+    column
+        Column in ``adata.obs`` containing gene symbols or Ensembl IDs.
+    sources
+        Which data sources to query. ``"all"`` queries everything.
+        Pass a list to select: ``["pathways", "expression",
+        "interactions", "diseases"]``.
+    copy
+        If ``True``, return a modified copy.
+
+    Returns
+    -------
+    AnnData with gene annotations in ``adata.obs`` and ``adata.uns``.
+
+    Examples
+    --------
+    >>> adata = annotate_gene_perturbations(adata, column="perturbation")
+    >>> adata.obs["gene_n_pathways"]
+    >>> adata.obs["gene_n_disease_assoc"]
+    >>> adata.uns["gene_annotations"]["TP53"]
+    """
+    from embpy.resources.gene_annotator import GeneAnnotator
+
+    annotator = GeneAnnotator()
+    return annotator.annotate_adata(
+        adata, column=column, sources=sources, copy=copy,
+    )
+
+
+def annotate_proteins(
+    adata: AnnData,
+    column: str,
+    id_type: str = "auto",
+    sources: str | list[str] = "all",
+    copy: bool = True,
+) -> AnnData:
+    """Annotate proteins with UniProt functional metadata.
+
+    Reads protein/gene identifiers from ``adata.obs[column]`` and
+    fetches annotations from UniProt and InterPro:
+
+    - **Function** -- molecular function, catalytic activity, pathway
+    - **Subcellular location** -- where the protein resides in the cell
+    - **Functional sites** -- active sites, binding sites, motifs
+    - **Domains** -- UniProt + InterPro domain/family annotations
+    - **PTMs** -- phosphorylation, glycosylation, disulfide bonds
+    - **Disease associations** -- disease involvement, clinical variants
+    - **GO terms** -- molecular function, biological process, cellular
+      component
+    - **Interactions** -- PPI cross-references (IntAct, STRING, BioGRID)
+    - **Isoform annotations** -- alternative products with functional
+      differences
+    - **Review status** -- Swiss-Prot (reviewed) vs TrEMBL (unreviewed)
+
+    Results are stored in ``adata.obs`` (summary as ``prot_*`` columns)
+    and ``adata.uns["protein_annotations"]`` (full dicts).
+
+    Parameters
+    ----------
+    adata
+        AnnData with protein/gene identifiers in ``.obs[column]``.
+    column
+        Column in ``adata.obs`` containing identifiers.
+    id_type
+        ``"auto"``, ``"symbol"``, ``"ensembl_id"``, or ``"uniprot_id"``.
+    sources
+        Annotation sources: ``"all"`` or a list from ``["function",
+        "location", "sites", "domains", "ptms", "diseases", "go",
+        "interactions", "isoforms", "metadata"]``.
+    copy
+        If ``True``, return a modified copy.
+
+    Returns
+    -------
+    AnnData with protein annotations.
+
+    Examples
+    --------
+    >>> adata = annotate_proteins(adata, column="gene", id_type="symbol")
+    >>> adata.obs["prot_location"]     # primary subcellular location
+    >>> adata.obs["prot_n_domains"]    # number of domains
+    >>> adata.uns["protein_annotations"]["TP53"]["go_terms"]
+    """
+    from embpy.resources.protein_annotator import ProteinAnnotator
+
+    annotator = ProteinAnnotator()
+    return annotator.annotate_adata(
+        adata, column=column, id_type=id_type, sources=sources, copy=copy,
+    )

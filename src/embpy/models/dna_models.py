@@ -1,3 +1,7 @@
+# pyright: reportAttributeAccessIssue=false
+# pyright: reportUnknownMemberType=false
+# pyright: reportMissingImports=false
+# pyright: reportOptionalMemberAccess=false
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -45,19 +49,101 @@ except ImportError:
     seq_indices_to_one_hot = None  # type: ignore
 
 try:
-    from transformers import AutoModel, AutoTokenizer  
+    from transformers import AutoModel, AutoTokenizer
+
     _HAVE_TRANSFORMERS = True
-    from transformers import AutoModelForCausalLM  
-    from transformers import AutoModelForMaskedLM
+    from transformers import AutoModelForCausalLM, AutoModelForMaskedLM
 except ImportError:
     _HAVE_TRANSFORMERS = False
-    AutoModel = None 
-    AutoTokenizer = None  
-    AutoModelForCausalLM = None  
-    AutoModelForMaskedLM = None  
+    AutoModel = None
+    AutoTokenizer = None
+    AutoModelForCausalLM = None
+    AutoModelForMaskedLM = None
 
 
 from .base import BaseModelWrapper
+
+
+def _hf_batched_embed(
+    model: Any,
+    tokenizer: Any,
+    device: Any,
+    inputs: Sequence[str],
+    pooling_strategy: str,
+    batch_size: int = 16,
+    target_layer: int | None = None,
+    tokenizer_kwargs: dict | None = None,
+    cast_float: bool = False,
+) -> list[np.ndarray]:
+    """Shared batched inference for HuggingFace-tokenizer DNA models.
+
+    Tokenizes inputs in chunks, runs one forward pass per chunk, and
+    pools per-sequence.
+    """
+    if not inputs:
+        return []
+
+    tok_kw: dict[str, Any] = {
+        "return_tensors": "pt",
+        "truncation": True,
+        "padding": True,
+    }
+    if tokenizer_kwargs:
+        tok_kw.update(tokenizer_kwargs)
+
+    all_embeddings: list[np.ndarray] = []
+
+    for start in range(0, len(inputs), batch_size):
+        chunk = list(inputs[start : start + batch_size])
+
+        enc = tokenizer(chunk, **tok_kw)
+        input_ids = enc["input_ids"].to(device)
+        attention_mask = enc.get("attention_mask")
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device)
+
+        with torch.no_grad():
+            out = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask if hasattr(model, "config") else None,
+                output_hidden_states=True,
+            )
+            if target_layer is not None:
+                emb = out.hidden_states[target_layer]
+            elif hasattr(out, "last_hidden_state") and out.last_hidden_state is not None:
+                emb = out.last_hidden_state
+            else:
+                emb = out.hidden_states[-1]
+
+        for i in range(emb.shape[0]):
+            seq_emb = emb[i]
+            if attention_mask is not None:
+                mask = attention_mask[i].unsqueeze(-1).float()
+            else:
+                mask = None
+
+            if pooling_strategy == "cls":
+                pooled = seq_emb[0]
+            elif pooling_strategy == "last":
+                pooled = seq_emb[-1]
+            elif pooling_strategy == "max":
+                if mask is not None:
+                    seq_emb = seq_emb.masked_fill(mask == 0, float("-inf"))
+                pooled = seq_emb.max(dim=0).values
+            else:
+                if mask is not None:
+                    pooled = (seq_emb * mask).sum(0).div(mask.sum(0).clamp(min=1))
+                else:
+                    pooled = seq_emb.mean(dim=0)
+
+            if cast_float:
+                pooled = pooled.float()
+            all_embeddings.append(pooled.cpu().numpy())
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    return all_embeddings
 
 
 class EnformerWrapper(BaseModelWrapper):
@@ -424,7 +510,10 @@ class BorzoiWrapper(BaseModelWrapper):
         logging.info(f"Loading Borzoi '{self.model_name}' …")
         try:
             borzoi_model: Any = Borzoi.from_pretrained(self.model_name)
-            self.model = borzoi_model.to(device).eval()
+            try:
+                self.model = borzoi_model.to(device).eval()
+            except NotImplementedError:
+                self.model = borzoi_model.to_empty(device=device).eval()
             self.device = device
             hidden_dim = getattr(borzoi_model.config, "dim", None)
             if hidden_dim is None:
@@ -974,6 +1063,8 @@ class EvoWrapper(BaseModelWrapper):
                 **kwargs,
             )
             results.append(emb)
+            if torch.cuda.is_available() and (i + 1) % 5 == 0:
+                torch.cuda.empty_cache()
 
         return results
 
@@ -1094,6 +1185,8 @@ class Evo2Wrapper(BaseModelWrapper):
         try:
             self._evo2_model = Evo2(self.model_name)
             self.model = self._evo2_model
+            if hasattr(self._evo2_model, "eval"):
+                self._evo2_model.eval()
             logging.info(f"Evo2 '{self.model_name}' loaded successfully.")
         except Exception as e:
             logging.error(f"Failed to load Evo2 '{self.model_name}': {e}")
@@ -1261,6 +1354,8 @@ class Evo2Wrapper(BaseModelWrapper):
                 logging.info(f"Evo2 batch: processed {i}/{len(inputs)} sequences...")
             emb = self.embed(seq, pooling_strategy=pooling_strategy, layer_name=layer_name, **kwargs)
             results.append(emb)
+            if torch.cuda.is_available() and (i + 1) % 5 == 0:
+                torch.cuda.empty_cache()
 
         return results
 
@@ -1310,14 +1405,8 @@ class GENALMWrapper(BaseModelWrapper):
 
         logging.info(f"Loading GENA-LM '{self.model_name}' …")
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name, trust_remote_code=True
-            )
-            self.model = (
-                AutoModel.from_pretrained(self.model_name, trust_remote_code=True)
-                .to(device)
-                .eval()
-            )
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
+            self.model = AutoModel.from_pretrained(self.model_name, trust_remote_code=True).to(device).eval()
             self.device = device
             logging.info(f"GENA-LM '{self.model_name}' loaded on {device}.")
         except Exception as e:
@@ -1381,11 +1470,16 @@ class GENALMWrapper(BaseModelWrapper):
         self,
         inputs: Sequence[str],
         pooling_strategy: str = "mean",
+        batch_size: int = 16,
         **kwargs: Any,
     ) -> list[np.ndarray]:
-        if not inputs:
-            return []
-        return [self.embed(s, pooling_strategy=pooling_strategy, **kwargs) for s in inputs]
+        if self.model is None or self.device is None or self.tokenizer is None:
+            raise RuntimeError("GENA-LM not loaded. Call load() first.")
+        return _hf_batched_embed(
+            self.model, self.tokenizer, self.device, inputs,
+            pooling_strategy, batch_size=batch_size,
+            target_layer=kwargs.get("target_layer"),
+        )
 
 
 class NucleotideTransformerWrapper(BaseModelWrapper):
@@ -1436,15 +1530,11 @@ class NucleotideTransformerWrapper(BaseModelWrapper):
 
         logging.info(f"Loading Nucleotide Transformer '{self.model_name}' …")
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name, trust_remote_code=True
-            )
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
 
             from transformers import AutoConfig, AutoModelForMaskedLM  # type: ignore
 
-            config = AutoConfig.from_pretrained(
-                self.model_name, trust_remote_code=True
-            )
+            config = AutoConfig.from_pretrained(self.model_name, trust_remote_code=True)
             self.model = (
                 AutoModelForMaskedLM.from_pretrained(
                     self.model_name,
@@ -1484,7 +1574,6 @@ class NucleotideTransformerWrapper(BaseModelWrapper):
             attention_mask = attention_mask.to(self.device)
 
         with torch.no_grad():
-
             out = self.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -1514,11 +1603,16 @@ class NucleotideTransformerWrapper(BaseModelWrapper):
         self,
         inputs: Sequence[str],
         pooling_strategy: str = "mean",
+        batch_size: int = 16,
         **kwargs: Any,
     ) -> list[np.ndarray]:
-        if not inputs:
-            return []
-        return [self.embed(s, pooling_strategy=pooling_strategy, **kwargs) for s in inputs]
+        if self.model is None or self.device is None or self.tokenizer is None:
+            raise RuntimeError("NT model not loaded. Call load() first.")
+        return _hf_batched_embed(
+            self.model, self.tokenizer, self.device, inputs,
+            pooling_strategy, batch_size=batch_size,
+            target_layer=kwargs.get("target_layer"),
+        )
 
 
 class NucleotideTransformerV3Wrapper(BaseModelWrapper):
@@ -1575,16 +1669,8 @@ class NucleotideTransformerV3Wrapper(BaseModelWrapper):
         try:
             from transformers import AutoModelForMaskedLM  # type: ignore
 
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name, trust_remote_code=True
-            )
-            self.model = (
-                AutoModelForMaskedLM.from_pretrained(
-                    self.model_name, trust_remote_code=True
-                )
-                .to(device)
-                .eval()
-            )
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
+            self.model = AutoModelForMaskedLM.from_pretrained(self.model_name, trust_remote_code=True).to(device).eval()
             self.device = device
             logging.info(f"NTv3 '{self.model_name}' loaded on {device}.")
         except Exception as e:
@@ -1644,11 +1730,19 @@ class NucleotideTransformerV3Wrapper(BaseModelWrapper):
         self,
         inputs: Sequence[str],
         pooling_strategy: str = "mean",
+        batch_size: int = 16,
         **kwargs: Any,
     ) -> list[np.ndarray]:
-        if not inputs:
-            return []
-        return [self.embed(s, pooling_strategy=pooling_strategy, **kwargs) for s in inputs]
+        if self.model is None or self.device is None or self.tokenizer is None:
+            raise RuntimeError("NTv3 not loaded. Call load() first.")
+        uppercased = [s.upper() for s in inputs]
+        return _hf_batched_embed(
+            self.model, self.tokenizer, self.device, uppercased,
+            pooling_strategy, batch_size=batch_size,
+            target_layer=kwargs.get("target_layer"),
+            tokenizer_kwargs={"add_special_tokens": False, "pad_to_multiple_of": self._PAD_MULTIPLE},
+            cast_float=True,
+        )
 
 
 class HyenaDNAWrapper(BaseModelWrapper):
@@ -1682,8 +1776,16 @@ class HyenaDNAWrapper(BaseModelWrapper):
     available_pooling_strategies = ["mean", "max", "cls", "last"]
 
     _CHAR_TO_ID: dict[str, int] = {
-        "A": 7, "C": 8, "G": 9, "T": 10, "N": 11,
-        "a": 7, "c": 8, "g": 9, "t": 10, "n": 11,
+        "A": 7,
+        "C": 8,
+        "G": 9,
+        "T": 10,
+        "N": 11,
+        "a": 7,
+        "c": 8,
+        "g": 9,
+        "t": 10,
+        "n": 11,
     }
     _DEFAULT_TOKEN_ID = 11  # N
 
@@ -1706,16 +1808,8 @@ class HyenaDNAWrapper(BaseModelWrapper):
         try:
             # HyenaDNA uses character-level tokenisation; the AutoTokenizer from
             # the HF repo handles this via trust_remote_code
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name, trust_remote_code=True
-            )
-            self.model = (
-                AutoModelForCausalLM.from_pretrained(
-                    self.model_name, trust_remote_code=True
-                )
-                .to(device)
-                .eval()
-            )
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
+            self.model = AutoModelForCausalLM.from_pretrained(self.model_name, trust_remote_code=True).to(device).eval()
             self.device = device
             logging.info(f"HyenaDNA '{self.model_name}' loaded on {device}.")
         except Exception as e:
@@ -1744,14 +1838,14 @@ class HyenaDNAWrapper(BaseModelWrapper):
 
         with torch.no_grad():
             out = self.model(input_ids=input_ids, output_hidden_states=True)
-            hs = out.hidden_states  
+            hs = out.hidden_states
             if target_layer is not None:
                 emb = hs[target_layer]
             else:
                 emb = hs[-1]  # last hidden state
 
         if emb.dim() == 3 and emb.shape[0] == 1:
-            emb = emb.squeeze(0) 
+            emb = emb.squeeze(0)
 
         if pooling_strategy == "cls":
             return emb[0].float().cpu().numpy()
@@ -1766,11 +1860,17 @@ class HyenaDNAWrapper(BaseModelWrapper):
         self,
         inputs: Sequence[str],
         pooling_strategy: str = "mean",
+        batch_size: int = 16,
         **kwargs: Any,
     ) -> list[np.ndarray]:
-        if not inputs:
-            return []
-        return [self.embed(s, pooling_strategy=pooling_strategy, **kwargs) for s in inputs]
+        if self.model is None or self.device is None or self.tokenizer is None:
+            raise RuntimeError("HyenaDNA not loaded. Call load() first.")
+        return _hf_batched_embed(
+            self.model, self.tokenizer, self.device, inputs,
+            pooling_strategy, batch_size=batch_size,
+            target_layer=kwargs.get("target_layer"),
+            cast_float=True,
+        )
 
 
 class CaduceusWrapper(BaseModelWrapper):
@@ -1816,14 +1916,10 @@ class CaduceusWrapper(BaseModelWrapper):
 
         logging.info(f"Loading Caduceus '{self.model_name}' …")
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name, trust_remote_code=True
-            )
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
 
             try:
-                m = AutoModelForMaskedLM.from_pretrained(
-                    self.model_name, trust_remote_code=True
-                )
+                m = AutoModelForMaskedLM.from_pretrained(self.model_name, trust_remote_code=True)
             except Exception:
                 m = AutoModel.from_pretrained(self.model_name, trust_remote_code=True)
             self.model = m.to(device).eval()
@@ -1865,7 +1961,7 @@ class CaduceusWrapper(BaseModelWrapper):
             if target_layer is not None:
                 emb = hs[target_layer]
             else:
-                emb = hs[-1] 
+                emb = hs[-1]
 
         if emb.dim() == 3 and emb.shape[0] == 1:
             emb = emb.squeeze(0)
@@ -1884,8 +1980,14 @@ class CaduceusWrapper(BaseModelWrapper):
         self,
         inputs: Sequence[str],
         pooling_strategy: str = "mean",
+        batch_size: int = 16,
         **kwargs: Any,
     ) -> list[np.ndarray]:
-        if not inputs:
-            return []
-        return [self.embed(s, pooling_strategy=pooling_strategy, **kwargs) for s in inputs]
+        if self.model is None or self.device is None or self.tokenizer is None:
+            raise RuntimeError("Caduceus not loaded. Call load() first.")
+        return _hf_batched_embed(
+            self.model, self.tokenizer, self.device, inputs,
+            pooling_strategy, batch_size=batch_size,
+            target_layer=kwargs.get("target_layer"),
+            cast_float=True,
+        )

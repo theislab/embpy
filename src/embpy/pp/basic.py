@@ -466,6 +466,7 @@ class PerturbationProcessor:
         n_components: int = 50,
         scale: bool = True,
         output_key: str | None = None,
+        backend: str = "cpu",
     ) -> AnnData:
         """Reduce embedding dimensionality via PCA.
 
@@ -487,17 +488,16 @@ class PerturbationProcessor:
             Number of principal components to keep.
         scale
             If ``True`` (default), apply ``StandardScaler`` before PCA.
-            This is recommended when combining embeddings from different
-            models, as their scales can differ significantly.
         output_key
             Key under which the reduced matrix is stored.
             Defaults to ``"{obsm_key}_pca"``.
+        backend
+            ``"cpu"`` uses sklearn (default). ``"gpu"`` uses cuml.
 
         Returns
         -------
         The same AnnData (modified **in-place**) with the reduced
-        matrix in ``.obsm[output_key]`` and the fitted ``PCA`` and
-        ``StandardScaler`` objects stored in ``.uns``.
+        matrix in ``.obsm[output_key]`` and metadata in ``.uns``.
         """
         if obsm_key not in adata.obsm:
             raise KeyError(f"'{obsm_key}' not found in adata.obsm. Available: {list(adata.obsm.keys())}")
@@ -511,15 +511,31 @@ class PerturbationProcessor:
         n_samples, n_features = X.shape
         actual_components = min(n_components, n_samples, n_features)
 
-        if scale:
-            scaler = StandardScaler()
-            X_scaled = scaler.fit_transform(X)
-        else:
-            scaler = None
-            X_scaled = X
+        if backend == "gpu":
+            try:
+                from cuml.decomposition import PCA as cuPCA  # type: ignore[import-untyped]
+                from cuml.preprocessing import StandardScaler as cuScaler  # type: ignore[import-untyped]
+            except ImportError as e:
+                raise ImportError("cuml is required for GPU PCA. Install with: pip install cuml-cu12") from e
 
-        pca = PCA(n_components=actual_components, random_state=0)
-        X_reduced = pca.fit_transform(X_scaled).astype(np.float32)
+            if scale:
+                X_scaled = cuScaler().fit_transform(X)
+            else:
+                X_scaled = X
+
+            pca = cuPCA(n_components=actual_components, random_state=0)
+            X_reduced = np.asarray(pca.fit_transform(X_scaled), dtype=np.float32)
+            var_ratio = np.asarray(pca.explained_variance_ratio_)
+        else:
+            if scale:
+                scaler = StandardScaler()
+                X_scaled = scaler.fit_transform(X)
+            else:
+                X_scaled = X
+
+            pca = PCA(n_components=actual_components, random_state=0)
+            X_reduced = pca.fit_transform(X_scaled).astype(np.float32)
+            var_ratio = pca.explained_variance_ratio_
 
         out_key = output_key or f"{obsm_key}_pca"
         adata.obsm[out_key] = X_reduced
@@ -527,14 +543,15 @@ class PerturbationProcessor:
         uns_key = f"{out_key}_params"
         adata.uns[uns_key] = {
             "n_components": actual_components,
-            "explained_variance_ratio": pca.explained_variance_ratio_,
-            "total_variance_explained": float(pca.explained_variance_ratio_.sum()),
+            "explained_variance_ratio": var_ratio,
+            "total_variance_explained": float(var_ratio.sum()),
             "scaled": scale,
+            "backend": backend,
         }
 
         logging.info(
-            f"PCA: {n_features} → {actual_components} components "
-            f"({pca.explained_variance_ratio_.sum():.1%} variance explained), "
+            f"PCA (backend={backend}): {n_features} -> {actual_components} components "
+            f"({var_ratio.sum():.1%} variance explained), "
             f"stored in .obsm['{out_key}']."
         )
         return adata
@@ -546,6 +563,7 @@ def reduce_embeddings(
     n_components: int = 50,
     scale: bool = True,
     output_key: str | None = None,
+    backend: str = "cpu",
 ) -> AnnData:
     """Convenience wrapper around :meth:`PerturbationProcessor.reduce_embeddings`.
 
@@ -557,4 +575,5 @@ def reduce_embeddings(
         n_components=n_components,
         scale=scale,
         output_key=output_key,
+        backend=backend,
     )

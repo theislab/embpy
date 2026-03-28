@@ -199,43 +199,41 @@ class EmbeddingError(EmbpyError):
 
 
 class GraphNotBuiltError(EmbpyError):
-    """A PPI graph operation was called before the graph was constructed.
+    """A PPI embedding operation was called before loading data.
 
     Common causes
     -------------
-    * Calling ``train_embeddings()`` or ``embed()`` on a
-      ``PPIGNNWrapper`` without first calling ``build_graph()``.
+    * Calling ``embed()`` on a ``PrecomputedPPIWrapper`` without first
+      calling ``load(device)``.
 
     How to fix
     ----------
-    Build the graph first::
+    Load the embeddings first::
 
-        wrapper.build_graph(gene_ids=["TP53", "BRCA1", ...])
-        wrapper.train_embeddings(epochs=200)
+        wrapper = PrecomputedPPIWrapper(data_dir="...", species=9606)
+        wrapper.load(torch.device("cpu"))
         emb = wrapper.embed("TP53")
     """
 
     def __init__(self, message: str | None = None):
         super().__init__(
-            message or "PPI graph has not been built. Call build_graph() first."
+            message or "PPI embeddings not loaded. Call load(device) first."
         )
 
 
 class GeneNotInGraphError(EmbpyError):
-    """The requested gene is not present in the PPI graph.
+    """The requested gene is not present in the PPI embeddings.
 
     Common causes
     -------------
-    * The gene was not included in the ``gene_ids`` list when
-      ``build_graph()`` was called.
-    * STRING does not have interactions for this gene at the chosen
-      ``score_threshold``.
+    * The gene name was not resolved during the STRING API mapping
+      at load time.
+    * The species does not have a protein for this gene.
 
     How to fix
     ----------
-    * Check ``wrapper.graph_genes`` to see which genes are available.
-    * Rebuild the graph with a broader gene list or a lower
-      ``score_threshold``.
+    * Check ``wrapper.available_genes`` to see which genes are available.
+    * Verify the correct ``species`` taxonomy ID was used.
     """
 
     def __init__(self, gene: str, num_nodes: int):
@@ -256,7 +254,7 @@ class DependencyError(EmbpyError):
 
     Common causes
     -------------
-    * Using ``PPIGNNWrapper`` without ``torch-geometric``.
+    * Using ``PrecomputedPPIWrapper`` without ``h5py``.
     * Using ``Evo2Wrapper`` without the ``evo2`` package.
     * Using ``ESMCWrapper`` without the ``esm`` SDK.
 
@@ -264,7 +262,7 @@ class DependencyError(EmbpyError):
     ----------
     Install the missing package::
 
-        pip install torch-geometric   # for PPI GNN
+        pip install h5py              # for PPI embeddings
         pip install embpy[evo2]       # for Evo2
     """
 

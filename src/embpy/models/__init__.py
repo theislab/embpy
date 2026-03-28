@@ -7,7 +7,7 @@ from .molecule_models import (
     MolformerWrapper,
     RDKitWrapper,
 )
-from .protein_models import ESM2Wrapper, ESMCWrapper, ProtT5Wrapper, STRINGWrapper
+from .protein_models import ESM2Wrapper, ESM3Wrapper, ESMCWrapper, ProtT5Wrapper
 from .text_models import TextLLMWrapper
 
 # Evo (v1/v1.5) is optional (requires: pip install evo-model)
@@ -38,12 +38,28 @@ except ImportError:
     NucleotideTransformerWrapper = None  # type: ignore
     NucleotideTransformerV3Wrapper = None  # type: ignore
 
-# PPI GNN is optional (requires: pip install torch-geometric)
+# PPI precomputed embeddings (requires: pip install h5py)
 try:
-    from .ppi_models import GNNEncoder, PPIGNNWrapper
+    from .ppi_models import PrecomputedPPIWrapper
 except ImportError:
-    GNNEncoder = None  # type: ignore
-    PPIGNNWrapper = None  # type: ignore
+    PrecomputedPPIWrapper = None  # type: ignore
+
+# Single-cell foundation model wrappers (requires: pip install helical)
+from .singlecell_models import (
+    Cell2SentenceWrapper,
+    GeneformerWrapper,
+    PCAEmbedding,
+    SCModelCard,
+    ScGPTWrapper,
+    ScVIToolsWrapper,
+    SingleCellWrapper,
+    TahoeWrapper,
+    TranscriptFormerWrapper,
+    UCEWrapper,
+    get_singlecell_wrapper,
+    list_singlecell_models,
+    singlecell_info,
+)
 
 __all__ = [
     "BorzoiWrapper",
@@ -51,21 +67,33 @@ __all__ = [
     "EvoWrapper",
     "Evo2Wrapper",
     "CaduceusWrapper",
+    "Cell2SentenceWrapper",
     "GENALMWrapper",
+    "GeneformerWrapper",
     "HyenaDNAWrapper",
     "NucleotideTransformerWrapper",
     "NucleotideTransformerV3Wrapper",
     "ChembertaWrapper",
     "ESM2Wrapper",
+    "ESM3Wrapper",
     "ESMCWrapper",
-    "GNNEncoder",
     "MHGGNNWrapper",
     "MiniMolWrapper",
     "MolEWrapper",
     "MolformerWrapper",
-    "PPIGNNWrapper",
+    "PCAEmbedding",
+    "PrecomputedPPIWrapper",
     "ProtT5Wrapper",
     "RDKitWrapper",
-    "STRINGWrapper",
+    "SCModelCard",
+    "ScGPTWrapper",
+    "ScVIToolsWrapper",
+    "SingleCellWrapper",
+    "TahoeWrapper",
     "TextLLMWrapper",
+    "TranscriptFormerWrapper",
+    "UCEWrapper",
+    "get_singlecell_wrapper",
+    "list_singlecell_models",
+    "singlecell_info",
 ]

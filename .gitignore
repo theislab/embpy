@@ -38,4 +38,12 @@ buck-out/
 /output/
 /err/
 /logs/
+submission_scripts/logs/
+
+# Debug / runtime logs
+activations_debug.log
+*.log
+
+# Experimental / operational directories
+cellflow_operational/
 

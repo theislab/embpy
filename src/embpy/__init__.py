@@ -1,6 +1,6 @@
 from importlib.metadata import version
 
-from . import models, pl, pp, resources, tl
+from . import dt, models, pl, pp, resources, tl
 from .embedder import BioEmbedder
 from .errors import (
     ConfigError,
@@ -19,6 +19,7 @@ from .errors import (
 from .resources import DrugResolver, GeneResolver
 
 __all__ = [
+    "dt",
     "models",
     "pl",
     "pp",

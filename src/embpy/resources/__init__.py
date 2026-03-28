@@ -1,5 +1,17 @@
 # This file makes 'resources' a package.
 from .drug_resolver import DrugResolver
+from .gene_annotator import GeneAnnotator
 from .gene_resolver import GeneResolver, detect_identifier_type
+from .molecule_annotator import MoleculeAnnotator
+from .protein_annotator import ProteinAnnotator
+from .protein_resolver import ProteinResolver
 
-__all__ = ["GeneResolver", "DrugResolver", "detect_identifier_type"]
+__all__ = [
+    "DrugResolver",
+    "GeneAnnotator",
+    "GeneResolver",
+    "MoleculeAnnotator",
+    "ProteinAnnotator",
+    "ProteinResolver",
+    "detect_identifier_type",
+]

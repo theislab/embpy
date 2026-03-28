@@ -142,14 +142,75 @@ class ChembertaWrapper(BaseModelWrapper):
         input: list[str],
         pooling_strategy: str = "mean",
         use_pooler: bool = False,
+        batch_size: int = 64,
         **kwargs: Any,
     ) -> list[np.ndarray | None]:
         """
-        Embed a batch of SMILES strings.
+        Embed a batch of SMILES strings with true batched inference.
+
+        Filters out too-long SMILES, batches the valid ones for a
+        single forward pass per chunk, then reassembles the results
+        preserving original order.
 
         Returns a list of 1D numpy arrays (or None for skipped SMILES).
         """
-        return [self.embed(s, pooling_strategy=pooling_strategy, use_pooler=use_pooler) for s in input]
+        if self.model is None or self.device is None or self.tokenizer is None:
+            raise RuntimeError("Call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(f"pooling_strategy must be one of {self.available_pooling_strategies}")
+
+        n = len(input)
+        results: list[np.ndarray | None] = [None] * n
+
+        valid_indices: list[int] = []
+        valid_smiles: list[str] = []
+        for idx, smi in enumerate(input):
+            tok_len = self._token_length(smi)
+            if self.max_len is not None and tok_len > self.max_len:
+                logging.warning(f"Skipping SMILES ({tok_len} tokens > max {self.max_len}): {smi[:80]}...")
+                continue
+            valid_indices.append(idx)
+            valid_smiles.append(smi)
+
+        for start in range(0, len(valid_smiles), batch_size):
+            chunk_smiles = valid_smiles[start : start + batch_size]
+            chunk_indices = valid_indices[start : start + batch_size]
+
+            enc = self.tokenizer(
+                chunk_smiles,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=self.max_len,
+            )
+            input_ids = enc["input_ids"].to(self.device)
+            attention_mask = enc["attention_mask"].to(self.device)
+
+            with torch.no_grad():
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
+                last_hidden = outputs.last_hidden_state
+                pooler_out = getattr(outputs, "pooler_output", None)
+
+            for i, orig_idx in enumerate(chunk_indices):
+                if use_pooler and pooler_out is not None:
+                    results[orig_idx] = pooler_out[i].cpu().numpy()
+                    continue
+
+                hidden = last_hidden[i]
+                mask = attention_mask[i].unsqueeze(-1)
+
+                if pooling_strategy == "cls":
+                    vec = hidden[0]
+                elif pooling_strategy == "mean":
+                    vec = (hidden * mask).sum(dim=0) / mask.sum(dim=0).clamp(min=1)
+                else:
+                    neg_inf = torch.finfo(hidden.dtype).min
+                    masked = hidden.masked_fill(mask == 0, neg_inf)
+                    vec = masked.max(dim=0).values
+
+                results[orig_idx] = vec.cpu().numpy()
+
+        return results
 
 
 class MolformerWrapper(BaseModelWrapper):
@@ -728,6 +789,8 @@ class MHGGNNWrapper(BaseModelWrapper):
         logging.info(f"Loading MHG-GNN from HuggingFace: {self.model_name}…")
         self._wrapper = _load_fn()
         self._wrapper.to(device)
+        if hasattr(self._wrapper, "eval"):
+            self._wrapper.eval()
         self.device = device
         self._loaded = True
         logging.info("MHG-GNN loaded successfully.")
