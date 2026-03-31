@@ -30,6 +30,27 @@ GWAS_CATALOG = "https://www.ebi.ac.uk/gwas/rest/api"
 GTEX_API = "https://gtexportal.org/api/v2"
 HPA_API = "https://www.proteinatlas.org"
 
+STRING_TAXON = {
+    "human": 9606, "homo_sapiens": 9606,
+    "mouse": 10090, "mus_musculus": 10090,
+    "rat": 10116, "rattus_norvegicus": 10116,
+    "zebrafish": 7955, "danio_rerio": 7955,
+    "drosophila": 7227, "drosophila_melanogaster": 7227,
+    "worm": 6239, "caenorhabditis_elegans": 6239,
+    "yeast": 559292, "saccharomyces_cerevisiae": 559292,
+    "chicken": 9031, "gallus_gallus": 9031,
+    "pig": 9823, "sus_scrofa": 9823,
+    "dog": 9615, "canis_lupus_familiaris": 9615,
+}
+
+_HUMAN_ONLY_SOURCES = {"gtex", "hpa", "gwas_catalog", "open_targets"}
+
+
+def _is_ensembl_gene_id(s: str) -> bool:
+    """Check if a string is an Ensembl gene ID (any species)."""
+    import re
+    return bool(re.match(r"^ENS[A-Z]*G\d{11}(\.\d+)?$", s, re.IGNORECASE))
+
 
 def _get_json(url: str, params: dict | None = None, timeout: int = 30) -> dict | None:
     try:
@@ -83,7 +104,8 @@ class GeneAnnotator:
     ) -> None:
         self.organism = organism
         self.delay = rate_limit_delay
-        self._string_species = 9606 if organism.lower() in ("human", "homo_sapiens") else 9606
+        self._string_species = STRING_TAXON.get(organism.lower(), 9606)
+        self._is_human = organism.lower() in ("human", "homo_sapiens")
 
     def _sleep(self) -> None:
         if self.delay > 0:
@@ -95,7 +117,7 @@ class GeneAnnotator:
 
     def _resolve_ensembl_id(self, gene: str) -> str | None:
         """Resolve a gene symbol to Ensembl gene ID via MyGene.info."""
-        if gene.startswith("ENSG"):
+        if _is_ensembl_gene_id(gene):
             return gene.split(".")[0]
         data = _get_json(
             f"{MYGENE}/query",
@@ -119,7 +141,7 @@ class GeneAnnotator:
 
     def _resolve_symbol(self, gene: str) -> str | None:
         """Resolve an Ensembl ID to gene symbol via MyGene.info."""
-        if not gene.startswith("ENSG"):
+        if not _is_ensembl_gene_id(gene):
             return gene
         data = _get_json(
             f"{MYGENE}/query",
@@ -156,7 +178,7 @@ class GeneAnnotator:
         Dict with keys ``"reactome"``, ``"kegg"``, ``"wikipathways"``,
         each containing a list of ``{id, name}`` dicts.
         """
-        scope = "ensembl.gene" if gene.startswith("ENSG") else "symbol"
+        scope = "ensembl.gene" if _is_ensembl_gene_id(gene) else "symbol"
         data = _get_json(
             f"{MYGENE}/query",
             params={
@@ -193,7 +215,7 @@ class GeneAnnotator:
     # ==================================================================
 
     def get_tissue_expression(self, gene: str) -> list[dict[str, Any]]:
-        """Get tissue expression profile from GTEx.
+        """Get tissue expression profile from GTEx (human only).
 
         Parameters
         ----------
@@ -204,6 +226,10 @@ class GeneAnnotator:
         -------
         List of dicts with ``tissue``, ``median_tpm``, ``n_samples``.
         """
+        if not self._is_human:
+            logger.debug("GTEx is human-only; skipping for organism '%s'", self.organism)
+            return []
+
         ensembl_id = self._resolve_ensembl_id(gene)
         if not ensembl_id:
             logger.debug("Could not resolve %s to Ensembl ID for GTEx", gene)
@@ -232,7 +258,7 @@ class GeneAnnotator:
         return tissues
 
     def get_subcellular_localization(self, gene: str) -> dict[str, Any]:
-        """Get subcellular localization from Human Protein Atlas.
+        """Get subcellular localization from Human Protein Atlas (human only).
 
         Parameters
         ----------
@@ -243,6 +269,10 @@ class GeneAnnotator:
         -------
         Dict with ``locations``, ``reliability``, and ``cell_line``.
         """
+        if not self._is_human:
+            logger.debug("HPA is human-only; skipping for organism '%s'", self.organism)
+            return {}
+
         ensembl_id = self._resolve_ensembl_id(gene)
         if not ensembl_id:
             return {}
@@ -392,7 +422,7 @@ class GeneAnnotator:
         gene: str,
         top_n: int = 20,
     ) -> list[dict[str, Any]]:
-        """Get disease associations from Open Targets Platform.
+        """Get disease associations from Open Targets Platform (human only).
 
         Parameters
         ----------
@@ -406,6 +436,10 @@ class GeneAnnotator:
         List of dicts with ``disease_id``, ``disease_name``, ``score``,
         ``evidence_count``.
         """
+        if not self._is_human:
+            logger.debug("Open Targets is human-only; skipping for organism '%s'", self.organism)
+            return []
+
         ensembl_id = self._resolve_ensembl_id(gene)
         if not ensembl_id:
             return []
@@ -473,6 +507,10 @@ class GeneAnnotator:
         -------
         List of dicts with ``trait``, ``p_value``, ``study``, ``snp``.
         """
+        if not self._is_human:
+            logger.debug("GWAS Catalog is human-only; skipping for organism '%s'", self.organism)
+            return []
+
         symbol = self._resolve_symbol(gene)
         if not symbol:
             return []

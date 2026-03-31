@@ -113,6 +113,6 @@ python -u "${SCRIPT_DIR}/embed_full_genome.py" \
     --organism human \
     --biotype protein_coding \
     --device auto \
-    --data-dir "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/embeddings"
+    --data-dir "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/datasets"
 
 echo "=== Job finished at $(date) ==="

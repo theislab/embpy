@@ -39,6 +39,18 @@ ORGANISM_TAXON = {
     "danio_rerio": 7955,
     "drosophila": 7227,
     "drosophila_melanogaster": 7227,
+    "worm": 6239,
+    "caenorhabditis_elegans": 6239,
+    "yeast": 559292,
+    "saccharomyces_cerevisiae": 559292,
+    "chicken": 9031,
+    "gallus_gallus": 9031,
+    "pig": 9823,
+    "sus_scrofa": 9823,
+    "dog": 9615,
+    "canis_lupus_familiaris": 9615,
+    "macaque": 9544,
+    "macaca_mulatta": 9544,
 }
 
 
@@ -454,23 +466,22 @@ class ProteinResolver:
             include_canonical=include_canonical,
         )
 
-    @staticmethod
-    def _get_all_gene_ids(biotype: str = "protein_coding") -> list[str]:
+    def _get_all_gene_ids(self, biotype: str = "protein_coding") -> list[str]:
         """Get all gene IDs for a biotype using pyensembl."""
         try:
             import pyensembl
-            ens = pyensembl.EnsemblRelease(release=109, species="human")
+            ens = pyensembl.EnsemblRelease(release=109, species=self.organism)
             ens.download()
             ens.index()
             all_genes = ens.genes()
             if biotype.lower() != "all":
                 all_genes = [g for g in all_genes if g.biotype == biotype]
             gene_ids = [g.gene_id for g in all_genes]
-            logger.info("Found %d genes with biotype '%s'", len(gene_ids), biotype)
+            logger.info("Found %d %s genes with biotype '%s'", len(gene_ids), self.organism, biotype)
             return gene_ids
         except ImportError:
             logger.error("pyensembl is required for bulk gene enumeration")
             return []
         except Exception as e:  # noqa: BLE001
-            logger.error("Failed to enumerate genes: %s", e)
+            logger.error("Failed to enumerate genes for %s: %s", self.organism, e)
             return []

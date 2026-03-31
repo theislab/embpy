@@ -109,7 +109,7 @@ def _try_load_predownloaded(
     region: str,
 ) -> dict[str, str] | None:
     """Try to load pre-downloaded sequences from disk."""
-    seq_dir = Path(data_dir) / "sequences"
+    seq_dir = Path(data_dir) / "genome"
     if not seq_dir.exists():
         return None
 

@@ -59,6 +59,15 @@ def _looks_like_smiles(s: str) -> bool:
 _AA_CHARS = frozenset("ACDEFGHIKLMNPQRSTVWYXacdefghiklmnpqrstvwyx")
 
 
+def _is_ensembl_id(s: str) -> bool:
+    """Check if a string looks like an Ensembl stable ID.
+
+    Covers human (ENSG), mouse (ENSMUSG), zebrafish (ENSDARG),
+    rat (ENSRNOG), fly (FBgn), and other Ensembl-style identifiers.
+    """
+    return bool(re.match(r"^ENS[A-Z]*[GTRPE]\d{11}(\.\d+)?$", s, re.IGNORECASE))
+
+
 def detect_identifier_type(
     identifier: str,
 ) -> Literal["dna_sequence", "ensembl_id", "symbol", "smiles", "protein_sequence"]:
@@ -87,7 +96,7 @@ def detect_identifier_type(
         return "smiles"
     if re.fullmatch(r"[ACGTNacgtn]+", s) and len(s) >= 20:
         return "dna_sequence"
-    if re.match(r"^ENS[A-Z]*G\d{11}(\.\d+)?$", s, re.IGNORECASE):
+    if _is_ensembl_id(s):
         return "ensembl_id"
     if len(s) >= 10 and all(c in _AA_CHARS for c in s):
         return "protein_sequence"
@@ -433,9 +442,8 @@ class GeneResolver:
         """
         sym = symbol.strip()
         # 1) pyensembl (offline once cached)
-        if self.ensembl is not None and organism.lower() in {"human", "homo_sapiens"}:
+        if self.ensembl is not None and organism.lower() in {self.species.lower(), "homo_sapiens" if self.species == "human" else self.species}:
             try:
-                # pyensembl is case-sensitive for symbols; use exact first, then case-insensitive fallback
                 genes = self.ensembl.genes_by_name(sym)
                 if not genes and sym.upper() != sym:
                     genes = self.ensembl.genes_by_name(sym.upper())
@@ -497,7 +505,7 @@ class GeneResolver:
         """
         ens = ensembl_gene_id.strip().split(".")[0]  # drop version if provided
         # 1) pyensembl
-        if self.ensembl is not None and organism.lower() in {"human", "homo_sapiens"}:
+        if self.ensembl is not None and organism.lower() in {self.species.lower(), "homo_sapiens" if self.species == "human" else self.species}:
             try:
                 g = self.ensembl.gene_by_id(ens)
                 if g and getattr(g, "gene_name", None):
@@ -620,6 +628,7 @@ class GeneResolver:
                         ex["start"],
                         ex["end"],
                         gene_strand,
+                        organism=organism,
                     )
                     if seq:
                         regions.append({
@@ -640,6 +649,7 @@ class GeneResolver:
                         intron_start,
                         intron_end,
                         gene_strand,
+                        organism=organism,
                     )
                     if seq:
                         regions.append({
@@ -699,11 +709,13 @@ class GeneResolver:
         start: int,
         end: int,
         strand: int,
+        organism: str | None = None,
     ) -> str | None:
         """Fetch a genomic region's DNA sequence from Ensembl REST."""
+        species = organism or self.species
         try:
             url = (
-                f"https://rest.ensembl.org/sequence/region/human/"
+                f"https://rest.ensembl.org/sequence/region/{species}/"
                 f"{seq_region_name}:{start}..{end}:{strand}"
             )
             resp = _ensembl_get(url, headers={"Content-Type": "text/plain"}, timeout=15)
@@ -759,7 +771,7 @@ class GeneResolver:
                 if i > 0 and i % 100 == 0:
                     logging.info(f"Fetched {i}/{total_genes} sequences...")
 
-                seq = self.get_dna_sequence(identifier=gene.gene_id, id_type="ensembl_id", organism="human")
+                seq = self.get_dna_sequence(identifier=gene.gene_id, id_type="ensembl_id", organism=self.species)
 
                 if seq:
                     gene_sequences[gene.gene_id] = seq

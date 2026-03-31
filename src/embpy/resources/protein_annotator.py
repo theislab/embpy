@@ -85,7 +85,8 @@ class ProteinAnnotator:
 
         from .protein_resolver import ProteinResolver
         pr = ProteinResolver(organism=self.organism)
-        if s.startswith("ENSG"):
+        import re
+        if re.match(r"^ENS[A-Z]*G\d{11}", s, re.IGNORECASE):
             return pr.resolve_uniprot_id(s, id_type="ensembl_id")
         return pr.resolve_uniprot_id(s, id_type="symbol")
 

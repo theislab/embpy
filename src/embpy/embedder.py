@@ -179,6 +179,26 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
 }
 
 
+HUMAN_ONLY_MODELS = frozenset({
+    "enformer_human_rough",
+    "nt_500m_human_ref",
+})
+
+MOUSE_ONLY_MODELS = frozenset({
+    "borzoi_v0_mouse", "borzoi_v1_mouse", "borzoi_v2_mouse", "borzoi_v3_mouse",
+})
+
+MULTI_SPECIES_DNA = frozenset({
+    "nt_v2_50m", "nt_v2_100m", "nt_v2_250m", "nt_v2_500m",
+    "nt_2b5_multi",
+    "ntv3_8m_pre", "ntv3_100m_pre", "ntv3_100m_pos", "ntv3_650m_pre", "ntv3_650m_pos",
+    "gena_lm_bert_base_multi",
+    "hyenadna_tiny_1k", "hyenadna_small_32k", "hyenadna_medium_160k",
+    "hyenadna_medium_450k", "hyenadna_large_1m",
+    "caduceus_ph_131k", "caduceus_ps_131k",
+})
+
+
 class BioEmbedder:
     """
     Central class for generating biological embeddings.
@@ -199,6 +219,7 @@ class BioEmbedder:
     def __init__(
         self,
         device: str | torch.device | None = "auto",  # type: ignore[name-defined]
+        organism: str = "human",
         resolver_backend: Literal["api", "local"] = "api",
         mart_file: str | None = None,
         chromosome_folder: str | None = None,
@@ -208,10 +229,15 @@ class BioEmbedder:
 
         Args:
             device: 'auto', 'cuda', 'mps', or 'cpu', or torch.device.
+            organism: Default organism for sequence resolution and annotation
+                (e.g. 'human', 'mouse', 'zebrafish'). Any species supported
+                by Ensembl can be used.
             resolver_backend: 'api' to use online APIs, 'local' to use local FASTAs.
             mart_file: path to Mart CSV (required if resolver_backend='local').
             chromosome_folder: path to folder with chr*.fa files (required if 'local').
         """
+        self.organism = organism
+
         # Device setup
         if isinstance(device, str):
             if device == "auto":
@@ -233,18 +259,19 @@ class BioEmbedder:
                 chromosome_folder=chromosome_folder,
             )
         else:
-            # API mode; mart/chrom args ignored
-            self.gene_resolver = GeneResolver()
+            self.gene_resolver = GeneResolver(species=organism)
 
         # Protein resolver
-        self.protein_resolver = ProteinResolver(organism="human")
+        self.protein_resolver = ProteinResolver(organism=organism)
 
         # Model cache and discovery
         self.model_cache: dict[str, BaseModelWrapper] = {}
         self._available_models = self._discover_models()
 
-        logging.info(f"BioEmbedder initialized on device {self.device}, backend={self.resolver_backend}")
-        logging.info(f"Available models: {self.list_available_models()}")
+        logging.info(
+            "BioEmbedder initialized: device=%s, organism=%s, backend=%s",
+            self.device, self.organism, self.resolver_backend,
+        )
 
     def _discover_models(self) -> dict[str, tuple[type[BaseModelWrapper], str]]:
         """Filters the MODEL_REGISTRY based on available wrapper classes."""
@@ -273,11 +300,24 @@ class BioEmbedder:
 
     def _get_model(self, model_name: str) -> BaseModelWrapper:
         """Loads a model or retrieves it from the cache using the registry or direct HF loading for text models."""
-        # Return from cache if already loaded
         if model_name in self.model_cache:
             return self.model_cache[model_name]
 
-        # Check if it's in the registry first
+        is_human = self.organism.lower() in ("human", "homo_sapiens")
+        is_mouse = self.organism.lower() in ("mouse", "mus_musculus")
+        if not is_human and model_name in HUMAN_ONLY_MODELS:
+            logging.warning(
+                "Model '%s' was trained on human data only. "
+                "Results for organism='%s' may not be meaningful.",
+                model_name, self.organism,
+            )
+        if not is_mouse and model_name in MOUSE_ONLY_MODELS:
+            logging.warning(
+                "Model '%s' was trained on mouse data only. "
+                "Results for organism='%s' may not be meaningful.",
+                model_name, self.organism,
+            )
+
         if model_name in self._available_models:
             logging.info(f"Loading registered model '{model_name}' onto device '{self.device}'...")
             WrapperClass, model_path_or_name = self._available_models[model_name]

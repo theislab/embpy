@@ -4,11 +4,16 @@
 Saves sequences to disk so embedding scripts can load them
 instantly instead of querying APIs for hours.
 
-Output files (in DATA_DIR):
-    sequences/
-        GRCh38_ensembl109_protein_coding_dna.npz
-        GRCh38_ensembl109_protein_coding_proteins.npz
-        GRCh38_ensembl109_protein_coding_exons.npz
+Output structure (under DATA_DIR):
+    genome/
+        GRCh38_ensembl{release}_protein_coding_full_dna.npz
+        GRCh38_ensembl{release}_protein_coding_exons_dna.npz
+        GRCh38_ensembl{release}_protein_coding_introns_dna.npz
+    proteome/
+        canonical/
+            uniprot_protein_coding_canonical_proteins.npz
+        isoforms/
+            uniprot_protein_coding_all_isoforms.npz
 
 Each .npz contains:
     gene_ids: array of Ensembl gene IDs
@@ -16,10 +21,10 @@ Each .npz contains:
     organism, biotype, region: metadata
 
 Usage:
-    python download_sequences.py --data-dir /path/to/data
-    python download_sequences.py --data-dir /path/to/data --region exons
-    python download_sequences.py --data-dir /path/to/data --region introns
-    python download_sequences.py --data-dir /path/to/data --type protein
+    python download_sequences.py --data-dir /path/to/data/datasets
+    python download_sequences.py --data-dir /path/to/data/datasets --type dna --region exons
+    python download_sequences.py --data-dir /path/to/data/datasets --type protein
+    python download_sequences.py --data-dir /path/to/data/datasets --type protein_isoforms
 """
 
 from __future__ import annotations
@@ -51,7 +56,7 @@ def download_dna_sequences(
 
     resolver = GeneResolver()
 
-    seq_dir = data_dir / "sequences"
+    seq_dir = data_dir / "genome"
     seq_dir.mkdir(parents=True, exist_ok=True)
 
     release = resolver.release_version
@@ -124,7 +129,7 @@ def download_protein_sequences(
 
     pr = ProteinResolver(organism=organism)
 
-    seq_dir = data_dir / "sequences"
+    seq_dir = data_dir / "proteome" / "canonical"
     seq_dir.mkdir(parents=True, exist_ok=True)
 
     filename = f"uniprot_{biotype}_canonical_proteins.npz"
@@ -186,7 +191,7 @@ def download_protein_isoforms(
 
     pr = ProteinResolver(organism=organism)
 
-    seq_dir = data_dir / "sequences"
+    seq_dir = data_dir / "proteome" / "isoforms"
     seq_dir.mkdir(parents=True, exist_ok=True)
 
     filename = f"uniprot_{biotype}_all_isoforms.npz"
@@ -246,7 +251,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--data-dir", type=Path, required=True,
-        help="Base data directory (sequences saved to data_dir/sequences/).",
+        help="Base datasets directory (e.g. data/datasets).",
     )
     parser.add_argument(
         "--type", type=str, default="dna",
@@ -267,18 +272,14 @@ def main() -> None:
         download_dna_sequences(
             args.data_dir, args.organism, args.biotype, args.region,
         )
-
     if args.type in ("protein", "all"):
         download_protein_sequences(
             args.data_dir, args.organism, args.biotype,
         )
-
     if args.type in ("protein_isoforms", "all"):
         download_protein_isoforms(
             args.data_dir, args.organism, args.biotype,
         )
-
-    logger.info("Done.")
 
 
 if __name__ == "__main__":

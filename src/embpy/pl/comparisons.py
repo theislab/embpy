@@ -117,7 +117,7 @@ def parallel_coordinates(
     pc_kw: dict[str, Any] = {"alpha": alpha, "linewidth": 0.8}
     pc_kw.update(kwargs)
 
-    n_groups = df[color_by].nunique()
+    n_groups = int(df[color_by].nunique())
     palette = sns.color_palette("tab20", n_colors=max(1, n_groups))
     _pd_parallel(df, color_by, ax=ax, color=palette, **pc_kw)
 
