@@ -41,6 +41,7 @@ flowchart TD
         GeneRes["GeneResolver\nEnsembl REST | pyensembl\nMyGene.info"]
         ProtRes["ProteinResolver\nUniProt REST\nMyGene.info"]
         DrugRes["DrugResolver\nPubChem | NIH Cactus\nCIRpy"]
+        TextRes["TextResolver\nMyGene | NCBI | Ensembl\nUniProt | Wikipedia | PubChem"]
     end
 
     subgraph annotators [Annotation Sources]
@@ -67,6 +68,13 @@ flowchart TD
         ESMC["ESM-C 300M-6B"]
         ESM3M["ESM3 1.4B-98B"]
         ProtT5["ProtT5 3B"]
+        BoltzM["Boltz-2 Trunk"]
+    end
+
+    subgraph text_models [Text Models]
+        MiniLM["MiniLM-L6"]
+        BERT["BERT"]
+        TextEmb["embed_description\nvia TextResolver"]
     end
 
     subgraph mol_models [Molecule Models]
@@ -104,6 +112,7 @@ flowchart TD
         Cluster["Clustering\nLeiden | K-means | Spectral"]
         DimRed["Dim Reduction\nUMAP | t-SNE | PCA"]
         Bench["Benchmarking\nKNN Overlap | Ranking\nMetrics"]
+        Viz["Visualization\nHeatmaps | Clustermaps\nParallel Coords | Radar\nStar Coords | Dendrograms"]
     end
 
     subgraph outputBlock [Output]
@@ -123,15 +132,19 @@ flowchart TD
     GeneRes --> dna_models
     ProtRes --> prot_models
     DrugRes --> mol_models
+    TextRes --> text_models
 
     GeneInput --> GeneAnn
+    GeneInput --> TextRes
     MolInput --> MolAnn
+    MolInput --> TextRes
     GeneInput --> ProtAnn
 
     dna_models --> strategies
     prot_models --> strategies
     mol_models --> strategies
     sc_models --> strategies
+    text_models --> strategies
 
     strategies --> outputBlock
     annotators --> ObsOut
