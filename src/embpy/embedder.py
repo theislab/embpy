@@ -32,7 +32,8 @@ from .models.molecule_models import (
     RDKitWrapper,
 )
 from .models.protein_models import ESM2Wrapper, ESM3Wrapper, ESMCWrapper, ProtT5Wrapper
-from .models.text_models import TextLLMWrapper
+from .models.text_models import LlamaEmbeddingWrapper, TextLLMWrapper
+from .models.api_models import APIEmbeddingWrapper
 from .resources.gene_resolver import GeneResolver
 from .resources.protein_resolver import ProteinResolver
 from .resources.text_resolver import TextResolver
@@ -161,6 +162,18 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # --- Text Models ---
     "minilm_l6_v2": (TextLLMWrapper, "sentence-transformers/all-MiniLM-L6-v2"),
     "bert_base_uncased": (TextLLMWrapper, "bert-base-uncased"),
+    # LLaMA decoder-only models (requires HF_TOKEN for gated access)
+    "llama3.1_8b": (LlamaEmbeddingWrapper, "meta-llama/Llama-3.1-8B"),
+    "llama3.2_3b": (LlamaEmbeddingWrapper, "meta-llama/Llama-3.2-3B"),
+    "llama3.2_1b": (LlamaEmbeddingWrapper, "meta-llama/Llama-3.2-1B"),
+    # API-based embedding models (require API keys via environment variables)
+    "openai_small": (APIEmbeddingWrapper, "text-embedding-3-small"),
+    "openai_large": (APIEmbeddingWrapper, "text-embedding-3-large"),
+    "cohere_v3": (APIEmbeddingWrapper, "embed-english-v3.0"),
+    "cohere_multilingual": (APIEmbeddingWrapper, "embed-multilingual-v3.0"),
+    "voyage_3": (APIEmbeddingWrapper, "voyage-3"),
+    "voyage_3_lite": (APIEmbeddingWrapper, "voyage-3-lite"),
+    "google_embed": (APIEmbeddingWrapper, "text-embedding-005"),
     # GENA-LM (AIRI-Institute) — pip install transformers
     "gena_lm_bert_base": (GENALMWrapper, "AIRI-Institute/gena-lm-bert-base-t2t"),
     "gena_lm_bert_large": (GENALMWrapper, "AIRI-Institute/gena-lm-bert-large-t2t"),
@@ -344,6 +357,14 @@ class BioEmbedder:
                     extra_kwargs["output_type"] = "pairwise"
                 elif model_name == "boltz2_both":
                     extra_kwargs["output_type"] = "both"
+                if WrapperClass is APIEmbeddingWrapper:
+                    provider_map = {
+                        "openai_small": "openai", "openai_large": "openai",
+                        "cohere_v3": "cohere", "cohere_multilingual": "cohere",
+                        "voyage_3": "voyage", "voyage_3_lite": "voyage",
+                        "google_embed": "google",
+                    }
+                    extra_kwargs["provider"] = provider_map.get(model_name, "openai")
                 model_instance = WrapperClass(model_path_or_name=model_path_or_name, **extra_kwargs)
                 model_instance.load(self.device)
                 self.model_cache[model_name] = model_instance
@@ -922,6 +943,57 @@ class BioEmbedder:
         except Exception as e:
             logging.error(f"Error during text embedding generation for model '{model}': {e}")
             raise RuntimeError(f"Text embedding failed for input '{text[:50]}...'.") from e
+
+    def embed_text_api(
+        self,
+        text: str,
+        model: str = "text-embedding-3-small",
+        provider: str = "openai",
+        api_key: str | None = None,
+        base_url: str | None = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Embed text using an API-based model with explicit provider config.
+
+        Convenience method for one-off API calls where you want to
+        specify the provider, API key, and/or base URL directly
+        without pre-registering the model.
+
+        Parameters
+        ----------
+        text
+            Text string to embed.
+        model
+            Model name as expected by the API.
+        provider
+            ``"openai"``, ``"cohere"``, ``"voyage"``, ``"google"``,
+            or ``"generic"`` (OpenAI-compatible endpoint).
+        api_key
+            API key (or set the provider's env var).
+        base_url
+            Custom API endpoint URL.
+        **kwargs
+            Forwarded to the API wrapper.
+
+        Returns
+        -------
+        np.ndarray
+            Embedding vector.
+        """
+        from .models.api_models import APIEmbeddingWrapper
+
+        cache_key = f"_api_{provider}_{model}"
+        if cache_key not in self.model_cache:
+            wrapper = APIEmbeddingWrapper(
+                model_path_or_name=model,
+                provider=provider,
+                api_key=api_key,
+                base_url=base_url,
+            )
+            wrapper.load(self.device)
+            self.model_cache[cache_key] = wrapper
+
+        return self.model_cache[cache_key].embed(input=text, **kwargs)
 
     def embed_texts_batch(
         self,
