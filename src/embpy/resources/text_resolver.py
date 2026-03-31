@@ -437,7 +437,7 @@ class TextResolver:
     def get_description(
         self,
         identifier: str,
-        entity_type: Literal["gene", "protein", "molecule", "auto"] = "auto",
+        entity_type: Literal["gene", "protein", "molecule", "cellline", "auto"] = "auto",
         sources: list[str] | str = "all",
     ) -> dict[str, str]:
         """Fetch text descriptions, auto-detecting entity type if needed.
@@ -464,13 +464,15 @@ class TextResolver:
             return self.get_protein_description(identifier, sources=sources)
         elif entity_type == "molecule":
             return self.get_molecule_description(identifier, sources=sources)
+        elif entity_type == "cellline":
+            return self.get_cellline_description(identifier)
         else:
             raise ValueError(f"Unknown entity_type '{entity_type}'")
 
     def get_combined_description(
         self,
         identifier: str,
-        entity_type: Literal["gene", "protein", "molecule", "auto"] = "auto",
+        entity_type: Literal["gene", "protein", "molecule", "cellline", "auto"] = "auto",
         sources: list[str] | str = "all",
         template: str | None = None,
     ) -> str:
@@ -516,15 +518,46 @@ class TextResolver:
         return "\n".join(parts)
 
     # ==================================================================
+    # Cell line descriptions
+    # ==================================================================
+
+    def get_cellline_description(self, name: str) -> dict[str, str]:
+        """Fetch text description for a cell line.
+
+        Uses ``CellLineAnnotator`` to gather metadata from Cellosaurus,
+        DepMap, and Cell Model Passports, then returns a dict with a
+        single ``"cellline"`` key containing the combined text.
+
+        Parameters
+        ----------
+        name
+            Cell line name or identifier.
+
+        Returns
+        -------
+        Dict with key ``"cellline"`` -> description text.
+        """
+        from .cellline_annotator import CellLineAnnotator
+
+        ann = CellLineAnnotator(rate_limit_delay=self.delay)
+        text = ann.get_text_description(name)
+        return {"cellline": text}
+
+    # ==================================================================
     # Helpers
     # ==================================================================
 
     @staticmethod
     def _detect_entity_type(
         identifier: str,
-    ) -> Literal["gene", "protein", "molecule"]:
+    ) -> Literal["gene", "protein", "molecule", "cellline"]:
         """Heuristic detection of entity type."""
         s = identifier.strip()
+
+        if re.match(r"^ACH-\d{6}$", s):
+            return "cellline"
+        if re.match(r"^CVCL_[A-Za-z0-9]+$", s):
+            return "cellline"
 
         smiles_chars = set("=()[]#@+\\/-.")
         if len(s) > 5 and (smiles_chars & set(s)):
