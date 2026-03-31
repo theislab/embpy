@@ -33,6 +33,7 @@ flowchart TD
         ProtInput["Protein Targets\nUniProt ID | Canonical\nIsoforms"]
         MolInput["Chemical Perturbations\nSMILES | InChI\nDrug Name | PubChem CID"]
         CellInput["Single-Cell Data\nAnnData | Raw Counts\nLog-normalized"]
+        SpeciesInput["Multi-Species\nhuman | mouse | rat\nzebrafish | fly | worm | ..."]
     end
 
     subgraph resolvers [Sequence Resolution]
@@ -116,6 +117,8 @@ flowchart TD
     GeneInput --> ProtRes
     MolInput --> DrugRes
     CellInput --> sc_models
+    SpeciesInput --> GeneRes
+    SpeciesInput --> ProtRes
 
     GeneRes --> dna_models
     ProtRes --> prot_models
@@ -141,9 +144,11 @@ flowchart TD
 
 - **60+ foundation models** across DNA, protein, molecule, single-cell, and text modalities
 - **Unified `BioEmbedder` interface** -- one class to access all models with automatic sequence resolution
+- **Multi-species support** -- embed and annotate genes from any Ensembl-supported organism (human, mouse, rat, zebrafish, fly, worm, yeast, ...) with automatic species-aware sequence resolution via Ensembl REST, UniProt, MyGene.info, and STRING-DB
 - **`embed_adata()`** -- embed cells and perturbations together in a single call
 - **Weighted protein embeddings** -- TPM-weighted isoform averaging, annotation-weighted residue pooling, expression-context concatenation
 - **Multi-source annotation** -- `MoleculeAnnotator` (RDKit, ChEMBL, ChEBI, KEGG, PubChem), `GeneAnnotator` (MyGene, GTEx, STRING-DB, Open Targets, GWAS Catalog), `ProteinAnnotator` (UniProt functional metadata, InterPro domains)
+- **20 visualization functions** in `embpy.pl` -- heatmaps, clustermaps, UMAP/t-SNE, parallel coordinates, radar charts, star coordinates, dendrograms, cross-model comparison
 - **GPU acceleration** via rapids_singlecell for preprocessing, PCA, UMAP, neighbors, and Leiden
 - **Batch processing** with SLURM array job scripts for full-genome embedding
 - **scverse integration** -- AnnData-native throughout, compatible with scanpy/scvi-tools/pertpy
@@ -232,6 +237,24 @@ emb = wpe.embed_perturbation(
     "TP53", model="esm2_650M", strategy="annotation_weighted",
     site_boost=3.0,
 )
+```
+
+### Multi-species embedding
+
+```python
+# Mouse gene embeddings using Borzoi mouse weights
+mouse_embedder = BioEmbedder(device="auto", organism="mouse")
+emb = mouse_embedder.embed_gene("Trp53", model="borzoi_v0_mouse", pooling_strategy="mean")
+
+# Cross-species protein comparison with ESM-2
+human_embedder = BioEmbedder(device="auto", organism="human")
+human_tp53 = human_embedder.embed_protein("TP53", model="esm2_650M")
+mouse_trp53 = mouse_embedder.embed_protein("Trp53", model="esm2_650M")
+
+# Mouse gene annotations (STRING PPI uses mouse taxon 10090)
+from embpy.resources.gene_annotator import GeneAnnotator
+mouse_ann = GeneAnnotator(organism="mouse")
+ppi = mouse_ann.get_protein_interactions("Trp53")
 ```
 
 ### Annotate perturbations
@@ -433,27 +456,34 @@ print(f"Models: {len(embedder.list_available_models())} available")
 | 14 | Unified Embedding (embed_adata) | [14_unified_embedding.ipynb](docs/notebooks/14_unified_embedding.ipynb) |
 | 15 | Molecule Annotation | [15_molecule_annotation.ipynb](docs/notebooks/15_molecule_annotation.ipynb) |
 | 16 | Gene/Protein Annotation + Weighted Embeddings | [16_gene_protein_annotation.ipynb](docs/notebooks/16_gene_protein_annotation.ipynb) |
+| 17 | Cross-Species Ortholog Embeddings | [17_cross_species_embeddings.ipynb](docs/notebooks/17_cross_species_embeddings.ipynb) |
 
 ## Package Structure
 
 ```
 embpy/
-    embedder.py          # BioEmbedder -- unified embedding interface
+    embedder.py          # BioEmbedder(organism=...) -- unified multi-species embedding
     models/
         dna_models.py    # Enformer, Borzoi, Evo, NT, HyenaDNA, Caduceus, GENA-LM
         protein_models.py # ESM-2, ESM-C, ESM3, ProtT5
         molecule_models.py # ChemBERTa, MolFormer, RDKit, MiniMol, MHG-GNN, MolE
         singlecell_models.py # scGPT, Geneformer, UCE, PCA, scVI
     resources/
-        gene_resolver.py      # Gene symbol <-> Ensembl ID <-> DNA sequence
-        protein_resolver.py   # Gene -> UniProt canonical/isoform sequences
+        gene_resolver.py      # Multi-species gene resolution (Ensembl, MyGene)
+        protein_resolver.py   # Multi-species protein resolution (UniProt, MyGene)
         molecule_annotator.py # Small molecule annotations (6 sources)
-        gene_annotator.py     # Gene annotations (pathways, expression, PPI, diseases)
-        protein_annotator.py  # Protein annotations (UniProt, InterPro)
+        gene_annotator.py     # Gene annotations (pathways, PPI, diseases -- species-aware)
+        protein_annotator.py  # Protein annotations (UniProt, InterPro -- species-aware)
         drug_resolver.py      # Drug name <-> SMILES resolution
     pp/
         sc_preprocessing.py   # Single-cell preprocessing (raw/standard pipelines)
         basic.py              # Perturbation embedding matrix construction
+    pl/
+        embedding_space.py    # UMAP/t-SNE scatter, all_embeddings, feature panels
+        heatmaps.py           # Similarity, distance, correlation, clustermap heatmaps
+        clustering.py         # Leiden overview, composition, dendrogram
+        distributions.py      # Embedding distributions, norms, perturbation ranking
+        comparisons.py        # Parallel coordinates, radar charts, star coordinates
     tl/
         similarity.py         # Cosine/Pearson/Spearman similarity, KNN overlap
         dimred.py             # UMAP, t-SNE (CPU/GPU)
