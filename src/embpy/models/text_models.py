@@ -431,10 +431,10 @@ class LlamaEmbeddingWrapper(TextLLMWrapper):
             hidden = hidden.squeeze(0)
 
         if pooling_strategy == "last_token":
-            pooled = self._last_token_pool(
-                hidden.unsqueeze(0) if hidden.dim() == 2 else hidden,
-                attention_mask,
-            ).cpu().float().numpy()
+            h = hidden.unsqueeze(0) if hidden.dim() == 2 else hidden
+            pooled = self._last_token_pool(h, attention_mask).cpu().float().numpy()
+            if pooled.ndim > 1:
+                pooled = pooled.squeeze(0)
         elif pooling_strategy == "mean":
             mask = attention_mask.squeeze(0).unsqueeze(-1).float()
             pooled = (torch.sum(hidden * mask, dim=0) / torch.sum(mask, dim=0)).cpu().float().numpy()
