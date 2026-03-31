@@ -81,6 +81,9 @@ optional-dependencies.caduceus = [
 optional-dependencies.ntv3 = [
   "transformers>=5.0.0",
 ]
+optional-dependencies.boltz = [
+  "boltz>=2.0",
+]
 optional-dependencies.ppi = [
   "h5py",
 ]
@@ -97,7 +100,7 @@ optional-dependencies.scanpy = [
   "scanpy>=1.10",
 ]
 optional-dependencies.all = [
-  "embpy[torch,evo,evo2,ppi,helical,lamindb,pertpy,scanpy]",
+  "embpy[torch,evo,evo2,boltz,ppi,helical,lamindb,pertpy,scanpy]",
 ]
 optional-dependencies.dev = [
   "pre-commit",

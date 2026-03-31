@@ -35,6 +35,7 @@ from .models.protein_models import ESM2Wrapper, ESM3Wrapper, ESMCWrapper, ProtT5
 from .models.text_models import TextLLMWrapper
 from .resources.gene_resolver import GeneResolver
 from .resources.protein_resolver import ProteinResolver
+from .resources.text_resolver import TextResolver
 
 # Evo (v1/v1.5) is an optional dependency - import conditionally
 try:
@@ -53,6 +54,15 @@ try:
 except ImportError:
     _HAVE_EVO2 = False
     Evo2Wrapper = None  # type: ignore
+
+# Boltz-2 structure model (optional: pip install boltz[cuda])
+try:
+    from .models.structure_models import Boltz2Wrapper
+
+    _HAVE_BOLTZ = True
+except ImportError:
+    _HAVE_BOLTZ = False
+    Boltz2Wrapper = None  # type: ignore
 
 
 # Helper function (can be moved to utils later)
@@ -127,6 +137,10 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # ProtT5 Models (ProtTrans)
     "prot_t5_xl": (ProtT5Wrapper, "Rostlab/prot_t5_xl_uniref50"),
     "prot_t5_xl_half": (ProtT5Wrapper, "Rostlab/prot_t5_xl_half_uniref50-enc"),
+    # Boltz-2 structure model (requires: pip install boltz[cuda])
+    "boltz2": (Boltz2Wrapper if _HAVE_BOLTZ else None, "boltz2"),
+    "boltz2_pairwise": (Boltz2Wrapper if _HAVE_BOLTZ else None, "boltz2_pairwise"),
+    "boltz2_both": (Boltz2Wrapper if _HAVE_BOLTZ else None, "boltz2_both"),
     # --- Molecule Models ---
     "chemberta2MTR": (ChembertaWrapper, "DeepChem/ChemBERTa-77M-MTR"),
     "chemberta2MLM": (ChembertaWrapper, "DeepChem/ChemBERTa-100M-MLM"),
@@ -264,6 +278,9 @@ class BioEmbedder:
         # Protein resolver
         self.protein_resolver = ProteinResolver(organism=organism)
 
+        # Text resolver for description-based embeddings
+        self.text_resolver = TextResolver(organism=organism)
+
         # Model cache and discovery
         self.model_cache: dict[str, BaseModelWrapper] = {}
         self._available_models = self._discover_models()
@@ -322,7 +339,12 @@ class BioEmbedder:
             logging.info(f"Loading registered model '{model_name}' onto device '{self.device}'...")
             WrapperClass, model_path_or_name = self._available_models[model_name]
             try:
-                model_instance = WrapperClass(model_path_or_name=model_path_or_name)
+                extra_kwargs: dict[str, Any] = {}
+                if model_name == "boltz2_pairwise":
+                    extra_kwargs["output_type"] = "pairwise"
+                elif model_name == "boltz2_both":
+                    extra_kwargs["output_type"] = "both"
+                model_instance = WrapperClass(model_path_or_name=model_path_or_name, **extra_kwargs)
                 model_instance.load(self.device)
                 self.model_cache[model_name] = model_instance
                 logging.info(f"Model '{model_name}' loaded successfully.")
@@ -946,6 +968,135 @@ class BioEmbedder:
         except (ValueError, KeyError) as e:
             logging.error(f"Error during batch text embedding generation for model '{model}': {e}")
             results = [None] * len(texts)
+
+        return results
+
+    def embed_description(
+        self,
+        identifier: str,
+        model: str = "minilm_l6_v2",
+        entity_type: Literal["gene", "protein", "molecule", "auto"] = "auto",
+        sources: list[str] | str = "all",
+        pooling_strategy: str = "mean",
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Fetch text description(s) for a biological entity and embed them.
+
+        Resolves the identifier to rich text descriptions from public
+        knowledge sources (MyGene, NCBI, Ensembl, UniProt, Wikipedia,
+        PubChem), combines them, and embeds the result with a text model.
+
+        Parameters
+        ----------
+        identifier
+            Gene symbol, Ensembl ID, UniProt accession, drug name,
+            or SMILES string.
+        model
+            Text embedding model (default ``"minilm_l6_v2"``).
+        entity_type
+            ``"gene"``, ``"protein"``, ``"molecule"``, or ``"auto"``
+            to auto-detect.
+        sources
+            Knowledge sources to query. ``"all"`` uses the defaults
+            for the detected entity type.
+        pooling_strategy
+            Pooling strategy for the text model.
+        **kwargs
+            Forwarded to the text model's ``embed`` method.
+
+        Returns
+        -------
+        np.ndarray
+            The text embedding vector.
+
+        Examples
+        --------
+        >>> emb = embedder.embed_description("TP53", model="minilm_l6_v2")
+        >>> emb.shape
+        (384,)
+        >>> emb = embedder.embed_description("aspirin", entity_type="molecule")
+        """
+        description = self.text_resolver.get_combined_description(
+            identifier,
+            entity_type=entity_type,
+            sources=sources,
+        )
+        logging.info(
+            "Description for '%s' (%d chars): %s...",
+            identifier, len(description), description[:100],
+        )
+        return self.embed_text(
+            text=description,
+            model=model,
+            pooling_strategy=pooling_strategy,
+            **kwargs,
+        )
+
+    def embed_descriptions_batch(
+        self,
+        identifiers: Sequence[str],
+        model: str = "minilm_l6_v2",
+        entity_type: Literal["gene", "protein", "molecule", "auto"] = "auto",
+        sources: list[str] | str = "all",
+        pooling_strategy: str = "mean",
+        batch_size: int | None = None,
+        **kwargs: Any,
+    ) -> list[np.ndarray | None]:
+        """Fetch and embed text descriptions for a batch of entities.
+
+        Parameters
+        ----------
+        identifiers
+            List of biological entity identifiers.
+        model
+            Text embedding model.
+        entity_type
+            Entity type (applied to all identifiers).
+        sources
+            Knowledge sources to query.
+        pooling_strategy
+            Pooling strategy for the text model.
+        batch_size
+            Maximum batch size for embedding inference.
+        **kwargs
+            Forwarded to the text model.
+
+        Returns
+        -------
+        List of embedding arrays, with ``None`` for failed lookups.
+        """
+        texts: list[str] = []
+        valid_indices: list[int] = []
+
+        for i, ident in enumerate(identifiers):
+            try:
+                desc = self.text_resolver.get_combined_description(
+                    ident,
+                    entity_type=entity_type,
+                    sources=sources,
+                )
+                if desc:
+                    texts.append(desc)
+                    valid_indices.append(i)
+                else:
+                    logging.warning("No description found for '%s'", ident)
+            except Exception as e:  # noqa: BLE001
+                logging.warning("Failed to fetch description for '%s': %s", ident, e)
+
+        if not texts:
+            return [None] * len(identifiers)
+
+        batch_embs = self.embed_texts_batch(
+            texts=texts,
+            model=model,
+            pooling_strategy=pooling_strategy,
+            batch_size=batch_size,
+            **kwargs,
+        )
+
+        results: list[np.ndarray | None] = [None] * len(identifiers)
+        for idx, emb in zip(valid_indices, batch_embs, strict=False):
+            results[idx] = emb
 
         return results
 
