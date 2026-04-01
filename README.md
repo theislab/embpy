@@ -49,6 +49,7 @@ flowchart TD
         MolAnn["MoleculeAnnotator\nRDKit | ChEMBL | ChEBI\nKEGG | PubChem | UniChem"]
         GeneAnn["GeneAnnotator\nMyGene | GTEx | STRING-DB\nOpen Targets | GWAS Catalog\nDoRothEA"]
         ProtAnn["ProteinAnnotator\nUniProt JSON | InterPro\nGO Terms"]
+        CellAnn["CellLineAnnotator\nCellosaurus | DepMap\nCell Model Passports | Wikipedia"]
     end
 
     subgraph dna_models [DNA Models]
@@ -162,7 +163,7 @@ flowchart TD
 - **Weighted protein embeddings** -- TPM-weighted isoform averaging, annotation-weighted residue pooling, expression-context concatenation
 - **Text knowledge embeddings** -- `TextResolver` fetches descriptions from 6 public sources (MyGene, NCBI, Ensembl, UniProt, Wikipedia, PubChem); `embed_description()` resolves + embeds in one call
 - **Boltz-2 structure embeddings** -- extract trunk representations (single per-residue + pairwise interaction features) from the Boltz-2 biomolecular foundation model
-- **Multi-source annotation** -- `MoleculeAnnotator` (RDKit, ChEMBL, ChEBI, KEGG, PubChem), `GeneAnnotator` (MyGene, GTEx, STRING-DB, Open Targets, GWAS Catalog), `ProteinAnnotator` (UniProt functional metadata, InterPro domains)
+- **Multi-source annotation** -- `MoleculeAnnotator` (RDKit, ChEMBL, ChEBI, KEGG, PubChem), `GeneAnnotator` (MyGene, GTEx, STRING-DB, Open Targets, GWAS Catalog), `ProteinAnnotator` (UniProt functional metadata, InterPro domains), `CellLineAnnotator` (Cellosaurus, DepMap/CCLE, Cell Model Passports, Wikipedia)
 - **20 visualization functions** in `embpy.pl` -- heatmaps, clustermaps, UMAP/t-SNE, parallel coordinates, radar charts, star coordinates, dendrograms, cross-model comparison
 - **GPU acceleration** via rapids_singlecell for preprocessing, PCA, UMAP, neighbors, and Leiden
 - **Batch processing** with SLURM array job scripts for full-genome embedding
@@ -300,6 +301,23 @@ emb_z = embedder.embed_protein("TP53", model="boltz2_pairwise")
 
 # Both concatenated (~512 dims)
 emb_both = embedder.embed_protein("TP53", model="boltz2_both")
+```
+
+### Cell line context annotation
+
+```python
+from embpy.resources import CellLineAnnotator
+
+ann = CellLineAnnotator()
+info = ann.annotate("A549")
+# {'tissue': 'Lung', 'disease': 'Non-small cell lung carcinoma', 'lineage': 'Lung', ...}
+
+# Text embedding of cell line context (metadata + Wikipedia)
+emb = embedder.embed_description("HeLa", entity_type="cellline", model="minilm_l6_v2")
+
+# Annotate cell lines in an AnnData
+adata = ann.annotate_adata(adata, column="cell_line")
+# Adds cellline_tissue, cellline_disease, cellline_lineage to .obs
 ```
 
 ### Annotate perturbations
@@ -506,6 +524,7 @@ print(f"Models: {len(embedder.list_available_models())} available")
 | 17 | Cross-Species Ortholog Embeddings | [17_cross_species_embeddings.ipynb](docs/notebooks/17_cross_species_embeddings.ipynb) |
 | 18 | Text Knowledge Embeddings | [18_text_knowledge_embeddings.ipynb](docs/notebooks/18_text_knowledge_embeddings.ipynb) |
 | 19 | Boltz-2 Structure Embeddings | [19_boltz2_structure_embeddings.ipynb](docs/notebooks/19_boltz2_structure_embeddings.ipynb) |
+| 20 | Cell Line Context Annotation | [20_cellline_context.ipynb](docs/notebooks/20_cellline_context.ipynb) |
 
 ## Package Structure
 
@@ -525,6 +544,7 @@ embpy/
         molecule_annotator.py # Small molecule annotations (6 sources)
         gene_annotator.py     # Gene annotations (pathways, PPI, diseases -- species-aware)
         protein_annotator.py  # Protein annotations (UniProt, InterPro -- species-aware)
+        cellline_annotator.py # Cell line context (Cellosaurus, DepMap, Passports, Wikipedia)
         drug_resolver.py      # Drug name <-> SMILES resolution
     pp/
         sc_preprocessing.py   # Single-cell preprocessing (raw/standard pipelines)
