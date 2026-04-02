@@ -1,8 +1,9 @@
 #!/usr/bin/env python
-"""Pre-download all protein-coding gene sequences and protein sequences.
+"""Production pipeline: bulk download genome/proteome from FTP and extract per-gene sequences.
 
-Saves sequences to disk so embedding scripts can load them
-instantly instead of querying APIs for hours.
+Uses Ensembl FTP for genome FASTA + GTF and UniProt FTP for proteome FASTA,
+then extracts per-gene sequences locally via pysam (indexed FASTA access)
+and pyensembl (gene coordinates). No REST API calls needed.
 
 Output structure (under DATA_DIR):
     genome/
@@ -15,24 +16,22 @@ Output structure (under DATA_DIR):
         isoforms/
             uniprot_protein_coding_all_isoforms.npz
 
-Each .npz contains:
-    gene_ids: array of Ensembl gene IDs
-    sequences: array of sequence strings
-    organism, biotype, region: metadata
-
 Usage:
-    python download_sequences.py --data-dir /path/to/data/datasets
+    python download_sequences.py --data-dir /path/to/data/datasets --type dna --region full
     python download_sequences.py --data-dir /path/to/data/datasets --type dna --region exons
     python download_sequences.py --data-dir /path/to/data/datasets --type protein
-    python download_sequences.py --data-dir /path/to/data/datasets --type protein_isoforms
 """
 
 from __future__ import annotations
 
 import argparse
+import gzip
 import logging
+import shutil
+import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 import numpy as np
@@ -44,6 +43,62 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+ENSEMBL_FTP = "https://ftp.ensembl.org/pub"
+
+SPECIES_CONFIG = {
+    "human": {
+        "assembly": "GRCh38",
+        "species_name": "homo_sapiens",
+        "release": 109,
+        "uniprot_proteome": "UP000005640_9606",
+    },
+    "mouse": {
+        "assembly": "GRCm39",
+        "species_name": "mus_musculus",
+        "release": 109,
+        "uniprot_proteome": "UP000000589_10090",
+    },
+}
+
+
+def _download_file(url: str, dest: Path) -> Path:
+    """Download a file from a URL if it doesn't already exist."""
+    if dest.exists():
+        logger.info("Already downloaded: %s", dest)
+        return dest
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Downloading %s -> %s", url, dest)
+    try:
+        urllib.request.urlretrieve(url, str(dest))
+    except Exception:
+        logger.info("urllib failed, trying wget...")
+        subprocess.run(
+            ["wget", "-q", "-O", str(dest), url],
+            check=True, timeout=7200,
+        )
+    size_mb = dest.stat().st_size / 1e6
+    logger.info("Downloaded %.1f MB", size_mb)
+    return dest
+
+
+def _decompress_gz(gz_path: Path) -> Path:
+    """Decompress a .gz file if the uncompressed version doesn't exist."""
+    out_path = gz_path.with_suffix("")
+    if out_path.exists():
+        logger.info("Already decompressed: %s", out_path)
+        return out_path
+
+    logger.info("Decompressing %s...", gz_path)
+    with gzip.open(gz_path, "rb") as f_in, open(out_path, "wb") as f_out:
+        shutil.copyfileobj(f_in, f_out)
+    logger.info("Decompressed to %s", out_path)
+    return out_path
+
+
+# ==================================================================
+# DNA: Bulk genome FASTA + pysam extraction
+# ==================================================================
 
 def download_dna_sequences(
     data_dir: Path,
@@ -51,83 +106,165 @@ def download_dna_sequences(
     biotype: str = "protein_coding",
     region: str = "full",
 ) -> None:
-    """Download all DNA sequences and save to disk."""
-    from embpy.resources.gene_resolver import GeneResolver
+    """Download genome FASTA from Ensembl FTP, then extract per-gene sequences."""
+    config = SPECIES_CONFIG.get(organism)
+    if not config:
+        logger.error("Unsupported organism '%s'. Supported: %s", organism, list(SPECIES_CONFIG.keys()))
+        sys.exit(1)
 
-    resolver = GeneResolver()
+    import pysam
+    import pyensembl
+
+    release = config["release"]
+    assembly = config["assembly"]
+    species = config["species_name"]
 
     seq_dir = data_dir / "genome"
     seq_dir.mkdir(parents=True, exist_ok=True)
-
-    release = resolver.release_version
-    filename = f"GRCh38_ensembl{release}_{biotype}_{region}_dna.npz"
+    filename = f"{assembly}_ensembl{release}_{biotype}_{region}_dna.npz"
     output_path = seq_dir / filename
 
     if output_path.exists():
         logger.info("Already exists: %s", output_path)
         return
 
-    logger.info("Downloading %s %s DNA sequences (region=%s)...", biotype, organism, region)
+    cache_dir = data_dir / ".cache" / "ensembl"
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
-    if region == "full":
-        sequences = resolver.get_gene_sequences(biotype=biotype)
-        if not sequences:
-            logger.error("No sequences retrieved")
-            sys.exit(1)
+    genome_url = (
+        f"{ENSEMBL_FTP}/release-{release}/fasta/{species}/dna/"
+        f"{species.capitalize().replace('_', '.')}.{assembly}.dna.primary_assembly.fa.gz"
+    )
+    genome_gz = cache_dir / f"{assembly}.dna.primary_assembly.fa.gz"
+    _download_file(genome_url, genome_gz)
+    genome_fa = _decompress_gz(genome_gz)
 
-        gene_ids = list(sequences.keys())
-        seq_list = list(sequences.values())
-    else:
-        if resolver.ensembl is None:
-            logger.error("pyensembl not available")
-            sys.exit(1)
+    logger.info("Indexing genome FASTA with pysam...")
+    pysam.faidx(str(genome_fa))
+    fasta = pysam.FastaFile(str(genome_fa))
 
-        all_genes = resolver.ensembl.genes()
-        if biotype != "all":
-            all_genes = [g for g in all_genes if g.biotype == biotype]
+    logger.info("Loading gene annotations via pyensembl (release %d, %s)...", release, organism)
+    ens = pyensembl.EnsemblRelease(release=release, species=organism)
+    ens.download()
+    ens.index()
 
-        gene_ids = []
-        seq_list = []
-        total = len(all_genes)
+    all_genes = ens.genes()
+    if biotype != "all":
+        all_genes = [g for g in all_genes if g.biotype == biotype]
+    total = len(all_genes)
+    logger.info("Found %d %s genes. Extracting %s sequences...", total, biotype, region)
 
-        for i, gene in enumerate(all_genes):
-            if (i + 1) % 100 == 0:
-                logger.info("Fetching %s %d/%d...", region, i + 1, total)
+    available_chroms = set(fasta.references)
 
-            seq = resolver.get_gene_region_sequence(
-                gene.gene_id, id_type="ensembl_id",
-                organism=organism, region=region,
-            )
+    gene_ids = []
+    sequences = []
+    skipped = 0
+
+    for i, gene in enumerate(all_genes):
+        if (i + 1) % 1000 == 0:
+            logger.info("  Processed %d/%d genes (%d sequences extracted)...", i + 1, total, len(gene_ids))
+
+        chrom = gene.contig
+        if chrom not in available_chroms:
+            alt = f"chr{chrom}" if not chrom.startswith("chr") else chrom[3:]
+            if alt in available_chroms:
+                chrom = alt
+            else:
+                skipped += 1
+                continue
+
+        try:
+            if region == "full":
+                seq = fasta.fetch(chrom, gene.start - 1, gene.end)
+                if gene.strand == "-":
+                    seq = _reverse_complement(seq)
+
+            elif region == "exons":
+                exon_seqs = []
+                for exon in sorted(gene.exons, key=lambda e: e.start):
+                    eseq = fasta.fetch(chrom, exon.start - 1, exon.end)
+                    exon_seqs.append(eseq)
+                if gene.strand == "-":
+                    exon_seqs = [_reverse_complement(s) for s in reversed(exon_seqs)]
+                seq = "".join(exon_seqs)
+
+            elif region == "introns":
+                exons = sorted(gene.exons, key=lambda e: e.start)
+                intron_seqs = []
+                for j in range(len(exons) - 1):
+                    i_start = exons[j].end
+                    i_end = exons[j + 1].start - 1
+                    if i_end <= i_start:
+                        continue
+                    iseq = fasta.fetch(chrom, i_start, i_end)
+                    intron_seqs.append(iseq)
+                if gene.strand == "-":
+                    intron_seqs = [_reverse_complement(s) for s in reversed(intron_seqs)]
+                seq = "".join(intron_seqs)
+            else:
+                logger.error("Unknown region '%s'", region)
+                sys.exit(1)
+
             if seq:
                 gene_ids.append(gene.gene_id)
-                seq_list.append(seq)
+                sequences.append(seq)
 
-            time.sleep(0.35)
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Failed to extract %s for %s: %s", region, gene.gene_id, e)
+            skipped += 1
 
-    np.savez(
-        output_path,
-        gene_ids=np.array(gene_ids, dtype=str),
-        sequences=np.array(seq_list, dtype=str),
-        organism=organism,
-        biotype=biotype,
-        region=region,
-        ensembl_release=release,
-    )
+    fasta.close()
+
     logger.info(
-        "Saved %d %s sequences to %s",
-        len(gene_ids), region, output_path,
+        "Extracted %d sequences (%d skipped) for region=%s",
+        len(gene_ids), skipped, region,
     )
 
+    _save_chunked_npz(
+        output_path, gene_ids, sequences,
+        organism=organism, biotype=biotype, region=region,
+        ensembl_release=str(release),
+    )
+
+
+def _reverse_complement(seq: str) -> str:
+    """Reverse complement a DNA sequence."""
+    comp = str.maketrans("ACGTacgt", "TGCAtgca")
+    return seq.translate(comp)[::-1]
+
+
+def _save_chunked_npz(
+    output_path: Path,
+    gene_ids: list[str],
+    sequences: list[str],
+    **metadata: str,
+) -> None:
+    """Save sequences to .npz without holding everything as a numpy array at once."""
+    logger.info("Saving %d sequences to %s...", len(gene_ids), output_path)
+    np.savez_compressed(
+        output_path,
+        gene_ids=np.array(gene_ids, dtype=object),
+        sequences=np.array(sequences, dtype=object),
+        **{k: np.array(v) for k, v in metadata.items()},
+    )
+    size_mb = output_path.stat().st_size / 1e6
+    logger.info("Saved %s (%.1f MB)", output_path, size_mb)
+
+
+# ==================================================================
+# Protein: Bulk UniProt FASTA
+# ==================================================================
 
 def download_protein_sequences(
     data_dir: Path,
     organism: str = "human",
     biotype: str = "protein_coding",
 ) -> None:
-    """Download all canonical protein sequences and save to disk."""
-    from embpy.resources.protein_resolver import ProteinResolver
-
-    pr = ProteinResolver(organism=organism)
+    """Download canonical protein sequences from UniProt FTP."""
+    config = SPECIES_CONFIG.get(organism)
+    if not config:
+        logger.error("Unsupported organism '%s'", organism)
+        sys.exit(1)
 
     seq_dir = data_dir / "proteome" / "canonical"
     seq_dir.mkdir(parents=True, exist_ok=True)
@@ -139,54 +276,66 @@ def download_protein_sequences(
         logger.info("Already exists: %s", output_path)
         return
 
-    logger.info("Downloading canonical protein sequences for %s %s genes...", biotype, organism)
+    proteome_id = config["uniprot_proteome"]
+    taxon = proteome_id.split("_")[1]
 
-    gene_ids = pr._get_all_gene_ids(biotype=biotype)
-    if not gene_ids:
-        logger.error("No genes found")
-        sys.exit(1)
+    cache_dir = data_dir / ".cache" / "uniprot"
+    cache_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Found %d genes, fetching protein sequences...", len(gene_ids))
+    fasta_url = (
+        f"https://rest.uniprot.org/uniprotkb/stream?"
+        f"format=fasta&query=organism_id:{taxon}+AND+reviewed:true"
+    )
+    fasta_file = cache_dir / f"{proteome_id}_sprot.fasta"
 
-    result_gene_ids = []
-    result_accessions = []
-    result_sequences = []
-    total = len(gene_ids)
+    if not fasta_file.exists():
+        logger.info("Downloading Swiss-Prot proteome for taxon %s...", taxon)
+        _download_file(fasta_url, fasta_file)
 
-    for i, gene_id in enumerate(gene_ids):
-        if (i + 1) % 100 == 0:
-            logger.info("Fetching protein %d/%d...", i + 1, total)
+    from Bio import SeqIO
 
-        accession = pr.resolve_uniprot_id(gene_id, id_type="ensembl_id")
-        if accession:
-            seq = pr.get_canonical_sequence(gene_id, id_type="ensembl_id")
-            if seq:
-                result_gene_ids.append(gene_id)
-                result_accessions.append(accession)
-                result_sequences.append(seq)
+    logger.info("Parsing protein FASTA...")
+    gene_ids = []
+    accessions = []
+    sequences_list = []
 
-        time.sleep(0.15)
+    for record in SeqIO.parse(str(fasta_file), "fasta"):
+        acc = record.id.split("|")[1] if "|" in record.id else record.id
+        seq = str(record.seq)
 
-    np.savez(
+        gene_name = ""
+        desc = record.description
+        if "GN=" in desc:
+            gn_part = desc.split("GN=")[1]
+            gene_name = gn_part.split()[0]
+
+        gene_ids.append(gene_name or acc)
+        accessions.append(acc)
+        sequences_list.append(seq)
+
+    logger.info("Parsed %d canonical protein sequences", len(gene_ids))
+
+    np.savez_compressed(
         output_path,
-        gene_ids=np.array(result_gene_ids, dtype=str),
-        accessions=np.array(result_accessions, dtype=str),
-        sequences=np.array(result_sequences, dtype=str),
+        gene_ids=np.array(gene_ids, dtype=object),
+        accessions=np.array(accessions, dtype=object),
+        sequences=np.array(sequences_list, dtype=object),
         organism=organism,
         biotype=biotype,
     )
-    logger.info(
-        "Saved %d protein sequences to %s",
-        len(result_gene_ids), output_path,
-    )
+    logger.info("Saved %s", output_path)
 
+
+# ==================================================================
+# Protein isoforms (keep existing REST API approach -- already works)
+# ==================================================================
 
 def download_protein_isoforms(
     data_dir: Path,
     organism: str = "human",
     biotype: str = "protein_coding",
 ) -> None:
-    """Download all protein isoforms and save to disk."""
+    """Download all protein isoforms from UniProt REST API."""
     from embpy.resources.protein_resolver import ProteinResolver
 
     pr = ProteinResolver(organism=organism)
@@ -203,20 +352,20 @@ def download_protein_isoforms(
 
     logger.info("Downloading all protein isoforms for %s %s genes...", biotype, organism)
 
-    gene_ids = pr._get_all_gene_ids(biotype=biotype)
-    if not gene_ids:
+    gene_ids_list = pr._get_all_gene_ids(biotype=biotype)
+    if not gene_ids_list:
         logger.error("No genes found")
         sys.exit(1)
 
-    logger.info("Found %d genes, fetching isoform sequences...", len(gene_ids))
+    logger.info("Found %d genes, fetching isoform sequences...", len(gene_ids_list))
 
     all_ids = []
     all_gene_ids = []
     all_isoform_ids = []
     all_sequences = []
-    total = len(gene_ids)
+    total = len(gene_ids_list)
 
-    for i, gene_id in enumerate(gene_ids):
+    for i, gene_id in enumerate(gene_ids_list):
         if (i + 1) % 100 == 0:
             logger.info("Fetching isoforms %d/%d (%d isoforms so far)...",
                         i + 1, total, len(all_sequences))
@@ -230,12 +379,12 @@ def download_protein_isoforms(
 
         time.sleep(0.2)
 
-    np.savez(
+    np.savez_compressed(
         output_path,
-        ids=np.array(all_ids, dtype=str),
-        gene_ids=np.array(all_gene_ids, dtype=str),
-        isoform_ids=np.array(all_isoform_ids, dtype=str),
-        sequences=np.array(all_sequences, dtype=str),
+        ids=np.array(all_ids, dtype=object),
+        gene_ids=np.array(all_gene_ids, dtype=object),
+        isoform_ids=np.array(all_isoform_ids, dtype=object),
+        sequences=np.array(all_sequences, dtype=object),
         organism=organism,
         biotype=biotype,
     )
@@ -245,9 +394,13 @@ def download_protein_isoforms(
     )
 
 
+# ==================================================================
+# CLI
+# ==================================================================
+
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Pre-download gene/protein sequences for embedding.",
+        description="Production pipeline: bulk download and extract gene/protein sequences.",
     )
     parser.add_argument(
         "--data-dir", type=Path, required=True,
@@ -256,12 +409,10 @@ def main() -> None:
     parser.add_argument(
         "--type", type=str, default="dna",
         choices=["dna", "protein", "protein_isoforms", "all"],
-        help="What to download: dna, protein (canonical), protein_isoforms, or all.",
     )
     parser.add_argument(
         "--region", type=str, default="full",
         choices=["full", "exons", "introns"],
-        help="DNA region (ignored for protein).",
     )
     parser.add_argument("--organism", type=str, default="human")
     parser.add_argument("--biotype", type=str, default="protein_coding")
