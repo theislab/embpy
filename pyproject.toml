@@ -32,6 +32,7 @@ dependencies = [
   "ipywidgets",
   "matplotlib",
   "numpy>=2.0,<2.3",
+  "pysam>=0.22",
   "pandas>=2.3.0",
   "pyarrow>=14.0.2",
   "pyensembl>=2.3.13",
