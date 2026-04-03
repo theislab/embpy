@@ -1,26 +1,31 @@
 """Morphology embedding models for fluorescence microscopy images.
 
 Wraps SubCell ViT-MAE models trained on Human Protein Atlas images.
-SubCell takes 4-channel fluorescence images (Red=microtubules,
-Yellow=ER, Blue=nucleus, Green=protein of interest) and produces
-rich cell morphology embeddings.
+SubCell takes multi-channel fluorescence images and produces rich
+cell morphology embeddings (1536-dim via gated attention pooling).
 
-Three model variants are supported:
+8 model variants across 4 channel configurations x 2 architectures:
 
-- ``subcell_mae`` -- masked autoencoder reconstruction only
-- ``subcell_cellprot`` -- cell-specific + protein-specific SSL
-- ``subcell_contrast`` -- MAE + contrastive + cell/protein SSL (best)
+Channel configs:
+- ``rybg`` (4ch): Red=microtubules, Yellow=ER, Blue=nucleus, Green=protein
+- ``rbg`` (3ch): microtubules + nucleus + protein
+- ``ybg`` (3ch): ER + nucleus + protein
+- ``bg`` (2ch): nucleus + protein
 
-Requires a local checkpoint file (``.ckpt``) obtained from the
-SubCell authors. Once HuggingFace weights are published, auto-download
-will be supported.
+Architectures:
+- ``mae_contrast_supcon_model`` -- MAE + contrastive + supervised contrastive
+- ``vit_supcon_model`` -- ViT + supervised contrastive
 
-Reference: https://github.com/CellProfiling/subcell-embed
+Weights are auto-downloaded from the public CZI S3 bucket on first use.
+
+Reference: https://github.com/CellProfiling/SubCellPortable
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import urllib.request
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -33,7 +38,67 @@ from .base import BaseModelWrapper
 
 logger = logging.getLogger(__name__)
 
-SUBCELL_VIT_CONFIG = {
+S3_BASE = "https://czi-subcell-public.s3.amazonaws.com/models"
+
+SUBCELL_MODELS = {
+    "subcell_mae_rybg": {
+        "encoder": f"{S3_BASE}/all_channels_MAE-CellS-ProtS-Pool.pth",
+        "classifier": f"{S3_BASE}/all_channels_MAE_MLP_classifier/all_channels_MAE_MLP_classifier_seed_0.pth",
+        "channels": "rybg",
+        "num_channels": 4,
+    },
+    "subcell_vit_rybg": {
+        "encoder": f"{S3_BASE}/all_channels_ViT-ProtS-Pool.pth",
+        "classifier": f"{S3_BASE}/all_channels_ViT_MLP_classifier/all_channels_ViT_MLP_classifier_seed_0.pth",
+        "channels": "rybg",
+        "num_channels": 4,
+    },
+    "subcell_mae_rbg": {
+        "encoder": f"{S3_BASE}/MT-DNA-Protein_MAE-CellS-ProtS-Pool.pth",
+        "classifier": f"{S3_BASE}/MT-DNA-Protein_MAE_MLP_classifier/MT-DNA-Protein_MAE_MLP_classifier_seed_0.pth",
+        "channels": "rbg",
+        "num_channels": 3,
+    },
+    "subcell_vit_rbg": {
+        "encoder": f"{S3_BASE}/MT-DNA-Protein_ViT-ProtS-Pool.pth",
+        "classifier": f"{S3_BASE}/MT-DNA-Protein_ViT_MLP_classifier/MT-DNA-Protein_ViT_MLP_classifier_seed_0.pth",
+        "channels": "rbg",
+        "num_channels": 3,
+    },
+    "subcell_mae_ybg": {
+        "encoder": f"{S3_BASE}/ER-DNA-Protein_MAE-CellS-ProtS-Pool.pth",
+        "classifier": f"{S3_BASE}/ER-DNA-Protein_MAE_MLP_classifier/ER-DNA-Protein_MAE_MLP_classifier_seed_0.pth",
+        "channels": "ybg",
+        "num_channels": 3,
+    },
+    "subcell_vit_ybg": {
+        "encoder": f"{S3_BASE}/ER-DNA-Protein_ViT-ProtS-Pool.pth",
+        "classifier": f"{S3_BASE}/ER-DNA-Protein_ViT_MLP_classifier/ER-DNA-Protein_ViT_MLP_classifier_seed_0.pth",
+        "channels": "ybg",
+        "num_channels": 3,
+    },
+    "subcell_mae_bg": {
+        "encoder": f"{S3_BASE}/DNA-Protein_MAE-CellS-ProtS-Pool.pth",
+        "classifier": f"{S3_BASE}/DNA-Protein_MAE_MLP_classifier/DNA-Protein_MAE_MLP_classifier_seed_0.pth",
+        "channels": "bg",
+        "num_channels": 2,
+    },
+    "subcell_vit_bg": {
+        "encoder": f"{S3_BASE}/DNA-Protein_ViT-ProtS-Pool.pth",
+        "classifier": f"{S3_BASE}/DNA-Protein_ViT_MLP_classifier/DNA-Protein_ViT_MLP_classifier_seed_0.pth",
+        "channels": "bg",
+        "num_channels": 2,
+    },
+}
+
+SUBCELL_ALIASES = {
+    "subcell_mae": "subcell_mae_rybg",
+    "subcell_cellprot": "subcell_mae_rybg",
+    "subcell_contrast": "subcell_mae_rybg",
+    "subcell_vit": "subcell_vit_rybg",
+}
+
+SUBCELL_VIT_CONFIG_BASE = {
     "hidden_size": 768,
     "num_hidden_layers": 12,
     "num_attention_heads": 12,
@@ -45,7 +110,6 @@ SUBCELL_VIT_CONFIG = {
     "layer_norm_eps": 1e-12,
     "image_size": 448,
     "patch_size": 16,
-    "num_channels": 4,
     "qkv_bias": True,
     "decoder_num_attention_heads": 16,
     "decoder_hidden_size": 512,
@@ -56,21 +120,29 @@ SUBCELL_VIT_CONFIG = {
 }
 
 
+def _download_weight(url: str, dest: Path) -> Path:
+    """Download a model weight file from S3 if not cached."""
+    if dest.exists():
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Downloading SubCell weight: %s", dest.name)
+    urllib.request.urlretrieve(url, str(dest))
+    logger.info("Downloaded %.1f MB -> %s", dest.stat().st_size / 1e6, dest)
+    return dest
+
+
 class SubCellWrapper(BaseModelWrapper):
     """Extract morphology embeddings from SubCell ViT-MAE models.
 
-    SubCell models are vision transformers (ViT-B/16) trained on
-    4-channel fluorescence microscopy images from the Human Protein
-    Atlas using self-supervised learning (MAE + contrastive + SSL).
+    Weights are auto-downloaded from CZI's public S3 bucket on first use.
 
     Parameters
     ----------
     model_path_or_name
-        Path to a local ``.ckpt`` checkpoint file, or a model variant
-        name (``"subcell_mae"``, ``"subcell_cellprot"``,
-        ``"subcell_contrast"``).
+        Model key (e.g. ``"subcell_mae_rybg"``) or path to a local
+        ``.pth`` encoder file. Available keys: see ``SUBCELL_MODELS``.
     variant
-        Model variant: ``"mae"``, ``"cellprot"``, or ``"contrast"``.
+        Alias: ``"mae"``, ``"vit"``, ``"contrast"``, ``"cellprot"``.
     image_size
         Input image resolution (default 448).
     """
@@ -80,129 +152,145 @@ class SubCellWrapper(BaseModelWrapper):
 
     def __init__(
         self,
-        model_path_or_name: str = "subcell_contrast",
-        variant: str = "contrast",
+        model_path_or_name: str = "subcell_mae_rybg",
+        variant: str | None = None,
         image_size: int = 448,
         **kwargs: Any,
     ):
         super().__init__(model_path_or_name, **kwargs)
-        self.variant = variant
         self.image_size = image_size
         self._encoder = None
         self._pool_model = None
+        self._num_channels = 4
+
+        key = model_path_or_name
+        if key in SUBCELL_ALIASES:
+            key = SUBCELL_ALIASES[key]
+        if variant and f"subcell_{variant}" in SUBCELL_ALIASES:
+            key = SUBCELL_ALIASES[f"subcell_{variant}"]
+
+        self._model_key = key if key in SUBCELL_MODELS else None
 
     def load(self, device: torch.device) -> None:
-        """Load the SubCell ViT-MAE encoder from a checkpoint.
-
-        Parameters
-        ----------
-        device
-            Compute device.
-        """
+        """Load the SubCell encoder, downloading weights if needed."""
         if self._encoder is not None:
             return
 
-        ckpt_path = self.model_name
-        if ckpt_path is None:
-            raise ValueError("model_path_or_name must be set.")
+        from transformers import ViTMAEConfig
 
-        if not Path(ckpt_path).exists():
-            raise FileNotFoundError(
-                f"SubCell checkpoint not found at '{ckpt_path}'. "
-                "Obtain weights from the SubCell authors: "
-                "https://github.com/CellProfiling/subcell-embed"
-            )
+        if self._model_key and self._model_key in SUBCELL_MODELS:
+            model_info = SUBCELL_MODELS[self._model_key]
+            self._num_channels = model_info["num_channels"]
 
-        logger.info("Loading SubCell %s from %s ...", self.variant, ckpt_path)
+            cache_dir = Path(
+                os.environ.get("EMBPY_CACHE", Path.home() / ".cache" / "embpy")
+            ) / "subcell"
 
-        try:
-            from transformers import ViTMAEConfig
+            encoder_url = model_info["encoder"]
+            encoder_name = Path(encoder_url).name
+            encoder_path = _download_weight(encoder_url, cache_dir / encoder_name)
 
-            config = ViTMAEConfig(**SUBCELL_VIT_CONFIG)
+            vit_config = {**SUBCELL_VIT_CONFIG_BASE, "num_channels": self._num_channels}
+            config = ViTMAEConfig(**vit_config)
 
-            checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-            state_dict = checkpoint.get("state_dict", checkpoint)
+            logger.info("Loading SubCell encoder: %s (%dch)...", self._model_key, self._num_channels)
+            self._encoder = _build_vit_encoder(config)
 
-            encoder_state = {}
+            state_dict = torch.load(str(encoder_path), map_location="cpu", weights_only=False)
+            if "state_dict" in state_dict:
+                state_dict = state_dict["state_dict"]
+
+            clean_state = {}
             pool_state = {}
             for k, v in state_dict.items():
-                clean_key = k.replace("model.mae_model.vit_mae.", "").replace("model.mae_model.", "")
-                if "pool_model" in k:
-                    pool_key = k.split("pool_model.")[-1]
+                if "pool_model" in k or "pool" in k.split(".")[0]:
+                    pool_key = k.split("pool_model.")[-1] if "pool_model." in k else k.split("pool.")[-1]
                     pool_state[pool_key] = v
-                elif "decoder" not in clean_key and "mask_token" not in clean_key:
-                    encoder_state[clean_key] = v
+                elif "classifier" not in k and "decoder" not in k and "mask_token" not in k:
+                    clean_key = k
+                    for prefix in ["model.mae_model.vit_mae.", "model.mae_model.", "model.", "vit_mae.", "encoder."]:
+                        if clean_key.startswith(prefix):
+                            clean_key = clean_key[len(prefix):]
+                            break
+                    clean_state[clean_key] = v
 
-            from .morphology_models import _build_vit_encoder
-            self._encoder = _build_vit_encoder(config)
-            missing, unexpected = self._encoder.load_state_dict(encoder_state, strict=False)
-            if missing:
-                logger.debug("Missing keys in encoder: %s", missing[:5])
+            self._encoder.load_state_dict(clean_state, strict=False)
 
             if pool_state:
                 self._pool_model = _build_attention_pooler(
-                    dim=config.hidden_size, int_dim=512, num_heads=2,
+                    dim=768, int_dim=512, num_heads=2,
                 )
                 self._pool_model.load_state_dict(pool_state, strict=False)
                 self._pool_model = self._pool_model.to(device).eval()
 
-            self._encoder = self._encoder.to(device).eval()
-            self.model = self._encoder
-            self.device = device
-            logger.info("SubCell %s loaded successfully (768-dim embeddings).", self.variant)
+        elif self.model_name and Path(self.model_name).exists():
+            vit_config = {**SUBCELL_VIT_CONFIG_BASE, "num_channels": self._num_channels}
+            config = ViTMAEConfig(**vit_config)
+            self._encoder = _build_vit_encoder(config)
 
-        except Exception as e:
-            logger.error("Failed to load SubCell: %s", e)
-            raise RuntimeError(f"Could not load SubCell '{ckpt_path}'") from e
+            state_dict = torch.load(self.model_name, map_location="cpu", weights_only=False)
+            if "state_dict" in state_dict:
+                state_dict = state_dict["state_dict"]
+            self._encoder.load_state_dict(state_dict, strict=False)
+        else:
+            raise FileNotFoundError(
+                f"SubCell model '{self.model_name}' not found. "
+                f"Available: {list(SUBCELL_MODELS.keys())}"
+            )
+
+        self._encoder = self._encoder.to(device).eval()
+        self.model = self._encoder
+        self.device = device
+        logger.info("SubCell loaded. Embedding dim: %s",
+                     "1536 (attention_pool)" if self._pool_model else "768 (cls/mean)")
 
     def _preprocess_image(
         self, image: str | np.ndarray | torch.Tensor,
     ) -> torch.Tensor:
         """Preprocess an image for SubCell inference.
 
-        Accepts a file path, numpy array (H,W,4) or (4,H,W), or torch tensor.
-        Returns a tensor of shape (1, 4, 448, 448) normalized to [0, 1].
+        Returns a tensor of shape (1, C, 448, 448) normalized to [0, 1].
         """
         if isinstance(image, str):
             from PIL import Image
             img = Image.open(image)
             arr = np.array(img)
             if arr.ndim == 2:
-                arr = np.stack([arr] * 4, axis=-1)
-            elif arr.shape[-1] == 3:
-                arr = np.concatenate([arr, arr[:, :, :1]], axis=-1)
-            tensor = torch.from_numpy(arr).permute(2, 0, 1).float()
+                arr = np.stack([arr] * self._num_channels, axis=-1)
+            tensor = torch.from_numpy(arr).float()
+            if tensor.ndim == 3 and tensor.shape[-1] <= 4:
+                tensor = tensor.permute(2, 0, 1)
         elif isinstance(image, np.ndarray):
-            if image.ndim == 3 and image.shape[-1] == 4:
+            if image.ndim == 3 and image.shape[-1] <= 4 and image.shape[0] > 4:
                 tensor = torch.from_numpy(image).permute(2, 0, 1).float()
-            elif image.ndim == 3 and image.shape[0] == 4:
+            elif image.ndim == 3 and image.shape[0] <= 4:
                 tensor = torch.from_numpy(image).float()
             else:
-                raise ValueError(f"Expected (H,W,4) or (4,H,W), got {image.shape}")
+                raise ValueError(f"Expected (H,W,C) or (C,H,W), got {image.shape}")
         elif isinstance(image, torch.Tensor):
             tensor = image.float()
-            if tensor.ndim == 3 and tensor.shape[0] != 4:
+            if tensor.ndim == 3 and tensor.shape[0] > 4 and tensor.shape[-1] <= 4:
                 tensor = tensor.permute(2, 0, 1)
         else:
             raise TypeError(f"Unsupported input type: {type(image)}")
 
-        if tensor.shape[0] != 4:
-            raise ValueError(f"Expected 4 channels (RYBG), got {tensor.shape[0]}")
+        n_ch = tensor.shape[0]
+        if n_ch < self._num_channels:
+            padding = torch.zeros(self._num_channels - n_ch, tensor.shape[1], tensor.shape[2])
+            tensor = torch.cat([tensor, padding], dim=0)
+        elif n_ch > self._num_channels:
+            tensor = tensor[:self._num_channels]
 
-        for c in range(4):
-            cmin = tensor[c].min()
-            cmax = tensor[c].max()
+        for c in range(self._num_channels):
+            cmin, cmax = tensor[c].min(), tensor[c].max()
             if cmax > cmin:
                 tensor[c] = (tensor[c] - cmin) / (cmax - cmin)
-            else:
-                tensor[c] = 0.0
 
         if tensor.shape[1] != self.image_size or tensor.shape[2] != self.image_size:
             tensor = torch.nn.functional.interpolate(
                 tensor.unsqueeze(0),
                 size=(self.image_size, self.image_size),
-                mode="bilinear",
-                align_corners=False,
+                mode="bilinear", align_corners=False,
             ).squeeze(0)
 
         return tensor.unsqueeze(0)
@@ -213,25 +301,19 @@ class SubCellWrapper(BaseModelWrapper):
         pooling_strategy: str = "cls",
         **kwargs: Any,
     ) -> np.ndarray:
-        """Compute morphology embedding for a single microscopy image.
+        """Compute morphology embedding for a microscopy image.
 
         Parameters
         ----------
         input
-            Path to image file, numpy array ``(H,W,4)`` or ``(4,H,W)``,
-            or torch tensor ``(4,H,W)``. Channels: Red (microtubules),
-            Yellow (ER), Blue (nucleus), Green (protein of interest).
+            Image path, numpy array, or torch tensor.
         pooling_strategy
-            ``"cls"`` (CLS token, 768-dim), ``"mean"`` (mean of all
-            patch tokens, 768-dim), or ``"attention_pool"`` (gated
-            attention pooling, 1536-dim if available).
-        **kwargs
-            Ignored.
+            ``"cls"`` (768d), ``"mean"`` (768d), or
+            ``"attention_pool"`` (1536d, recommended).
 
         Returns
         -------
         np.ndarray
-            Embedding vector.
         """
         if self._encoder is None:
             raise RuntimeError("Model not loaded. Call load() first.")
@@ -251,8 +333,8 @@ class SubCellWrapper(BaseModelWrapper):
                 pooled, _ = self._pool_model(hidden[:, 1:, :])
                 emb = pooled.cpu().numpy().squeeze(0)
             else:
+                logger.warning("No attention pooler; falling back to CLS.")
                 emb = hidden[:, 0, :].cpu().numpy().squeeze(0)
-                logger.warning("No attention pooler found, falling back to CLS.")
         else:
             raise ValueError(f"Unknown pooling '{pooling_strategy}'")
 
@@ -264,35 +346,21 @@ class SubCellWrapper(BaseModelWrapper):
         pooling_strategy: str = "cls",
         **kwargs: Any,
     ) -> list[np.ndarray]:
-        """Compute embeddings for a batch of microscopy images.
-
-        Parameters
-        ----------
-        inputs
-            List of images (paths, arrays, or tensors).
-        pooling_strategy
-            Pooling strategy.
-        **kwargs
-            Ignored.
-
-        Returns
-        -------
-        list of np.ndarray
-        """
+        """Compute embeddings for a batch of images."""
         results = []
         for img in inputs:
             try:
                 results.append(self.embed(img, pooling_strategy=pooling_strategy))
             except Exception as e:  # noqa: BLE001
                 logger.warning("SubCell embedding failed: %s", e)
-                results.append(np.zeros(768, dtype=np.float32))
+                dim = 1536 if pooling_strategy == "attention_pool" and self._pool_model else 768
+                results.append(np.zeros(dim, dtype=np.float32))
         return results
 
 
 def _build_vit_encoder(config) -> nn.Module:
     """Build the ViT-MAE encoder from a HuggingFace config."""
     from transformers import ViTMAEModel as HFViTMAEModel
-
     return HFViTMAEModel(config)
 
 

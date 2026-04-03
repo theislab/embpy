@@ -176,10 +176,19 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     "voyage_3_lite": (APIEmbeddingWrapper, "voyage-3-lite"),
     "google_embed": (APIEmbeddingWrapper, "text-embedding-005"),
     # --- Morphology Models (microscopy images) ---
-    # SubCell ViT-MAE models (requires local checkpoint from authors)
+    # SubCell ViT-MAE models (auto-downloaded from CZI S3)
+    "subcell_mae_rybg": (SubCellWrapper, "subcell_mae_rybg"),
+    "subcell_vit_rybg": (SubCellWrapper, "subcell_vit_rybg"),
+    "subcell_mae_rbg": (SubCellWrapper, "subcell_mae_rbg"),
+    "subcell_vit_rbg": (SubCellWrapper, "subcell_vit_rbg"),
+    "subcell_mae_ybg": (SubCellWrapper, "subcell_mae_ybg"),
+    "subcell_vit_ybg": (SubCellWrapper, "subcell_vit_ybg"),
+    "subcell_mae_bg": (SubCellWrapper, "subcell_mae_bg"),
+    "subcell_vit_bg": (SubCellWrapper, "subcell_vit_bg"),
+    # Convenience aliases
     "subcell_mae": (SubCellWrapper, "subcell_mae"),
-    "subcell_cellprot": (SubCellWrapper, "subcell_cellprot"),
     "subcell_contrast": (SubCellWrapper, "subcell_contrast"),
+    "subcell_vit": (SubCellWrapper, "subcell_vit"),
     # GENA-LM (AIRI-Institute) — pip install transformers
     "gena_lm_bert_base": (GENALMWrapper, "AIRI-Institute/gena-lm-bert-base-t2t"),
     "gena_lm_bert_large": (GENALMWrapper, "AIRI-Institute/gena-lm-bert-large-t2t"),
@@ -364,12 +373,7 @@ class BioEmbedder:
                 elif model_name == "boltz2_both":
                     extra_kwargs["output_type"] = "both"
                 if WrapperClass is SubCellWrapper:
-                    variant_map = {
-                        "subcell_mae": "mae",
-                        "subcell_cellprot": "cellprot",
-                        "subcell_contrast": "contrast",
-                    }
-                    extra_kwargs["variant"] = variant_map.get(model_name, "contrast")
+                    pass
                 if WrapperClass is APIEmbeddingWrapper:
                     provider_map = {
                         "openai_small": "openai", "openai_large": "openai",
