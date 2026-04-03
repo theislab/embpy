@@ -34,6 +34,7 @@ from .models.molecule_models import (
 from .models.protein_models import ESM2Wrapper, ESM3Wrapper, ESMCWrapper, ProtT5Wrapper
 from .models.text_models import LlamaEmbeddingWrapper, TextLLMWrapper
 from .models.api_models import APIEmbeddingWrapper
+from .models.morphology_models import SubCellWrapper
 from .resources.gene_resolver import GeneResolver
 from .resources.protein_resolver import ProteinResolver
 from .resources.text_resolver import TextResolver
@@ -174,6 +175,11 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     "voyage_3": (APIEmbeddingWrapper, "voyage-3"),
     "voyage_3_lite": (APIEmbeddingWrapper, "voyage-3-lite"),
     "google_embed": (APIEmbeddingWrapper, "text-embedding-005"),
+    # --- Morphology Models (microscopy images) ---
+    # SubCell ViT-MAE models (requires local checkpoint from authors)
+    "subcell_mae": (SubCellWrapper, "subcell_mae"),
+    "subcell_cellprot": (SubCellWrapper, "subcell_cellprot"),
+    "subcell_contrast": (SubCellWrapper, "subcell_contrast"),
     # GENA-LM (AIRI-Institute) — pip install transformers
     "gena_lm_bert_base": (GENALMWrapper, "AIRI-Institute/gena-lm-bert-base-t2t"),
     "gena_lm_bert_large": (GENALMWrapper, "AIRI-Institute/gena-lm-bert-large-t2t"),
@@ -357,6 +363,13 @@ class BioEmbedder:
                     extra_kwargs["output_type"] = "pairwise"
                 elif model_name == "boltz2_both":
                     extra_kwargs["output_type"] = "both"
+                if WrapperClass is SubCellWrapper:
+                    variant_map = {
+                        "subcell_mae": "mae",
+                        "subcell_cellprot": "cellprot",
+                        "subcell_contrast": "contrast",
+                    }
+                    extra_kwargs["variant"] = variant_map.get(model_name, "contrast")
                 if WrapperClass is APIEmbeddingWrapper:
                     provider_map = {
                         "openai_small": "openai", "openai_large": "openai",
