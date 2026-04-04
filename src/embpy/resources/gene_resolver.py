@@ -234,7 +234,7 @@ class GeneResolver:
             cache_dir = Path(cache_dir)
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        cap_species = species_name.capitalize().replace("_", ".")
+        cap_species = species_name[0].upper() + species_name[1:]
         fa_name = f"{cap_species}.{assembly}.dna.primary_assembly.fa"
         fa_path = cache_dir / fa_name
         fai_path = cache_dir / f"{fa_name}.fai"

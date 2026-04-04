@@ -28,6 +28,7 @@ dependencies:
   - conda-forge::pyensembl>=2.3.13
   - conda-forge::rdkit
 
-  # Install embpy + remaining deps via pip
+  # JUMP Cell Painting utilities
   - pip:
+      - broad-babel>=0.1
       - -e ".[helical,pertpy,evo,ppi]"

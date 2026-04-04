@@ -169,10 +169,13 @@ def embed_all_genes(
     logger.info(f"Initializing BioEmbedder with device={device}")
     embedder = BioEmbedder(device=device)
 
-    # Try loading pre-downloaded sequences first
+    # Try loading pre-downloaded region-specific sequences first
     sequences = None
+    predownloaded = False
     if data_dir:
         sequences = _try_load_predownloaded(data_dir, biotype, region)
+        if sequences is not None:
+            predownloaded = True
 
     if sequences is None:
         logger.info("No pre-downloaded sequences found; fetching from API...")
@@ -211,14 +214,22 @@ def embed_all_genes(
             continue
 
         try:
-            emb = embedder.embed_gene(
-                identifier=gene_id,
-                model=model_name,
-                id_type="ensembl_id",
-                organism=organism,
-                pooling_strategy=pooling,
-                region=region,
-            )
+            if predownloaded and dna_seq:
+                emb = embedder.embed_gene(
+                    identifier=str(dna_seq),
+                    model=model_name,
+                    id_type="sequence",
+                    pooling_strategy=pooling,
+                )
+            else:
+                emb = embedder.embed_gene(
+                    identifier=gene_id,
+                    model=model_name,
+                    id_type="ensembl_id",
+                    organism=organism,
+                    pooling_strategy=pooling,
+                    region=region,
+                )
 
             if emb is not None:
                 emb_np = np.asarray(emb, dtype=np.float32).ravel()

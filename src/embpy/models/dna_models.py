@@ -122,7 +122,12 @@ def _hf_batched_embed(
             else:
                 mask = None
 
-            if pooling_strategy == "cls":
+            if pooling_strategy == "none":
+                if cast_float:
+                    seq_emb = seq_emb.float()
+                all_embeddings.append(seq_emb.cpu().numpy())
+                continue
+            elif pooling_strategy == "cls":
                 pooled = seq_emb[0]
             elif pooling_strategy == "last":
                 pooled = seq_emb[-1]
@@ -169,7 +174,7 @@ class EnformerWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
-    available_pooling_strategies = ["mean", "max", "median"]
+    available_pooling_strategies = ["mean", "max", "median", "none"]
 
     SEQUENCE_LENGTH = 196_608
     TRUNK_OUTPUT_DIM = 3072
@@ -347,7 +352,9 @@ class EnformerWrapper(BaseModelWrapper):
         else:
             raise RuntimeError(f"Unexpected trunk shape: {trunk.shape}")
 
-        if pooling_strategy == "mean":
+        if pooling_strategy == "none":
+            return trunk.cpu().numpy()
+        elif pooling_strategy == "mean":
             pooled = trunk.mean(dim=0)  # (3072,)
         elif pooling_strategy == "median":
             pooled = trunk.median(dim=0).values
@@ -461,7 +468,7 @@ class BorzoiWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
-    available_pooling_strategies = ["mean", "max", "median"]
+    available_pooling_strategies = ["mean", "max", "median", "none"]
 
     SEQUENCE_LENGTH = 524_288
     NUM_CHANNELS = 4
@@ -635,7 +642,9 @@ class BorzoiWrapper(BaseModelWrapper):
                 raise RuntimeError(f"Unexpected Borzoi output: {type(embs)}, shape={getattr(embs, 'shape', None)}")
 
         trunk = embs.squeeze(0)  # (hidden_dim, num_bins)
-        if pooling_strategy == "mean":
+        if pooling_strategy == "none":
+            return trunk.T.cpu().numpy()  # (num_bins, hidden_dim)
+        elif pooling_strategy == "mean":
             pooled = trunk.mean(dim=1)  # (hidden_dim,)
         else:
             pooled = trunk.max(dim=1).values  # (hidden_dim,)
@@ -780,7 +789,7 @@ class EvoWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
-    available_pooling_strategies = ["mean", "max", "cls"]
+    available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     AVAILABLE_MODELS: list[str] = [
         "evo-1-8k-base",
@@ -978,7 +987,9 @@ class EvoWrapper(BaseModelWrapper):
         if hidden.dim() == 3 and hidden.shape[0] == 1:
             hidden = hidden.squeeze(0)  # (seq_len, hidden_dim)
 
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return hidden.float().cpu().numpy()
+        elif pooling_strategy == "cls":
             pooled = hidden[0]
         elif pooling_strategy == "max":
             pooled = hidden.max(dim=0).values
@@ -1107,7 +1118,7 @@ class Evo2Wrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
-    available_pooling_strategies = ["mean", "max", "cls"]
+    available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     LAYER_DEFAULTS: dict[str, str] = {
         "evo2_7b": "blocks.28.mlp.l3",
@@ -1268,7 +1279,9 @@ class Evo2Wrapper(BaseModelWrapper):
         if emb_tensor.dim() == 3 and emb_tensor.shape[0] == 1:
             emb_tensor = emb_tensor.squeeze(0)
 
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return emb_tensor.float().cpu().numpy()
+        elif pooling_strategy == "cls":
             pooled = emb_tensor[0]
         elif pooling_strategy == "max":
             pooled = emb_tensor.max(dim=0).values
@@ -1386,7 +1399,7 @@ class GENALMWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
-    available_pooling_strategies = ["mean", "max", "cls"]
+    available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     def __init__(
         self,
@@ -1456,7 +1469,9 @@ class GENALMWrapper(BaseModelWrapper):
         if emb.dim() == 3 and emb.shape[0] == 1:
             emb = emb.squeeze(0)  # (L, H)
 
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return emb.cpu().numpy()
+        elif pooling_strategy == "cls":
             return emb[0].cpu().numpy()
         elif pooling_strategy == "max":
             return emb.max(dim=0).values.cpu().numpy()
@@ -1511,7 +1526,7 @@ class NucleotideTransformerWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
-    available_pooling_strategies = ["mean", "max", "cls"]
+    available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     def __init__(
         self,
@@ -1589,7 +1604,9 @@ class NucleotideTransformerWrapper(BaseModelWrapper):
         if emb.dim() == 3 and emb.shape[0] == 1:
             emb = emb.squeeze(0)
 
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return emb.cpu().numpy()
+        elif pooling_strategy == "cls":
             return emb[0].cpu().numpy()
         elif pooling_strategy == "max":
             return emb.max(dim=0).values.cpu().numpy()
@@ -1647,7 +1664,7 @@ class NucleotideTransformerV3Wrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
-    available_pooling_strategies = ["mean", "max", "cls"]
+    available_pooling_strategies = ["mean", "max", "cls", "none"]
     _PAD_MULTIPLE = 128
 
     def __init__(
@@ -1716,7 +1733,9 @@ class NucleotideTransformerV3Wrapper(BaseModelWrapper):
         if emb.dim() == 3 and emb.shape[0] == 1:
             emb = emb.squeeze(0)  # (L, H)
 
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return emb.float().cpu().numpy()
+        elif pooling_strategy == "cls":
             return emb[0].float().cpu().numpy()
         elif pooling_strategy == "max":
             return emb.max(dim=0).values.float().cpu().numpy()
@@ -1773,7 +1792,7 @@ class HyenaDNAWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
-    available_pooling_strategies = ["mean", "max", "cls", "last"]
+    available_pooling_strategies = ["mean", "max", "cls", "last", "none"]
 
     _CHAR_TO_ID: dict[str, int] = {
         "A": 7,
@@ -1847,7 +1866,9 @@ class HyenaDNAWrapper(BaseModelWrapper):
         if emb.dim() == 3 and emb.shape[0] == 1:
             emb = emb.squeeze(0)
 
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return emb.float().cpu().numpy()
+        elif pooling_strategy == "cls":
             return emb[0].float().cpu().numpy()
         elif pooling_strategy == "last":
             return emb[-1].float().cpu().numpy()
@@ -1897,7 +1918,7 @@ class CaduceusWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
-    available_pooling_strategies = ["mean", "max", "cls"]
+    available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     def __init__(
         self,
@@ -1966,7 +1987,9 @@ class CaduceusWrapper(BaseModelWrapper):
         if emb.dim() == 3 and emb.shape[0] == 1:
             emb = emb.squeeze(0)
 
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return emb.float().cpu().numpy()
+        elif pooling_strategy == "cls":
             return emb[0].float().cpu().numpy()
         elif pooling_strategy == "max":
             return emb.max(dim=0).values.float().cpu().numpy()

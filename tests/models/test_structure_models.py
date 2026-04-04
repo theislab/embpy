@@ -104,6 +104,11 @@ class TestBoltz2WrapperEmbed:
         emb = mock_wrapper.embed("MKWVTFISLLFLFSSAYS", pooling_strategy="cls")
         assert emb.shape == (384,)
 
+    def test_none_pooling(self, mock_wrapper):
+        emb = mock_wrapper.embed("MKWVTFISLLFLFSSAYS", pooling_strategy="none")
+        assert emb.ndim == 2
+        assert emb.shape[1] == 384
+
     def test_output_type_override(self, mock_wrapper):
         emb = mock_wrapper.embed("MKWVTFISLLFLFSSAYS", output_type="pairwise")
         assert emb.shape == (128,)

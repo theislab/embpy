@@ -56,7 +56,7 @@ class Boltz2Wrapper(BaseModelWrapper):
     """
 
     model_type = "protein"
-    available_pooling_strategies = ["mean", "max", "cls"]
+    available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     def __init__(
         self,
@@ -270,7 +270,9 @@ class Boltz2Wrapper(BaseModelWrapper):
 
     def _pool_single(self, s: torch.Tensor, strategy: str) -> np.ndarray:
         """Pool the single representation over the token dimension."""
-        if strategy == "mean":
+        if strategy == "none":
+            return s.cpu().numpy()
+        elif strategy == "mean":
             return s.mean(dim=0).cpu().numpy()
         elif strategy == "max":
             return s.max(dim=0).values.cpu().numpy()

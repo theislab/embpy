@@ -105,6 +105,9 @@ set -u
 # ---- Run Python script -----------------------------------------------------
 mkdir -p "${OUTPUT_DIR}"
 
+CHECKPOINT_DIR="${BASE_OUTPUT_DIR}/checkpoints"
+mkdir -p "${CHECKPOINT_DIR}"
+
 python -u "${SCRIPT_DIR}/embed_full_genome.py" \
     --model "${MODEL}" \
     --pooling "${POOLING}" \
@@ -113,6 +116,7 @@ python -u "${SCRIPT_DIR}/embed_full_genome.py" \
     --organism human \
     --biotype protein_coding \
     --device auto \
-    --data-dir "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/datasets"
+    --data-dir "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/datasets" \
+    --checkpoint-dir "${CHECKPOINT_DIR}"
 
 echo "=== Job finished at $(date) ==="

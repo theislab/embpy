@@ -31,7 +31,7 @@ class ChembertaWrapper(BaseModelWrapper):
     """
 
     model_type = "molecule"
-    available_pooling_strategies = ["cls", "mean", "max"]
+    available_pooling_strategies = ["cls", "mean", "max", "none"]
 
     def __init__(self, model_path_or_name: str = "DeepChem/ChemBERTa-77M-MTR", **kwargs):
         super().__init__(model_path_or_name, **kwargs)
@@ -127,7 +127,9 @@ class ChembertaWrapper(BaseModelWrapper):
         hidden = last_hidden.squeeze(0)  # (seq_len, hidden_dim)
 
         # 5) masking-aware pooling
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return hidden.cpu().numpy()
+        elif pooling_strategy == "cls":
             vec = hidden[0]
         else:
             mask = attention_mask.squeeze(0).unsqueeze(-1)  # (seq_len, 1)
@@ -203,7 +205,10 @@ class ChembertaWrapper(BaseModelWrapper):
                 hidden = last_hidden[i]
                 mask = attention_mask[i].unsqueeze(-1)
 
-                if pooling_strategy == "cls":
+                if pooling_strategy == "none":
+                    results[orig_idx] = hidden.cpu().numpy()
+                    continue
+                elif pooling_strategy == "cls":
                     vec = hidden[0]
                 elif pooling_strategy == "mean":
                     vec = (hidden * mask).sum(dim=0) / mask.sum(dim=0).clamp(min=1)
@@ -232,7 +237,7 @@ class MolformerWrapper(BaseModelWrapper):
     """
 
     model_type = "molecule"
-    available_pooling_strategies = ["cls", "mean", "max"]
+    available_pooling_strategies = ["cls", "mean", "max", "none"]
 
     def __init__(self, model_path_or_name: str = "ibm/MoLFormer-XL-both-10pct", **kwargs):
         """
@@ -345,7 +350,9 @@ class MolformerWrapper(BaseModelWrapper):
 
         # out.pooler_output: (B, hidden_dim)
         # out.last_hidden_state: (B, seq_len, hidden_dim)
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return out.last_hidden_state[0].cpu().numpy()
+        elif pooling_strategy == "cls":
             vec = out.pooler_output[0]
         else:
             seq_emb = out.last_hidden_state[0]  # (seq_len, hidden_dim)
@@ -389,11 +396,13 @@ class MolformerWrapper(BaseModelWrapper):
             out = self.model(**tokens)
 
         embeddings: list[np.ndarray] = []
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            for seq_emb in out.last_hidden_state:
+                embeddings.append(seq_emb.cpu().numpy())
+        elif pooling_strategy == "cls":
             for vec in out.pooler_output:
                 embeddings.append(vec.cpu().numpy())
         else:
-            # (B, seq_len, hidden_dim)
             seqs = out.last_hidden_state
             if pooling_strategy == "mean":
                 pooled = seqs.mean(dim=1)

@@ -148,7 +148,7 @@ class SubCellWrapper(BaseModelWrapper):
     """
 
     model_type = "morphology"
-    available_pooling_strategies = ["cls", "mean", "attention_pool"]
+    available_pooling_strategies = ["cls", "mean", "attention_pool", "none"]
 
     def __init__(
         self,
@@ -308,12 +308,14 @@ class SubCellWrapper(BaseModelWrapper):
         input
             Image path, numpy array, or torch tensor.
         pooling_strategy
-            ``"cls"`` (768d), ``"mean"`` (768d), or
-            ``"attention_pool"`` (1536d, recommended).
+            ``"cls"`` (768d), ``"mean"`` (768d),
+            ``"attention_pool"`` (1536d, recommended), or
+            ``"none"`` (num_tokens x 768 -- raw per-patch tokens).
 
         Returns
         -------
         np.ndarray
+            1D for pooled strategies, 2D ``(num_tokens, 768)`` for ``"none"``.
         """
         if self._encoder is None:
             raise RuntimeError("Model not loaded. Call load() first.")
@@ -324,7 +326,9 @@ class SubCellWrapper(BaseModelWrapper):
             outputs = self._encoder(pixel_values=pixel_values, mask_ratio=0.0)
             hidden = outputs.last_hidden_state
 
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            emb = hidden.squeeze(0).cpu().numpy()
+        elif pooling_strategy == "cls":
             emb = hidden[:, 0, :].cpu().numpy().squeeze(0)
         elif pooling_strategy == "mean":
             emb = hidden[:, 1:, :].mean(dim=1).cpu().numpy().squeeze(0)
@@ -347,14 +351,19 @@ class SubCellWrapper(BaseModelWrapper):
         **kwargs: Any,
     ) -> list[np.ndarray]:
         """Compute embeddings for a batch of images."""
+        n_patches = (self.image_size // 16) ** 2 + 1
         results = []
         for img in inputs:
             try:
                 results.append(self.embed(img, pooling_strategy=pooling_strategy))
             except Exception as e:  # noqa: BLE001
                 logger.warning("SubCell embedding failed: %s", e)
-                dim = 1536 if pooling_strategy == "attention_pool" and self._pool_model else 768
-                results.append(np.zeros(dim, dtype=np.float32))
+                if pooling_strategy == "none":
+                    results.append(np.zeros((n_patches, 768), dtype=np.float32))
+                elif pooling_strategy == "attention_pool" and self._pool_model:
+                    results.append(np.zeros(1536, dtype=np.float32))
+                else:
+                    results.append(np.zeros(768, dtype=np.float32))
         return results
 
 

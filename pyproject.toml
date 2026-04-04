@@ -24,6 +24,7 @@ classifiers = [
 dependencies = [
   "anndata",
   "biopython",
+  "broad-babel>=0.1",
   "cirpy",
   "borzoi-pytorch>=0.4.3",
   "enformer-pytorch>=0.8.10",

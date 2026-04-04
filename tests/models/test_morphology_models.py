@@ -102,6 +102,13 @@ class TestSubCellEmbed:
         emb = mock_wrapper.embed(img, pooling_strategy="mean")
         assert emb.shape == (768,)
 
+    def test_none_pooling(self, mock_wrapper):
+        img = np.random.rand(4, 448, 448).astype(np.float32)
+        emb = mock_wrapper.embed(img, pooling_strategy="none")
+        assert emb.ndim == 2
+        assert emb.shape == (785, 768)
+        assert emb.dtype == np.float32
+
     def test_attention_pool_fallback(self, mock_wrapper):
         img = np.random.rand(4, 448, 448).astype(np.float32)
         emb = mock_wrapper.embed(img, pooling_strategy="attention_pool")
@@ -144,6 +151,13 @@ class TestSubCellBatch:
         results = mock_wrapper.embed_batch(imgs)
         assert len(results) == 3
         assert all(r.shape == (768,) for r in results)
+
+    def test_batch_none_pooling(self, mock_wrapper):
+        imgs = [np.random.rand(4, 100, 100).astype(np.float32) for _ in range(3)]
+        results = mock_wrapper.embed_batch(imgs, pooling_strategy="none")
+        assert len(results) == 3
+        assert all(r.ndim == 2 for r in results)
+        assert all(r.shape == (785, 768) for r in results)
 
 
 class TestAttentionPooler:

@@ -25,8 +25,10 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import gzip
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -61,44 +63,97 @@ SPECIES_CONFIG = {
 }
 
 
-def _download_file(url: str, dest: Path) -> Path:
-    """Download a file from a URL if it doesn't already exist."""
-    if dest.exists():
-        logger.info("Already downloaded: %s", dest)
+def _download_file(url: str, dest: Path, min_size: int = 100) -> Path:
+    """Download a file from a URL if it doesn't already exist and is valid."""
+    if dest.exists() and dest.stat().st_size > min_size:
+        logger.info("Already downloaded: %s (%.1f MB)", dest, dest.stat().st_size / 1e6)
         return dest
 
+    if dest.exists():
+        logger.warning("Removing invalid/truncated file: %s (%d bytes)", dest, dest.stat().st_size)
+        dest.unlink()
+
     dest.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dest.with_suffix(dest.suffix + ".tmp")
+
     logger.info("Downloading %s -> %s", url, dest)
     try:
-        urllib.request.urlretrieve(url, str(dest))
+        urllib.request.urlretrieve(url, str(tmp))
     except Exception:
         logger.info("urllib failed, trying wget...")
         subprocess.run(
-            ["wget", "-q", "-O", str(dest), url],
+            ["wget", "-q", "-O", str(tmp), url],
             check=True, timeout=7200,
         )
+
+    if tmp.stat().st_size < min_size:
+        logger.error("Downloaded file too small (%d bytes), likely failed", tmp.stat().st_size)
+        tmp.unlink()
+        sys.exit(1)
+
+    os.rename(str(tmp), str(dest))
     size_mb = dest.stat().st_size / 1e6
     logger.info("Downloaded %.1f MB", size_mb)
     return dest
 
 
 def _decompress_gz(gz_path: Path) -> Path:
-    """Decompress a .gz file if the uncompressed version doesn't exist."""
+    """Decompress a .gz file atomically (write to .tmp, then rename)."""
     out_path = gz_path.with_suffix("")
-    if out_path.exists():
-        logger.info("Already decompressed: %s", out_path)
+    if out_path.exists() and out_path.stat().st_size > 0:
+        logger.info("Already decompressed: %s (%.1f MB)", out_path, out_path.stat().st_size / 1e6)
         return out_path
 
+    tmp_path = out_path.with_suffix(".decompressing")
     logger.info("Decompressing %s...", gz_path)
-    with gzip.open(gz_path, "rb") as f_in, open(out_path, "wb") as f_out:
+    with gzip.open(gz_path, "rb") as f_in, open(tmp_path, "wb") as f_out:
         shutil.copyfileobj(f_in, f_out)
-    logger.info("Decompressed to %s", out_path)
+
+    os.rename(str(tmp_path), str(out_path))
+    logger.info("Decompressed to %s (%.1f MB)", out_path, out_path.stat().st_size / 1e6)
     return out_path
 
 
 # ==================================================================
 # DNA: Bulk genome FASTA + pysam extraction
 # ==================================================================
+
+def _prepare_genome(cache_dir: Path, config: dict) -> Path:
+    """Download, decompress, and index the genome FASTA -- concurrency-safe via flock."""
+    import pysam
+
+    assembly = config["assembly"]
+    species = config["species_name"]
+    release = config["release"]
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = cache_dir / f"{assembly}.lock"
+    genome_gz = cache_dir / f"{assembly}.dna.primary_assembly.fa.gz"
+    genome_fa = cache_dir / f"{assembly}.dna.primary_assembly.fa"
+    fai_path = Path(str(genome_fa) + ".fai")
+
+    with open(lock_path, "w") as lock_fd:
+        logger.info("Acquiring genome prep lock (%s)...", lock_path)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        logger.info("Lock acquired -- preparing genome...")
+
+        genome_url = (
+            f"{ENSEMBL_FTP}/release-{release}/fasta/{species}/dna/"
+            f"{species[0].upper() + species[1:]}.{assembly}.dna.primary_assembly.fa.gz"
+        )
+        _download_file(genome_url, genome_gz)
+        _decompress_gz(genome_gz)
+
+        if not fai_path.exists():
+            logger.info("Indexing genome FASTA with pysam...")
+            pysam.faidx(str(genome_fa))
+            logger.info("Genome index created: %s", fai_path)
+        else:
+            logger.info("Genome index already exists: %s", fai_path)
+
+    logger.info("Genome preparation complete")
+    return genome_fa
+
 
 def download_dna_sequences(
     data_dir: Path,
@@ -117,7 +172,6 @@ def download_dna_sequences(
 
     release = config["release"]
     assembly = config["assembly"]
-    species = config["species_name"]
 
     seq_dir = data_dir / "genome"
     seq_dir.mkdir(parents=True, exist_ok=True)
@@ -129,18 +183,7 @@ def download_dna_sequences(
         return
 
     cache_dir = data_dir / ".cache" / "ensembl"
-    cache_dir.mkdir(parents=True, exist_ok=True)
-
-    genome_url = (
-        f"{ENSEMBL_FTP}/release-{release}/fasta/{species}/dna/"
-        f"{species.capitalize().replace('_', '.')}.{assembly}.dna.primary_assembly.fa.gz"
-    )
-    genome_gz = cache_dir / f"{assembly}.dna.primary_assembly.fa.gz"
-    _download_file(genome_url, genome_gz)
-    genome_fa = _decompress_gz(genome_gz)
-
-    logger.info("Indexing genome FASTA with pysam...")
-    pysam.faidx(str(genome_fa))
+    genome_fa = _prepare_genome(cache_dir, config)
     fasta = pysam.FastaFile(str(genome_fa))
 
     logger.info("Loading gene annotations via pyensembl (release %d, %s)...", release, organism)

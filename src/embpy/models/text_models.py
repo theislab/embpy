@@ -13,7 +13,7 @@ class TextLLMWrapper(BaseModelWrapper):
     """Wrapper for general-purpose text embedding models"""
 
     model_type = "text"
-    available_pooling_strategies = ["mean", "max", "cls", "last_token"]
+    available_pooling_strategies = ["mean", "max", "cls", "last_token", "none"]
 
     def __init__(
         self,
@@ -144,7 +144,9 @@ class TextLLMWrapper(BaseModelWrapper):
             embeddings_tensor = embeddings_tensor.squeeze(0)  # (L, D)
 
         # Apply pooling (Needs attention mask awareness for HF mean pooling)
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            pooled_embedding = embeddings_tensor.cpu().numpy()
+        elif pooling_strategy == "cls":
             pooled_embedding = self._get_cls_embedding(embeddings_tensor).cpu().numpy()
         elif pooling_strategy == "last_token":
             pooled_embedding = self._last_token_pool(embeddings_tensor, attention_mask).cpu().numpy()
@@ -254,7 +256,9 @@ class TextLLMWrapper(BaseModelWrapper):
             seq_embeddings = embeddings_tensor[i]
             seq_mask = None if attention_mask is None else attention_mask[i]
 
-            if pooling_strategy == "cls":
+            if pooling_strategy == "none":
+                pooled_embedding = seq_embeddings.cpu().numpy()
+            elif pooling_strategy == "cls":
                 pooled_embedding = seq_embeddings[self.cls_token_position, :].cpu().numpy()
             elif pooling_strategy == "last_token":
                 # For batch processing, we need to handle single sequence
@@ -332,7 +336,7 @@ class LlamaEmbeddingWrapper(TextLLMWrapper):
         Maximum sequence length. Defaults to 4096.
     """
 
-    available_pooling_strategies = ["last_token", "mean", "max"]
+    available_pooling_strategies = ["last_token", "mean", "max", "none"]
 
     def __init__(
         self,
@@ -430,7 +434,9 @@ class LlamaEmbeddingWrapper(TextLLMWrapper):
         if hidden.dim() == 3 and hidden.shape[0] == 1:
             hidden = hidden.squeeze(0)
 
-        if pooling_strategy == "last_token":
+        if pooling_strategy == "none":
+            pooled = hidden.float().cpu().numpy()
+        elif pooling_strategy == "last_token":
             h = hidden.unsqueeze(0) if hidden.dim() == 2 else hidden
             pooled = self._last_token_pool(h, attention_mask).cpu().float().numpy()
             if pooled.ndim > 1:
