@@ -4,10 +4,14 @@ Resolves gene identifiers (symbol, Ensembl ID, UniProt accession) to
 protein sequences via the UniProt REST API.  Supports fetching canonical
 sequences, individual isoforms, or all isoforms for a gene.
 
+If ``download_proteome()`` has been called, canonical sequence lookups
+use instant local access instead of API calls.
+
 Example
 -------
 >>> resolver = ProteinResolver()
->>> seq = resolver.get_canonical_sequence("TP53", id_type="symbol")
+>>> resolver.download_proteome()  # one-time, ~25 MB download
+>>> seq = resolver.get_canonical_sequence("TP53", id_type="symbol")  # instant
 >>> len(seq)
 393
 >>> isoforms = resolver.get_isoforms("TP53", id_type="symbol")
@@ -19,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import Literal
 
 import requests
@@ -39,6 +44,18 @@ ORGANISM_TAXON = {
     "danio_rerio": 7955,
     "drosophila": 7227,
     "drosophila_melanogaster": 7227,
+    "worm": 6239,
+    "caenorhabditis_elegans": 6239,
+    "yeast": 559292,
+    "saccharomyces_cerevisiae": 559292,
+    "chicken": 9031,
+    "gallus_gallus": 9031,
+    "pig": 9823,
+    "sus_scrofa": 9823,
+    "dog": 9615,
+    "canis_lupus_familiaris": 9615,
+    "macaque": 9544,
+    "macaca_mulatta": 9544,
 }
 
 
@@ -59,6 +76,16 @@ class ProteinResolver:
         rate limits.
     """
 
+    _UNIPROT_PROTEOME = {
+        "human": ("UP000005640", "9606"),
+        "homo_sapiens": ("UP000005640", "9606"),
+        "mouse": ("UP000000589", "10090"),
+        "mus_musculus": ("UP000000589", "10090"),
+        "rat": ("UP000002494", "10116"),
+        "zebrafish": ("UP000000437", "7955"),
+        "drosophila": ("UP000000803", "7227"),
+    }
+
     def __init__(
         self,
         organism: str = "human",
@@ -69,6 +96,122 @@ class ProteinResolver:
         self.timeout = request_timeout
         self.rate_limit_delay = rate_limit_delay
         self._uniprot_cache: dict[str, str | None] = {}
+        self._local_proteome: dict[str, str] | None = None
+        self._local_gene_to_acc: dict[str, str] | None = None
+
+    # ------------------------------------------------------------------
+    # Bulk proteome download + local access
+    # ------------------------------------------------------------------
+
+    def download_proteome(self, cache_dir: str | Path | None = None) -> None:
+        """Download the Swiss-Prot reviewed proteome for this organism.
+
+        One-time operation. After this, ``get_canonical_sequence()``
+        uses instant local lookup instead of UniProt REST API calls.
+
+        Parameters
+        ----------
+        cache_dir
+            Directory to store proteome files. Defaults to
+            ``~/.cache/embpy/proteomes/{organism}/``.
+        """
+        import os
+        import urllib.request
+
+        species_key = self.organism.lower()
+        prot_config = self._UNIPROT_PROTEOME.get(species_key)
+        if not prot_config:
+            raise ValueError(
+                f"Unsupported organism '{self.organism}' for proteome download. "
+                f"Supported: {list(self._UNIPROT_PROTEOME.keys())}"
+            )
+
+        _, taxon = prot_config
+
+        if cache_dir is None:
+            base = Path(os.environ.get("EMBPY_CACHE", Path.home() / ".cache" / "embpy"))
+            cache_dir = base / "proteomes" / species_key
+        else:
+            cache_dir = Path(cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        fasta_file = cache_dir / f"sprot_{taxon}.fasta"
+
+        if not fasta_file.exists():
+            url = (
+                f"https://rest.uniprot.org/uniprotkb/stream?"
+                f"format=fasta&query=organism_id:{taxon}+AND+reviewed:true"
+            )
+            logger.info("Downloading Swiss-Prot proteome for %s (taxon %s)...", self.organism, taxon)
+            urllib.request.urlretrieve(url, str(fasta_file))
+            logger.info("Downloaded %.1f MB", fasta_file.stat().st_size / 1e6)
+
+        self._load_local_proteome(fasta_file)
+
+    def _load_local_proteome(self, fasta_path: Path) -> None:
+        """Parse a Swiss-Prot FASTA into an in-memory lookup dict."""
+        from Bio import SeqIO
+
+        logger.info("Parsing proteome FASTA: %s ...", fasta_path.name)
+        acc_to_seq: dict[str, str] = {}
+        gene_to_acc: dict[str, str] = {}
+
+        for record in SeqIO.parse(str(fasta_path), "fasta"):
+            acc = record.id.split("|")[1] if "|" in record.id else record.id
+            seq = str(record.seq)
+            acc_to_seq[acc] = seq
+
+            desc = record.description
+            if "GN=" in desc:
+                gene_name = desc.split("GN=")[1].split()[0]
+                gene_to_acc[gene_name.upper()] = acc
+
+        self._local_proteome = acc_to_seq
+        self._local_gene_to_acc = gene_to_acc
+        logger.info(
+            "Proteome ready: %d proteins, %d gene mappings. "
+            "get_canonical_sequence() will now use local lookup.",
+            len(acc_to_seq), len(gene_to_acc),
+        )
+
+    def _load_proteome_if_available(self) -> bool:
+        """Try to load a previously downloaded proteome."""
+        if self._local_proteome is not None:
+            return True
+
+        import os
+
+        base = Path(os.environ.get("EMBPY_CACHE", Path.home() / ".cache" / "embpy"))
+        prot_dir = base / "proteomes" / self.organism.lower()
+        if not prot_dir.exists():
+            return False
+
+        fasta_files = list(prot_dir.glob("*.fasta"))
+        if not fasta_files:
+            return False
+
+        try:
+            self._load_local_proteome(fasta_files[0])
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _get_local_protein_sequence(
+        self, identifier: str, id_type: str,
+    ) -> str | None:
+        """Look up a protein sequence from the local proteome."""
+        if self._local_proteome is None:
+            return None
+
+        if id_type == "uniprot_id":
+            return self._local_proteome.get(identifier)
+
+        if id_type == "symbol" and self._local_gene_to_acc is not None:
+            acc = self._local_gene_to_acc.get(identifier.upper())
+            if acc:
+                return self._local_proteome.get(acc)
+
+        return None
 
     # ------------------------------------------------------------------
     # Identifier resolution
@@ -207,6 +350,12 @@ class ProteinResolver:
         -------
         Amino acid sequence string, or ``None`` on failure.
         """
+        self._load_proteome_if_available()
+        if self._local_proteome is not None:
+            seq = self._get_local_protein_sequence(identifier, id_type)
+            if seq:
+                return seq
+
         accession = self.resolve_uniprot_id(identifier, id_type, organism)
         if accession is None:
             logger.warning("Could not resolve UniProt ID for %s '%s'", id_type, identifier)
@@ -454,23 +603,22 @@ class ProteinResolver:
             include_canonical=include_canonical,
         )
 
-    @staticmethod
-    def _get_all_gene_ids(biotype: str = "protein_coding") -> list[str]:
+    def _get_all_gene_ids(self, biotype: str = "protein_coding") -> list[str]:
         """Get all gene IDs for a biotype using pyensembl."""
         try:
             import pyensembl
-            ens = pyensembl.EnsemblRelease(release=109, species="human")
+            ens = pyensembl.EnsemblRelease(release=109, species=self.organism)
             ens.download()
             ens.index()
             all_genes = ens.genes()
             if biotype.lower() != "all":
                 all_genes = [g for g in all_genes if g.biotype == biotype]
             gene_ids = [g.gene_id for g in all_genes]
-            logger.info("Found %d genes with biotype '%s'", len(gene_ids), biotype)
+            logger.info("Found %d %s genes with biotype '%s'", len(gene_ids), self.organism, biotype)
             return gene_ids
         except ImportError:
             logger.error("pyensembl is required for bulk gene enumeration")
             return []
         except Exception as e:  # noqa: BLE001
-            logger.error("Failed to enumerate genes: %s", e)
+            logger.error("Failed to enumerate genes for %s: %s", self.organism, e)
             return []

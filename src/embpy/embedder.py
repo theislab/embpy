@@ -32,9 +32,12 @@ from .models.molecule_models import (
     RDKitWrapper,
 )
 from .models.protein_models import ESM2Wrapper, ESM3Wrapper, ESMCWrapper, ProtT5Wrapper
-from .models.text_models import TextLLMWrapper
+from .models.text_models import LlamaEmbeddingWrapper, TextLLMWrapper
+from .models.api_models import APIEmbeddingWrapper
+from .models.morphology_models import SubCellWrapper
 from .resources.gene_resolver import GeneResolver
 from .resources.protein_resolver import ProteinResolver
+from .resources.text_resolver import TextResolver
 
 # Evo (v1/v1.5) is an optional dependency - import conditionally
 try:
@@ -53,6 +56,15 @@ try:
 except ImportError:
     _HAVE_EVO2 = False
     Evo2Wrapper = None  # type: ignore
+
+# Boltz-2 structure model (optional: pip install boltz[cuda])
+try:
+    from .models.structure_models import Boltz2Wrapper
+
+    _HAVE_BOLTZ = True
+except ImportError:
+    _HAVE_BOLTZ = False
+    Boltz2Wrapper = None  # type: ignore
 
 
 # Helper function (can be moved to utils later)
@@ -127,6 +139,10 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # ProtT5 Models (ProtTrans)
     "prot_t5_xl": (ProtT5Wrapper, "Rostlab/prot_t5_xl_uniref50"),
     "prot_t5_xl_half": (ProtT5Wrapper, "Rostlab/prot_t5_xl_half_uniref50-enc"),
+    # Boltz-2 structure model (requires: pip install boltz[cuda])
+    "boltz2": (Boltz2Wrapper if _HAVE_BOLTZ else None, "boltz2"),
+    "boltz2_pairwise": (Boltz2Wrapper if _HAVE_BOLTZ else None, "boltz2_pairwise"),
+    "boltz2_both": (Boltz2Wrapper if _HAVE_BOLTZ else None, "boltz2_both"),
     # --- Molecule Models ---
     "chemberta2MTR": (ChembertaWrapper, "DeepChem/ChemBERTa-77M-MTR"),
     "chemberta2MLM": (ChembertaWrapper, "DeepChem/ChemBERTa-100M-MLM"),
@@ -147,6 +163,32 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # --- Text Models ---
     "minilm_l6_v2": (TextLLMWrapper, "sentence-transformers/all-MiniLM-L6-v2"),
     "bert_base_uncased": (TextLLMWrapper, "bert-base-uncased"),
+    # LLaMA decoder-only models (requires HF_TOKEN for gated access)
+    "llama3.1_8b": (LlamaEmbeddingWrapper, "meta-llama/Llama-3.1-8B"),
+    "llama3.2_3b": (LlamaEmbeddingWrapper, "meta-llama/Llama-3.2-3B"),
+    "llama3.2_1b": (LlamaEmbeddingWrapper, "meta-llama/Llama-3.2-1B"),
+    # API-based embedding models (require API keys via environment variables)
+    "openai_small": (APIEmbeddingWrapper, "text-embedding-3-small"),
+    "openai_large": (APIEmbeddingWrapper, "text-embedding-3-large"),
+    "cohere_v3": (APIEmbeddingWrapper, "embed-english-v3.0"),
+    "cohere_multilingual": (APIEmbeddingWrapper, "embed-multilingual-v3.0"),
+    "voyage_3": (APIEmbeddingWrapper, "voyage-3"),
+    "voyage_3_lite": (APIEmbeddingWrapper, "voyage-3-lite"),
+    "google_embed": (APIEmbeddingWrapper, "text-embedding-005"),
+    # --- Morphology Models (microscopy images) ---
+    # SubCell ViT-MAE models (auto-downloaded from CZI S3)
+    "subcell_mae_rybg": (SubCellWrapper, "subcell_mae_rybg"),
+    "subcell_vit_rybg": (SubCellWrapper, "subcell_vit_rybg"),
+    "subcell_mae_rbg": (SubCellWrapper, "subcell_mae_rbg"),
+    "subcell_vit_rbg": (SubCellWrapper, "subcell_vit_rbg"),
+    "subcell_mae_ybg": (SubCellWrapper, "subcell_mae_ybg"),
+    "subcell_vit_ybg": (SubCellWrapper, "subcell_vit_ybg"),
+    "subcell_mae_bg": (SubCellWrapper, "subcell_mae_bg"),
+    "subcell_vit_bg": (SubCellWrapper, "subcell_vit_bg"),
+    # Convenience aliases
+    "subcell_mae": (SubCellWrapper, "subcell_mae"),
+    "subcell_contrast": (SubCellWrapper, "subcell_contrast"),
+    "subcell_vit": (SubCellWrapper, "subcell_vit"),
     # GENA-LM (AIRI-Institute) — pip install transformers
     "gena_lm_bert_base": (GENALMWrapper, "AIRI-Institute/gena-lm-bert-base-t2t"),
     "gena_lm_bert_large": (GENALMWrapper, "AIRI-Institute/gena-lm-bert-large-t2t"),
@@ -179,6 +221,26 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
 }
 
 
+HUMAN_ONLY_MODELS = frozenset({
+    "enformer_human_rough",
+    "nt_500m_human_ref",
+})
+
+MOUSE_ONLY_MODELS = frozenset({
+    "borzoi_v0_mouse", "borzoi_v1_mouse", "borzoi_v2_mouse", "borzoi_v3_mouse",
+})
+
+MULTI_SPECIES_DNA = frozenset({
+    "nt_v2_50m", "nt_v2_100m", "nt_v2_250m", "nt_v2_500m",
+    "nt_2b5_multi",
+    "ntv3_8m_pre", "ntv3_100m_pre", "ntv3_100m_pos", "ntv3_650m_pre", "ntv3_650m_pos",
+    "gena_lm_bert_base_multi",
+    "hyenadna_tiny_1k", "hyenadna_small_32k", "hyenadna_medium_160k",
+    "hyenadna_medium_450k", "hyenadna_large_1m",
+    "caduceus_ph_131k", "caduceus_ps_131k",
+})
+
+
 class BioEmbedder:
     """
     Central class for generating biological embeddings.
@@ -199,6 +261,7 @@ class BioEmbedder:
     def __init__(
         self,
         device: str | torch.device | None = "auto",  # type: ignore[name-defined]
+        organism: str = "human",
         resolver_backend: Literal["api", "local"] = "api",
         mart_file: str | None = None,
         chromosome_folder: str | None = None,
@@ -208,10 +271,15 @@ class BioEmbedder:
 
         Args:
             device: 'auto', 'cuda', 'mps', or 'cpu', or torch.device.
+            organism: Default organism for sequence resolution and annotation
+                (e.g. 'human', 'mouse', 'zebrafish'). Any species supported
+                by Ensembl can be used.
             resolver_backend: 'api' to use online APIs, 'local' to use local FASTAs.
             mart_file: path to Mart CSV (required if resolver_backend='local').
             chromosome_folder: path to folder with chr*.fa files (required if 'local').
         """
+        self.organism = organism
+
         # Device setup
         if isinstance(device, str):
             if device == "auto":
@@ -233,18 +301,22 @@ class BioEmbedder:
                 chromosome_folder=chromosome_folder,
             )
         else:
-            # API mode; mart/chrom args ignored
-            self.gene_resolver = GeneResolver()
+            self.gene_resolver = GeneResolver(species=organism)
 
         # Protein resolver
-        self.protein_resolver = ProteinResolver(organism="human")
+        self.protein_resolver = ProteinResolver(organism=organism)
+
+        # Text resolver for description-based embeddings
+        self.text_resolver = TextResolver(organism=organism)
 
         # Model cache and discovery
         self.model_cache: dict[str, BaseModelWrapper] = {}
         self._available_models = self._discover_models()
 
-        logging.info(f"BioEmbedder initialized on device {self.device}, backend={self.resolver_backend}")
-        logging.info(f"Available models: {self.list_available_models()}")
+        logging.info(
+            "BioEmbedder initialized: device=%s, organism=%s, backend=%s",
+            self.device, self.organism, self.resolver_backend,
+        )
 
     def _discover_models(self) -> dict[str, tuple[type[BaseModelWrapper], str]]:
         """Filters the MODEL_REGISTRY based on available wrapper classes."""
@@ -273,16 +345,44 @@ class BioEmbedder:
 
     def _get_model(self, model_name: str) -> BaseModelWrapper:
         """Loads a model or retrieves it from the cache using the registry or direct HF loading for text models."""
-        # Return from cache if already loaded
         if model_name in self.model_cache:
             return self.model_cache[model_name]
 
-        # Check if it's in the registry first
+        is_human = self.organism.lower() in ("human", "homo_sapiens")
+        is_mouse = self.organism.lower() in ("mouse", "mus_musculus")
+        if not is_human and model_name in HUMAN_ONLY_MODELS:
+            logging.warning(
+                "Model '%s' was trained on human data only. "
+                "Results for organism='%s' may not be meaningful.",
+                model_name, self.organism,
+            )
+        if not is_mouse and model_name in MOUSE_ONLY_MODELS:
+            logging.warning(
+                "Model '%s' was trained on mouse data only. "
+                "Results for organism='%s' may not be meaningful.",
+                model_name, self.organism,
+            )
+
         if model_name in self._available_models:
             logging.info(f"Loading registered model '{model_name}' onto device '{self.device}'...")
             WrapperClass, model_path_or_name = self._available_models[model_name]
             try:
-                model_instance = WrapperClass(model_path_or_name=model_path_or_name)
+                extra_kwargs: dict[str, Any] = {}
+                if model_name == "boltz2_pairwise":
+                    extra_kwargs["output_type"] = "pairwise"
+                elif model_name == "boltz2_both":
+                    extra_kwargs["output_type"] = "both"
+                if WrapperClass is SubCellWrapper:
+                    pass
+                if WrapperClass is APIEmbeddingWrapper:
+                    provider_map = {
+                        "openai_small": "openai", "openai_large": "openai",
+                        "cohere_v3": "cohere", "cohere_multilingual": "cohere",
+                        "voyage_3": "voyage", "voyage_3_lite": "voyage",
+                        "google_embed": "google",
+                    }
+                    extra_kwargs["provider"] = provider_map.get(model_name, "openai")
+                model_instance = WrapperClass(model_path_or_name=model_path_or_name, **extra_kwargs)
                 model_instance.load(self.device)
                 self.model_cache[model_name] = model_instance
                 logging.info(f"Model '{model_name}' loaded successfully.")
@@ -861,6 +961,57 @@ class BioEmbedder:
             logging.error(f"Error during text embedding generation for model '{model}': {e}")
             raise RuntimeError(f"Text embedding failed for input '{text[:50]}...'.") from e
 
+    def embed_text_api(
+        self,
+        text: str,
+        model: str = "text-embedding-3-small",
+        provider: str = "openai",
+        api_key: str | None = None,
+        base_url: str | None = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Embed text using an API-based model with explicit provider config.
+
+        Convenience method for one-off API calls where you want to
+        specify the provider, API key, and/or base URL directly
+        without pre-registering the model.
+
+        Parameters
+        ----------
+        text
+            Text string to embed.
+        model
+            Model name as expected by the API.
+        provider
+            ``"openai"``, ``"cohere"``, ``"voyage"``, ``"google"``,
+            or ``"generic"`` (OpenAI-compatible endpoint).
+        api_key
+            API key (or set the provider's env var).
+        base_url
+            Custom API endpoint URL.
+        **kwargs
+            Forwarded to the API wrapper.
+
+        Returns
+        -------
+        np.ndarray
+            Embedding vector.
+        """
+        from .models.api_models import APIEmbeddingWrapper
+
+        cache_key = f"_api_{provider}_{model}"
+        if cache_key not in self.model_cache:
+            wrapper = APIEmbeddingWrapper(
+                model_path_or_name=model,
+                provider=provider,
+                api_key=api_key,
+                base_url=base_url,
+            )
+            wrapper.load(self.device)
+            self.model_cache[cache_key] = wrapper
+
+        return self.model_cache[cache_key].embed(input=text, **kwargs)
+
     def embed_texts_batch(
         self,
         texts: Sequence[str],
@@ -906,6 +1057,135 @@ class BioEmbedder:
         except (ValueError, KeyError) as e:
             logging.error(f"Error during batch text embedding generation for model '{model}': {e}")
             results = [None] * len(texts)
+
+        return results
+
+    def embed_description(
+        self,
+        identifier: str,
+        model: str = "minilm_l6_v2",
+        entity_type: Literal["gene", "protein", "molecule", "auto"] = "auto",
+        sources: list[str] | str = "all",
+        pooling_strategy: str = "mean",
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Fetch text description(s) for a biological entity and embed them.
+
+        Resolves the identifier to rich text descriptions from public
+        knowledge sources (MyGene, NCBI, Ensembl, UniProt, Wikipedia,
+        PubChem), combines them, and embeds the result with a text model.
+
+        Parameters
+        ----------
+        identifier
+            Gene symbol, Ensembl ID, UniProt accession, drug name,
+            or SMILES string.
+        model
+            Text embedding model (default ``"minilm_l6_v2"``).
+        entity_type
+            ``"gene"``, ``"protein"``, ``"molecule"``, or ``"auto"``
+            to auto-detect.
+        sources
+            Knowledge sources to query. ``"all"`` uses the defaults
+            for the detected entity type.
+        pooling_strategy
+            Pooling strategy for the text model.
+        **kwargs
+            Forwarded to the text model's ``embed`` method.
+
+        Returns
+        -------
+        np.ndarray
+            The text embedding vector.
+
+        Examples
+        --------
+        >>> emb = embedder.embed_description("TP53", model="minilm_l6_v2")
+        >>> emb.shape
+        (384,)
+        >>> emb = embedder.embed_description("aspirin", entity_type="molecule")
+        """
+        description = self.text_resolver.get_combined_description(
+            identifier,
+            entity_type=entity_type,
+            sources=sources,
+        )
+        logging.info(
+            "Description for '%s' (%d chars): %s...",
+            identifier, len(description), description[:100],
+        )
+        return self.embed_text(
+            text=description,
+            model=model,
+            pooling_strategy=pooling_strategy,
+            **kwargs,
+        )
+
+    def embed_descriptions_batch(
+        self,
+        identifiers: Sequence[str],
+        model: str = "minilm_l6_v2",
+        entity_type: Literal["gene", "protein", "molecule", "auto"] = "auto",
+        sources: list[str] | str = "all",
+        pooling_strategy: str = "mean",
+        batch_size: int | None = None,
+        **kwargs: Any,
+    ) -> list[np.ndarray | None]:
+        """Fetch and embed text descriptions for a batch of entities.
+
+        Parameters
+        ----------
+        identifiers
+            List of biological entity identifiers.
+        model
+            Text embedding model.
+        entity_type
+            Entity type (applied to all identifiers).
+        sources
+            Knowledge sources to query.
+        pooling_strategy
+            Pooling strategy for the text model.
+        batch_size
+            Maximum batch size for embedding inference.
+        **kwargs
+            Forwarded to the text model.
+
+        Returns
+        -------
+        List of embedding arrays, with ``None`` for failed lookups.
+        """
+        texts: list[str] = []
+        valid_indices: list[int] = []
+
+        for i, ident in enumerate(identifiers):
+            try:
+                desc = self.text_resolver.get_combined_description(
+                    ident,
+                    entity_type=entity_type,
+                    sources=sources,
+                )
+                if desc:
+                    texts.append(desc)
+                    valid_indices.append(i)
+                else:
+                    logging.warning("No description found for '%s'", ident)
+            except Exception as e:  # noqa: BLE001
+                logging.warning("Failed to fetch description for '%s': %s", ident, e)
+
+        if not texts:
+            return [None] * len(identifiers)
+
+        batch_embs = self.embed_texts_batch(
+            texts=texts,
+            model=model,
+            pooling_strategy=pooling_strategy,
+            batch_size=batch_size,
+            **kwargs,
+        )
+
+        results: list[np.ndarray | None] = [None] * len(identifiers)
+        for idx, emb in zip(valid_indices, batch_embs, strict=False):
+            results[idx] = emb
 
         return results
 

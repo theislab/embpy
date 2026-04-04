@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import time
+from pathlib import Path
 from typing import Literal
 
 import pandas as pd
@@ -59,6 +60,15 @@ def _looks_like_smiles(s: str) -> bool:
 _AA_CHARS = frozenset("ACDEFGHIKLMNPQRSTVWYXacdefghiklmnpqrstvwyx")
 
 
+def _is_ensembl_id(s: str) -> bool:
+    """Check if a string looks like an Ensembl stable ID.
+
+    Covers human (ENSG), mouse (ENSMUSG), zebrafish (ENSDARG),
+    rat (ENSRNOG), fly (FBgn), and other Ensembl-style identifiers.
+    """
+    return bool(re.match(r"^ENS[A-Z]*[GTRPE]\d{11}(\.\d+)?$", s, re.IGNORECASE))
+
+
 def detect_identifier_type(
     identifier: str,
 ) -> Literal["dna_sequence", "ensembl_id", "symbol", "smiles", "protein_sequence"]:
@@ -87,7 +97,7 @@ def detect_identifier_type(
         return "smiles"
     if re.fullmatch(r"[ACGTNacgtn]+", s) and len(s) >= 20:
         return "dna_sequence"
-    if re.match(r"^ENS[A-Z]*G\d{11}(\.\d+)?$", s, re.IGNORECASE):
+    if _is_ensembl_id(s):
         return "ensembl_id"
     if len(s) >= 10 and all(c in _AA_CHARS for c in s):
         return "protein_sequence"
@@ -161,6 +171,211 @@ class GeneResolver:
             logging.warning(f"Failed to initialize pyensembl: {e}")
             self.ensembl = None
 
+        # Local indexed genome (populated by download_genome())
+        self._genome_fasta = None
+        self._genome_dir: Path | None = None
+
+    # ==================================================================
+    # Bulk genome download + indexed access
+    # ==================================================================
+
+    _ENSEMBL_FTP = "https://ftp.ensembl.org/pub"
+    _SPECIES_ASSEMBLY = {
+        "human": ("homo_sapiens", "GRCh38"),
+        "homo_sapiens": ("homo_sapiens", "GRCh38"),
+        "mouse": ("mus_musculus", "GRCm39"),
+        "mus_musculus": ("mus_musculus", "GRCm39"),
+        "rat": ("rattus_norvegicus", "Rnor6.0"),
+        "zebrafish": ("danio_rerio", "GRCz11"),
+        "drosophila": ("drosophila_melanogaster", "BDGP6.46"),
+    }
+
+    def download_genome(self, cache_dir: str | Path | None = None) -> None:
+        """Download and index the genome FASTA for this species.
+
+        One-time operation. After this, all ``get_dna_sequence()`` and
+        ``get_gene_region_sequence()`` calls use instant indexed local
+        access via pysam instead of REST API calls.
+
+        Parameters
+        ----------
+        cache_dir
+            Directory to store genome files. Defaults to
+            ``~/.cache/embpy/genomes/{species}/``. Override with the
+            ``EMBPY_CACHE`` environment variable.
+        """
+        import gzip
+        import os
+        import shutil
+        import urllib.request
+
+        try:
+            import pysam
+        except ImportError as e:
+            raise ImportError(
+                "pysam is required for local genome access. "
+                "Install with: pip install pysam"
+            ) from e
+
+        species_key = self.species.lower()
+        if species_key not in self._SPECIES_ASSEMBLY:
+            raise ValueError(
+                f"Unsupported species '{self.species}' for genome download. "
+                f"Supported: {list(self._SPECIES_ASSEMBLY.keys())}"
+            )
+
+        species_name, assembly = self._SPECIES_ASSEMBLY[species_key]
+        release = self.release_version
+
+        if cache_dir is None:
+            base = Path(os.environ.get("EMBPY_CACHE", Path.home() / ".cache" / "embpy"))
+            cache_dir = base / "genomes" / species_key
+        else:
+            cache_dir = Path(cache_dir)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        cap_species = species_name[0].upper() + species_name[1:]
+        fa_name = f"{cap_species}.{assembly}.dna.primary_assembly.fa"
+        fa_path = cache_dir / fa_name
+        fai_path = cache_dir / f"{fa_name}.fai"
+
+        if not fa_path.exists():
+            gz_path = cache_dir / f"{fa_name}.gz"
+            if not gz_path.exists():
+                url = (
+                    f"{self._ENSEMBL_FTP}/release-{release}/fasta/{species_name}/dna/{fa_name}.gz"
+                )
+                logging.info("Downloading genome FASTA from %s ...", url)
+                try:
+                    urllib.request.urlretrieve(url, str(gz_path))
+                except Exception:
+                    import subprocess
+                    subprocess.run(["wget", "-q", "-O", str(gz_path), url], check=True, timeout=7200)
+                logging.info("Downloaded %.1f MB", gz_path.stat().st_size / 1e6)
+
+            logging.info("Decompressing %s ...", gz_path.name)
+            with gzip.open(gz_path, "rb") as f_in, open(fa_path, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+            logging.info("Decompressed to %s (%.1f GB)", fa_path, fa_path.stat().st_size / 1e9)
+
+        if not fai_path.exists():
+            logging.info("Indexing genome FASTA with pysam ...")
+            pysam.faidx(str(fa_path))
+
+        self._genome_dir = cache_dir
+        self._genome_fasta = pysam.FastaFile(str(fa_path))
+        logging.info(
+            "Genome ready: %s (%d contigs). "
+            "get_dna_sequence() will now use instant local access.",
+            fa_path.name, len(self._genome_fasta.references),
+        )
+
+    def _load_genome_if_available(self) -> bool:
+        """Try to load a previously downloaded genome. Returns True if loaded."""
+        if self._genome_fasta is not None:
+            return True
+
+        import os
+
+        base = Path(os.environ.get("EMBPY_CACHE", Path.home() / ".cache" / "embpy"))
+        genome_dir = base / "genomes" / self.species.lower()
+
+        if not genome_dir.exists():
+            return False
+
+        fa_files = list(genome_dir.glob("*.fa"))
+        if not fa_files:
+            return False
+
+        fa_path = fa_files[0]
+        fai_path = fa_path.with_suffix(".fa.fai")
+        if not fai_path.exists():
+            return False
+
+        try:
+            import pysam
+            self._genome_fasta = pysam.FastaFile(str(fa_path))
+            self._genome_dir = genome_dir
+            logging.info("Auto-loaded local genome: %s", fa_path.name)
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _get_local_indexed_sequence(
+        self,
+        ensembl_id: str,
+        region: str = "full",
+    ) -> str | None:
+        """Extract a gene's DNA from the local indexed genome.
+
+        Parameters
+        ----------
+        ensembl_id
+            Ensembl gene ID (e.g. ``ENSG00000141510``).
+        region
+            ``"full"``, ``"exons"``, or ``"introns"``.
+
+        Returns
+        -------
+        DNA sequence string, or ``None`` if the gene cannot be found.
+        """
+        if self._genome_fasta is None or self.ensembl is None:
+            return None
+
+        try:
+            gene = self.ensembl.gene_by_id(ensembl_id)
+        except Exception:  # noqa: BLE001
+            return None
+
+        chrom = gene.contig
+        available = set(self._genome_fasta.references)
+        if chrom not in available:
+            alt = f"chr{chrom}" if not chrom.startswith("chr") else chrom[3:]
+            if alt in available:
+                chrom = alt
+            else:
+                return None
+
+        try:
+            if region == "full":
+                seq = self._genome_fasta.fetch(chrom, gene.start - 1, gene.end)
+                if gene.strand == "-":
+                    seq = self._reverse_complement(seq)
+                return seq
+
+            elif region == "exons":
+                parts = []
+                for exon in sorted(gene.exons, key=lambda e: e.start):
+                    parts.append(self._genome_fasta.fetch(chrom, exon.start - 1, exon.end))
+                if gene.strand == "-":
+                    parts = [self._reverse_complement(s) for s in reversed(parts)]
+                return "".join(parts) if parts else None
+
+            elif region == "introns":
+                exons = sorted(gene.exons, key=lambda e: e.start)
+                parts = []
+                for j in range(len(exons) - 1):
+                    i_start = exons[j].end
+                    i_end = exons[j + 1].start - 1
+                    if i_end <= i_start:
+                        continue
+                    parts.append(self._genome_fasta.fetch(chrom, i_start, i_end))
+                if gene.strand == "-":
+                    parts = [self._reverse_complement(s) for s in reversed(parts)]
+                return "".join(parts) if parts else None
+
+        except Exception as e:  # noqa: BLE001
+            logging.debug("Local extraction failed for %s: %s", ensembl_id, e)
+            return None
+
+        return None
+
+    @staticmethod
+    def _reverse_complement(seq: str) -> str:
+        """Reverse complement a DNA sequence."""
+        comp = str.maketrans("ACGTacgtNn", "TGCAtgcaNn")
+        return seq.translate(comp)[::-1]
+
     def get_local_dna_sequence(
         self,
         identifier: str,
@@ -211,7 +426,11 @@ class GeneResolver:
         organism: str = "human",
     ) -> str | None:
         """
-        Fetches the DNA sequence for a given gene identifier using the Ensembl REST API.
+        Fetches the DNA sequence for a given gene identifier.
+
+        If a local genome has been downloaded (via ``download_genome()``),
+        uses instant indexed access. Otherwise falls back to the
+        Ensembl REST API.
 
         Parameters
         ----------
@@ -227,6 +446,14 @@ class GeneResolver:
         str or None
             DNA sequence in plain text (not FASTA format), or None if not found.
         """
+        self._load_genome_if_available()
+        if self._genome_fasta is not None:
+            ens_id = identifier if id_type == "ensembl_id" else self.symbol_to_ensembl(identifier, organism)
+            if ens_id:
+                seq = self._get_local_indexed_sequence(ens_id, region="full")
+                if seq:
+                    return seq
+
         try:
             # Step 1: Resolve symbol → Ensembl ID if needed
             if id_type == "symbol":
@@ -433,9 +660,8 @@ class GeneResolver:
         """
         sym = symbol.strip()
         # 1) pyensembl (offline once cached)
-        if self.ensembl is not None and organism.lower() in {"human", "homo_sapiens"}:
+        if self.ensembl is not None and organism.lower() in {self.species.lower(), "homo_sapiens" if self.species == "human" else self.species}:
             try:
-                # pyensembl is case-sensitive for symbols; use exact first, then case-insensitive fallback
                 genes = self.ensembl.genes_by_name(sym)
                 if not genes and sym.upper() != sym:
                     genes = self.ensembl.genes_by_name(sym.upper())
@@ -497,7 +723,7 @@ class GeneResolver:
         """
         ens = ensembl_gene_id.strip().split(".")[0]  # drop version if provided
         # 1) pyensembl
-        if self.ensembl is not None and organism.lower() in {"human", "homo_sapiens"}:
+        if self.ensembl is not None and organism.lower() in {self.species.lower(), "homo_sapiens" if self.species == "human" else self.species}:
             try:
                 g = self.ensembl.gene_by_id(ens)
                 if g and getattr(g, "gene_name", None):
@@ -620,6 +846,7 @@ class GeneResolver:
                         ex["start"],
                         ex["end"],
                         gene_strand,
+                        organism=organism,
                     )
                     if seq:
                         regions.append({
@@ -640,6 +867,7 @@ class GeneResolver:
                         intron_start,
                         intron_end,
                         gene_strand,
+                        organism=organism,
                     )
                     if seq:
                         regions.append({
@@ -682,6 +910,14 @@ class GeneResolver:
         -------
         Concatenated DNA string, or ``None`` on failure.
         """
+        self._load_genome_if_available()
+        if self._genome_fasta is not None and transcript_id is None:
+            ens_id = identifier if id_type == "ensembl_id" else self.symbol_to_ensembl(identifier, organism)
+            if ens_id:
+                seq = self._get_local_indexed_sequence(ens_id, region=region)
+                if seq:
+                    return seq
+
         regions = self.get_gene_regions(
             identifier,
             id_type=id_type,
@@ -699,11 +935,13 @@ class GeneResolver:
         start: int,
         end: int,
         strand: int,
+        organism: str | None = None,
     ) -> str | None:
         """Fetch a genomic region's DNA sequence from Ensembl REST."""
+        species = organism or self.species
         try:
             url = (
-                f"https://rest.ensembl.org/sequence/region/human/"
+                f"https://rest.ensembl.org/sequence/region/{species}/"
                 f"{seq_region_name}:{start}..{end}:{strand}"
             )
             resp = _ensembl_get(url, headers={"Content-Type": "text/plain"}, timeout=15)
@@ -717,7 +955,11 @@ class GeneResolver:
     # TODO: we can use merge this function with the previous ones and clean it up
 
     def get_gene_sequences(self, biotype: str = "protein_coding") -> dict[str, str] | None:
-        """Fetch genomic DNA sequences via Ensembl REST API.
+        """Fetch genomic DNA sequences for all genes of a biotype.
+
+        If a local genome has been downloaded (via ``download_genome()``),
+        extracts all sequences locally in seconds. Otherwise falls back
+        to the Ensembl REST API (~hours for ~20k genes).
 
         Parameters
         ----------
@@ -743,12 +985,28 @@ class GeneResolver:
 
             total_genes = len(all_genes)
 
-            if total_genes > 0:
-                logging.debug(f"First 5 genes after filtering: {all_genes[:5]}")
-
             if total_genes == 0:
                 logging.warning(f"No genes found with biotype='{biotype}'.")
                 return {}
+
+            self._load_genome_if_available()
+            if self._genome_fasta is not None:
+                logging.info(
+                    "Using LOCAL indexed genome for %d genes (instant extraction)...",
+                    total_genes,
+                )
+                gene_sequences = {}
+                for i, gene in enumerate(all_genes):
+                    if (i + 1) % 2000 == 0:
+                        logging.info("  Extracted %d/%d ...", i + 1, total_genes)
+                    seq = self._get_local_indexed_sequence(gene.gene_id, region="full")
+                    if seq:
+                        gene_sequences[gene.gene_id] = seq
+                logging.info(
+                    "Extracted %d/%d sequences from local genome.",
+                    len(gene_sequences), total_genes,
+                )
+                return gene_sequences
 
             logging.info(f"Found {total_genes} genes. Starting REST API downloads...")
             logging.warning(f"This involves ~{total_genes} network requests.")
@@ -759,7 +1017,7 @@ class GeneResolver:
                 if i > 0 and i % 100 == 0:
                     logging.info(f"Fetched {i}/{total_genes} sequences...")
 
-                seq = self.get_dna_sequence(identifier=gene.gene_id, id_type="ensembl_id", organism="human")
+                seq = self.get_dna_sequence(identifier=gene.gene_id, id_type="ensembl_id", organism=self.species)
 
                 if seq:
                     gene_sequences[gene.gene_id] = seq

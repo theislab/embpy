@@ -33,6 +33,7 @@ flowchart TD
         ProtInput["Protein Targets\nUniProt ID | Canonical\nIsoforms"]
         MolInput["Chemical Perturbations\nSMILES | InChI\nDrug Name | PubChem CID"]
         CellInput["Single-Cell Data\nAnnData | Raw Counts\nLog-normalized"]
+        SpeciesInput["Multi-Species\nhuman | mouse | rat\nzebrafish | fly | worm | ..."]
     end
 
     subgraph resolvers [Sequence Resolution]
@@ -40,6 +41,7 @@ flowchart TD
         GeneRes["GeneResolver\nEnsembl REST | pyensembl\nMyGene.info"]
         ProtRes["ProteinResolver\nUniProt REST\nMyGene.info"]
         DrugRes["DrugResolver\nPubChem | NIH Cactus\nCIRpy"]
+        TextRes["TextResolver\nMyGene | NCBI | Ensembl\nUniProt | Wikipedia | PubChem"]
     end
 
     subgraph annotators [Annotation Sources]
@@ -47,6 +49,7 @@ flowchart TD
         MolAnn["MoleculeAnnotator\nRDKit | ChEMBL | ChEBI\nKEGG | PubChem | UniChem"]
         GeneAnn["GeneAnnotator\nMyGene | GTEx | STRING-DB\nOpen Targets | GWAS Catalog\nDoRothEA"]
         ProtAnn["ProteinAnnotator\nUniProt JSON | InterPro\nGO Terms"]
+        CellAnn["CellLineAnnotator\nCellosaurus | DepMap\nCell Model Passports | Wikipedia"]
     end
 
     subgraph dna_models [DNA Models]
@@ -66,6 +69,13 @@ flowchart TD
         ESMC["ESM-C 300M-6B"]
         ESM3M["ESM3 1.4B-98B"]
         ProtT5["ProtT5 3B"]
+        BoltzM["Boltz-2 Trunk"]
+    end
+
+    subgraph text_models [Text Models]
+        MiniLM["MiniLM-L6"]
+        BERT["BERT"]
+        TextEmb["embed_description\nvia TextResolver"]
     end
 
     subgraph mol_models [Molecule Models]
@@ -103,6 +113,7 @@ flowchart TD
         Cluster["Clustering\nLeiden | K-means | Spectral"]
         DimRed["Dim Reduction\nUMAP | t-SNE | PCA"]
         Bench["Benchmarking\nKNN Overlap | Ranking\nMetrics"]
+        Viz["Visualization\nHeatmaps | Clustermaps\nParallel Coords | Radar\nStar Coords | Dendrograms"]
     end
 
     subgraph outputBlock [Output]
@@ -116,19 +127,25 @@ flowchart TD
     GeneInput --> ProtRes
     MolInput --> DrugRes
     CellInput --> sc_models
+    SpeciesInput --> GeneRes
+    SpeciesInput --> ProtRes
 
     GeneRes --> dna_models
     ProtRes --> prot_models
     DrugRes --> mol_models
+    TextRes --> text_models
 
     GeneInput --> GeneAnn
+    GeneInput --> TextRes
     MolInput --> MolAnn
+    MolInput --> TextRes
     GeneInput --> ProtAnn
 
     dna_models --> strategies
     prot_models --> strategies
     mol_models --> strategies
     sc_models --> strategies
+    text_models --> strategies
 
     strategies --> outputBlock
     annotators --> ObsOut
@@ -141,9 +158,13 @@ flowchart TD
 
 - **60+ foundation models** across DNA, protein, molecule, single-cell, and text modalities
 - **Unified `BioEmbedder` interface** -- one class to access all models with automatic sequence resolution
+- **Multi-species support** -- embed and annotate genes from any Ensembl-supported organism (human, mouse, rat, zebrafish, fly, worm, yeast, ...) with automatic species-aware sequence resolution via Ensembl REST, UniProt, MyGene.info, and STRING-DB
 - **`embed_adata()`** -- embed cells and perturbations together in a single call
 - **Weighted protein embeddings** -- TPM-weighted isoform averaging, annotation-weighted residue pooling, expression-context concatenation
-- **Multi-source annotation** -- `MoleculeAnnotator` (RDKit, ChEMBL, ChEBI, KEGG, PubChem), `GeneAnnotator` (MyGene, GTEx, STRING-DB, Open Targets, GWAS Catalog), `ProteinAnnotator` (UniProt functional metadata, InterPro domains)
+- **Text knowledge embeddings** -- `TextResolver` fetches descriptions from 6 public sources (MyGene, NCBI, Ensembl, UniProt, Wikipedia, PubChem); `embed_description()` resolves + embeds in one call
+- **Boltz-2 structure embeddings** -- extract trunk representations (single per-residue + pairwise interaction features) from the Boltz-2 biomolecular foundation model
+- **Multi-source annotation** -- `MoleculeAnnotator` (RDKit, ChEMBL, ChEBI, KEGG, PubChem), `GeneAnnotator` (MyGene, GTEx, STRING-DB, Open Targets, GWAS Catalog), `ProteinAnnotator` (UniProt functional metadata, InterPro domains), `CellLineAnnotator` (Cellosaurus, DepMap/CCLE, Cell Model Passports, Wikipedia)
+- **20 visualization functions** in `embpy.pl` -- heatmaps, clustermaps, UMAP/t-SNE, parallel coordinates, radar charts, star coordinates, dendrograms, cross-model comparison
 - **GPU acceleration** via rapids_singlecell for preprocessing, PCA, UMAP, neighbors, and Leiden
 - **Batch processing** with SLURM array job scripts for full-genome embedding
 - **scverse integration** -- AnnData-native throughout, compatible with scanpy/scvi-tools/pertpy
@@ -234,6 +255,71 @@ emb = wpe.embed_perturbation(
 )
 ```
 
+### Multi-species embedding
+
+```python
+# Mouse gene embeddings using Borzoi mouse weights
+mouse_embedder = BioEmbedder(device="auto", organism="mouse")
+emb = mouse_embedder.embed_gene("Trp53", model="borzoi_v0_mouse", pooling_strategy="mean")
+
+# Cross-species protein comparison with ESM-2
+human_embedder = BioEmbedder(device="auto", organism="human")
+human_tp53 = human_embedder.embed_protein("TP53", model="esm2_650M")
+mouse_trp53 = mouse_embedder.embed_protein("Trp53", model="esm2_650M")
+
+# Mouse gene annotations (STRING PPI uses mouse taxon 10090)
+from embpy.resources.gene_annotator import GeneAnnotator
+mouse_ann = GeneAnnotator(organism="mouse")
+ppi = mouse_ann.get_protein_interactions("Trp53")
+```
+
+### Text knowledge embeddings
+
+```python
+# Fetch descriptions from 6 knowledge sources and embed them
+emb = embedder.embed_description("TP53", model="minilm_l6_v2")
+
+# Inspect descriptions before embedding
+from embpy.resources import TextResolver
+tr = TextResolver(organism="human")
+descs = tr.get_gene_description("BRCA1")
+for source, text in descs.items():
+    print(f"[{source}] {text[:100]}...")
+
+# Embed custom text directly
+emb = embedder.embed_text("TP53 is a tumor suppressor gene.", model="minilm_l6_v2")
+```
+
+### Boltz-2 structure embeddings
+
+```python
+# Single representation from Boltz-2 pairformer trunk (~384 dims)
+emb = embedder.embed_protein("TP53", model="boltz2", pooling_strategy="mean")
+
+# Pairwise interaction features (~128 dims)
+emb_z = embedder.embed_protein("TP53", model="boltz2_pairwise")
+
+# Both concatenated (~512 dims)
+emb_both = embedder.embed_protein("TP53", model="boltz2_both")
+```
+
+### Cell line context annotation
+
+```python
+from embpy.resources import CellLineAnnotator
+
+ann = CellLineAnnotator()
+info = ann.annotate("A549")
+# {'tissue': 'Lung', 'disease': 'Non-small cell lung carcinoma', 'lineage': 'Lung', ...}
+
+# Text embedding of cell line context (metadata + Wikipedia)
+emb = embedder.embed_description("HeLa", entity_type="cellline", model="minilm_l6_v2")
+
+# Annotate cell lines in an AnnData
+adata = ann.annotate_adata(adata, column="cell_line")
+# Adds cellline_tissue, cellline_disease, cellline_lineage to .obs
+```
+
 ### Annotate perturbations
 
 ```python
@@ -277,6 +363,7 @@ adata = annotate_proteins(adata, column="gene")
 | ESM-C | `esmc_300m`, `esmc_600m`, `esmc_6b` | 300M -- 6B |
 | ESM3 | `esm3_small`, `esm3_medium`, `esm3_large` | 1.4B -- 98B |
 | ProtT5 | `prot_t5_xl`, `prot_t5_xl_half` | 3B |
+| Boltz-2 | `boltz2`, `boltz2_pairwise`, `boltz2_both` | ~400M (trunk) |
 
 ### Molecule Models
 
@@ -392,6 +479,7 @@ Install only what you need:
 | `evo` | Evo v1/v1.5 |
 | `evo2` | Evo 2 |
 | `helical` | Single-cell foundation models (scGPT, Geneformer, UCE, TranscriptFormer, Tahoe, Cell2Sentence) |
+| `boltz` | Boltz-2 structure embeddings (requires CUDA) |
 | `ppi` | PPI GNN encoder |
 | `pertpy` | pertpy metadata annotation |
 | `scanpy` | scanpy integration |
@@ -433,27 +521,40 @@ print(f"Models: {len(embedder.list_available_models())} available")
 | 14 | Unified Embedding (embed_adata) | [14_unified_embedding.ipynb](docs/notebooks/14_unified_embedding.ipynb) |
 | 15 | Molecule Annotation | [15_molecule_annotation.ipynb](docs/notebooks/15_molecule_annotation.ipynb) |
 | 16 | Gene/Protein Annotation + Weighted Embeddings | [16_gene_protein_annotation.ipynb](docs/notebooks/16_gene_protein_annotation.ipynb) |
+| 17 | Cross-Species Ortholog Embeddings | [17_cross_species_embeddings.ipynb](docs/notebooks/17_cross_species_embeddings.ipynb) |
+| 18 | Text Knowledge Embeddings | [18_text_knowledge_embeddings.ipynb](docs/notebooks/18_text_knowledge_embeddings.ipynb) |
+| 19 | Boltz-2 Structure Embeddings | [19_boltz2_structure_embeddings.ipynb](docs/notebooks/19_boltz2_structure_embeddings.ipynb) |
+| 20 | Cell Line Context Annotation | [20_cellline_context.ipynb](docs/notebooks/20_cellline_context.ipynb) |
 
 ## Package Structure
 
 ```
 embpy/
-    embedder.py          # BioEmbedder -- unified embedding interface
+    embedder.py          # BioEmbedder(organism=...) -- unified multi-species embedding
     models/
         dna_models.py    # Enformer, Borzoi, Evo, NT, HyenaDNA, Caduceus, GENA-LM
         protein_models.py # ESM-2, ESM-C, ESM3, ProtT5
         molecule_models.py # ChemBERTa, MolFormer, RDKit, MiniMol, MHG-GNN, MolE
         singlecell_models.py # scGPT, Geneformer, UCE, PCA, scVI
+        structure_models.py  # Boltz-2 trunk embeddings
     resources/
-        gene_resolver.py      # Gene symbol <-> Ensembl ID <-> DNA sequence
-        protein_resolver.py   # Gene -> UniProt canonical/isoform sequences
+        gene_resolver.py      # Multi-species gene resolution (Ensembl, MyGene)
+        protein_resolver.py   # Multi-species protein resolution (UniProt, MyGene)
+        text_resolver.py      # Text descriptions from 6 knowledge sources
         molecule_annotator.py # Small molecule annotations (6 sources)
-        gene_annotator.py     # Gene annotations (pathways, expression, PPI, diseases)
-        protein_annotator.py  # Protein annotations (UniProt, InterPro)
+        gene_annotator.py     # Gene annotations (pathways, PPI, diseases -- species-aware)
+        protein_annotator.py  # Protein annotations (UniProt, InterPro -- species-aware)
+        cellline_annotator.py # Cell line context (Cellosaurus, DepMap, Passports, Wikipedia)
         drug_resolver.py      # Drug name <-> SMILES resolution
     pp/
         sc_preprocessing.py   # Single-cell preprocessing (raw/standard pipelines)
         basic.py              # Perturbation embedding matrix construction
+    pl/
+        embedding_space.py    # UMAP/t-SNE scatter, all_embeddings, feature panels
+        heatmaps.py           # Similarity, distance, correlation, clustermap heatmaps
+        clustering.py         # Leiden overview, composition, dendrogram
+        distributions.py      # Embedding distributions, norms, perturbation ranking
+        comparisons.py        # Parallel coordinates, radar charts, star coordinates
     tl/
         similarity.py         # Cosine/Pearson/Spearman similarity, KNN overlap
         dimred.py             # UMAP, t-SNE (CPU/GPU)
