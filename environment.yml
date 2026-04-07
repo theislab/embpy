@@ -31,4 +31,4 @@ dependencies:
   # JUMP Cell Painting utilities
   - pip:
       - broad-babel>=0.1
-      - -e ".[helical,pertpy,evo,ppi]"
+      - -e ".[helical,pertpy,evo,caduceus,ppi]"

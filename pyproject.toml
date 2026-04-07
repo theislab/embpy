@@ -102,7 +102,7 @@ optional-dependencies.scanpy = [
   "scanpy>=1.10",
 ]
 optional-dependencies.all = [
-  "embpy[torch,evo,evo2,boltz,ppi,helical,lamindb,pertpy,scanpy]",
+  "embpy[torch,evo,evo2,caduceus,boltz,ppi,helical,lamindb,pertpy,scanpy]",
 ]
 optional-dependencies.dev = [
   "pre-commit",

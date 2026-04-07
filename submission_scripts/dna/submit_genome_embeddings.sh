@@ -14,14 +14,29 @@ if [[ "${1:-}" == "--dry-run" ]]; then
 fi
 
 MODELS=(
+    # Genomic track models
     "enformer_human_rough"
     "borzoi_v0"
     "borzoi_v1"
+    # Evo2
     "evo2_7b"
     "evo2_7b_base"
-    "evo1_8k"
-    "evo1_131k"
+    # Nucleotide Transformer v2
     "nt_v2_500m"
+    # GENA-LM
+    "gena_lm_bert_base"
+    "gena_lm_bert_large"
+    "gena_lm_bert_base_multi"
+    "gena_lm_bigbird_base"
+    # HyenaDNA
+    "hyenadna_tiny_1k"
+    "hyenadna_small_32k"
+    "hyenadna_medium_160k"
+    "hyenadna_medium_450k"
+    "hyenadna_large_1m"
+    # Caduceus
+    "caduceus_ph_131k"
+    "caduceus_ps_131k"
 )
 POOLINGS=("mean" "max")
 REGIONS=("full" "exons" "introns")
@@ -49,14 +64,14 @@ done
 
 if [[ ${#MISSING_IDS[@]} -eq 0 ]]; then
     echo ""
-    echo "All 48 tasks are complete. Nothing to submit."
+    echo "All 102 tasks are complete. Nothing to submit."
     exit 0
 fi
 
 ARRAY_SPEC=$(IFS=,; echo "${MISSING_IDS[*]}")
 
 echo ""
-echo "${#MISSING_IDS[@]} of 48 tasks still need to run."
+echo "${#MISSING_IDS[@]} of 102 tasks still need to run."
 echo "Array spec: --array=${ARRAY_SPEC}"
 
 if [[ "${DRY_RUN}" == true ]]; then

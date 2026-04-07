@@ -212,6 +212,20 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
         default_model_name="27B",
         variants=["27B"],
     ),
+    # --- STATE (Arc Institute) ---
+    "state": SCModelCard(
+        key="state",
+        wrapper_class_name="StateEmbeddingWrapper",
+        description="STATE embedding model (Arc Institute, SE-600M).",
+        reference="https://github.com/ArcInstitute/state",
+    ),
+    # --- Stack (Arc Institute) ---
+    "stack": SCModelCard(
+        key="stack",
+        wrapper_class_name="StackWrapper",
+        description="Stack encoder-decoder (150M+ cells, tabular attention, Arc Institute).",
+        reference="https://github.com/ArcInstitute/stack",
+    ),
     # --- PCA (classical baseline) ---
     "pca": SCModelCard(
         key="pca",
@@ -528,6 +542,212 @@ class Cell2SentenceWrapper(SingleCellWrapper):
         return np.asarray(embs, dtype=np.float32)
 
 
+class StateEmbeddingWrapper(SingleCellWrapper):
+    """Wrapper for STATE embedding model (Arc Institute).
+
+    STATE (State Transition / Embedding) is a foundation model for
+    predicting cellular perturbation responses. The SE (State Embedding)
+    component produces cell embeddings from scRNA-seq count data.
+
+    Requires the ``arc-state`` package::
+
+        pip install arc-state
+
+    Parameters
+    ----------
+    checkpoint : str
+        Path to the trained STATE ``.ckpt`` checkpoint file.
+    model_folder : str or None
+        Path to the model folder containing the checkpoint and optional
+        ``protein_embeddings.pt``. If provided, checkpoint is auto-detected.
+    protein_embeddings : str or None
+        Path to a ``.pt`` file with protein embeddings. Auto-detected
+        from ``model_folder`` if not given.
+    config : str or None
+        Path to a YAML config override. If omitted, uses config
+        embedded in the checkpoint.
+
+    Example::
+
+        wrapper = StateEmbeddingWrapper(
+            checkpoint="/path/to/SE-600M/se600m_epoch15.ckpt",
+            model_folder="/path/to/SE-600M",
+        )
+        wrapper.load("cuda")
+        embs = wrapper.embed_cells(adata)
+    """
+
+    def __init__(
+        self,
+        checkpoint: str | None = None,
+        model_folder: str | None = None,
+        protein_embeddings: str | None = None,
+        config: str | None = None,
+        model_name: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model_name=model_name or "state", **kwargs)
+        self._checkpoint = checkpoint
+        self._model_folder = model_folder
+        self._protein_embeddings_path = protein_embeddings
+        self._config_path = config
+        self._inferer: Any = None
+
+    def load(self, device: str = "cpu") -> None:  # noqa: D102
+        try:
+            from state.emb import Inference  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise ImportError(
+                "The 'arc-state' package is required for STATE embeddings. "
+                "Install with: pip install arc-state"
+            ) from exc
+
+        import glob
+        import os
+        import torch
+        from omegaconf import OmegaConf  # type: ignore[import-not-found]
+
+        self.device = device
+
+        protein_embeds = None
+        if self._protein_embeddings_path:
+            protein_embeds = torch.load(
+                self._protein_embeddings_path, weights_only=False, map_location="cpu",
+            )
+        elif self._model_folder:
+            pe_path = os.path.join(self._model_folder, "protein_embeddings.pt")
+            if os.path.exists(pe_path):
+                protein_embeds = torch.load(pe_path, weights_only=False, map_location="cpu")
+
+        cfg = OmegaConf.load(self._config_path) if self._config_path else None
+        self._inferer = Inference(cfg=cfg, protein_embeds=protein_embeds)
+
+        checkpoint = self._checkpoint
+        if checkpoint is None and self._model_folder:
+            ckpts = sorted(glob.glob(os.path.join(self._model_folder, "*.ckpt")))
+            if not ckpts:
+                raise FileNotFoundError(
+                    f"No .ckpt files found in {self._model_folder}"
+                )
+            checkpoint = ckpts[-1]
+        if checkpoint is None:
+            raise ValueError(
+                "Either checkpoint or model_folder must be provided."
+            )
+
+        self._inferer.load_model(checkpoint)
+        self._model = self._inferer.model
+        logger.info("Loaded STATE embedding model from %s on %s", checkpoint, device)
+
+    def embed_cells(self, adata: Any) -> np.ndarray:  # noqa: D102
+        if self._inferer is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+        import tempfile
+        import os
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = os.path.join(tmpdir, "input.h5ad")
+            adata.write_h5ad(tmp_path)
+            embeddings = self._inferer.encode_adata(
+                input_adata_path=tmp_path,
+                output_adata_path=None,
+                emb_key="X_state",
+            )
+        return np.asarray(embeddings, dtype=np.float32)
+
+
+class StackWrapper(SingleCellWrapper):
+    """Wrapper for Stack single-cell foundation model (Arc Institute).
+
+    Stack is a large-scale encoder-decoder model trained on 150M+
+    single cells using tabular attention. It supports in-context
+    learning and produces cell embeddings from raw count data.
+
+    Requires the ``arc-stack`` package::
+
+        pip install arc-stack
+
+    Parameters
+    ----------
+    checkpoint : str
+        Path to the trained Stack ``.ckpt`` checkpoint file.
+    genelist : str
+        Path to the pickled gene list used during training.
+    gene_name_col : str or None
+        Column in ``adata.var`` containing gene symbols. If ``None``,
+        auto-detected from the overlap with the model's gene list.
+
+    Example::
+
+        wrapper = StackWrapper(
+            checkpoint="/path/to/stack.ckpt",
+            genelist="/path/to/hvg_genes.pkl",
+        )
+        wrapper.load("cuda")
+        embs = wrapper.embed_cells(adata)
+    """
+
+    def __init__(
+        self,
+        checkpoint: str | None = None,
+        genelist: str | None = None,
+        gene_name_col: str | None = None,
+        model_name: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(model_name=model_name or "stack", **kwargs)
+        self._checkpoint = checkpoint
+        self._genelist = genelist
+        self._gene_name_col = gene_name_col
+
+    def load(self, device: str = "cpu") -> None:  # noqa: D102
+        try:
+            from stack.cli.embedding import _ensure_deps, _load_model, _resolve_device  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise ImportError(
+                "The 'arc-stack' package is required for Stack embeddings. "
+                "Install with: pip install arc-stack"
+            ) from exc
+
+        if self._checkpoint is None:
+            raise ValueError("checkpoint path is required for StackWrapper.")
+        if self._genelist is None:
+            raise ValueError("genelist path is required for StackWrapper.")
+
+        self.device = device
+        _ensure_deps()
+        resolved = _resolve_device(device)
+        self._model = _load_model(self._checkpoint, device=resolved)
+        logger.info("Loaded Stack model from %s on %s", self._checkpoint, device)
+
+    def embed_cells(self, adata: Any) -> np.ndarray:  # noqa: D102
+        if self._model is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+        try:
+            from stack.cli.embedding import extract_embeddings  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise ImportError(
+                "The 'arc-stack' package is required. "
+                "Install with: pip install arc-stack"
+            ) from exc
+
+        import tempfile
+        import os
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = os.path.join(tmpdir, "input.h5ad")
+            adata.write_h5ad(tmp_path)
+            embeddings, _ = extract_embeddings(
+                checkpoint_path=self._checkpoint,
+                adata_path=tmp_path,
+                genelist_path=self._genelist,
+                gene_name_col=self._gene_name_col,
+                batch_size=self.batch_size,
+                device=self.device,
+            )
+        return np.asarray(embeddings, dtype=np.float32)
+
+
 # ---------------------------------------------------------------------------
 # Classical / statistical wrappers
 # ---------------------------------------------------------------------------
@@ -828,6 +1048,8 @@ _WRAPPER_MAP: dict[str, type[SingleCellWrapper]] = {
     "TranscriptFormerWrapper": TranscriptFormerWrapper,
     "TahoeWrapper": TahoeWrapper,
     "Cell2SentenceWrapper": Cell2SentenceWrapper,
+    "StateEmbeddingWrapper": StateEmbeddingWrapper,
+    "StackWrapper": StackWrapper,
     "PCAEmbedding": PCAEmbedding,
     "ScVIToolsWrapper": ScVIToolsWrapper,
 }
