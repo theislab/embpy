@@ -8,7 +8,7 @@
 
 **embpy** is a Python package for generating embeddings of biological perturbations and cell lines using 60+ foundation models through a unified interface.
 
-Given a perturbation (genetic or chemical) and/or single-cell expression data, embpy resolves the underlying biological sequences, routes them to the appropriate foundation models, and returns dense vector representations ready for downstream machine learning.
+Given a perturbation (genetic, chemical, or morphological) and/or single-cell expression data, embpy resolves the underlying biological sequences and images, routes them to the appropriate foundation models, and returns dense vector representations ready for downstream machine learning.
 
 ## Workflow
 
@@ -33,6 +33,7 @@ flowchart TD
         ProtInput["Protein Targets\nUniProt ID | Canonical\nIsoforms"]
         MolInput["Chemical Perturbations\nSMILES | InChI\nDrug Name | PubChem CID"]
         CellInput["Single-Cell Data\nAnnData | Raw Counts\nLog-normalized"]
+        MorphInput["Morphology Data\nJUMP Cell Painting\nFluorescence Images"]
         SpeciesInput["Multi-Species\nhuman | mouse | rat\nzebrafish | fly | worm | ..."]
     end
 
@@ -98,6 +99,11 @@ flowchart TD
         scVIM["scVI | scANVI | totalVI"]
     end
 
+    subgraph morph_models [Morphology Models]
+        SubCellMAE["SubCell MAE\n4 channel configs"]
+        SubCellViT["SubCell ViT\n4 channel configs"]
+    end
+
     subgraph strategies [Embedding Strategies]
         StdPool["Standard: mean | max | cls"]
         TPMWeight["TPM-Weighted Isoform Average"]
@@ -112,6 +118,7 @@ flowchart TD
         Sim["Similarity\nCosine | Pearson | Spearman\nWasserstein"]
         Cluster["Clustering\nLeiden | K-means | Spectral"]
         DimRed["Dim Reduction\nUMAP | t-SNE | PCA"]
+        Activity["Phenotypic Activity\nmAP | Chunked Cosine\nCPU & GPU"]
         Bench["Benchmarking\nKNN Overlap | Ranking\nMetrics"]
         Viz["Visualization\nHeatmaps | Clustermaps\nParallel Coords | Radar\nStar Coords | Dendrograms"]
     end
@@ -127,6 +134,7 @@ flowchart TD
     GeneInput --> ProtRes
     MolInput --> DrugRes
     CellInput --> sc_models
+    MorphInput --> morph_models
     SpeciesInput --> GeneRes
     SpeciesInput --> ProtRes
 
@@ -145,6 +153,7 @@ flowchart TD
     prot_models --> strategies
     mol_models --> strategies
     sc_models --> strategies
+    morph_models --> strategies
     text_models --> strategies
 
     strategies --> outputBlock
@@ -156,7 +165,7 @@ flowchart TD
 
 ## Key Features
 
-- **60+ foundation models** across DNA, protein, molecule, single-cell, and text modalities
+- **60+ foundation models** across DNA, protein, molecule, single-cell, morphology, and text modalities
 - **Unified `BioEmbedder` interface** -- one class to access all models with automatic sequence resolution
 - **Multi-species support** -- embed and annotate genes from any Ensembl-supported organism (human, mouse, rat, zebrafish, fly, worm, yeast, ...) with automatic species-aware sequence resolution via Ensembl REST, UniProt, MyGene.info, and STRING-DB
 - **`embed_adata()`** -- embed cells and perturbations together in a single call
@@ -165,6 +174,8 @@ flowchart TD
 - **Boltz-2 structure embeddings** -- extract trunk representations (single per-residue + pairwise interaction features) from the Boltz-2 biomolecular foundation model
 - **Multi-source annotation** -- `MoleculeAnnotator` (RDKit, ChEMBL, ChEBI, KEGG, PubChem), `GeneAnnotator` (MyGene, GTEx, STRING-DB, Open Targets, GWAS Catalog), `ProteinAnnotator` (UniProt functional metadata, InterPro domains), `CellLineAnnotator` (Cellosaurus, DepMap/CCLE, Cell Model Passports, Wikipedia)
 - **20 visualization functions** in `embpy.pl` -- heatmaps, clustermaps, UMAP/t-SNE, parallel coordinates, radar charts, star coordinates, dendrograms, cross-model comparison
+- **Morphology embeddings** -- SubCell MAE/ViT models for JUMP Cell Painting fluorescence images with 8 model variants across 4 channel configurations
+- **Phenotypic activity (mAP)** -- memory-efficient chunked cosine similarity with optional GPU acceleration for computing mean average precision on large perturbation screens (e.g. 50K+ wells)
 - **GPU acceleration** via rapids_singlecell for preprocessing, PCA, UMAP, neighbors, and Leiden
 - **Batch processing** with SLURM array job scripts for full-genome embedding
 - **scverse integration** -- AnnData-native throughout, compatible with scanpy/scvi-tools/pertpy
@@ -389,6 +400,19 @@ adata = annotate_proteins(adata, column="gene")
 | PCA | `pca` | -- |
 | scVI / scANVI / totalVI | `scvi`, `scanvi`, `totalvi` | -- |
 
+### Morphology Models
+
+| Model | Key | Channels |
+|---|---|---|
+| SubCell MAE (all) | `subcell_mae_rybg` | MT, ER, DNA, Protein |
+| SubCell ViT (all) | `subcell_vit_rybg` | MT, ER, DNA, Protein |
+| SubCell MAE (MT-DNA-Prot) | `subcell_mae_rbg` | MT, DNA, Protein |
+| SubCell ViT (MT-DNA-Prot) | `subcell_vit_rbg` | MT, DNA, Protein |
+| SubCell MAE (ER-DNA-Prot) | `subcell_mae_ybg` | ER, DNA, Protein |
+| SubCell ViT (ER-DNA-Prot) | `subcell_vit_ybg` | ER, DNA, Protein |
+| SubCell MAE (DNA-Prot) | `subcell_mae_bg` | DNA, Protein |
+| SubCell ViT (DNA-Prot) | `subcell_vit_bg` | DNA, Protein |
+
 ### Text Models
 
 | Model | Key |
@@ -514,7 +538,7 @@ print(f"Models: {len(embedder.list_available_models())} available")
 | 07 | Combined Analysis | [07_combined_analysis.ipynb](docs/notebooks/07_combined_analysis.ipynb) |
 | 08 | Visualization and Analysis | [08_visualization_and_analysis.ipynb](docs/notebooks/08_visualization_and_analysis.ipynb) |
 | 09 | Embedding Benchmark | [09_embedding_benchmark.ipynb](docs/notebooks/09_embedding_benchmark.ipynb) |
-| 10 | DNA Embeddings (Advanced) | [10_dna_embeddings.ipynb](docs/notebooks/10_dna_embeddings.ipynb) |
+| 10 | *(merged into 02)* | -- |
 | 11 | DepMap Analysis | [11_depmap_analysis.ipynb](docs/notebooks/11_depmap_analysis.ipynb) |
 | 12 | Single-Cell Foundation Models | [12_singlecell_foundation_models.ipynb](docs/notebooks/12_singlecell_foundation_models.ipynb) |
 | 13 | JUMP Cell Painting | [13_jump_cell_painting.ipynb](docs/notebooks/13_jump_cell_painting.ipynb) |
@@ -536,6 +560,7 @@ embpy/
         protein_models.py # ESM-2, ESM-C, ESM3, ProtT5
         molecule_models.py # ChemBERTa, MolFormer, RDKit, MiniMol, MHG-GNN, MolE
         singlecell_models.py # scGPT, Geneformer, UCE, PCA, scVI
+        morphology_models.py # SubCell MAE/ViT for JUMP Cell Painting
         structure_models.py  # Boltz-2 trunk embeddings
     resources/
         gene_resolver.py      # Multi-species gene resolution (Ensembl, MyGene)
@@ -557,6 +582,7 @@ embpy/
         comparisons.py        # Parallel coordinates, radar charts, star coordinates
     tl/
         similarity.py         # Cosine/Pearson/Spearman similarity, KNN overlap
+        activity.py           # Phenotypic activity (mAP) with chunked cosine, CPU/GPU
         dimred.py             # UMAP, t-SNE (CPU/GPU)
         clustering.py         # Leiden, k-means, spectral (CPU/GPU)
         weighted_protein_embedding.py # TPM-weighted, annotation-weighted, expression-context
