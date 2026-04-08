@@ -18,6 +18,9 @@ Architectures:
 
 Weights are auto-downloaded from the public CZI S3 bucket on first use.
 
+For **data prep** (Z-projection, nm/px rescaling, 640x640 canvas, per-channel PNGs,
+mask-based crops), see :mod:`embpy.pp.morphology_preprocessing`.
+
 Reference: https://github.com/CellProfiling/SubCellPortable
 """
 
@@ -323,7 +326,10 @@ class SubCellWrapper(BaseModelWrapper):
         pixel_values = self._preprocess_image(input).to(self.device)
 
         with torch.no_grad():
-            outputs = self._encoder(pixel_values=pixel_values, mask_ratio=0.0)
+            try:
+                outputs = self._encoder(pixel_values=pixel_values, mask_ratio=0.0)
+            except TypeError:
+                outputs = self._encoder(pixel_values=pixel_values)
             hidden = outputs.last_hidden_state
 
         if pooling_strategy == "none":

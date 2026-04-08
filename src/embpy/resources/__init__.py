@@ -6,6 +6,7 @@ from .gene_resolver import GeneResolver, detect_identifier_type
 from .molecule_annotator import MoleculeAnnotator
 from .protein_annotator import ProteinAnnotator
 from .protein_resolver import ProteinResolver
+from .jump_metadata import fetch_jump_fov, get_jump_item_location_metadata
 from .text_resolver import TextResolver
 
 __all__ = [
@@ -13,6 +14,8 @@ __all__ = [
     "DrugResolver",
     "GeneAnnotator",
     "GeneResolver",
+    "fetch_jump_fov",
+    "get_jump_item_location_metadata",
     "MoleculeAnnotator",
     "ProteinAnnotator",
     "ProteinResolver",
