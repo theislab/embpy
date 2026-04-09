@@ -17,9 +17,10 @@ It also provides:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
+if TYPE_CHECKING:
+    import numpy as np
 
 
 def get_jump_gene_mapper(
@@ -141,6 +142,7 @@ def fetch_jump_fov(well_meta: dict[str, Any]) -> np.ndarray:
     >>> locs = get_jump_item_location_metadata("PLK1")
     >>> fov = fetch_jump_fov(locs[0])   # (5, H, W)
     """
+    import numpy as np
     from jump_portrait.fetch import get_jump_image
 
     from embpy.pp.morphology_preprocessing import CELL_PAINTING_CHANNELS
