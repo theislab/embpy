@@ -164,6 +164,7 @@ class SubCellWrapper(BaseModelWrapper):
         self.image_size = image_size
         self._encoder = None
         self._pool_model = None
+        self._pool_pretrained = False
         self._num_channels = 4
 
         key = model_path_or_name
@@ -219,12 +220,19 @@ class SubCellWrapper(BaseModelWrapper):
 
             self._encoder.load_state_dict(clean_state, strict=False)
 
+            self._pool_model = _build_attention_pooler(
+                dim=768, int_dim=512, num_heads=2,
+            )
             if pool_state:
-                self._pool_model = _build_attention_pooler(
-                    dim=768, int_dim=512, num_heads=2,
-                )
                 self._pool_model.load_state_dict(pool_state, strict=False)
-                self._pool_model = self._pool_model.to(device).eval()
+                self._pool_pretrained = True
+            else:
+                logger.info(
+                    "No attention-pooler weights in checkpoint; "
+                    "using randomly initialised pooler."
+                )
+                self._pool_pretrained = False
+            self._pool_model = self._pool_model.to(device).eval()
 
         elif self.model_name and Path(self.model_name).exists():
             vit_config = {**SUBCELL_VIT_CONFIG_BASE, "num_channels": self._num_channels}
@@ -235,6 +243,11 @@ class SubCellWrapper(BaseModelWrapper):
             if "state_dict" in state_dict:
                 state_dict = state_dict["state_dict"]
             self._encoder.load_state_dict(state_dict, strict=False)
+
+            self._pool_model = _build_attention_pooler(
+                dim=768, int_dim=512, num_heads=2,
+            ).to(device).eval()
+            self._pool_pretrained = False
         else:
             raise FileNotFoundError(
                 f"SubCell model '{self.model_name}' not found. "
@@ -244,8 +257,8 @@ class SubCellWrapper(BaseModelWrapper):
         self._encoder = self._encoder.to(device).eval()
         self.model = self._encoder
         self.device = device
-        logger.info("SubCell loaded. Embedding dim: %s",
-                     "1536 (attention_pool)" if self._pool_model else "768 (cls/mean)")
+        pool_tag = "pretrained" if self._pool_pretrained else "random init"
+        logger.info("SubCell loaded. Pooler: %s. Dims: cls/mean=768, attention_pool=1536", pool_tag)
 
     def _preprocess_image(
         self, image: str | np.ndarray | torch.Tensor,
@@ -332,21 +345,17 @@ class SubCellWrapper(BaseModelWrapper):
                 outputs = self._encoder(pixel_values=pixel_values)
             hidden = outputs.last_hidden_state
 
-        if pooling_strategy == "none":
-            emb = hidden.squeeze(0).cpu().numpy()
-        elif pooling_strategy == "cls":
-            emb = hidden[:, 0, :].cpu().numpy().squeeze(0)
-        elif pooling_strategy == "mean":
-            emb = hidden[:, 1:, :].mean(dim=1).cpu().numpy().squeeze(0)
-        elif pooling_strategy == "attention_pool":
-            if self._pool_model is not None:
+            if pooling_strategy == "none":
+                emb = hidden.squeeze(0).cpu().numpy()
+            elif pooling_strategy == "cls":
+                emb = hidden[:, 0, :].cpu().numpy().squeeze(0)
+            elif pooling_strategy == "mean":
+                emb = hidden[:, 1:, :].mean(dim=1).cpu().numpy().squeeze(0)
+            elif pooling_strategy == "attention_pool":
                 pooled, _ = self._pool_model(hidden[:, 1:, :])
                 emb = pooled.cpu().numpy().squeeze(0)
             else:
-                logger.warning("No attention pooler; falling back to CLS.")
-                emb = hidden[:, 0, :].cpu().numpy().squeeze(0)
-        else:
-            raise ValueError(f"Unknown pooling '{pooling_strategy}'")
+                raise ValueError(f"Unknown pooling '{pooling_strategy}'")
 
         return emb.astype(np.float32)
 
@@ -366,7 +375,7 @@ class SubCellWrapper(BaseModelWrapper):
                 logger.warning("SubCell embedding failed: %s", e)
                 if pooling_strategy == "none":
                     results.append(np.zeros((n_patches, 768), dtype=np.float32))
-                elif pooling_strategy == "attention_pool" and self._pool_model:
+                elif pooling_strategy == "attention_pool":
                     results.append(np.zeros(1536, dtype=np.float32))
                 else:
                     results.append(np.zeros(768, dtype=np.float32))
