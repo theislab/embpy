@@ -1997,7 +1997,10 @@ class BioEmbedder:
         pooling_strategy
             Pooling strategy for the SubCell model.
         local_dir
-            Path to local images.  ``None`` = fetch from CDN.
+            Path to a local image directory.  When images are already
+            present they are loaded from disk; when they are fetched
+            from the CDN they are cached here for future re-use.
+            ``None`` = fetch from CDN without caching.
         aggregate
             ``"mean"`` averages embeddings across images; ``"none"``
             returns the first image embedding only.
@@ -2131,39 +2134,60 @@ class BioEmbedder:
     ) -> list[np.ndarray]:
         """Resolve an HPA gene to SubCell-ready image arrays.
 
+        When *local_dir* is given and already contains channel images for
+        this gene the images are loaded from disk.  Otherwise images are
+        fetched from the HPA CDN and -- if *local_dir* is provided --
+        cached there as per-channel JPEGs for future re-use.
+
         Gene symbol resolution uses ``GeneResolver`` internally (via
         ``hpa_images._resolve_ensembl_id``).
         """
+        import os
+        import re
+        from pathlib import Path as _Path
+
         from .resources.hpa_images import (
+            HPA_IF_CHANNELS,
             fetch_hpa_if_image,
             get_hpa_antibodies,
             load_hpa_if_image,
+            strip_antibody_id,
         )
 
+        # ── Try loading from local cache first ──────────────────────
         if local_dir is not None:
-            import os
-            import re
+            gene_dir = _Path(local_dir) / perturbation
+            if gene_dir.is_dir():
+                candidates = sorted(
+                    f for f in os.listdir(gene_dir) if f.endswith((".png", ".jpg"))
+                )
+                prefixes: set[str] = set()
+                for f in candidates:
+                    if re.search(r"_blue\.\w+$", f):
+                        prefixes.add(re.sub(r"_blue\.\w+$", "", f))
+                if prefixes:
+                    images: list[np.ndarray] = []
+                    for prefix in sorted(prefixes):
+                        try:
+                            img = load_hpa_if_image(
+                                prefix=str(gene_dir / prefix)
+                            )
+                            images.append(img)
+                        except Exception as exc:
+                            logging.warning(
+                                "Failed to load local HPA image %s: %s",
+                                prefix, exc,
+                            )
+                    if max_images is not None:
+                        images = images[:max_images]
+                    if images:
+                        logging.info(
+                            "Loaded %d cached HPA images for %r from %s",
+                            len(images), perturbation, gene_dir,
+                        )
+                        return images
 
-            candidates = sorted(
-                f for f in os.listdir(local_dir) if f.endswith((".png", ".jpg"))
-            )
-            prefixes: set[str] = set()
-            for f in candidates:
-                if re.search(r"_blue\.\w+$", f):
-                    prefixes.add(re.sub(r"_blue\.\w+$", "", f))
-            images: list[np.ndarray] = []
-            for prefix in sorted(prefixes):
-                try:
-                    img = load_hpa_if_image(prefix=os.path.join(local_dir, prefix))
-                    images.append(img)
-                except Exception as exc:
-                    logging.warning(
-                        "Failed to load local HPA image %s: %s", prefix, exc
-                    )
-            if max_images is not None:
-                images = images[:max_images]
-            return images
-
+        # ── Fetch from CDN ──────────────────────────────────────────
         antibodies = get_hpa_antibodies(perturbation)
         if not antibodies:
             logging.warning("No HPA antibodies found for %r", perturbation)
@@ -2171,35 +2195,46 @@ class BioEmbedder:
                 from .resources.hpa_images import build_hpa_subcellular_catalog
 
                 logging.info(
-                    "HPA XML catalog not available; falling back to CDN probe for antibodies"
+                    "HPA XML catalog not available; "
+                    "falling back to CDN probe for antibodies"
                 )
                 catalog = build_hpa_subcellular_catalog(genes=[perturbation])
                 if len(catalog) == 0:
                     return []
-                images = []
+                antibodies = []
                 for _, row in catalog.iterrows():
-                    try:
-                        img = fetch_hpa_if_image(
-                            row["antibody"],
-                            row["plate"],
-                            row["position"],
-                            row["sample"],
-                        )
-                        images.append(img)
-                    except Exception as exc:
-                        logging.warning("Failed to fetch HPA image: %s", exc)
-                if max_images is not None:
-                    images = images[:max_images]
-                return images
+                    antibodies.append({
+                        "id": row["antibody"],
+                        "_plate": row["plate"],
+                        "_position": row["position"],
+                        "_sample": row["sample"],
+                    })
             except Exception:
                 return []
 
         images = []
+        cache_dir = None
+        if local_dir is not None:
+            cache_dir = _Path(local_dir) / perturbation
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
         for ab in antibodies:
-            ab_id = ab.get("id", ab) if isinstance(ab, dict) else str(ab)
+            if isinstance(ab, dict):
+                ab_id = ab.get("id", "")
+                plate = ab.get("_plate", 1)
+                position = ab.get("_position", "A1")
+                sample = ab.get("_sample", 1)
+            else:
+                ab_id = str(ab)
+                plate, position, sample = 1, "A1", 1
             try:
-                img = fetch_hpa_if_image(ab_id, 1, "A1", 1)
+                img = fetch_hpa_if_image(ab_id, plate, position, sample)
                 images.append(img)
+
+                if cache_dir is not None:
+                    _save_hpa_channels(
+                        img, cache_dir, ab_id, plate, position, sample,
+                    )
             except Exception as exc:
                 logging.warning("Failed to fetch HPA image: %s", exc)
         if max_images is not None:
@@ -2314,6 +2349,31 @@ def _load_jump_fov_local(well_meta: dict, local_dir: str) -> np.ndarray:
         img = np.asarray(Image.open(found), dtype=np.float32)
         planes.append(img)
     return np.stack(planes, axis=0)
+
+
+def _save_hpa_channels(
+    img: np.ndarray,
+    cache_dir,
+    antibody: str,
+    plate,
+    position: str,
+    sample,
+) -> None:
+    """Save a (4, H, W) HPA image as per-channel JPEGs in *cache_dir*."""
+    from pathlib import Path as _Path
+
+    from PIL import Image as _PILImage
+
+    from embpy.resources.hpa_images import HPA_IF_CHANNELS
+
+    cache_dir = _Path(cache_dir)
+    for i, ch in enumerate(HPA_IF_CHANNELS):
+        fname = f"{antibody}_{plate}_{position}_{sample}_{ch}.jpg"
+        dest = cache_dir / fname
+        if dest.exists():
+            continue
+        plane = img[i]
+        _PILImage.fromarray(plane).save(dest)
 
 
 def _resolve_jump_perturbation_fallback(
