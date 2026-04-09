@@ -25,6 +25,14 @@ def compute_similarity(
     adata: AnnData,
     obsm_key: str,
     metric: str = "cosine",
+    *,
+    plot: bool = False,
+    labels: list[str] | None = None,
+    title: str | None = None,
+    figsize: tuple[float, float] = (8, 6),
+    cmap: str = "RdBu_r",
+    show: bool = True,
+    **plot_kwargs,
 ) -> np.ndarray:
     """Compute pairwise similarity between perturbation embeddings.
 
@@ -37,6 +45,24 @@ def compute_similarity(
     metric
         Similarity metric: ``"cosine"``, ``"pearson"``,
         ``"spearman"``, or ``"correlation"`` (alias for pearson).
+    plot
+        If ``True``, render an inline heatmap via
+        :func:`embpy.pl.plot_similarity_heatmap`.
+    labels
+        Row / column labels for the heatmap.  Defaults to
+        ``adata.obs_names``.
+    title
+        Heatmap title.
+    figsize
+        Figure size passed to matplotlib.
+    cmap
+        Colormap name.
+    show
+        Whether to call ``plt.show()`` (passed through to the plot
+        function).
+    **plot_kwargs
+        Extra keyword arguments forwarded to
+        :func:`embpy.pl.plot_similarity_heatmap`.
 
     Returns
     -------
@@ -45,12 +71,10 @@ def compute_similarity(
     X = _get_embedding(adata, obsm_key)
 
     if metric == "cosine":
-        return cosine_similarity(X)
-
-    if metric in ("pearson", "correlation"):
-        return np.corrcoef(X)
-
-    if metric == "spearman":
+        sim = cosine_similarity(X)
+    elif metric in ("pearson", "correlation"):
+        sim = np.corrcoef(X)
+    elif metric == "spearman":
         n = X.shape[0]
         sim = np.ones((n, n), dtype=np.float64)
         for i in range(n):
@@ -58,9 +82,28 @@ def compute_similarity(
                 rho, _ = spearmanr(X[i], X[j])
                 sim[i, j] = rho
                 sim[j, i] = rho
-        return sim
+    else:
+        raise ValueError(f"Unknown similarity metric '{metric}'. Choose from: cosine, pearson, spearman.")
 
-    raise ValueError(f"Unknown similarity metric '{metric}'. Choose from: cosine, pearson, spearman.")
+    if plot:
+        from embpy.pl import plot_similarity_heatmap
+
+        if labels is None:
+            labels = list(adata.obs_names)
+        plot_similarity_heatmap(
+            sim,
+            labels=labels,
+            title=title,
+            figsize=figsize,
+            cmap=cmap,
+            **plot_kwargs,
+        )
+        if show:
+            import matplotlib.pyplot as _plt
+
+            _plt.show()
+
+    return sim
 
 
 def compute_distance_matrix(
