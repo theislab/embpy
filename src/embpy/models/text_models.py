@@ -13,7 +13,7 @@ class TextLLMWrapper(BaseModelWrapper):
     """Wrapper for general-purpose text embedding models"""
 
     model_type = "text"
-    available_pooling_strategies = ["mean", "max", "cls", "last_token"]
+    available_pooling_strategies = ["mean", "max", "cls", "last_token", "none"]
 
     def __init__(
         self,
@@ -144,7 +144,9 @@ class TextLLMWrapper(BaseModelWrapper):
             embeddings_tensor = embeddings_tensor.squeeze(0)  # (L, D)
 
         # Apply pooling (Needs attention mask awareness for HF mean pooling)
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            pooled_embedding = embeddings_tensor.cpu().numpy()
+        elif pooling_strategy == "cls":
             pooled_embedding = self._get_cls_embedding(embeddings_tensor).cpu().numpy()
         elif pooling_strategy == "last_token":
             pooled_embedding = self._last_token_pool(embeddings_tensor, attention_mask).cpu().numpy()
@@ -254,7 +256,9 @@ class TextLLMWrapper(BaseModelWrapper):
             seq_embeddings = embeddings_tensor[i]
             seq_mask = None if attention_mask is None else attention_mask[i]
 
-            if pooling_strategy == "cls":
+            if pooling_strategy == "none":
+                pooled_embedding = seq_embeddings.cpu().numpy()
+            elif pooling_strategy == "cls":
                 pooled_embedding = seq_embeddings[self.cls_token_position, :].cpu().numpy()
             elif pooling_strategy == "last_token":
                 # For batch processing, we need to handle single sequence
@@ -311,3 +315,142 @@ class TextLLMWrapper(BaseModelWrapper):
             result = result.squeeze(0)
 
         return result
+
+
+class LlamaEmbeddingWrapper(TextLLMWrapper):
+    """Extract embeddings from LLaMA decoder-only models.
+
+    LLaMA models are autoregressive (decoder-only), so the natural
+    embedding is the **last non-padding token** representation. This
+    wrapper loads the model via ``AutoModelForCausalLM`` in bfloat16
+    for memory efficiency and defaults to ``last_token`` pooling.
+
+    Requires a HuggingFace token for gated models -- set ``HF_TOKEN``
+    environment variable or run ``huggingface-cli login``.
+
+    Parameters
+    ----------
+    model_path_or_name
+        HuggingFace model ID (e.g. ``"meta-llama/Llama-3.2-3B"``).
+    max_length
+        Maximum sequence length. Defaults to 4096.
+    """
+
+    available_pooling_strategies = ["last_token", "mean", "max", "none"]
+
+    def __init__(
+        self,
+        model_path_or_name: str = "meta-llama/Llama-3.2-3B",
+        max_length: int | None = 4096,
+        **kwargs,
+    ):
+        super().__init__(model_path_or_name, max_length=max_length, **kwargs)
+
+    def load(self, device: torch.device):
+        """Load a LLaMA model in bfloat16 for embedding extraction."""
+        if self.model is not None:
+            return
+
+        if self.model_name is None:
+            raise ValueError("model_path_or_name must be set.")
+
+        import os
+
+        logging.info("Loading LLaMA '%s' in bfloat16...", self.model_name)
+        try:
+            from transformers import AutoModelForCausalLM
+
+            token = os.environ.get("HF_TOKEN")
+
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name, token=token,
+            )
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+                self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                torch_dtype=torch.bfloat16,
+                device_map={"": device} if device.type == "cuda" else None,
+                token=token,
+            )
+            if device.type != "cuda":
+                self.model = self.model.to(device)
+            self.model.eval()
+            self.device = device
+
+            if self.max_length is None:
+                self.max_length = 4096
+            self.tokenizer.model_max_length = self.max_length
+
+            logging.info(
+                "LLaMA loaded: %s, dtype=bfloat16, max_length=%d",
+                self.model_name, self.max_length,
+            )
+        except Exception as e:
+            logging.error("Failed to load LLaMA '%s': %s", self.model_name, e)
+            raise RuntimeError(f"Could not load LLaMA '{self.model_name}'") from e
+
+    def embed(
+        self,
+        input: str,
+        pooling_strategy: str = "last_token",
+        target_layer: int | None = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Compute embedding from a LLaMA model.
+
+        Default pooling is ``last_token`` (last non-padding token),
+        which is the natural choice for decoder-only models.
+        """
+        text = input
+        if self.model is None or self.device is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+        if pooling_strategy not in self.available_pooling_strategies:
+            raise ValueError(
+                f"Invalid pooling '{pooling_strategy}'. "
+                f"Available: {self.available_pooling_strategies}"
+            )
+
+        tokenized = self.tokenizer(
+            text, return_tensors="pt", truncation=True,
+            padding=True, max_length=self.max_length,
+        )
+        input_ids = tokenized["input_ids"].to(self.device)
+        attention_mask = tokenized["attention_mask"].to(self.device)
+
+        with torch.no_grad():
+            outputs = self.model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_hidden_states=True,
+            )
+            if target_layer is not None:
+                hidden = outputs.hidden_states[target_layer]
+            else:
+                hidden = outputs.hidden_states[-1]
+
+        if hidden.dim() == 3 and hidden.shape[0] == 1:
+            hidden = hidden.squeeze(0)
+
+        if pooling_strategy == "none":
+            pooled = hidden.float().cpu().numpy()
+        elif pooling_strategy == "last_token":
+            h = hidden.unsqueeze(0) if hidden.dim() == 2 else hidden
+            pooled = self._last_token_pool(h, attention_mask).cpu().float().numpy()
+            if pooled.ndim > 1:
+                pooled = pooled.squeeze(0)
+        elif pooling_strategy == "mean":
+            mask = attention_mask.squeeze(0).unsqueeze(-1).float()
+            pooled = (torch.sum(hidden * mask, dim=0) / torch.sum(mask, dim=0)).cpu().float().numpy()
+        elif pooling_strategy == "max":
+            pooled = hidden.max(dim=0).values.cpu().float().numpy()
+        else:
+            pooled = self._apply_pooling(hidden, pooling_strategy)
+
+        del input_ids, attention_mask, hidden, outputs
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        return pooled

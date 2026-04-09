@@ -27,7 +27,7 @@ class BaseModelWrapper(ABC):
     """
 
     model_type: Literal["dna", "protein", "molecule", "text", "ppi", "unknown"] = "unknown"
-    available_pooling_strategies: list[str] = ["mean", "max", "median"]  # Common defaults
+    available_pooling_strategies: list[str] = ["mean", "max", "median", "none"]  # Common defaults
 
     def __init__(self, model_path_or_name: str | None = None, **kwargs: Any):
         """
@@ -117,15 +117,20 @@ class BaseModelWrapper(ABC):
         embeddings : torch.Tensor
             Tensor of shape ``(batch, seq_len, hidden_dim)`` or ``(seq_len, hidden_dim)``.
         strategy : str
-            Pooling strategy (``'mean'``, ``'max'``, ``'cls'``, ``'median'``).
+            Pooling strategy (``'mean'``, ``'max'``, ``'cls'``, ``'median'``,
+            ``'none'``).  ``'none'`` returns the raw tensor as-is.
 
         Returns
         -------
         np.ndarray
-            Pooled embedding of shape ``(batch, hidden_dim)`` or ``(hidden_dim,)``.
+            Pooled embedding of shape ``(hidden_dim,)`` or ``(batch, hidden_dim)``,
+            or raw ``(seq_len, hidden_dim)`` when ``strategy='none'``.
         """
         if strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling strategy '{strategy}'. Available: {self.available_pooling_strategies}")
+
+        if strategy == "none":
+            return embeddings.cpu().numpy()
 
         if embeddings.dim() == 3:  # Batch dimension present
             if strategy == "mean":

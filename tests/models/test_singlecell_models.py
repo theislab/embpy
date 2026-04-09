@@ -15,6 +15,8 @@ from embpy.models.singlecell_models import (
     TranscriptFormerWrapper,
     TahoeWrapper,
     Cell2SentenceWrapper,
+    StateEmbeddingWrapper,
+    StackWrapper,
     SingleCellWrapper,
     _SC_MODEL_REGISTRY,
     get_singlecell_wrapper,
@@ -63,7 +65,7 @@ class TestRegistry:
 
     def test_known_keys_present(self) -> None:
         keys = list_singlecell_models()
-        for expected in ["scgpt", "uce", "tahoe_1b", "cell2sentence_2b"]:
+        for expected in ["scgpt", "uce", "tahoe_1b", "cell2sentence_2b", "state", "stack"]:
             assert expected in keys
 
     def test_singlecell_info_valid(self) -> None:
@@ -465,3 +467,181 @@ class TestScVIToolsWrapper:
 
         wrapper = get_singlecell_wrapper("scanvi")
         assert isinstance(wrapper, ScVIToolsWrapper)
+
+
+# =====================================================================
+# StateEmbeddingWrapper
+# =====================================================================
+
+
+class TestStateEmbeddingWrapper:
+    def test_init_defaults(self) -> None:
+        wrapper = StateEmbeddingWrapper()
+        assert wrapper.model_name == "state"
+        assert wrapper._checkpoint is None
+        assert wrapper._model_folder is None
+        assert wrapper._inferer is None
+
+    def test_init_with_checkpoint(self) -> None:
+        wrapper = StateEmbeddingWrapper(
+            checkpoint="/path/to/ckpt.ckpt",
+            model_folder="/path/to/folder",
+        )
+        assert wrapper._checkpoint == "/path/to/ckpt.ckpt"
+        assert wrapper._model_folder == "/path/to/folder"
+
+    def test_embed_before_load_raises(self) -> None:
+        wrapper = StateEmbeddingWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            wrapper.embed_cells(_make_fake_adata())
+
+    def test_load_missing_package_raises(self) -> None:
+        wrapper = StateEmbeddingWrapper(checkpoint="/fake.ckpt")
+        with patch.dict("sys.modules", {"state": None, "state.emb": None}):
+            with pytest.raises(ImportError, match="arc-state"):
+                wrapper.load("cpu")
+
+    def test_load_no_checkpoint_raises(self) -> None:
+        wrapper = StateEmbeddingWrapper()
+        mock_inference_cls = MagicMock()
+        with patch(
+            "embpy.models.singlecell_models.StateEmbeddingWrapper.load"
+        ) as mock_load:
+            mock_load.side_effect = ValueError("Either checkpoint or model_folder")
+            with pytest.raises(ValueError, match="checkpoint or model_folder"):
+                wrapper.load("cpu")
+
+    @patch("embpy.models.singlecell_models.StateEmbeddingWrapper.load")
+    def test_embed_with_mock_inferer(self, mock_load: MagicMock) -> None:
+        wrapper = StateEmbeddingWrapper(checkpoint="/fake.ckpt")
+        mock_inferer = MagicMock()
+        fake_embs = np.random.randn(_N_CELLS, _FAKE_EMB_DIM).astype(np.float32)
+        mock_inferer.encode_adata.return_value = fake_embs
+        wrapper._inferer = mock_inferer
+        wrapper._model = MagicMock()
+
+        adata = _make_fake_adata()
+        adata.write_h5ad = MagicMock()
+
+        import tempfile
+        import os
+
+        with patch("tempfile.TemporaryDirectory") as mock_tmpdir:
+            mock_tmpdir.return_value.__enter__ = MagicMock(return_value="/tmp/fake")
+            mock_tmpdir.return_value.__exit__ = MagicMock(return_value=False)
+            embs = wrapper.embed_cells(adata)
+
+        assert isinstance(embs, np.ndarray)
+        assert embs.shape == (_N_CELLS, _FAKE_EMB_DIM)
+        assert embs.dtype == np.float32
+        mock_inferer.encode_adata.assert_called_once()
+
+    def test_registry_entry(self) -> None:
+        keys = list_singlecell_models()
+        assert "state" in keys
+
+    def test_registry_card(self) -> None:
+        card = singlecell_info("state")
+        assert card.wrapper_class_name == "StateEmbeddingWrapper"
+        assert "Arc Institute" in card.description
+
+    def test_factory(self) -> None:
+        wrapper = get_singlecell_wrapper("state")
+        assert isinstance(wrapper, StateEmbeddingWrapper)
+
+    def test_repr(self) -> None:
+        wrapper = StateEmbeddingWrapper()
+        r = repr(wrapper)
+        assert "StateEmbeddingWrapper" in r
+
+
+# =====================================================================
+# StackWrapper
+# =====================================================================
+
+
+class TestStackWrapper:
+    def test_init_defaults(self) -> None:
+        wrapper = StackWrapper()
+        assert wrapper.model_name == "stack"
+        assert wrapper._checkpoint is None
+        assert wrapper._genelist is None
+
+    def test_init_with_paths(self) -> None:
+        wrapper = StackWrapper(
+            checkpoint="/path/to/stack.ckpt",
+            genelist="/path/to/genes.pkl",
+            gene_name_col="gene_symbols",
+        )
+        assert wrapper._checkpoint == "/path/to/stack.ckpt"
+        assert wrapper._genelist == "/path/to/genes.pkl"
+        assert wrapper._gene_name_col == "gene_symbols"
+
+    def test_embed_before_load_raises(self) -> None:
+        wrapper = StackWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            wrapper.embed_cells(_make_fake_adata())
+
+    def test_load_missing_package_raises(self) -> None:
+        wrapper = StackWrapper(checkpoint="/fake.ckpt", genelist="/fake.pkl")
+        with patch.dict("sys.modules", {"stack": None, "stack.cli": None, "stack.cli.embedding": None}):
+            with pytest.raises(ImportError, match="arc-stack"):
+                wrapper.load("cpu")
+
+    def test_load_missing_checkpoint_raises(self) -> None:
+        wrapper = StackWrapper(genelist="/fake.pkl")
+        with pytest.raises((ValueError, ImportError)):
+            wrapper.load("cpu")
+
+    def test_load_missing_genelist_raises(self) -> None:
+        wrapper = StackWrapper(checkpoint="/fake.ckpt")
+        with pytest.raises((ValueError, ImportError)):
+            wrapper.load("cpu")
+
+    @patch("embpy.models.singlecell_models.StackWrapper.load")
+    def test_embed_with_mock(self, mock_load: MagicMock) -> None:
+        wrapper = StackWrapper(checkpoint="/fake.ckpt", genelist="/fake.pkl")
+        wrapper._model = MagicMock()
+
+        fake_embs = np.random.randn(_N_CELLS, _FAKE_EMB_DIM).astype(np.float32)
+
+        adata = _make_fake_adata()
+        adata.write_h5ad = MagicMock()
+
+        with patch(
+            "embpy.models.singlecell_models.StackWrapper.embed_cells",
+            return_value=fake_embs,
+        ):
+            embs = wrapper.embed_cells(adata)
+
+        assert isinstance(embs, np.ndarray)
+        assert embs.shape == (_N_CELLS, _FAKE_EMB_DIM)
+        assert embs.dtype == np.float32
+
+    def test_registry_entry(self) -> None:
+        keys = list_singlecell_models()
+        assert "stack" in keys
+
+    def test_registry_card(self) -> None:
+        card = singlecell_info("stack")
+        assert card.wrapper_class_name == "StackWrapper"
+        assert "Arc Institute" in card.description
+
+    def test_factory(self) -> None:
+        wrapper = get_singlecell_wrapper("stack")
+        assert isinstance(wrapper, StackWrapper)
+
+    def test_factory_passes_kwargs(self) -> None:
+        wrapper = get_singlecell_wrapper(
+            "stack",
+            checkpoint="/path/to/ckpt",
+            genelist="/path/to/genes.pkl",
+        )
+        assert isinstance(wrapper, StackWrapper)
+        assert wrapper._checkpoint == "/path/to/ckpt"
+        assert wrapper._genelist == "/path/to/genes.pkl"
+
+    def test_repr(self) -> None:
+        wrapper = StackWrapper()
+        r = repr(wrapper)
+        assert "StackWrapper" in r

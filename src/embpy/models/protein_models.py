@@ -39,7 +39,7 @@ class ESM2Wrapper(BaseModelWrapper):
     """
 
     model_type = "protein"
-    available_pooling_strategies = ["mean", "max", "cls"]
+    available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     def __init__(self, model_path_or_name: str = "facebook/esm2_t6_8M_UR50D", **kwargs):
         """
@@ -159,7 +159,9 @@ class ESM2Wrapper(BaseModelWrapper):
             embeddings_tensor = embeddings_tensor.squeeze(0)
 
         # Apply pooling strategy:
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            pooled_embedding = embeddings_tensor.cpu().numpy()
+        elif pooling_strategy == "cls":
             pooled_embedding = embeddings_tensor[0].cpu().numpy()
         elif pooling_strategy == "max":
             pooled_embedding = torch.max(embeddings_tensor, dim=0)[0].cpu().numpy()
@@ -249,7 +251,10 @@ class ESM2Wrapper(BaseModelWrapper):
                 else:
                     mask = None
 
-                if pooling_strategy == "cls":
+                if pooling_strategy == "none":
+                    all_embeddings.append(seq_emb.cpu().numpy())
+                    continue
+                elif pooling_strategy == "cls":
                     pooled = seq_emb[0]
                 elif pooling_strategy == "max":
                     if mask is not None:
@@ -290,7 +295,7 @@ class ESMCWrapper(BaseModelWrapper):
     """
 
     model_type = "protein"
-    available_pooling_strategies = ["mean", "max", "cls"]
+    available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     def __init__(self, model_path_or_name: str = "esmc_300m", **kwargs: Any):
         """
@@ -381,7 +386,9 @@ class ESMCWrapper(BaseModelWrapper):
         if embs.dim() == 3 and embs.shape[0] == 1:
             embs = embs.squeeze(0)
 
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return embs.cpu().numpy().astype(np.float32)
+        elif pooling_strategy == "cls":
             pooled = embs[0]
         elif pooling_strategy == "max":
             pooled = torch.max(embs, dim=0)[0]
@@ -436,7 +443,9 @@ class ESMCWrapper(BaseModelWrapper):
         if embs.dim() == 3 and embs.shape[0] == 1:
             embs = embs.squeeze(0)
 
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return embs.cpu().numpy().astype(np.float32)
+        elif pooling_strategy == "cls":
             pooled = embs[0]
         elif pooling_strategy == "max":
             pooled = torch.max(embs, dim=0)[0]
@@ -516,7 +525,7 @@ class ProtT5Wrapper(BaseModelWrapper):
     """
 
     model_type = "protein"
-    available_pooling_strategies = ["mean", "max", "cls"]
+    available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     # ProtT5-XL hidden dimension
     EMBEDDING_DIM = 1024
@@ -639,11 +648,13 @@ class ProtT5Wrapper(BaseModelWrapper):
             emb = emb.squeeze(0)  # (seq_len, 1024)
 
         # Mask out padding tokens for mean/max pooling
-        if attention_mask is not None and pooling_strategy != "cls":
+        if attention_mask is not None and pooling_strategy not in ("cls", "none"):
             mask = attention_mask.squeeze(0).unsqueeze(-1).bool()  # (seq_len, 1)
             emb = emb.masked_fill(~mask, 0.0)
 
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return emb.float().cpu().numpy()
+        elif pooling_strategy == "cls":
             pooled = emb[0]
         elif pooling_strategy == "max":
             if attention_mask is not None:
@@ -724,7 +735,10 @@ class ProtT5Wrapper(BaseModelWrapper):
                 else:
                     mask = None
 
-                if pooling_strategy == "cls":
+                if pooling_strategy == "none":
+                    all_embeddings.append(seq_emb.float().cpu().numpy())
+                    continue
+                elif pooling_strategy == "cls":
                     pooled = seq_emb[0]
                 elif pooling_strategy == "max":
                     if mask is not None:
@@ -761,7 +775,7 @@ class ESM3Wrapper(BaseModelWrapper):
     """
 
     model_type = "protein"
-    available_pooling_strategies = ["mean", "max", "cls"]
+    available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     def __init__(
         self,
@@ -826,7 +840,9 @@ class ESM3Wrapper(BaseModelWrapper):
         if embs.dim() == 3 and embs.shape[0] == 1:
             embs = embs.squeeze(0)
 
-        if pooling_strategy == "cls":
+        if pooling_strategy == "none":
+            return embs.float().cpu().numpy()
+        elif pooling_strategy == "cls":
             pooled = embs[0]
         elif pooling_strategy == "max":
             pooled = torch.max(embs, dim=0)[0]

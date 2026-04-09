@@ -1,4 +1,4 @@
-"""Similarity, distance, and perturbation ranking tools."""
+"""Similarity, distance, perturbation ranking, and pseudobulk aggregation tools."""
 
 from __future__ import annotations
 
@@ -25,6 +25,14 @@ def compute_similarity(
     adata: AnnData,
     obsm_key: str,
     metric: str = "cosine",
+    *,
+    plot: bool = False,
+    labels: list[str] | None = None,
+    title: str | None = None,
+    figsize: tuple[float, float] = (8, 6),
+    cmap: str = "RdBu_r",
+    show: bool = True,
+    **plot_kwargs,
 ) -> np.ndarray:
     """Compute pairwise similarity between perturbation embeddings.
 
@@ -37,6 +45,24 @@ def compute_similarity(
     metric
         Similarity metric: ``"cosine"``, ``"pearson"``,
         ``"spearman"``, or ``"correlation"`` (alias for pearson).
+    plot
+        If ``True``, render an inline heatmap via
+        :func:`embpy.pl.plot_similarity_heatmap`.
+    labels
+        Row / column labels for the heatmap.  Defaults to
+        ``adata.obs_names``.
+    title
+        Heatmap title.
+    figsize
+        Figure size passed to matplotlib.
+    cmap
+        Colormap name.
+    show
+        Whether to call ``plt.show()`` (passed through to the plot
+        function).
+    **plot_kwargs
+        Extra keyword arguments forwarded to
+        :func:`embpy.pl.plot_similarity_heatmap`.
 
     Returns
     -------
@@ -45,12 +71,10 @@ def compute_similarity(
     X = _get_embedding(adata, obsm_key)
 
     if metric == "cosine":
-        return cosine_similarity(X)
-
-    if metric in ("pearson", "correlation"):
-        return np.corrcoef(X)
-
-    if metric == "spearman":
+        sim = cosine_similarity(X)
+    elif metric in ("pearson", "correlation"):
+        sim = np.corrcoef(X)
+    elif metric == "spearman":
         n = X.shape[0]
         sim = np.ones((n, n), dtype=np.float64)
         for i in range(n):
@@ -58,9 +82,28 @@ def compute_similarity(
                 rho, _ = spearmanr(X[i], X[j])
                 sim[i, j] = rho
                 sim[j, i] = rho
-        return sim
+    else:
+        raise ValueError(f"Unknown similarity metric '{metric}'. Choose from: cosine, pearson, spearman.")
 
-    raise ValueError(f"Unknown similarity metric '{metric}'. Choose from: cosine, pearson, spearman.")
+    if plot:
+        from embpy.pl import plot_similarity_heatmap
+
+        if labels is None:
+            labels = list(adata.obs_names)
+        plot_similarity_heatmap(
+            sim,
+            labels=labels,
+            title=title,
+            figsize=figsize,
+            cmap=cmap,
+            **plot_kwargs,
+        )
+        if show:
+            import matplotlib.pyplot as _plt
+
+            _plt.show()
+
+    return sim
 
 
 def compute_distance_matrix(
@@ -202,3 +245,102 @@ def rank_perturbations(
     order = np.argsort(sims)[::-1]
     names = list(adata.obs_names)
     return [(names[i], float(sims[i])) for i in order[:top_k]]
+
+
+def pseudobulk_embeddings(
+    adata: AnnData,
+    group_col: str,
+    obsm_key: str | None = None,
+    label_col: str | None = None,
+) -> AnnData:
+    """Aggregate replicate observations into per-group mean embeddings.
+
+    Wraps :func:`scanpy.get.aggregate` to compute per-group mean
+    embeddings -- the standard "pseudobulk" operation used to go from
+    well-level to perturbation-level profiles.
+
+    Parameters
+    ----------
+    adata
+        AnnData with embedding vectors.  Embeddings are read from
+        ``obsm[obsm_key]`` when *obsm_key* is given, otherwise from ``.X``.
+    group_col
+        Column in ``adata.obs`` to group by (e.g. ``"gene"``,
+        ``"Metadata_JCP2022"``).  The unique values become the
+        ``obs_names`` of the returned object.
+    obsm_key
+        Key in ``.obsm`` holding the embedding matrix.  If ``None``
+        (default), ``.X`` is used.
+    label_col
+        Optional column in ``adata.obs`` whose first-per-group value is
+        carried into the returned ``.obs``.  Useful for keeping a
+        human-readable label alongside an opaque group identifier
+        (e.g. ``label_col="gene"`` when grouping by JCP2022 IDs).
+
+    Returns
+    -------
+    AnnData
+        One row per group.  Mean embeddings are stored in ``.X`` and,
+        when *obsm_key* is not ``None``, also in ``.obsm[obsm_key]``.
+        ``obs_names`` are the unique group values.
+
+    Examples
+    --------
+    >>> import embpy.tl as tl
+    >>> gene_adata = tl.pseudobulk_embeddings(
+    ...     adata, group_col="gene", obsm_key="X_emb",
+    ... )
+    >>> tl.rank_perturbations(gene_adata, "TP53", obsm_key="X_emb")
+    """
+    import scanpy as sc
+
+    if group_col not in adata.obs.columns:
+        raise KeyError(
+            f"'{group_col}' not found in adata.obs. "
+            f"Available columns: {list(adata.obs.columns)}"
+        )
+    if label_col is not None and label_col not in adata.obs.columns:
+        raise KeyError(
+            f"label_col '{label_col}' not found in adata.obs. "
+            f"Available columns: {list(adata.obs.columns)}"
+        )
+
+    if obsm_key is not None:
+        X = _get_embedding(adata, obsm_key)
+        work = AnnData(X=X, obs=adata.obs.copy())
+    else:
+        work = adata
+
+    agg = sc.get.aggregate(work, by=group_col, func="mean")
+
+    # scanpy >= 1.11 stores the result in layers["mean"] and sets X=None;
+    # older versions put it directly in X.
+    raw = agg.layers.get("mean") if agg.X is None else agg.X
+    dense = np.asarray(
+        raw.toarray() if hasattr(raw, "toarray") else raw,
+        dtype=np.float32,
+    )
+
+    if group_col in agg.obs.columns:
+        agg.obs_names = agg.obs[group_col].astype(str).values
+    agg.obs.index.name = group_col
+
+    if obsm_key is not None:
+        agg.obsm[obsm_key] = dense.astype(np.float64)
+
+    agg.X = dense
+
+    if label_col is not None:
+        first_labels = (
+            adata.obs
+            .groupby(group_col, sort=False)[label_col]
+            .first()
+        )
+        first_labels.index = first_labels.index.astype(str)
+        agg.obs[label_col] = agg.obs_names.map(first_labels).values
+
+    logging.info(
+        "Pseudobulk: %d observations -> %d groups (column '%s').",
+        adata.n_obs, agg.n_obs, group_col,
+    )
+    return agg

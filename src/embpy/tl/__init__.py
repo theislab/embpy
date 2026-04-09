@@ -4,9 +4,11 @@ from .similarity import (
     compute_distance_matrix,
     compute_knn_overlap,
     compute_similarity,
+    pseudobulk_embeddings,
     rank_perturbations,
 )
 
+from .activity import phenotypic_activity
 from .basic import basic_tool
 
 from .benchmark import benchmark_embeddings

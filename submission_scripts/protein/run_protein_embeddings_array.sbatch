@@ -105,6 +105,6 @@ python -u "${SCRIPT_DIR}/embed_full_proteome.py" \
     --biotype protein_coding \
     --device auto \
     --checkpoint-dir "${CHECKPOINT_DIR}" \
-    --data-dir "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/embeddings"
+    --data-dir "/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/datasets"
 
 echo "=== Job finished at $(date) ==="

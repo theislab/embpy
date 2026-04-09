@@ -23,6 +23,7 @@ from .models.dna_models import (
 
 if TYPE_CHECKING:
     pass
+from .models.api_models import APIEmbeddingWrapper
 from .models.molecule_models import (
     ChembertaWrapper,
     MHGGNNWrapper,
@@ -31,10 +32,12 @@ from .models.molecule_models import (
     MolformerWrapper,
     RDKitWrapper,
 )
+from .models.morphology_models import SubCellWrapper
 from .models.protein_models import ESM2Wrapper, ESM3Wrapper, ESMCWrapper, ProtT5Wrapper
-from .models.text_models import TextLLMWrapper
+from .models.text_models import LlamaEmbeddingWrapper, TextLLMWrapper
 from .resources.gene_resolver import GeneResolver
 from .resources.protein_resolver import ProteinResolver
+from .resources.text_resolver import TextResolver
 
 # Evo (v1/v1.5) is an optional dependency - import conditionally
 try:
@@ -53,6 +56,15 @@ try:
 except ImportError:
     _HAVE_EVO2 = False
     Evo2Wrapper = None  # type: ignore
+
+# Boltz-2 structure model (optional: pip install boltz[cuda])
+try:
+    from .models.structure_models import Boltz2Wrapper
+
+    _HAVE_BOLTZ = True
+except ImportError:
+    _HAVE_BOLTZ = False
+    Boltz2Wrapper = None  # type: ignore
 
 
 # Helper function (can be moved to utils later)
@@ -127,6 +139,10 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # ProtT5 Models (ProtTrans)
     "prot_t5_xl": (ProtT5Wrapper, "Rostlab/prot_t5_xl_uniref50"),
     "prot_t5_xl_half": (ProtT5Wrapper, "Rostlab/prot_t5_xl_half_uniref50-enc"),
+    # Boltz-2 structure model (requires: pip install boltz[cuda])
+    "boltz2": (Boltz2Wrapper if _HAVE_BOLTZ else None, "boltz2"),
+    "boltz2_pairwise": (Boltz2Wrapper if _HAVE_BOLTZ else None, "boltz2_pairwise"),
+    "boltz2_both": (Boltz2Wrapper if _HAVE_BOLTZ else None, "boltz2_both"),
     # --- Molecule Models ---
     "chemberta2MTR": (ChembertaWrapper, "DeepChem/ChemBERTa-77M-MTR"),
     "chemberta2MLM": (ChembertaWrapper, "DeepChem/ChemBERTa-100M-MLM"),
@@ -147,20 +163,73 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # --- Text Models ---
     "minilm_l6_v2": (TextLLMWrapper, "sentence-transformers/all-MiniLM-L6-v2"),
     "bert_base_uncased": (TextLLMWrapper, "bert-base-uncased"),
+    # LLaMA decoder-only models (requires HF_TOKEN for gated access)
+    "llama3.1_8b": (LlamaEmbeddingWrapper, "meta-llama/Llama-3.1-8B"),
+    "llama3.2_3b": (LlamaEmbeddingWrapper, "meta-llama/Llama-3.2-3B"),
+    "llama3.2_1b": (LlamaEmbeddingWrapper, "meta-llama/Llama-3.2-1B"),
+    # API-based embedding models (require API keys via environment variables)
+    "openai_small": (APIEmbeddingWrapper, "text-embedding-3-small"),
+    "openai_large": (APIEmbeddingWrapper, "text-embedding-3-large"),
+    "cohere_v3": (APIEmbeddingWrapper, "embed-english-v3.0"),
+    "cohere_multilingual": (APIEmbeddingWrapper, "embed-multilingual-v3.0"),
+    "voyage_3": (APIEmbeddingWrapper, "voyage-3"),
+    "voyage_3_lite": (APIEmbeddingWrapper, "voyage-3-lite"),
+    "google_embed": (APIEmbeddingWrapper, "text-embedding-005"),
+    # --- Morphology Models (microscopy images) ---
+    # SubCell ViT-MAE models (auto-downloaded from CZI S3)
+    "subcell_mae_rybg": (SubCellWrapper, "subcell_mae_rybg"),
+    "subcell_vit_rybg": (SubCellWrapper, "subcell_vit_rybg"),
+    "subcell_mae_rbg": (SubCellWrapper, "subcell_mae_rbg"),
+    "subcell_vit_rbg": (SubCellWrapper, "subcell_vit_rbg"),
+    "subcell_mae_ybg": (SubCellWrapper, "subcell_mae_ybg"),
+    "subcell_vit_ybg": (SubCellWrapper, "subcell_vit_ybg"),
+    "subcell_mae_bg": (SubCellWrapper, "subcell_mae_bg"),
+    "subcell_vit_bg": (SubCellWrapper, "subcell_vit_bg"),
+    # Convenience aliases
+    "subcell_mae": (SubCellWrapper, "subcell_mae"),
+    "subcell_contrast": (SubCellWrapper, "subcell_contrast"),
+    "subcell_vit": (SubCellWrapper, "subcell_vit"),
     # GENA-LM (AIRI-Institute) — pip install transformers
     "gena_lm_bert_base": (GENALMWrapper, "AIRI-Institute/gena-lm-bert-base-t2t"),
     "gena_lm_bert_large": (GENALMWrapper, "AIRI-Institute/gena-lm-bert-large-t2t"),
-    "gena_lm_bert_base_multi": (GENALMWrapper, "AIRI-Institute/gena-lm-bert-base-t2t-multi"),
+    "gena_lm_bert_base_multi": (
+        GENALMWrapper,
+        "AIRI-Institute/gena-lm-bert-base-t2t-multi",
+    ),
     "gena_lm_bigbird_base": (GENALMWrapper, "AIRI-Institute/gena-lm-bigbird-base-t2t"),
     # Nucleotide Transformer v1/v2 (InstaDeep) — pip install transformers
-    "nt_500m_human_ref": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-500m-human-ref"),
-    "nt_500m_1000g": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-500m-1000g"),
-    "nt_2b5_1000g": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-2.5b-1000g"),
-    "nt_2b5_multi": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-2.5b-multi-species"),
-    "nt_v2_50m": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-v2-50m-multi-species"),
-    "nt_v2_100m": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-v2-100m-multi-species"),
-    "nt_v2_250m": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-v2-250m-multi-species"),
-    "nt_v2_500m": (NucleotideTransformerWrapper, "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species"),
+    "nt_500m_human_ref": (
+        NucleotideTransformerWrapper,
+        "InstaDeepAI/nucleotide-transformer-500m-human-ref",
+    ),
+    "nt_500m_1000g": (
+        NucleotideTransformerWrapper,
+        "InstaDeepAI/nucleotide-transformer-500m-1000g",
+    ),
+    "nt_2b5_1000g": (
+        NucleotideTransformerWrapper,
+        "InstaDeepAI/nucleotide-transformer-2.5b-1000g",
+    ),
+    "nt_2b5_multi": (
+        NucleotideTransformerWrapper,
+        "InstaDeepAI/nucleotide-transformer-2.5b-multi-species",
+    ),
+    "nt_v2_50m": (
+        NucleotideTransformerWrapper,
+        "InstaDeepAI/nucleotide-transformer-v2-50m-multi-species",
+    ),
+    "nt_v2_100m": (
+        NucleotideTransformerWrapper,
+        "InstaDeepAI/nucleotide-transformer-v2-100m-multi-species",
+    ),
+    "nt_v2_250m": (
+        NucleotideTransformerWrapper,
+        "InstaDeepAI/nucleotide-transformer-v2-250m-multi-species",
+    ),
+    "nt_v2_500m": (
+        NucleotideTransformerWrapper,
+        "InstaDeepAI/nucleotide-transformer-v2-500m-multi-species",
+    ),
     # Nucleotide Transformer v3 (InstaDeep) — pip install transformers
     "ntv3_8m_pre": (NucleotideTransformerV3Wrapper, "InstaDeepAI/NTv3_8M_pre"),
     "ntv3_100m_pre": (NucleotideTransformerV3Wrapper, "InstaDeepAI/NTv3_100M_pre"),
@@ -170,13 +239,65 @@ MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # HyenaDNA (HazyResearch) — pip install transformers
     "hyenadna_tiny_1k": (HyenaDNAWrapper, "LongSafari/hyenadna-tiny-1k-seqlen-hf"),
     "hyenadna_small_32k": (HyenaDNAWrapper, "LongSafari/hyenadna-small-32k-seqlen-hf"),
-    "hyenadna_medium_160k": (HyenaDNAWrapper, "LongSafari/hyenadna-medium-160k-seqlen-hf"),
-    "hyenadna_medium_450k": (HyenaDNAWrapper, "LongSafari/hyenadna-medium-450k-seqlen-hf"),
+    "hyenadna_medium_160k": (
+        HyenaDNAWrapper,
+        "LongSafari/hyenadna-medium-160k-seqlen-hf",
+    ),
+    "hyenadna_medium_450k": (
+        HyenaDNAWrapper,
+        "LongSafari/hyenadna-medium-450k-seqlen-hf",
+    ),
     "hyenadna_large_1m": (HyenaDNAWrapper, "LongSafari/hyenadna-large-1m-seqlen-hf"),
     # Caduceus (kuleshov-group) — pip install embpy[caduceus]
-    "caduceus_ph_131k": (CaduceusWrapper, "kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16"),
-    "caduceus_ps_131k": (CaduceusWrapper, "kuleshov-group/caduceus-ps_seqlen-131k_d_model-256_n_layer-16"),
+    "caduceus_ph_131k": (
+        CaduceusWrapper,
+        "kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16",
+    ),
+    "caduceus_ps_131k": (
+        CaduceusWrapper,
+        "kuleshov-group/caduceus-ps_seqlen-131k_d_model-256_n_layer-16",
+    ),
 }
+
+
+HUMAN_ONLY_MODELS = frozenset(
+    {
+        "enformer_human_rough",
+        "nt_500m_human_ref",
+    }
+)
+
+MOUSE_ONLY_MODELS = frozenset(
+    {
+        "borzoi_v0_mouse",
+        "borzoi_v1_mouse",
+        "borzoi_v2_mouse",
+        "borzoi_v3_mouse",
+    }
+)
+
+MULTI_SPECIES_DNA = frozenset(
+    {
+        "nt_v2_50m",
+        "nt_v2_100m",
+        "nt_v2_250m",
+        "nt_v2_500m",
+        "nt_2b5_multi",
+        "ntv3_8m_pre",
+        "ntv3_100m_pre",
+        "ntv3_100m_pos",
+        "ntv3_650m_pre",
+        "ntv3_650m_pos",
+        "gena_lm_bert_base_multi",
+        "hyenadna_tiny_1k",
+        "hyenadna_small_32k",
+        "hyenadna_medium_160k",
+        "hyenadna_medium_450k",
+        "hyenadna_large_1m",
+        "caduceus_ph_131k",
+        "caduceus_ps_131k",
+    }
+)
 
 
 class BioEmbedder:
@@ -199,6 +320,7 @@ class BioEmbedder:
     def __init__(
         self,
         device: str | torch.device | None = "auto",  # type: ignore[name-defined]
+        organism: str = "human",
         resolver_backend: Literal["api", "local"] = "api",
         mart_file: str | None = None,
         chromosome_folder: str | None = None,
@@ -208,10 +330,15 @@ class BioEmbedder:
 
         Args:
             device: 'auto', 'cuda', 'mps', or 'cpu', or torch.device.
+            organism: Default organism for sequence resolution and annotation
+                (e.g. 'human', 'mouse', 'zebrafish'). Any species supported
+                by Ensembl can be used.
             resolver_backend: 'api' to use online APIs, 'local' to use local FASTAs.
             mart_file: path to Mart CSV (required if resolver_backend='local').
             chromosome_folder: path to folder with chr*.fa files (required if 'local').
         """
+        self.organism = organism
+
         # Device setup
         if isinstance(device, str):
             if device == "auto":
@@ -221,30 +348,40 @@ class BioEmbedder:
         elif isinstance(device, torch.device):  # type: ignore[attr-defined]
             self.device = device
         else:
-            raise ConfigError("Invalid device; use 'auto','cpu','cuda','mps', or torch.device.")
+            raise ConfigError(
+                "Invalid device; use 'auto','cpu','cuda','mps', or torch.device."
+            )
 
         # GeneResolver setup
         self.resolver_backend = resolver_backend
         if resolver_backend == "local":
             if not mart_file or not chromosome_folder:
-                raise ConfigError("mart_file and chromosome_folder must be provided for local resolver.")
+                raise ConfigError(
+                    "mart_file and chromosome_folder must be provided for local resolver."
+                )
             self.gene_resolver = GeneResolver(
                 mart_file=mart_file,
                 chromosome_folder=chromosome_folder,
             )
         else:
-            # API mode; mart/chrom args ignored
-            self.gene_resolver = GeneResolver()
+            self.gene_resolver = GeneResolver(species=organism)
 
         # Protein resolver
-        self.protein_resolver = ProteinResolver(organism="human")
+        self.protein_resolver = ProteinResolver(organism=organism)
+
+        # Text resolver for description-based embeddings
+        self.text_resolver = TextResolver(organism=organism)
 
         # Model cache and discovery
         self.model_cache: dict[str, BaseModelWrapper] = {}
         self._available_models = self._discover_models()
 
-        logging.info(f"BioEmbedder initialized on device {self.device}, backend={self.resolver_backend}")
-        logging.info(f"Available models: {self.list_available_models()}")
+        logging.info(
+            "BioEmbedder initialized: device=%s, organism=%s, backend=%s",
+            self.device,
+            self.organism,
+            self.resolver_backend,
+        )
 
     def _discover_models(self) -> dict[str, tuple[type[BaseModelWrapper], str]]:
         """Filters the MODEL_REGISTRY based on available wrapper classes."""
@@ -256,33 +393,78 @@ class BioEmbedder:
                 )
                 continue
             if model_path is None:
-                logging.warning(f"Skipping model '{name}': No model path/identifier defined in registry.")
+                logging.warning(
+                    f"Skipping model '{name}': No model path/identifier defined in registry."
+                )
                 continue
             # Check if the wrapper class itself is valid (was imported successfully)
             if not issubclass(wrapper_class, BaseModelWrapper):
-                logging.error(f"Internal Error: Registered item for '{name}' is not a valid BaseModelWrapper subclass.")
+                logging.error(
+                    f"Internal Error: Registered item for '{name}' is not a valid BaseModelWrapper subclass."
+                )
                 continue
 
             available[name] = (wrapper_class, model_path)
-            logging.debug(f"Registered model '{name}' using wrapper {wrapper_class.__name__} for path '{model_path}'")
+            logging.debug(
+                f"Registered model '{name}' using wrapper {wrapper_class.__name__} for path '{model_path}'"
+            )
 
         if not available:
-            logging.warning("No models were successfully registered. Check imports and MODEL_REGISTRY definition.")
+            logging.warning(
+                "No models were successfully registered. Check imports and MODEL_REGISTRY definition."
+            )
 
         return available
 
     def _get_model(self, model_name: str) -> BaseModelWrapper:
         """Loads a model or retrieves it from the cache using the registry or direct HF loading for text models."""
-        # Return from cache if already loaded
         if model_name in self.model_cache:
             return self.model_cache[model_name]
 
-        # Check if it's in the registry first
+        is_human = self.organism.lower() in ("human", "homo_sapiens")
+        is_mouse = self.organism.lower() in ("mouse", "mus_musculus")
+        if not is_human and model_name in HUMAN_ONLY_MODELS:
+            logging.warning(
+                "Model '%s' was trained on human data only. "
+                "Results for organism='%s' may not be meaningful.",
+                model_name,
+                self.organism,
+            )
+        if not is_mouse and model_name in MOUSE_ONLY_MODELS:
+            logging.warning(
+                "Model '%s' was trained on mouse data only. "
+                "Results for organism='%s' may not be meaningful.",
+                model_name,
+                self.organism,
+            )
+
         if model_name in self._available_models:
-            logging.info(f"Loading registered model '{model_name}' onto device '{self.device}'...")
+            logging.info(
+                f"Loading registered model '{model_name}' onto device '{self.device}'..."
+            )
             WrapperClass, model_path_or_name = self._available_models[model_name]
             try:
-                model_instance = WrapperClass(model_path_or_name=model_path_or_name)
+                extra_kwargs: dict[str, Any] = {}
+                if model_name == "boltz2_pairwise":
+                    extra_kwargs["output_type"] = "pairwise"
+                elif model_name == "boltz2_both":
+                    extra_kwargs["output_type"] = "both"
+                if WrapperClass is SubCellWrapper:
+                    pass
+                if WrapperClass is APIEmbeddingWrapper:
+                    provider_map = {
+                        "openai_small": "openai",
+                        "openai_large": "openai",
+                        "cohere_v3": "cohere",
+                        "cohere_multilingual": "cohere",
+                        "voyage_3": "voyage",
+                        "voyage_3_lite": "voyage",
+                        "google_embed": "google",
+                    }
+                    extra_kwargs["provider"] = provider_map.get(model_name, "openai")
+                model_instance = WrapperClass(
+                    model_path_or_name=model_path_or_name, **extra_kwargs
+                )
                 model_instance.load(self.device)
                 self.model_cache[model_name] = model_instance
                 logging.info(f"Model '{model_name}' loaded successfully.")
@@ -295,18 +477,20 @@ class BioEmbedder:
 
         # If not in registry, try to load as a text model from Hugging Face
         else:
-            logging.info(f"Model '{model_name}' not in registry. Attempting to load as text model from Hugging Face...")
+            logging.info(
+                f"Model '{model_name}' not in registry. Attempting to load as text model from Hugging Face..."
+            )
             try:
                 model_instance = TextLLMWrapper(model_path_or_name=model_name)
                 model_instance.load(self.device)
                 self.model_cache[model_name] = model_instance
-                logging.info(f"Successfully loaded text model '{model_name}' from Hugging Face.")
+                logging.info(
+                    f"Successfully loaded text model '{model_name}' from Hugging Face."
+                )
                 return model_instance
             except Exception as e:
                 available_model_names = self.list_available_models()
-                message = (
-                    f"Model '{model_name}' could not be loaded from Hugging Face and is not in the predefined registry."
-                )
+                message = f"Model '{model_name}' could not be loaded from Hugging Face and is not in the predefined registry."
                 if available_model_names:
                     message += f" Available predefined models: {available_model_names}"
                 message += f" Original error: {str(e)}"
@@ -385,12 +569,18 @@ class BioEmbedder:
             elif self.resolver_backend == "local":
                 seq = self.gene_resolver.get_local_dna_sequence(identifier, dna_id_type)
             else:
-                seq = self.gene_resolver.get_dna_sequence(identifier, dna_id_type, organism)
+                seq = self.gene_resolver.get_dna_sequence(
+                    identifier, dna_id_type, organism
+                )
             if not seq:
-                raise IdentifierError(f"DNA not found for {id_type}='{identifier}' (region={region})")
+                raise IdentifierError(
+                    f"DNA not found for {id_type}='{identifier}' (region={region})"
+                )
             input_data = seq
         elif mtype == "protein":
-            prot = self.protein_resolver.get_canonical_sequence(identifier, id_type, organism)
+            prot = self.protein_resolver.get_canonical_sequence(
+                identifier, id_type, organism
+            )
             if not prot:
                 raise IdentifierError(f"Protein not found for {id_type}='{identifier}'")
             input_data = prot
@@ -399,7 +589,9 @@ class BioEmbedder:
                 identifier, id_type, organism, format_string=gene_description_format
             )
             if not desc:
-                raise IdentifierError(f"Description not found for {id_type}='{identifier}'")
+                raise IdentifierError(
+                    f"Description not found for {id_type}='{identifier}'"
+                )
             input_data = desc
         elif mtype == "ppi":
             input_data = identifier
@@ -407,7 +599,9 @@ class BioEmbedder:
             raise ValueError(f"Unsupported model type '{mtype}' for embedding.")
         # Embed
         try:
-            emb = inst.embed(input=input_data, pooling_strategy=pooling_strategy, **kwargs)
+            emb = inst.embed(
+                input=input_data, pooling_strategy=pooling_strategy, **kwargs
+            )
             return emb
         except Exception as e:
             logging.error(f"Embedding error for {identifier} with model {model}: {e}")
@@ -457,16 +651,24 @@ class BioEmbedder:
         """
         inst = self._get_model(model)
         if inst.model_type != "protein":
-            raise ValueError(f"Model '{model}' is not a protein model (type={inst.model_type}).")
+            raise ValueError(
+                f"Model '{model}' is not a protein model (type={inst.model_type})."
+            )
 
         if id_type == "sequence":
-            emb = inst.embed(input=identifier, pooling_strategy=pooling_strategy, **kwargs)
+            emb = inst.embed(
+                input=identifier, pooling_strategy=pooling_strategy, **kwargs
+            )
             return emb
 
         if isoform == "canonical":
-            seq = self.protein_resolver.get_canonical_sequence(identifier, id_type, organism)
+            seq = self.protein_resolver.get_canonical_sequence(
+                identifier, id_type, organism
+            )
             if not seq:
-                raise IdentifierError(f"Canonical protein not found for {id_type}='{identifier}'")
+                raise IdentifierError(
+                    f"Canonical protein not found for {id_type}='{identifier}'"
+                )
             return inst.embed(input=seq, pooling_strategy=pooling_strategy, **kwargs)
 
         # isoform == "all"
@@ -568,7 +770,9 @@ class BioEmbedder:
                         **kwargs,
                     )
                 except Exception as e:  # noqa: BLE001
-                    logging.warning(f"Failed to embed isoform {iso_id} for {ident}: {e}")
+                    logging.warning(
+                        f"Failed to embed isoform {iso_id} for {ident}: {e}"
+                    )
         return results_iso
 
     def embed_genes_batch(
@@ -621,7 +825,9 @@ class BioEmbedder:
                         return []
             else:
                 if identifiers is None:
-                    logging.error("Cannot auto-discover genes with 'local' backend. Provide identifiers.")
+                    logging.error(
+                        "Cannot auto-discover genes with 'local' backend. Provide identifiers."
+                    )
                     return []
                 logging.warning("fetch_all_dna is ignored in local mode.")
 
@@ -663,16 +869,24 @@ class BioEmbedder:
                                     ident,
                                 )
                             elif self.resolver_backend == "local":
-                                data = self.gene_resolver.get_local_dna_sequence(ident, dna_id)
+                                data = self.gene_resolver.get_local_dna_sequence(
+                                    ident, dna_id
+                                )
                             else:
-                                data = self.gene_resolver.get_dna_sequence(ident, dna_id, organism)
+                                data = self.gene_resolver.get_dna_sequence(
+                                    ident, dna_id, organism
+                                )
 
                 elif mtype == "protein":
-                    data = self.protein_resolver.get_canonical_sequence(ident, id_type, organism)
+                    data = self.protein_resolver.get_canonical_sequence(
+                        ident, id_type, organism
+                    )
 
                 elif mtype == "text":
                     fmt = gene_description_format or "Gene: {identifier}..."
-                    data = self.gene_resolver.get_gene_description(ident, id_type, organism, format_string=fmt)
+                    data = self.gene_resolver.get_gene_description(
+                        ident, id_type, organism, format_string=fmt
+                    )
 
                 if data is None:
                     logging.warning(f"No data for {ident}; skipping.")
@@ -688,7 +902,9 @@ class BioEmbedder:
             return [None] * len(identifiers)
 
         try:
-            batch_results = inst.embed_batch(inputs=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
+            batch_results = inst.embed_batch(
+                inputs=valid_inputs, pooling_strategy=pooling_strategy, **kwargs
+            )
         except Exception as e:  # noqa: BLE001
             logging.error(f"Batch embed failed: {e}")
             traceback.print_exc()
@@ -811,7 +1027,9 @@ class BioEmbedder:
 
         logging.info(f"Embedding {len(valid_inputs)} valid SMILES with model '{model}'")
         try:
-            batch_embs = inst.embed_batch(input=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
+            batch_embs = inst.embed_batch(
+                input=valid_inputs, pooling_strategy=pooling_strategy, **kwargs
+            )
             for out_idx, emb in zip(valid_indices, batch_embs, strict=False):
                 results[out_idx] = emb
         except Exception as e:  # noqa: BLE001
@@ -850,16 +1068,75 @@ class BioEmbedder:
         """
         model_instance = self._get_model(model)
         if model_instance.model_type != "text":
-            raise ValueError(f"Model '{model}' is not a text embedder. Use embed_gene or embed_molecule.")
+            raise ValueError(
+                f"Model '{model}' is not a text embedder. Use embed_gene or embed_molecule."
+            )
 
         logging.debug(f"Embedding text: '{text[:100]}...' using model '{model}'")
         try:
-            embedding = model_instance.embed(input=text, pooling_strategy=pooling_strategy, **kwargs)
+            embedding = model_instance.embed(
+                input=text, pooling_strategy=pooling_strategy, **kwargs
+            )
             logging.debug(f"Text embedding generated with shape: {embedding.shape}")
             return embedding
         except Exception as e:
-            logging.error(f"Error during text embedding generation for model '{model}': {e}")
-            raise RuntimeError(f"Text embedding failed for input '{text[:50]}...'.") from e
+            logging.error(
+                f"Error during text embedding generation for model '{model}': {e}"
+            )
+            raise RuntimeError(
+                f"Text embedding failed for input '{text[:50]}...'."
+            ) from e
+
+    def embed_text_api(
+        self,
+        text: str,
+        model: str = "text-embedding-3-small",
+        provider: str = "openai",
+        api_key: str | None = None,
+        base_url: str | None = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Embed text using an API-based model with explicit provider config.
+
+        Convenience method for one-off API calls where you want to
+        specify the provider, API key, and/or base URL directly
+        without pre-registering the model.
+
+        Parameters
+        ----------
+        text
+            Text string to embed.
+        model
+            Model name as expected by the API.
+        provider
+            ``"openai"``, ``"cohere"``, ``"voyage"``, ``"google"``,
+            or ``"generic"`` (OpenAI-compatible endpoint).
+        api_key
+            API key (or set the provider's env var).
+        base_url
+            Custom API endpoint URL.
+        **kwargs
+            Forwarded to the API wrapper.
+
+        Returns
+        -------
+        np.ndarray
+            Embedding vector.
+        """
+        from .models.api_models import APIEmbeddingWrapper
+
+        cache_key = f"_api_{provider}_{model}"
+        if cache_key not in self.model_cache:
+            wrapper = APIEmbeddingWrapper(
+                model_path_or_name=model,
+                provider=provider,
+                api_key=api_key,
+                base_url=base_url,
+            )
+            wrapper.load(self.device)
+            self.model_cache[cache_key] = wrapper
+
+        return self.model_cache[cache_key].embed(input=text, **kwargs)
 
     def embed_texts_batch(
         self,
@@ -889,11 +1166,16 @@ class BioEmbedder:
             raise ValueError(f"Model '{model}' is not a text embedder.")
 
         valid_inputs = list(texts)
-        logging.info(f"Embedding batch of {len(valid_inputs)} texts using model '{model}'...")
+        logging.info(
+            f"Embedding batch of {len(valid_inputs)} texts using model '{model}'..."
+        )
 
         try:
             batch_results = model_instance.embed_batch(
-                inputs=valid_inputs, pooling_strategy=pooling_strategy, batch_size=batch_size, **kwargs
+                inputs=valid_inputs,
+                pooling_strategy=pooling_strategy,
+                batch_size=batch_size,
+                **kwargs,
             )
             if len(batch_results) != len(valid_inputs):
                 logging.error(
@@ -904,8 +1186,141 @@ class BioEmbedder:
             results: list[np.ndarray | None] = list(batch_results)
 
         except (ValueError, KeyError) as e:
-            logging.error(f"Error during batch text embedding generation for model '{model}': {e}")
+            logging.error(
+                f"Error during batch text embedding generation for model '{model}': {e}"
+            )
             results = [None] * len(texts)
+
+        return results
+
+    def embed_description(
+        self,
+        identifier: str,
+        model: str = "minilm_l6_v2",
+        entity_type: Literal["gene", "protein", "molecule", "auto"] = "auto",
+        sources: list[str] | str = "all",
+        pooling_strategy: str = "mean",
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Fetch text description(s) for a biological entity and embed them.
+
+        Resolves the identifier to rich text descriptions from public
+        knowledge sources (MyGene, NCBI, Ensembl, UniProt, Wikipedia,
+        PubChem), combines them, and embeds the result with a text model.
+
+        Parameters
+        ----------
+        identifier
+            Gene symbol, Ensembl ID, UniProt accession, drug name,
+            or SMILES string.
+        model
+            Text embedding model (default ``"minilm_l6_v2"``).
+        entity_type
+            ``"gene"``, ``"protein"``, ``"molecule"``, or ``"auto"``
+            to auto-detect.
+        sources
+            Knowledge sources to query. ``"all"`` uses the defaults
+            for the detected entity type.
+        pooling_strategy
+            Pooling strategy for the text model.
+        **kwargs
+            Forwarded to the text model's ``embed`` method.
+
+        Returns
+        -------
+        np.ndarray
+            The text embedding vector.
+
+        Examples
+        --------
+        >>> emb = embedder.embed_description("TP53", model="minilm_l6_v2")
+        >>> emb.shape
+        (384,)
+        >>> emb = embedder.embed_description("aspirin", entity_type="molecule")
+        """
+        description = self.text_resolver.get_combined_description(
+            identifier,
+            entity_type=entity_type,
+            sources=sources,
+        )
+        logging.info(
+            "Description for '%s' (%d chars): %s...",
+            identifier,
+            len(description),
+            description[:100],
+        )
+        return self.embed_text(
+            text=description,
+            model=model,
+            pooling_strategy=pooling_strategy,
+            **kwargs,
+        )
+
+    def embed_descriptions_batch(
+        self,
+        identifiers: Sequence[str],
+        model: str = "minilm_l6_v2",
+        entity_type: Literal["gene", "protein", "molecule", "auto"] = "auto",
+        sources: list[str] | str = "all",
+        pooling_strategy: str = "mean",
+        batch_size: int | None = None,
+        **kwargs: Any,
+    ) -> list[np.ndarray | None]:
+        """Fetch and embed text descriptions for a batch of entities.
+
+        Parameters
+        ----------
+        identifiers
+            List of biological entity identifiers.
+        model
+            Text embedding model.
+        entity_type
+            Entity type (applied to all identifiers).
+        sources
+            Knowledge sources to query.
+        pooling_strategy
+            Pooling strategy for the text model.
+        batch_size
+            Maximum batch size for embedding inference.
+        **kwargs
+            Forwarded to the text model.
+
+        Returns
+        -------
+        List of embedding arrays, with ``None`` for failed lookups.
+        """
+        texts: list[str] = []
+        valid_indices: list[int] = []
+
+        for i, ident in enumerate(identifiers):
+            try:
+                desc = self.text_resolver.get_combined_description(
+                    ident,
+                    entity_type=entity_type,
+                    sources=sources,
+                )
+                if desc:
+                    texts.append(desc)
+                    valid_indices.append(i)
+                else:
+                    logging.warning("No description found for '%s'", ident)
+            except Exception as e:  # noqa: BLE001
+                logging.warning("Failed to fetch description for '%s': %s", ident, e)
+
+        if not texts:
+            return [None] * len(identifiers)
+
+        batch_embs = self.embed_texts_batch(
+            texts=texts,
+            model=model,
+            pooling_strategy=pooling_strategy,
+            batch_size=batch_size,
+            **kwargs,
+        )
+
+        results: list[np.ndarray | None] = [None] * len(identifiers)
+        for idx, emb in zip(valid_indices, batch_embs, strict=False):
+            results[idx] = emb
 
         return results
 
@@ -1029,7 +1444,9 @@ class BioEmbedder:
         available = list_singlecell_models()
         for m in models:
             if m not in available:
-                raise ValueError(f"Unknown single-cell model '{m}'. Available: {available}")
+                raise ValueError(
+                    f"Unknown single-cell model '{m}'. Available: {available}"
+                )
 
         if copy:
             adata = adata.copy()
@@ -1437,6 +1854,7 @@ class BioEmbedder:
             "protein",
             "molecule",
             "text",
+            "morphology",
             "single_cell",
         ] = "all",
     ) -> list[str]:
@@ -1446,8 +1864,8 @@ class BioEmbedder:
         ----------
         category
             ``"all"`` returns every model (sequence + single-cell).
-            ``"dna"``, ``"protein"``, ``"molecule"``, ``"text"`` filter
-            the sequence/structure model registry.
+            ``"dna"``, ``"protein"``, ``"molecule"``, ``"text"``,
+            ``"morphology"`` filter the sequence/structure model registry.
             ``"single_cell"`` returns single-cell foundation model keys.
         """
         from .models.singlecell_models import list_singlecell_models
@@ -1462,6 +1880,639 @@ class BioEmbedder:
 
         result = []
         for name, (wrapper_cls, _) in self._available_models.items():
-            if hasattr(wrapper_cls, "model_type") and wrapper_cls.model_type == category:
+            if (
+                hasattr(wrapper_cls, "model_type")
+                and wrapper_cls.model_type == category
+            ):
                 result.append(name)
         return sorted(result)
+
+    # ------------------------------------------------------------------
+    # Morphological embedding API
+    # ------------------------------------------------------------------
+
+    def embed_morphological(
+        self,
+        image: str | np.ndarray | torch.Tensor,
+        model: str = "subcell_mae_rybg",
+        pooling_strategy: str = "attention_pool",
+        **kwargs,
+    ) -> np.ndarray:
+        """Embed a single microscopy image using a morphology model.
+
+        Parameters
+        ----------
+        image
+            Path to a multi-channel image, or a ``(C, H, W)`` array/tensor.
+        model
+            Registered morphology model key (default ``"subcell_mae_rybg"``).
+        pooling_strategy
+            Pooling strategy for the model (``"cls"``, ``"mean"``,
+            ``"attention_pool"``, ``"none"``).
+
+        Returns
+        -------
+        np.ndarray
+            1-D embedding vector.
+        """
+        wrapper = self._get_model(model)
+        if getattr(wrapper, "model_type", None) != "morphology":
+            raise ValueError(
+                f"Model '{model}' is not a morphology embedder "
+                f"(type={getattr(wrapper, 'model_type', '?')})."
+            )
+        try:
+            return wrapper.embed(image, pooling_strategy=pooling_strategy, **kwargs)
+        except Exception as e:
+            logging.error("Morphological embedding failed: %s", e)
+            raise RuntimeError("Morphological embedding failed") from e
+
+    def embed_morphological_batch(
+        self,
+        images: Sequence[str | np.ndarray | torch.Tensor],
+        model: str = "subcell_mae_rybg",
+        pooling_strategy: str = "attention_pool",
+        **kwargs,
+    ) -> list[np.ndarray]:
+        """Embed a batch of microscopy images.
+
+        Parameters
+        ----------
+        images
+            Iterable of paths or ``(C, H, W)`` arrays/tensors.
+        model
+            Registered morphology model key.
+        pooling_strategy
+            Pooling strategy passed to the underlying model.
+
+        Returns
+        -------
+        list[np.ndarray]
+            One embedding per image.
+        """
+        wrapper = self._get_model(model)
+        if getattr(wrapper, "model_type", None) != "morphology":
+            raise ValueError(
+                f"Model '{model}' is not a morphology embedder "
+                f"(type={getattr(wrapper, 'model_type', '?')})."
+            )
+        return wrapper.embed_batch(images, pooling_strategy=pooling_strategy, **kwargs)
+
+    def embed_perturbation_morphology(
+        self,
+        perturbation: str,
+        perturbation_type: str = "genetic",
+        dataset: str = "jump",
+        source: str = "subcell",
+        model: str = "subcell_mae_rybg",
+        pooling_strategy: str = "attention_pool",
+        local_dir: str | None = None,
+        aggregate: str = "mean",
+        max_images: int | None = None,
+        plate_type: str | None = None,
+        jump_profiles_dir: str | None = None,
+        **kwargs,
+    ) -> np.ndarray:
+        """Embed a perturbation from JUMP or HPA by resolving images automatically.
+
+        The method handles identifier resolution (gene symbols via
+        ``GeneResolver``, compound names via ``DrugResolver``), image
+        fetching from CDN or local directories, preprocessing, and
+        optional aggregation.
+
+        Parameters
+        ----------
+        perturbation
+            Gene symbol, compound name, JCP2022 ID, or Ensembl ID.
+        perturbation_type
+            ``"genetic"`` (CRISPR/ORF) or ``"compound"``.
+        dataset
+            ``"jump"`` or ``"hpa"``.
+        source
+            ``"subcell"`` -- run SubCell inference on images.
+            ``"precomputed"`` -- load pre-computed JUMP CellProfiler profiles
+            (only valid with ``dataset="jump"``).
+        model
+            Morphology model key (used when ``source="subcell"``).
+        pooling_strategy
+            Pooling strategy for the SubCell model.
+        local_dir
+            Path to a local image directory.  When images are already
+            present they are loaded from disk; when they are fetched
+            from the CDN they are cached here for future re-use.
+            ``None`` = fetch from CDN without caching.
+        aggregate
+            ``"mean"`` averages embeddings across images; ``"none"``
+            returns the first image embedding only.
+        max_images
+            Cap on the number of images to embed.
+        plate_type
+            JUMP plate type (``"crispr"``, ``"orf"``, ``"compound"``).
+            Inferred from *perturbation_type* when ``None``.
+        jump_profiles_dir
+            Directory containing JUMP profile parquets (for
+            ``source="precomputed"``).
+
+        Returns
+        -------
+        np.ndarray
+            Embedding vector (shape depends on model and aggregation).
+        """
+        if source == "precomputed":
+            if dataset != "jump":
+                raise ValueError(
+                    "source='precomputed' is only valid with dataset='jump'"
+                )
+            return self._load_jump_precomputed(
+                perturbation,
+                perturbation_type,
+                plate_type,
+                jump_profiles_dir,
+                aggregate,
+            )
+
+        if dataset == "jump":
+            images = self._resolve_jump_images(
+                perturbation,
+                perturbation_type,
+                local_dir,
+                plate_type,
+                max_images,
+            )
+        elif dataset == "hpa":
+            if perturbation_type == "compound":
+                raise ValueError(
+                    "perturbation_type='compound' is not supported for dataset='hpa'"
+                )
+            images = self._resolve_hpa_images(perturbation, local_dir, max_images)
+        else:
+            raise ValueError(f"Unknown dataset: {dataset!r}")
+
+        if not images:
+            raise RuntimeError(
+                f"No images found for perturbation={perturbation!r}, "
+                f"dataset={dataset!r}, perturbation_type={perturbation_type!r}"
+            )
+
+        embeddings = self.embed_morphological_batch(
+            images,
+            model=model,
+            pooling_strategy=pooling_strategy,
+            **kwargs,
+        )
+
+        if aggregate == "mean":
+            return np.mean(embeddings, axis=0).astype(np.float32)
+        return embeddings[0]
+
+    # ------------------------------------------------------------------
+    # Internal resolvers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_jump_images(
+        perturbation: str,
+        perturbation_type: str,
+        local_dir: str | None,
+        plate_type: str | None,
+        max_images: int | None,
+    ) -> list[np.ndarray]:
+        """Resolve a JUMP perturbation to preprocessed SubCell-ready arrays.
+
+        For compounds, uses ``DrugResolver`` to resolve alternate names
+        when the initial lookup fails.  For genetic perturbations, uses
+        ``GeneResolver`` to map symbols to canonical forms.
+        """
+        from .pp.morphology_preprocessing import (
+            cell_painting_to_subcell,
+            prepare_subcell_canvas,
+        )
+        from .resources.jump_metadata import (
+            fetch_jump_fov,
+            get_jump_item_location_metadata,
+        )
+
+        if plate_type is None:
+            plate_type = "compound" if perturbation_type == "compound" else "crispr"
+
+        is_jcp = perturbation.startswith("JCP2022")
+        input_column = "JCP2022" if is_jcp else "standard_key"
+        rows = get_jump_item_location_metadata(
+            perturbation,
+            input_column=input_column,
+        )
+
+        # Fallback resolution when initial lookup fails
+        if not rows and not is_jcp:
+            rows = _resolve_jump_perturbation_fallback(
+                perturbation,
+                perturbation_type,
+            )
+
+        if max_images is not None:
+            rows = rows[:max_images]
+
+        images: list[np.ndarray] = []
+        for row in rows:
+            try:
+                if local_dir is not None:
+                    fov = _load_jump_fov_local(row, local_dir)
+                else:
+                    fov = fetch_jump_fov(row)
+                subcell_4ch = cell_painting_to_subcell(fov)
+                canvas = prepare_subcell_canvas(subcell_4ch, nm_per_pixel=325.0)
+                images.append(canvas)
+            except Exception as exc:
+                logging.warning("Failed to fetch/preprocess JUMP image: %s", exc)
+        return images
+
+    @staticmethod
+    def _resolve_hpa_images(
+        perturbation: str,
+        local_dir: str | None,
+        max_images: int | None,
+    ) -> list[np.ndarray]:
+        """Resolve an HPA gene to SubCell-ready image arrays.
+
+        When *local_dir* is given and already contains channel images for
+        this gene the images are loaded from disk.  Otherwise images are
+        fetched from the HPA CDN and -- if *local_dir* is provided --
+        cached there as per-channel JPEGs for future re-use.
+
+        Gene symbol resolution uses ``GeneResolver`` internally (via
+        ``hpa_images._resolve_ensembl_id``).
+        """
+        import os
+        import re
+        from pathlib import Path as _Path
+
+        from .resources.hpa_images import (
+            HPA_IF_CHANNELS,
+            fetch_hpa_if_image,
+            get_hpa_antibodies,
+            load_hpa_if_image,
+            strip_antibody_id,
+        )
+
+        # ── Try loading from local cache first ──────────────────────
+        if local_dir is not None:
+            gene_dir = _Path(local_dir) / perturbation
+            if gene_dir.is_dir():
+                candidates = sorted(
+                    f for f in os.listdir(gene_dir) if f.endswith((".png", ".jpg"))
+                )
+                prefixes: set[str] = set()
+                for f in candidates:
+                    if re.search(r"_blue\.\w+$", f):
+                        prefixes.add(re.sub(r"_blue\.\w+$", "", f))
+                if prefixes:
+                    images: list[np.ndarray] = []
+                    for prefix in sorted(prefixes):
+                        try:
+                            img = load_hpa_if_image(
+                                prefix=str(gene_dir / prefix)
+                            )
+                            images.append(img)
+                        except Exception as exc:
+                            logging.warning(
+                                "Failed to load local HPA image %s: %s",
+                                prefix, exc,
+                            )
+                    if max_images is not None:
+                        images = images[:max_images]
+                    if images:
+                        logging.info(
+                            "Loaded %d cached HPA images for %r from %s",
+                            len(images), perturbation, gene_dir,
+                        )
+                        return images
+
+        # ── Fetch from CDN ──────────────────────────────────────────
+        antibodies = get_hpa_antibodies(perturbation)
+        if not antibodies:
+            logging.warning("No HPA antibodies found for %r", perturbation)
+            try:
+                from .resources.hpa_images import build_hpa_subcellular_catalog
+
+                logging.info(
+                    "HPA XML catalog not available; "
+                    "falling back to CDN probe for antibodies"
+                )
+                catalog = build_hpa_subcellular_catalog(genes=[perturbation])
+                if len(catalog) == 0:
+                    return []
+                antibodies = []
+                for _, row in catalog.iterrows():
+                    antibodies.append({
+                        "id": row["antibody"],
+                        "_plate": row["plate"],
+                        "_position": row["position"],
+                        "_sample": row["sample"],
+                    })
+            except Exception:
+                return []
+
+        images = []
+        cache_dir = None
+        if local_dir is not None:
+            cache_dir = _Path(local_dir) / perturbation
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+        for ab in antibodies:
+            if isinstance(ab, dict):
+                ab_id = ab.get("id", "")
+                plate = ab.get("_plate", 1)
+                position = ab.get("_position", "A1")
+                sample = ab.get("_sample", 1)
+            else:
+                ab_id = str(ab)
+                plate, position, sample = 1, "A1", 1
+            try:
+                img = fetch_hpa_if_image(ab_id, plate, position, sample)
+                images.append(img)
+
+                if cache_dir is not None:
+                    _save_hpa_channels(
+                        img, cache_dir, ab_id, plate, position, sample,
+                    )
+            except Exception as exc:
+                logging.warning("Failed to fetch HPA image: %s", exc)
+        if max_images is not None:
+            images = images[:max_images]
+        return images
+
+    @staticmethod
+    def _load_jump_precomputed(
+        perturbation: str,
+        perturbation_type: str | None,
+        plate_type: str | None,
+        profiles_dir: str | None,
+        aggregate: str,
+    ) -> np.ndarray:
+        """Load pre-computed JUMP profiles from parquet."""
+        from pathlib import Path as _Path
+
+        import pandas as pd
+
+        from .resources.jump_metadata import get_jump_gene_mapper
+
+        if plate_type is None:
+            plate_type = "compound" if perturbation_type == "compound" else "crispr"
+
+        fname = f"{plate_type}_standard.parquet"
+        if profiles_dir is not None:
+            pq_path = _Path(profiles_dir) / fname
+        else:
+            pq_path = (
+                _Path(__file__).resolve().parent / "data" / "datasets" / "JUMP" / fname
+            )
+        if not pq_path.exists():
+            raise FileNotFoundError(
+                f"JUMP profile parquet not found at {pq_path}. "
+                "Download it or pass jump_profiles_dir explicitly."
+            )
+
+        df = pd.read_parquet(pq_path)
+
+        meta_cols = [c for c in df.columns if c.startswith("Metadata_")]
+        jcp_col = "Metadata_JCP2022"
+        feature_cols = [c for c in df.columns if not c.startswith("Metadata_")]
+
+        if perturbation.startswith("JCP2022"):
+            mask = df[jcp_col] == perturbation
+        else:
+            mapper = get_jump_gene_mapper(plate_type)
+            inv_mapper = {v: k for k, v in mapper.items()}
+            jcp_id = inv_mapper.get(perturbation)
+            if jcp_id:
+                mask = df[jcp_col] == jcp_id
+            else:
+                sk_col = next(
+                    (c for c in meta_cols if c != jcp_col and "standard" in c.lower()),
+                    None,
+                )
+                if sk_col and sk_col in df.columns:
+                    mask = df[sk_col].astype(str).str.upper() == perturbation.upper()
+                else:
+                    jcp_to_name = pd.Series(mapper)
+                    df["_mapped_name"] = df[jcp_col].map(jcp_to_name).fillna("")
+                    mask = df["_mapped_name"].str.upper() == perturbation.upper()
+                    df.drop(columns=["_mapped_name"], inplace=True)
+
+        subset = df.loc[mask, feature_cols]
+        if subset.empty:
+            raise ValueError(
+                f"Perturbation {perturbation!r} not found in JUMP {plate_type} profiles."
+            )
+
+        if aggregate == "mean":
+            return subset.mean(axis=0).values.astype(np.float32)
+        return subset.iloc[0].values.astype(np.float32)
+
+
+# ------------------------------------------------------------------
+# Module-level helpers for morphological resolution
+# ------------------------------------------------------------------
+
+
+def _load_jump_fov_local(well_meta: dict, local_dir: str) -> np.ndarray:
+    """Load a JUMP field-of-view from local files."""
+    import os
+
+    import numpy as np
+    from PIL import Image
+
+    from embpy.pp.morphology_preprocessing import CELL_PAINTING_CHANNELS
+
+    def _get(row: dict, *keys: str):
+        for k in keys:
+            if k in row and row[k] is not None:
+                return row[k]
+        return None
+
+    plate = _get(well_meta, "plate", "Metadata_Plate")
+    well = _get(well_meta, "well", "Metadata_Well")
+    site = _get(well_meta, "site", "Metadata_Site") or 1
+
+    planes = []
+    for ch in CELL_PAINTING_CHANNELS:
+        pattern = f"{plate}_{well}_{site}_{ch}"
+        found = None
+        for f in os.listdir(local_dir):
+            if pattern in f and os.path.isfile(os.path.join(local_dir, f)):
+                found = os.path.join(local_dir, f)
+                break
+        if found is None:
+            raise FileNotFoundError(
+                f"Channel {ch} not found for {pattern} in {local_dir}"
+            )
+        img = np.asarray(Image.open(found), dtype=np.float32)
+        planes.append(img)
+    return np.stack(planes, axis=0)
+
+
+def _save_hpa_channels(
+    img: np.ndarray,
+    cache_dir,
+    antibody: str,
+    plate,
+    position: str,
+    sample,
+) -> None:
+    """Save a (4, H, W) HPA image as per-channel JPEGs in *cache_dir*."""
+    from pathlib import Path as _Path
+
+    from PIL import Image as _PILImage
+
+    from embpy.resources.hpa_images import HPA_IF_CHANNELS
+
+    cache_dir = _Path(cache_dir)
+    for i, ch in enumerate(HPA_IF_CHANNELS):
+        fname = f"{antibody}_{plate}_{position}_{sample}_{ch}.jpg"
+        dest = cache_dir / fname
+        if dest.exists():
+            continue
+        plane = img[i]
+        _PILImage.fromarray(plane).save(dest)
+
+
+def _resolve_jump_perturbation_fallback(
+    perturbation: str,
+    perturbation_type: str,
+) -> list[dict]:
+    """Try resolving a perturbation using DrugResolver or GeneResolver.
+
+    When the initial ``get_jump_item_location_metadata`` lookup fails for a
+    given name, this function:
+
+    - **Compounds**: uses ``DrugResolver`` to generate name variants
+      (salt-stripping, SMILES resolution, synonym lookup) and retries.
+    - **Genetic perturbations**: uses ``GeneResolver`` to canonicalise the
+      gene symbol and retries.
+    """
+
+    if perturbation_type == "compound":
+        return _resolve_compound_jump_fallback(perturbation)
+    return _resolve_gene_jump_fallback(perturbation)
+
+
+def _resolve_compound_jump_fallback(compound_name: str) -> list[dict]:
+    """Use DrugResolver to find alternate compound names for JUMP lookup."""
+    from .resources.jump_metadata import get_jump_item_location_metadata
+
+    try:
+        from .resources.drug_resolver import DrugResolver
+
+        resolver = DrugResolver(use_rdkit=False, sleep_sec=0.2)
+
+        # 1) Try cleaned name variants (salt stripping, Greek letters, etc.)
+        for variant in resolver._name_variants(compound_name):
+            if variant == compound_name:
+                continue
+            rows = get_jump_item_location_metadata(variant, input_column="standard_key")
+            if rows:
+                logging.info(
+                    "Resolved compound %r via name variant %r", compound_name, variant
+                )
+                return rows
+
+        # 2) Resolve to SMILES, then look up synonyms and try those
+        smiles = resolver.name_to_smiles(compound_name)
+        if smiles:
+            synonyms = resolver.smiles_to_names(smiles, top_k=5)
+            for synonym in synonyms:
+                if synonym.upper() == compound_name.upper():
+                    continue
+                rows = get_jump_item_location_metadata(
+                    synonym,
+                    input_column="standard_key",
+                )
+                if rows:
+                    logging.info(
+                        "Resolved compound %r via synonym %r (SMILES: %s)",
+                        compound_name,
+                        synonym,
+                        smiles,
+                    )
+                    return rows
+
+        # 3) Try SMILES directly as standard_key (some datasets use InChIKey/SMILES)
+        if smiles:
+            rows = get_jump_item_location_metadata(smiles, input_column="standard_key")
+            if rows:
+                logging.info(
+                    "Resolved compound %r via SMILES %r",
+                    compound_name,
+                    smiles,
+                )
+                return rows
+
+    except Exception:
+        logging.debug("DrugResolver fallback failed for compound %r", compound_name)
+
+    return []
+
+
+def _resolve_gene_jump_fallback(gene_symbol: str) -> list[dict]:
+    """Use GeneResolver to canonicalise a gene symbol for JUMP lookup.
+
+    Tries resolving via Ensembl ID -> canonical symbol, then looks up
+    alternate symbols from the MyGene.info API.
+    """
+    from .resources.jump_metadata import get_jump_item_location_metadata
+
+    try:
+        from .resources.gene_resolver import GeneResolver
+
+        resolver = GeneResolver(organism="human")
+        ensembl_id = resolver.symbol_to_ensembl(gene_symbol)
+        if ensembl_id:
+            canonical = resolver.ensembl_to_symbol(ensembl_id)
+            if canonical and canonical.upper() != gene_symbol.upper():
+                rows = get_jump_item_location_metadata(
+                    canonical,
+                    input_column="standard_key",
+                )
+                if rows:
+                    logging.info(
+                        "Resolved gene %r via canonical symbol %r",
+                        gene_symbol,
+                        canonical,
+                    )
+                    return rows
+
+        # Try aliases from mygene
+        try:
+            import mygene
+
+            mg = mygene.MyGeneInfo()
+            result = mg.query(
+                gene_symbol,
+                scopes="symbol,alias",
+                fields="symbol,alias",
+                species="human",
+            )
+            for hit in result.get("hits", []):
+                alt = hit.get("symbol", "")
+                if alt and alt.upper() != gene_symbol.upper():
+                    rows = get_jump_item_location_metadata(
+                        alt,
+                        input_column="standard_key",
+                    )
+                    if rows:
+                        logging.info(
+                            "Resolved gene %r via mygene alias %r",
+                            gene_symbol,
+                            alt,
+                        )
+                        return rows
+        except Exception:
+            pass
+
+    except Exception:
+        logging.debug(
+            "GeneResolver fallback failed for gene %r",
+            gene_symbol,
+        )
+
+    return []

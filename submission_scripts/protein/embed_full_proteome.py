@@ -110,7 +110,7 @@ def _try_load_protein_sequences(data_dir: str | None) -> dict[str, str] | None:
     """Try to load pre-downloaded canonical protein sequences from disk."""
     if data_dir is None:
         return None
-    seq_dir = Path(data_dir) / "sequences"
+    seq_dir = Path(data_dir) / "proteome" / "canonical"
     if not seq_dir.exists():
         return None
     for npz_file in seq_dir.glob("*canonical_proteins*.npz"):
@@ -130,7 +130,7 @@ def _try_load_isoform_sequences(data_dir: str | None) -> dict[str, dict[str, str
     """
     if data_dir is None:
         return None
-    seq_dir = Path(data_dir) / "sequences"
+    seq_dir = Path(data_dir) / "proteome" / "isoforms"
     if not seq_dir.exists():
         return None
     for npz_file in seq_dir.glob("*all_isoforms*.npz"):
