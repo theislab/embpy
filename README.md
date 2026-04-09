@@ -19,146 +19,112 @@ Given a perturbation (genetic, chemical, or morphological) and/or single-cell ex
 ## Architecture
 
 <p align="center">
-  <img src="docs/_static/embpy_architecture_detailed.png" alt="embpy architecture" width="1000"/>
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="docs/_static/embpy_architecture_detailed.svg">
+    <img src="docs/_static/embpy_architecture_detailed.png" alt="embpy architecture" width="1000"/>
+  </picture>
 </p>
 
 <details>
 <summary>Mermaid diagram (click to expand)</summary>
 
 ```mermaid
-flowchart TD
-    subgraph inputs [Input Modalities]
+flowchart LR
+    subgraph inputs [" Input Modalities "]
         direction TB
-        GeneInput["Genetic Perturbations\nGene Symbol | Ensembl ID\nDNA Sequence | Exons/Introns"]
-        ProtInput["Protein Targets\nUniProt ID | Canonical\nIsoforms"]
-        MolInput["Chemical Perturbations\nSMILES | InChI\nDrug Name | PubChem CID"]
-        CellInput["Single-Cell Data\nAnnData | Raw Counts\nLog-normalized"]
-        MorphInput["Morphology Data\nJUMP Cell Painting\nFluorescence Images"]
-        SpeciesInput["Multi-Species\nhuman | mouse | rat\nzebrafish | fly | worm | ..."]
+        GeneInput["Genetic Perturbations\nGene Symbol | Ensembl ID\nDNA Sequence"]
+        ProtInput["Protein Targets\nUniProt ID | Isoforms"]
+        MolInput["Chemical Perturbations\nSMILES | Drug Name\nPubChem CID"]
+        CellInput["Single-Cell Data\nAnnData | Counts"]
+        MorphInput["Morphology Data\nJUMP Cell Painting\nHPA ICC-IF Images"]
+        SpeciesInput["Multi-Species\nhuman | mouse | rat\nzebrafish | fly | ..."]
     end
 
-    subgraph resolvers [Sequence Resolution]
+    subgraph resolution [" Resolution "]
         direction TB
-        GeneRes["GeneResolver\nEnsembl REST | pyensembl\nMyGene.info"]
-        ProtRes["ProteinResolver\nUniProt REST\nMyGene.info"]
-        DrugRes["DrugResolver\nPubChem | NIH Cactus\nCIRpy"]
-        TextRes["TextResolver\nMyGene | NCBI | Ensembl\nUniProt | Wikipedia | PubChem"]
+        subgraph seq_res [Sequence Resolution]
+            GeneRes["GeneResolver\npyensembl | MyGene\nEnsembl REST"]
+            ProtRes["ProteinResolver\nUniProt | MyGene"]
+            DrugRes["DrugResolver\nPubChem | Cactus\nCIRpy | RDKit"]
+            TextRes["TextResolver\n6 knowledge sources"]
+        end
+        subgraph morph_res [Morphology Resolution]
+            JUMPRes["JUMP Resolver\nbroad_babel\njump_portrait"]
+            HPARes["HPA Resolver\nproteinatlas XML\nHPA API"]
+            MorphPrep["Preprocessing\ncell_painting_to_subcell\nprepare_subcell_canvas"]
+        end
+        subgraph ann [Annotation]
+            MolAnn["MoleculeAnnotator\nRDKit | ChEMBL | ChEBI"]
+            GeneAnn["GeneAnnotator\nGTEx | STRING | GWAS"]
+            ProtAnn["ProteinAnnotator\nUniProt | InterPro"]
+            CellAnn["CellLineAnnotator\nCellosaurus | DepMap"]
+        end
     end
 
-    subgraph annotators [Annotation Sources]
+    subgraph models [" Foundation Models (60+) "]
         direction TB
-        MolAnn["MoleculeAnnotator\nRDKit | ChEMBL | ChEBI\nKEGG | PubChem | UniChem"]
-        GeneAnn["GeneAnnotator\nMyGene | GTEx | STRING-DB\nOpen Targets | GWAS Catalog\nDoRothEA"]
-        ProtAnn["ProteinAnnotator\nUniProt JSON | InterPro\nGO Terms"]
-        CellAnn["CellLineAnnotator\nCellosaurus | DepMap\nCell Model Passports | Wikipedia"]
+        DNA["DNA Models\nEnformer | Borzoi | Flashzoi\nEvo 1/1.5/2 | NT v1-v3\nHyenaDNA | GENA-LM | Caduceus"]
+        Prot["Protein Models\nESM-1b/1v | ESM-2 | ESM-C\nESM3 | ProtT5 | Boltz-2"]
+        Mol["Molecule Models\nChemBERTa | MolFormer\nRDKit FP | MiniMol\nMHG-GNN | MolE"]
+        SC["Single-Cell Models\nscGPT | Geneformer | UCE\nTranscriptFormer | Tahoe\nCell2Sentence | scVI | PCA"]
+        Morph["Morphology Models\nSubCell MAE (4 configs)\nSubCell ViT (4 configs)\nJUMP Pre-computed (259d)"]
+        Text["Text Models\nMiniLM | BERT"]
     end
 
-    subgraph dna_models [DNA Models]
-        Enformer["Enformer 250M"]
-        Borzoi["Borzoi v0-v3 200M"]
-        Flashzoi["Flashzoi v0-v3 200M"]
-        Evo["Evo 1/1.5/2 7B-40B"]
-        NT["Nucleotide Transformer\nv1/v2/v3 50M-2.5B"]
-        HyenaDNA["HyenaDNA 1.6M-6.6M"]
-        GENALM["GENA-LM 110M-336M"]
-        Caduceus2["Caduceus 16M"]
-    end
-
-    subgraph prot_models [Protein Models]
-        ESM1["ESM-1b/1v 650M"]
-        ESM2["ESM-2 8M-15B"]
-        ESMC["ESM-C 300M-6B"]
-        ESM3M["ESM3 1.4B-98B"]
-        ProtT5["ProtT5 3B"]
-        BoltzM["Boltz-2 Trunk"]
-    end
-
-    subgraph text_models [Text Models]
-        MiniLM["MiniLM-L6"]
-        BERT["BERT"]
-        TextEmb["embed_description\nvia TextResolver"]
-    end
-
-    subgraph mol_models [Molecule Models]
-        ChemBERTa["ChemBERTa 77M-100M"]
-        MolFormer["MolFormer XL"]
-        RDKitFP["RDKit Fingerprints\nMorgan | MACCS | Torsion"]
-        MiniMolM["MiniMol 10M"]
-        MHGGNN["MHG-GNN"]
-        MolEM["MolE"]
-    end
-
-    subgraph sc_models [Single-Cell Models]
-        scGPTM["scGPT 51M"]
-        GeneformerM["Geneformer v1/v2\n10M-316M"]
-        UCEM["UCE 1.3B"]
-        TFM["TranscriptFormer\n368M-542M"]
-        TahoeM["Tahoe-x1 70M-3B"]
-        C2SM["Cell2Sentence 2B-27B"]
-        PCAM["PCA"]
-        scVIM["scVI | scANVI | totalVI"]
-    end
-
-    subgraph morph_models [Morphology Models]
-        SubCellMAE["SubCell MAE\n4 channel configs"]
-        SubCellViT["SubCell ViT\n4 channel configs"]
-    end
-
-    subgraph strategies [Embedding Strategies]
-        StdPool["Standard: mean | max | cls"]
-        TPMWeight["TPM-Weighted Isoform Average"]
-        AnnWeight["Annotation-Weighted\nResidue Pooling"]
-        ExprCtx["Expression-Context\nConcatenation"]
-        RegionEmb["Region-Specific:\nfull | exons | introns"]
-    end
-
-    subgraph tools [Analysis Tools]
+    subgraph strategies [" Embedding Strategies "]
         direction TB
-        Preproc["Preprocessing\nNormalize | Log1p | HVG | Scale\nCPU or GPU via rapids"]
-        Sim["Similarity\nCosine | Pearson | Spearman\nWasserstein"]
-        Cluster["Clustering\nLeiden | K-means | Spectral"]
-        DimRed["Dim Reduction\nUMAP | t-SNE | PCA"]
-        Activity["Phenotypic Activity\nmAP | Chunked Cosine\nCPU & GPU"]
-        Bench["Benchmarking\nKNN Overlap | Ranking\nMetrics"]
-        Viz["Visualization\nHeatmaps | Clustermaps\nParallel Coords | Radar\nStar Coords | Dendrograms"]
+        StdPool["mean | max | cls"]
+        AttnPool["Attention Pool (1536d)"]
+        TPMWeight["TPM-Weighted Isoform"]
+        AnnWeight["Annotation-Weighted"]
+        RegionEmb["Region: full | exons | introns"]
+        PertAgg["Perturbation Aggregation"]
     end
 
-    subgraph outputBlock [Output]
+    subgraph output [" Output "]
+        direction TB
         ObsmOut[".obsm embeddings"]
         ObsOut[".obs annotations"]
         UnsOut[".uns metadata"]
         NpzOut[".npz matrices"]
     end
 
-    GeneInput --> GeneRes
-    GeneInput --> ProtRes
-    MolInput --> DrugRes
-    CellInput --> sc_models
-    MorphInput --> morph_models
-    SpeciesInput --> GeneRes
-    SpeciesInput --> ProtRes
+    subgraph analysis [" Analysis "]
+        direction TB
+        subgraph tl [embpy.tl]
+            SimTL["Similarity & Distance\ncompute_similarity\ncompute_distance_matrix\ncompute_knn_overlap\nrank_perturbations"]
+            AggTL["Aggregation\npseudobulk_embeddings\nphenocopy_score"]
+            DimTL["Dim Reduction & Clustering\ncompute_umap | compute_tsne\nleiden | cluster_embeddings"]
+            ActTL["Phenotypic Activity\nphenotypic_activity (mAP)\nCPU & GPU"]
+            BenchTL["Benchmarking & Metrics\nbenchmark_embeddings\ncompute_metrics | cell_eval\ndeg_overlap | gene_r2"]
+            MetaTL["Metadata Annotation\nannotate_molecules\nannotate_gene_perturbations\nannotate_proteins\nembed_vcf"]
+        end
+        subgraph pl [embpy.pl]
+            HeatPL["Heatmaps\nsimilarity | distance | correlation\nclustermap | cross-model"]
+            SpacePL["Embedding Space\nUMAP | t-SNE scatter\nfeature panels"]
+            VisPL["Distributions & Comparisons\nnorms | ranking | cell_painting\nparallel coords | radar\nstar coords | dendrograms"]
+        end
+        subgraph pp [embpy.pp]
+            PrepPP["preprocess_counts\nreduce_embeddings\nload_depmap\nmorphology preprocessing"]
+        end
+    end
 
-    GeneRes --> dna_models
-    ProtRes --> prot_models
-    DrugRes --> mol_models
-    TextRes --> text_models
+    inputs --> resolution
+    GeneRes --> DNA
+    GeneRes --> morph_res
+    ProtRes --> Prot
+    DrugRes --> Mol
+    DrugRes --> morph_res
+    TextRes --> Text
+    CellInput --> SC
+    JUMPRes --> MorphPrep
+    HPARes --> MorphPrep
+    MorphPrep --> Morph
 
-    GeneInput --> GeneAnn
-    GeneInput --> TextRes
-    MolInput --> MolAnn
-    MolInput --> TextRes
-    GeneInput --> ProtAnn
-
-    dna_models --> strategies
-    prot_models --> strategies
-    mol_models --> strategies
-    sc_models --> strategies
-    morph_models --> strategies
-    text_models --> strategies
-
-    strategies --> outputBlock
-    annotators --> ObsOut
-    outputBlock --> tools
+    models --> strategies
+    ann --> ObsOut
+    strategies --> output
+    output --> analysis
 ```
 
 </details>
@@ -174,7 +140,7 @@ flowchart TD
 - **Boltz-2 structure embeddings** -- extract trunk representations (single per-residue + pairwise interaction features) from the Boltz-2 biomolecular foundation model
 - **Multi-source annotation** -- `MoleculeAnnotator` (RDKit, ChEMBL, ChEBI, KEGG, PubChem), `GeneAnnotator` (MyGene, GTEx, STRING-DB, Open Targets, GWAS Catalog), `ProteinAnnotator` (UniProt functional metadata, InterPro domains), `CellLineAnnotator` (Cellosaurus, DepMap/CCLE, Cell Model Passports, Wikipedia)
 - **20 visualization functions** in `embpy.pl` -- heatmaps, clustermaps, UMAP/t-SNE, parallel coordinates, radar charts, star coordinates, dendrograms, cross-model comparison
-- **Morphology embeddings** -- SubCell MAE/ViT models for JUMP Cell Painting fluorescence images with 8 model variants across 4 channel configurations
+- **Morphology embeddings** -- SubCell MAE/ViT models for JUMP Cell Painting and HPA fluorescence images with 8 model variants across 4 channel configurations; `embed_morphological()` for single images, `embed_perturbation_morphology()` for perturbation-level embedding with automatic identifier resolution (`GeneResolver` for genes, `DrugResolver` for compounds), image fetching from CDN or local paths, preprocessing, and aggregation; pre-computed JUMP CellProfiler profiles also supported
 - **Phenotypic activity (mAP)** -- memory-efficient chunked cosine similarity with optional GPU acceleration for computing mean average precision on large perturbation screens (e.g. 50K+ wells)
 - **GPU acceleration** via rapids_singlecell for preprocessing, PCA, UMAP, neighbors, and Leiden
 - **Batch processing** with SLURM array job scripts for full-genome embedding
@@ -312,6 +278,40 @@ emb_z = embedder.embed_protein("TP53", model="boltz2_pairwise")
 
 # Both concatenated (~512 dims)
 emb_both = embedder.embed_protein("TP53", model="boltz2_both")
+```
+
+### Morphological embeddings
+
+```python
+from embpy.embedder import BioEmbedder
+
+embedder = BioEmbedder(device="auto")
+
+# Single image embedding (4-channel array or path)
+emb = embedder.embed_morphological(image_array, model="subcell_mae_rybg")
+print(emb.shape)  # (1536,) with attention_pool
+
+# Perturbation-level: average across all JUMP images for a gene
+emb = embedder.embed_perturbation_morphology(
+    "PLK1", perturbation_type="genetic", dataset="jump",
+    source="subcell", aggregate="mean", max_images=5,
+)
+
+# Compound perturbation (DrugResolver resolves name variants automatically)
+emb = embedder.embed_perturbation_morphology(
+    "Latrunculin B", perturbation_type="compound", dataset="jump",
+)
+
+# HPA gene embedding (GeneResolver maps symbol -> Ensembl ID)
+emb = embedder.embed_perturbation_morphology(
+    "TP53", perturbation_type="genetic", dataset="hpa",
+)
+
+# Pre-computed JUMP CellProfiler profiles (no GPU needed)
+emb = embedder.embed_perturbation_morphology(
+    "PLK1", source="precomputed", dataset="jump",
+)
+print(emb.shape)  # (259,) CellProfiler features
 ```
 
 ### Cell line context annotation
@@ -565,14 +565,17 @@ embpy/
     resources/
         gene_resolver.py      # Multi-species gene resolution (Ensembl, MyGene)
         protein_resolver.py   # Multi-species protein resolution (UniProt, MyGene)
+        drug_resolver.py      # Drug name <-> SMILES resolution (PubChem, Cactus, CIRpy)
         text_resolver.py      # Text descriptions from 6 knowledge sources
         molecule_annotator.py # Small molecule annotations (6 sources)
         gene_annotator.py     # Gene annotations (pathways, PPI, diseases -- species-aware)
         protein_annotator.py  # Protein annotations (UniProt, InterPro -- species-aware)
         cellline_annotator.py # Cell line context (Cellosaurus, DepMap, Passports, Wikipedia)
-        drug_resolver.py      # Drug name <-> SMILES resolution
+        jump_metadata.py      # JUMP Cell Painting metadata, gene/compound mapping, FOV fetch
+        hpa_images.py         # HPA subcellular ICC-IF image fetch, catalog, antibody lookup
     pp/
         sc_preprocessing.py   # Single-cell preprocessing (raw/standard pipelines)
+        morphology_preprocessing.py  # Cell Painting channel remapping, SubCell canvas prep
         basic.py              # Perturbation embedding matrix construction
     pl/
         embedding_space.py    # UMAP/t-SNE scatter, all_embeddings, feature panels
@@ -580,15 +583,19 @@ embpy/
         clustering.py         # Leiden overview, composition, dendrogram
         distributions.py      # Embedding distributions, norms, perturbation ranking
         comparisons.py        # Parallel coordinates, radar charts, star coordinates
+        cell_painting.py      # Cell Painting channel-coloured fluorescence visualization
+        benchmark.py          # Benchmark result plots and comparisons
     tl/
-        similarity.py         # Cosine/Pearson/Spearman similarity, KNN overlap
+        similarity.py         # Cosine/Pearson/Spearman similarity, KNN overlap, pseudobulk
         activity.py           # Phenotypic activity (mAP) with chunked cosine, CPU/GPU
         dimred.py             # UMAP, t-SNE (CPU/GPU)
         clustering.py         # Leiden, k-means, spectral (CPU/GPU)
         weighted_protein_embedding.py # TPM-weighted, annotation-weighted, expression-context
-        metrics.py            # Benchmarking metrics
+        metrics.py            # Benchmarking metrics, DEG overlap, phenocopy score
+        benchmark.py          # Cross-validated regression benchmarks
         pipeline.py           # Automated evaluation pipelines
         metadata.py           # pertpy-based metadata annotation
+        snp_utils.py          # SNP context extraction, VCF embedding
 ```
 
 ## Release Notes
