@@ -19,7 +19,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-import duckdb
 import numpy as np
 
 
@@ -110,6 +109,8 @@ def get_jump_item_location_metadata(
     JOIN read_parquet('{index_path}')
     USING (Metadata_Source, Metadata_Plate, Metadata_Well)
     """
+    import duckdb
+
     with duckdb.connect(database=":memory:") as con:
         table = con.execute(sql).fetch_arrow_table()
     return table.to_pylist()
