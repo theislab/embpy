@@ -76,6 +76,137 @@ _CP_TO_SUBCELL_INDICES: tuple[int, ...] = (4, 1, 0, 3)
 """Indices into CELL_PAINTING_CHANNELS that produce SUBCELL_CHANNELS order."""
 
 # ---------------------------------------------------------------------------
+# Canonical Cell Painting fluorescence colours (RGB, 0-1)
+# ---------------------------------------------------------------------------
+
+CELL_PAINTING_COLORS: dict[str, tuple[float, float, float]] = {
+    "DNA":  (0.0, 0.4, 1.0),
+    "ER":   (0.0, 1.0, 0.0),
+    "RNA":  (1.0, 1.0, 0.0),
+    "AGP":  (1.0, 0.0, 0.0),
+    "Mito": (1.0, 0.0, 1.0),
+}
+"""Canonical pseudo-colour mapping for the 5 Cell Painting channels.
+
+Matches the fluorophore emission profiles used in the standard
+protocol (Bray et al. 2016, Cimini et al. 2023 *Nature Protocols*):
+
+=====  =====================  =========
+Chan   Dye                    Colour
+=====  =====================  =========
+DNA    Hoechst 33342          Blue
+ER     Concanavalin A / 488   Green
+RNA    SYTO 14                Yellow
+AGP    Phalloidin + WGA / 594 Red
+Mito   MitoTracker Deep Red   Magenta
+=====  =====================  =========
+"""
+
+# ---------------------------------------------------------------------------
+# Composite image helpers
+# ---------------------------------------------------------------------------
+
+
+def normalize_channels(
+    images: dict[str, np.ndarray] | np.ndarray,
+    channels: Sequence[str] | None = None,
+    *,
+    clip_percentile: float = 0.0,
+) -> dict[str, np.ndarray]:
+    """Min-max normalise each channel independently to [0, 1].
+
+    Parameters
+    ----------
+    images
+        Either a ``{channel_name: 2-D array}`` dict or a single array of
+        shape ``(C, H, W)`` (channel-first).  When an array is given,
+        *channels* must list the channel names in order.
+    channels
+        Channel names corresponding to axis-0 of *images* when it is an
+        array.  Ignored when *images* is already a dict.
+    clip_percentile
+        If > 0, clip each channel at this and ``100 - this`` percentile
+        before normalising.  Useful for suppressing hot pixels.
+
+    Returns
+    -------
+    Dict mapping channel name to a ``float64`` array in [0, 1].
+    """
+    if isinstance(images, np.ndarray):
+        if channels is None:
+            raise ValueError(
+                "channels must be provided when images is an ndarray"
+            )
+        if images.ndim != 3 or images.shape[0] != len(channels):
+            raise ValueError(
+                f"Expected array of shape ({len(channels)}, H, W), "
+                f"got {images.shape}"
+            )
+        images = {ch: images[i] for i, ch in enumerate(channels)}
+
+    result: dict[str, np.ndarray] = {}
+    for ch, img in images.items():
+        arr = img.astype(np.float64)
+        if clip_percentile > 0:
+            lo = np.percentile(arr, clip_percentile)
+            hi = np.percentile(arr, 100.0 - clip_percentile)
+            arr = np.clip(arr, lo, hi)
+        else:
+            lo, hi = arr.min(), arr.max()
+        if hi > lo:
+            arr = (arr - lo) / (hi - lo)
+        else:
+            arr = np.zeros_like(arr)
+        result[ch] = arr
+    return result
+
+
+def composite_cell_painting(
+    images: dict[str, np.ndarray] | np.ndarray,
+    channels: Sequence[str] | None = None,
+    *,
+    colors: dict[str, tuple[float, float, float]] | None = None,
+    clip_percentile: float = 0.0,
+) -> np.ndarray:
+    """Build an additive RGB composite from Cell Painting channels.
+
+    Parameters
+    ----------
+    images
+        Either a ``{channel_name: 2-D array}`` dict or a ``(C, H, W)``
+        array.  When an array, *channels* lists the names in order.
+    channels
+        Channel names for the array form.  Ignored for dicts.
+    colors
+        Per-channel ``(R, G, B)`` colour tuples.  Defaults to
+        :data:`CELL_PAINTING_COLORS`.
+    clip_percentile
+        Forwarded to :func:`normalize_channels`.
+
+    Returns
+    -------
+    ``(H, W, 3)`` float64 array in [0, 1] suitable for ``plt.imshow``.
+    """
+    if colors is None:
+        colors = CELL_PAINTING_COLORS
+
+    normed = normalize_channels(images, channels, clip_percentile=clip_percentile)
+
+    composite: np.ndarray | None = None
+    for ch, img in normed.items():
+        r, g, b = colors.get(ch, (1.0, 1.0, 1.0))
+        plane = np.stack([img * r, img * g, img * b], axis=-1)
+        if composite is None:
+            composite = plane
+        else:
+            composite = composite + plane
+
+    if composite is None:
+        raise ValueError("No channels provided")
+    return np.clip(composite, 0.0, 1.0)
+
+
+# ---------------------------------------------------------------------------
 # Cell Painting -> SubCell channel remapping
 # ---------------------------------------------------------------------------
 

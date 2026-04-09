@@ -30,3 +30,4 @@ from .comparisons import (
     tsne_feature_panel,
 )
 from .benchmark import plot_benchmark, plot_benchmark_comparison
+from .cell_painting import plot_cell_painting

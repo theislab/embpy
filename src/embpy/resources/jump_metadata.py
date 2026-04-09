@@ -1,13 +1,17 @@
-"""JUMP Cell Painting image location queries and FOV fetching.
- 
+"""JUMP Cell Painting metadata, gene mapping, and FOV fetching.
+
 ``jump-portrait`` 0.1.0 calls ``FROM meta_wells`` in DuckDB while ``broad_babel.data.get_table``
 returns a filesystem path string, which triggers a DuckDB replacement-scan error. This module
 reimplements the metadata join using ``read_csv_auto`` on that path so image lookup works with
 current ``broad-babel`` and ``jump-portrait`` releases.
 
-It also provides :func:`fetch_jump_fov` to download all 5 Cell Painting channels
-for a single well/site and return them as a stacked ``(5, H, W)`` array in the
-standard ``(DNA, ER, RNA, AGP, Mito)`` order.
+It also provides:
+
+* :func:`get_jump_gene_mapper` -- thin wrapper around ``broad_babel`` to obtain a
+  ``{JCP2022: gene_symbol}`` dictionary for a given plate type.
+* :func:`fetch_jump_fov` -- download all 5 Cell Painting channels for a single
+  well/site and return them as a stacked ``(5, H, W)`` array in the standard
+  ``(DNA, ER, RNA, AGP, Mito)`` order.
 """
 
 from __future__ import annotations
@@ -17,6 +21,43 @@ from typing import Any
 
 import duckdb
 import numpy as np
+
+
+def get_jump_gene_mapper(
+    plate_type: str = "crispr",
+) -> dict[str, str]:
+    """Return a ``{JCP2022_id: gene_symbol}`` mapping for a JUMP plate type.
+
+    Thin wrapper around :func:`broad_babel.query.get_mapper` that fixes the
+    column arguments to the JUMP convention so callers do not need to
+    remember the ``broad-babel`` API.
+
+    Parameters
+    ----------
+    plate_type
+        JUMP plate type to query, e.g. ``"crispr"`` (default), ``"orf"``,
+        or ``"compound"``.
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping from JCP2022 identifiers to standard gene symbols
+        (or compound names for ``"compound"`` plates).
+
+    Examples
+    --------
+    >>> mapper = get_jump_gene_mapper()          # CRISPR plates
+    >>> mapper["JCP2022_807021"]
+    'TERT'
+    >>> mapper_orf = get_jump_gene_mapper("orf")  # ORF overexpression plates
+    """
+    from broad_babel.query import get_mapper
+
+    return get_mapper(
+        query=plate_type,
+        input_column="plate_type",
+        output_columns="JCP2022,standard_key",
+    )
 
 
 def get_jump_item_location_metadata(

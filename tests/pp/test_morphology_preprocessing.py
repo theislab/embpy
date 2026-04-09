@@ -13,16 +13,19 @@ torch = pytest.importorskip("torch")
 
 from embpy.pp.morphology_preprocessing import (
     CELL_PAINTING_CHANNELS,
+    CELL_PAINTING_COLORS,
     SUBCELL_CANVAS_HEIGHT,
     SUBCELL_CANVAS_WIDTH,
     SUBCELL_CHANNELS,
     SUBCELL_TARGET_NM_PER_PIXEL,
     bbox_from_mask,
     cell_painting_to_subcell,
+    composite_cell_painting,
     crop_spatial,
     crop_to_mask,
     max_projection_z,
     max_projection_z_multichannel,
+    normalize_channels,
     prepare_subcell_canvas,
     rescale_to_target_nm_per_pixel,
     resize_to_canvas,
@@ -291,3 +294,112 @@ class TestPngIO:
         assert len(paths) == 2
         loaded = load_channels_from_pngs(paths, channel_axis="last")
         assert loaded.shape == (64, 64, 2)
+
+
+# ---- Cell Painting colour constants -----------------------------------------
+
+class TestCellPaintingColors:
+    def test_all_channels_have_colors(self):
+        for ch in CELL_PAINTING_CHANNELS:
+            assert ch in CELL_PAINTING_COLORS
+
+    def test_color_values_are_rgb_tuples(self):
+        for ch, rgb in CELL_PAINTING_COLORS.items():
+            assert len(rgb) == 3
+            for c in rgb:
+                assert 0.0 <= c <= 1.0
+
+
+# ---- normalize_channels -----------------------------------------------------
+
+class TestNormalizeChannels:
+    def test_dict_input(self):
+        imgs = {
+            "DNA": np.array([[10.0, 20.0], [30.0, 40.0]]),
+            "ER":  np.array([[0.0, 100.0], [200.0, 300.0]]),
+        }
+        normed = normalize_channels(imgs)
+        for ch in ("DNA", "ER"):
+            assert normed[ch].min() == pytest.approx(0.0)
+            assert normed[ch].max() == pytest.approx(1.0)
+            assert normed[ch].dtype == np.float64
+
+    def test_array_input(self):
+        arr = RNG.integers(0, 1000, size=(3, 16, 16)).astype(np.float32)
+        ch_names = ["DNA", "ER", "RNA"]
+        normed = normalize_channels(arr, ch_names)
+        assert set(normed.keys()) == set(ch_names)
+        for img in normed.values():
+            assert img.min() >= 0.0
+            assert img.max() <= 1.0
+
+    def test_array_requires_channels(self):
+        with pytest.raises(ValueError, match="channels must be provided"):
+            normalize_channels(np.zeros((3, 8, 8)))
+
+    def test_array_shape_mismatch(self):
+        with pytest.raises(ValueError, match="Expected array of shape"):
+            normalize_channels(np.zeros((3, 8, 8)), ["a", "b"])
+
+    def test_constant_channel(self):
+        imgs = {"DNA": np.full((8, 8), 42.0)}
+        normed = normalize_channels(imgs)
+        np.testing.assert_array_equal(normed["DNA"], np.zeros((8, 8)))
+
+    def test_clip_percentile(self):
+        arr = np.zeros((1, 100, 1))
+        arr[0, :, 0] = np.arange(100, dtype=float)
+        normed = normalize_channels(arr, ["ch0"], clip_percentile=10.0)
+        assert normed["ch0"].min() == pytest.approx(0.0)
+        assert normed["ch0"].max() == pytest.approx(1.0)
+
+
+# ---- composite_cell_painting ------------------------------------------------
+
+class TestCompositeCellPainting:
+    def _make_images(self, h=32, w=32):
+        return {ch: RNG.random((h, w)) * 500 for ch in CELL_PAINTING_CHANNELS}
+
+    def test_output_shape_and_range(self):
+        imgs = self._make_images()
+        comp = composite_cell_painting(imgs)
+        assert comp.shape == (32, 32, 3)
+        assert comp.dtype == np.float64
+        assert comp.min() >= 0.0
+        assert comp.max() <= 1.0
+
+    def test_array_input(self):
+        arr = RNG.random((5, 16, 16)).astype(np.float32) * 1000
+        comp = composite_cell_painting(arr, list(CELL_PAINTING_CHANNELS))
+        assert comp.shape == (16, 16, 3)
+        assert comp.min() >= 0.0
+        assert comp.max() <= 1.0
+
+    def test_single_channel_matches_color(self):
+        h, w = 8, 8
+        imgs = {"DNA": np.arange(h * w, dtype=float).reshape(h, w)}
+        colors = {"DNA": (0.0, 0.0, 1.0)}
+        comp = composite_cell_painting(imgs, colors=colors)
+        np.testing.assert_allclose(comp[..., 0], 0.0)
+        np.testing.assert_allclose(comp[..., 1], 0.0)
+        assert comp[..., 2].max() == pytest.approx(1.0)
+        assert comp[..., 2].min() == pytest.approx(0.0)
+
+    def test_custom_colors(self):
+        imgs = {"X": np.arange(16, dtype=float).reshape(4, 4)}
+        comp = composite_cell_painting(imgs, colors={"X": (1.0, 0.5, 0.0)})
+        np.testing.assert_allclose(comp[-1, -1], [1.0, 0.5, 0.0])
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError, match="No channels"):
+            composite_cell_painting({})
+
+    def test_additive_blend(self):
+        h, w = 4, 4
+        imgs = {
+            "A": np.arange(h * w, dtype=float).reshape(h, w),
+            "B": np.arange(h * w, dtype=float).reshape(h, w),
+        }
+        colors = {"A": (1.0, 0.0, 0.0), "B": (0.0, 1.0, 0.0)}
+        comp = composite_cell_painting(imgs, colors=colors)
+        np.testing.assert_allclose(comp[-1, -1], [1.0, 1.0, 0.0])

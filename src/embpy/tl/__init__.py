@@ -4,6 +4,7 @@ from .similarity import (
     compute_distance_matrix,
     compute_knn_overlap,
     compute_similarity,
+    pseudobulk_embeddings,
     rank_perturbations,
 )
 

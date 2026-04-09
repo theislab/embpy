@@ -214,6 +214,24 @@ class GeneAnnotator:
     # 2. Tissue & Expression Context
     # ==================================================================
 
+    def _resolve_gtex_gencode_id(self, gene: str) -> str | None:
+        """Resolve a gene to its versioned GENCODE ID used by GTEx.
+
+        The GTEx expression API requires a versioned GENCODE ID
+        (e.g. ``ENSG00000165704.14``) from GENCODE v26.  We query the
+        GTEx reference endpoint which maps symbols / Ensembl IDs to the
+        correct versioned ID.
+        """
+        symbol = self._resolve_symbol(gene)
+        query = symbol or gene
+        data = _get_json(
+            f"{GTEX_API}/reference/gene",
+            params={"geneId": query},
+        )
+        if data and data.get("data"):
+            return data["data"][0].get("gencodeId")
+        return None
+
     def get_tissue_expression(self, gene: str) -> list[dict[str, Any]]:
         """Get tissue expression profile from GTEx (human only).
 
@@ -230,16 +248,16 @@ class GeneAnnotator:
             logger.debug("GTEx is human-only; skipping for organism '%s'", self.organism)
             return []
 
-        ensembl_id = self._resolve_ensembl_id(gene)
-        if not ensembl_id:
-            logger.debug("Could not resolve %s to Ensembl ID for GTEx", gene)
+        gencode_id = self._resolve_gtex_gencode_id(gene)
+        if not gencode_id:
+            logger.debug("Could not resolve %s to GTEx GENCODE ID", gene)
             return []
 
         self._sleep()
         data = _get_json(
             f"{GTEX_API}/expression/medianGeneExpression",
             params={
-                "gencodeId": ensembl_id,
+                "gencodeId": gencode_id,
                 "datasetId": "gtex_v8",
             },
         )
@@ -267,7 +285,8 @@ class GeneAnnotator:
 
         Returns
         -------
-        Dict with ``locations``, ``reliability``, and ``cell_line``.
+        Dict with ``locations`` (list of ``{location, is_main}`` dicts),
+        ``reliability``, and ``source``.
         """
         if not self._is_human:
             logger.debug("HPA is human-only; skipping for organism '%s'", self.organism)
@@ -287,20 +306,27 @@ class GeneAnnotator:
         if isinstance(data, list) and data:
             data = data[0]
 
-        subcell = data.get("Subcellular location", [])
-        if not subcell:
-            return {"locations": [], "source": "HPA"}
+        main_locs = set(data.get("Subcellular main location", []))
+        all_locs = data.get("Subcellular location", [])
+        reliability = data.get("Reliability (IF)", "")
+
+        if not all_locs:
+            return {"locations": [], "reliability": reliability, "source": "HPA"}
 
         locations = []
-        for entry in subcell if isinstance(subcell, list) else [subcell]:
-            loc = entry if isinstance(entry, dict) else {}
-            locations.append({
-                "location": loc.get("location", ""),
-                "reliability": loc.get("reliability", ""),
-                "enhanced": loc.get("enhanced", False),
-                "supported": loc.get("supported", False),
-            })
-        return {"locations": locations, "source": "HPA"}
+        for entry in all_locs if isinstance(all_locs, list) else [all_locs]:
+            if isinstance(entry, str):
+                locations.append({
+                    "location": entry,
+                    "is_main": entry in main_locs,
+                })
+            elif isinstance(entry, dict):
+                locations.append({
+                    "location": entry.get("location", str(entry)),
+                    "is_main": entry.get("location", "") in main_locs,
+                })
+
+        return {"locations": locations, "reliability": reliability, "source": "HPA"}
 
     # ==================================================================
     # 3. Interaction Networks
@@ -697,9 +723,13 @@ class GeneAnnotator:
             n_tfs_col.append(len(tfs))
 
             tissues = ann.get("tissue_expression", [])
-            top_tissue_col.append(
-                tissues[0]["tissue_name"] if tissues else ""
-            )
+            if tissues:
+                top = tissues[0]
+                top_tissue_col.append(
+                    top.get("tissue_name") or top.get("tissue", "")
+                )
+            else:
+                top_tissue_col.append("")
 
         adata.obs["gene_n_pathways"] = n_pathways_col
         adata.obs["gene_n_ppi_partners"] = n_ppi_col
