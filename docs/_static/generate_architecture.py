@@ -3,471 +3,396 @@
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.patches import FancyBboxPatch, FancyArrowPatch
-import numpy as np
+from matplotlib.patches import FancyBboxPatch
+import os
 
-# ── Colour palette ──────────────────────────────────────────────────────
-C = {
-    "input":      "#4A90D9",
-    "resolver":   "#7B68EE",
-    "annotator":  "#9B59B6",
-    "model_dna":  "#E74C3C",
-    "model_prot": "#E67E22",
-    "model_mol":  "#F1C40F",
-    "model_sc":   "#2ECC71",
-    "model_morph":"#1ABC9C",
-    "model_text": "#3498DB",
-    "strategy":   "#95A5A6",
-    "output":     "#34495E",
-    "analysis_tl":"#D4E6F1",
-    "analysis_pl":"#D5F5E3",
-    "analysis_pp":"#FDEBD0",
-    "bg":         "#FFFFFF",
-    "header":     "#2C3E50",
-    "arrow":      "#7F8C8D",
-    "morph_res":  "#16A085",
+OUT_DIR = os.path.dirname(os.path.abspath(__file__))
+FIG_W, FIG_H = 30, 18
+DPI = 180
+
+# ── Colour palette ──────────────────────────────────────────────────
+PAL = {
+    "input":    {"hdr": "#2563eb", "bg": "#eff6ff", "accent": "#1d4ed8", "bdr": "#93c5fd"},
+    "resolve":  {"hdr": "#059669", "bg": "#ecfdf5", "accent": "#047857", "bdr": "#6ee7b7"},
+    "model":    {"hdr": "#7c3aed", "bg": "#f5f3ff", "accent": "#6d28d9", "bdr": "#c4b5fd"},
+    "output":   {"hdr": "#d97706", "bg": "#fffbeb", "accent": "#b45309", "bdr": "#fcd34d"},
+    "analysis": {"hdr": "#dc2626", "bg": "#fef2f2", "accent": "#b91c1c", "bdr": "#fca5a5"},
+    "pp":       {"hdr": "#0891b2", "bg": "#ecfeff", "accent": "#0e7490", "bdr": "#67e8f9"},
 }
+TXT = {"dark": "#1e293b", "mid": "#475569", "sub": "#64748b", "muted": "#94a3b8"}
 
-# ── Text colour for each bg ─────────────────────────────────────────────
-def text_col(bg):
-    r, g, b = matplotlib.colors.to_rgb(bg)
-    lum = 0.299 * r + 0.587 * g + 0.114 * b
-    return "white" if lum < 0.55 else "#2C3E50"
 
-# ── Figure setup ────────────────────────────────────────────────────────
-fig, ax = plt.subplots(figsize=(32, 18), dpi=250)
-ax.set_xlim(0, 32)
-ax.set_ylim(0, 18)
-ax.set_aspect("equal")
-ax.axis("off")
-fig.patch.set_facecolor(C["bg"])
+def main():
+    fig = plt.figure(figsize=(FIG_W, FIG_H), dpi=DPI)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, FIG_W)
+    ax.set_ylim(0, FIG_H)
+    ax.axis("off")
+    fig.patch.set_facecolor("#fafbfc")
 
-# ── Drawing helpers ─────────────────────────────────────────────────────
-def draw_box(x, y, w, h, colour, label, fontsize=7, alpha=0.92, bold=False,
-             sublabel=None, sublabel_size=5.5, radius=0.15):
-    box = FancyBboxPatch(
-        (x, y), w, h,
-        boxstyle=f"round,pad=0.05,rounding_size={radius}",
-        facecolor=colour, edgecolor="white", linewidth=0.6, alpha=alpha,
-        transform=ax.transData, zorder=2,
+    # ── Helpers ──────────────────────────────────────────────────
+    def rbox(x, y, w, h, fc="white", ec="#e2e8f0", lw=1.5, zorder=2, alpha=1):
+        b = FancyBboxPatch(
+            (x, y), w, h, boxstyle="round,pad=0.12",
+            fc=fc, ec=ec, lw=lw, zorder=zorder, alpha=alpha,
+        )
+        ax.add_patch(b)
+
+    def hbar(x, y, w, h, color, label, fs=13):
+        rbox(x, y, w, h, fc=color, ec="none", zorder=3)
+        ax.text(
+            x + w / 2, y + h / 2, label, ha="center", va="center",
+            fontsize=fs, fontweight="bold", color="white", zorder=4,
+        )
+
+    def draw_arrow(x1, y, x2):
+        ax.annotate(
+            "", xy=(x2, y), xytext=(x1, y),
+            arrowprops=dict(
+                arrowstyle="-|>", color=TXT["muted"], lw=2.8,
+                mutation_scale=20,
+            ),
+            zorder=1,
+        )
+
+    def divider(x, y, w, color, alpha=0.25):
+        ax.plot([x, x + w], [y, y], color=color, lw=1, alpha=alpha, zorder=3)
+
+    # ── Title banner ─────────────────────────────────────────────
+    rbox(0.3, FIG_H - 1.7, FIG_W - 0.6, 1.5, fc="#1e293b", ec="#334155", lw=2, zorder=5)
+    ax.text(
+        FIG_W / 2, FIG_H - 0.65, "embpy",
+        fontsize=42, fontweight="bold", color="white",
+        ha="center", va="center", zorder=6, fontstyle="italic",
     )
-    ax.add_patch(box)
-    weight = "bold" if bold else "normal"
-    tc = text_col(colour)
-    if sublabel:
-        ax.text(x + w / 2, y + h * 0.62, label, ha="center", va="center",
-                fontsize=fontsize, fontweight=weight, color=tc, zorder=3)
-        ax.text(x + w / 2, y + h * 0.30, sublabel, ha="center", va="center",
-                fontsize=sublabel_size, color=tc, alpha=0.85, zorder=3,
-                fontstyle="italic")
-    else:
-        ax.text(x + w / 2, y + h / 2, label, ha="center", va="center",
-                fontsize=fontsize, fontweight=weight, color=tc, zorder=3)
-    return (x, y, w, h)
-
-def draw_column_header(x, y, w, label, colour=C["header"], fontsize=9):
-    ax.text(x + w / 2, y, label, ha="center", va="bottom",
-            fontsize=fontsize, fontweight="bold", color=colour, zorder=4)
-
-def draw_section_bg(x, y, w, h, colour, alpha=0.12, label=None, label_size=6.5):
-    box = FancyBboxPatch(
-        (x, y), w, h,
-        boxstyle="round,pad=0.08,rounding_size=0.2",
-        facecolor=colour, edgecolor=matplotlib.colors.to_rgba(colour, 0.35),
-        linewidth=0.8, alpha=alpha, zorder=0,
+    ax.text(
+        FIG_W / 2, FIG_H - 1.25,
+        "Unified Biological Embedding Framework  --  60+ models, 20+ databases, scanpy-style API",
+        fontsize=14, color="#94a3b8", ha="center", va="center", zorder=6,
     )
-    ax.add_patch(box)
-    if label:
-        ax.text(x + 0.12, y + h - 0.15, label, fontsize=label_size,
-                fontweight="bold", color=matplotlib.colors.to_rgba(colour, 0.9),
-                va="top", zorder=1)
 
-def arrow(x1, y1, x2, y2, colour=C["arrow"], lw=0.7, style="-|>"):
-    ax.annotate("", xy=(x2, y2), xytext=(x1, y1),
-                arrowprops=dict(arrowstyle=style, color=colour, lw=lw,
-                                connectionstyle="arc3,rad=0.0"),
-                zorder=1)
+    # ── Layout constants ─────────────────────────────────────────
+    top = FIG_H - 2.1
+    bot = 0.5
+    card_h = top - bot
+    aw = 0.7  # arrow zone width
 
-def arrow_curve(x1, y1, x2, y2, colour=C["arrow"], lw=0.7, rad=0.15):
-    ax.annotate("", xy=(x2, y2), xytext=(x1, y1),
-                arrowprops=dict(arrowstyle="-|>", color=colour, lw=lw,
-                                connectionstyle=f"arc3,rad={rad}"),
-                zorder=1)
+    c1x, c1w = 0.4, 3.4
+    a1 = c1x + c1w + 0.05
+    c2x, c2w = a1 + aw + 0.05, 4.6
+    a2 = c2x + c2w + 0.05
+    c3x, c3w = a2 + aw + 0.05, 8.6
+    a3 = c3x + c3w + 0.05
+    c4x, c4w = a3 + aw + 0.05, 3.0
+    a4 = c4x + c4w + 0.05
+    c5x, c5w = a4 + aw + 0.05, FIG_W - (a4 + aw + 0.05) - 0.4
 
-# ── Layout constants ────────────────────────────────────────────────────
-bw = 3.0    # box width
-bh = 0.55   # box height
-gap = 0.18  # vertical gap between boxes
-col_gap = 0.55  # horizontal gap between columns
+    mid_y = bot + card_h / 2
+    for ax_start in (a1, a2, a3, a4):
+        draw_arrow(ax_start, mid_y, ax_start + aw)
 
-# Column x positions
-cx = {
-    "input":    0.5,
-    "resolve":  4.2,
-    "models":   9.0,
-    "strategy": 15.0,
-    "output":   19.0,
-    "analysis": 22.5,
-}
+    # =================================================================
+    #  COLUMN 1 -- INPUT MODALITIES
+    # =================================================================
+    p = PAL["input"]
+    rbox(c1x, bot, c1w, card_h, fc=p["bg"], ec=p["bdr"], lw=2)
+    hbar(c1x, bot + card_h - 0.65, c1w, 0.65, p["hdr"], "INPUT", fs=13)
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# COLUMN 1: INPUTS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-x = cx["input"]
-top = 16.5
-draw_column_header(x, top + 0.15, bw, "Input Modalities")
+    inputs = [
+        ("Gene symbols", "PLK1, TP53, BRCA1"),
+        ("Protein seqs", "MTEYKLVVVGA..."),
+        ("SMILES", "CC(=O)Oc1ccc..."),
+        ("DNA sequences", "ATCGATCG..."),
+        ("Free text", "Tumor suppressor p53..."),
+        ("Single-cell", "AnnData objects"),
+        ("Images", "Cell Painting / HPA IF"),
+    ]
+    yy = bot + card_h - 1.25
+    for label, ex in inputs:
+        ax.text(c1x + 0.25, yy, label, fontsize=10, fontweight="bold",
+                color=p["accent"], va="top", zorder=4)
+        ax.text(c1x + 0.25, yy - 0.4, ex, fontsize=7.5,
+                color=TXT["sub"], va="top", zorder=4, fontstyle="italic")
+        yy -= 1.25
+        if yy > bot + 0.5:
+            divider(c1x + 0.2, yy + 0.35, c1w - 0.4, p["bdr"])
 
-inputs_data = [
-    ("Genetic Perturbations", "Gene Symbol | Ensembl ID | DNA Seq"),
-    ("Protein Targets", "UniProt ID | Isoforms"),
-    ("Chemical Perturbations", "SMILES | Drug Name | PubChem CID"),
-    ("Single-Cell Data", "AnnData | Raw / Log-normalized"),
-    ("Morphology Data", "JUMP Cell Painting | HPA ICC-IF"),
-    ("Multi-Species Support", "human | mouse | rat | fly | worm | ..."),
-]
-input_boxes = []
-for i, (lab, sub) in enumerate(inputs_data):
-    by = top - (i + 1) * (bh + gap)
-    b = draw_box(x, by, bw, bh, C["input"], lab, fontsize=6.5, bold=True,
-                 sublabel=sub, sublabel_size=5)
-    input_boxes.append(b)
+    # Small BioEmbedder badge
+    badge_y = bot + 0.15
+    rbox(c1x + 0.3, badge_y, c1w - 0.6, 0.55, fc="#1e293b", ec="#334155", lw=1, zorder=5)
+    ax.text(c1x + c1w / 2, badge_y + 0.27, "BioEmbedder",
+            ha="center", va="center", fontsize=9, fontweight="bold",
+            color="white", zorder=6, fontstyle="italic")
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# COLUMN 2: RESOLUTION & ANNOTATION
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-x = cx["resolve"]
-draw_column_header(x, top + 0.15, bw, "Resolution & Annotation")
+    # =================================================================
+    #  COLUMN 2 -- RESOLUTION & RESOURCES
+    # =================================================================
+    p = PAL["resolve"]
+    rbox(c2x, bot, c2w, card_h, fc=p["bg"], ec=p["bdr"], lw=2)
+    hbar(c2x, bot + card_h - 0.65, c2w, 0.65, p["hdr"], "RESOLUTION & RESOURCES", fs=12)
 
-# Sequence resolvers
-res_top = top - 0.1
-draw_section_bg(x - 0.1, res_top - 4 * (bh + gap) - 0.1, bw + 0.2,
-                4 * (bh + gap) + 0.15, C["resolver"], alpha=0.08,
-                label="Sequence Resolution")
+    yy = bot + card_h - 1.2
 
-resolvers_data = [
-    ("GeneResolver", "pyensembl | MyGene | Ensembl REST"),
-    ("ProteinResolver", "UniProt REST | MyGene.info"),
-    ("DrugResolver", "PubChem | NIH Cactus | CIRpy | RDKit"),
-    ("TextResolver", "MyGene | NCBI | UniProt | Wikipedia"),
-]
-resolver_boxes = []
-for i, (lab, sub) in enumerate(resolvers_data):
-    by = res_top - (i + 1) * (bh + gap)
-    b = draw_box(x, by, bw, bh, C["resolver"], lab, fontsize=6.5, bold=True,
-                 sublabel=sub, sublabel_size=5)
-    resolver_boxes.append(b)
+    # -- Resolvers
+    ax.text(c2x + 0.2, yy, "Resolvers", fontsize=11, fontweight="bold",
+            color=p["accent"], va="top", zorder=4)
+    yy -= 0.45
+    resolvers = [
+        ("GeneResolver", "pyensembl, MyGene, Ensembl REST"),
+        ("ProteinResolver", "UniProt REST, isoform mapping"),
+        ("DrugResolver", "PubChem, name-to-SMILES"),
+        ("TextResolver", "NCBI, Wikipedia, UniProt"),
+    ]
+    for name, detail in resolvers:
+        ax.text(c2x + 0.35, yy, name, fontsize=9.5, fontweight="bold",
+                color=TXT["dark"], va="top", zorder=4)
+        ax.text(c2x + 0.35, yy - 0.32, detail, fontsize=7.5,
+                color=TXT["sub"], va="top", zorder=4)
+        yy -= 0.78
 
-# Morphology resolvers
-morph_res_top = res_top - 4 * (bh + gap) - 0.35
-draw_section_bg(x - 0.1, morph_res_top - 3 * (bh + gap) - 0.1, bw + 0.2,
-                3 * (bh + gap) + 0.15, C["morph_res"], alpha=0.08,
-                label="Morphology Resolution")
+    yy -= 0.15
+    divider(c2x + 0.2, yy + 0.1, c2w - 0.4, p["hdr"], alpha=0.4)
+    yy -= 0.2
 
-morph_res_data = [
-    ("JUMP Resolver", "broad_babel | jump_portrait | DuckDB"),
-    ("HPA Resolver", "proteinatlas.xml | HPA JSON API"),
-    ("Morph. Preprocessing", "cell_painting_to_subcell | canvas prep"),
-]
-morph_res_boxes = []
-for i, (lab, sub) in enumerate(morph_res_data):
-    by = morph_res_top - (i + 1) * (bh + gap)
-    b = draw_box(x, by, bw, bh, C["morph_res"], lab, fontsize=6.5, bold=True,
-                 sublabel=sub, sublabel_size=5)
-    morph_res_boxes.append(b)
+    # -- Annotators
+    ax.text(c2x + 0.2, yy, "Annotators", fontsize=11, fontweight="bold",
+            color=p["accent"], va="top", zorder=4)
+    yy -= 0.4
+    annotators = [
+        "GeneAnnotator  (pathways, PPI, expression)",
+        "MoleculeAnnotator  (ChEMBL, KEGG)",
+        "ProteinAnnotator  (InterPro, GO, domains)",
+        "CellLineAnnotator  (DepMap, Cellosaurus)",
+    ]
+    for a in annotators:
+        ax.text(c2x + 0.35, yy, a, fontsize=8.5, color=TXT["dark"],
+                va="top", zorder=4)
+        yy -= 0.5
 
-# Annotators
-ann_top = morph_res_top - 3 * (bh + gap) - 0.35
-draw_section_bg(x - 0.1, ann_top - 4 * (bh + gap) - 0.1, bw + 0.2,
-                4 * (bh + gap) + 0.15, C["annotator"], alpha=0.08,
-                label="Annotation Sources")
+    yy -= 0.15
+    divider(c2x + 0.2, yy + 0.1, c2w - 0.4, p["hdr"], alpha=0.4)
+    yy -= 0.2
 
-annotators_data = [
-    ("MoleculeAnnotator", "RDKit | ChEMBL | ChEBI | KEGG"),
-    ("GeneAnnotator", "GTEx | STRING-DB | Open Targets | GWAS"),
-    ("ProteinAnnotator", "UniProt | InterPro | GO Terms"),
-    ("CellLineAnnotator", "Cellosaurus | DepMap | Passports"),
-]
-annotator_boxes = []
-for i, (lab, sub) in enumerate(annotators_data):
-    by = ann_top - (i + 1) * (bh + gap)
-    b = draw_box(x, by, bw, bh, C["annotator"], lab, fontsize=6.5, bold=True,
-                 sublabel=sub, sublabel_size=5)
-    annotator_boxes.append(b)
+    # -- Data sources
+    ax.text(c2x + 0.2, yy, "Data Sources", fontsize=11, fontweight="bold",
+            color=p["accent"], va="top", zorder=4)
+    yy -= 0.4
+    sources = [
+        ("HPA", "ICC-IF microscopy images"),
+        ("JUMP Cell Painting", "CellProfiler profiles (S3)"),
+        ("STRING 12.0", "PPI network embeddings"),
+        ("GTEx", "Tissue expression"),
+        ("Open Targets", "Disease associations"),
+        ("DepMap / Lamin", "Dataset loaders"),
+        ("Ensembl 109", "Genome annotations"),
+        ("UniProt", "Proteome sequences"),
+        ("PubChem", "Compound metadata"),
+    ]
+    for name, detail in sources:
+        ax.text(c2x + 0.35, yy, name, fontsize=8.5, fontweight="bold",
+                color=TXT["dark"], va="top", zorder=4)
+        ax.text(c2x + 1.9, yy, detail, fontsize=7.5,
+                color=TXT["sub"], va="top", zorder=4)
+        yy -= 0.45
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# COLUMN 3: FOUNDATION MODELS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-x = cx["models"]
-mw = 5.2  # wider column for models
-draw_column_header(x, top + 0.15, mw, "Foundation Models (60+)")
+    # =================================================================
+    #  COLUMN 3 -- EMBEDDING MODELS (2-col grid)
+    # =================================================================
+    p = PAL["model"]
+    rbox(c3x, bot, c3w, card_h, fc=p["bg"], ec=p["bdr"], lw=2)
+    hbar(c3x, bot + card_h - 0.65, c3w, 0.65, p["hdr"], "EMBEDDING MODELS  (60+)", fs=13)
 
-model_sections = [
-    ("DNA Models", C["model_dna"], [
-        "Enformer 250M", "Borzoi v0-v3 200M", "Flashzoi v0-v3 200M",
-        "Evo 1 / 1.5 / 2  (7B-40B)", "Nucleotide Transformer v1-v3  (50M-2.5B)",
-        "HyenaDNA  (1.6M-6.6M)", "GENA-LM  (110M-336M)", "Caduceus 16M",
-    ]),
-    ("Protein Models", C["model_prot"], [
-        "ESM-1b / 1v 650M", "ESM-2  (8M-15B)", "ESM-C  (300M-6B)",
-        "ESM3  (1.4B-98B)", "ProtT5 3B", "Boltz-2 Trunk",
-    ]),
-    ("Molecule Models", C["model_mol"], [
-        "ChemBERTa  (77M-100M)", "MolFormer XL",
-        "RDKit FP  (Morgan | MACCS)", "MiniMol 10M", "MHG-GNN", "MolE",
-    ]),
-    ("Single-Cell Models", C["model_sc"], [
-        "scGPT 51M", "Geneformer v1/v2  (10M-316M)", "UCE 1.3B",
-        "TranscriptFormer  (368M-542M)", "Tahoe-x1  (70M-3B)",
-        "Cell2Sentence  (2B-27B)", "PCA", "scVI | scANVI | totalVI",
-    ]),
-    ("Morphology Models", C["model_morph"], [
-        "SubCell MAE  (4 channel configs)", "SubCell ViT  (4 channel configs)",
-        "JUMP Pre-computed CellProfiler  (259-dim)",
-    ]),
-    ("Text Models", C["model_text"], [
-        "MiniLM-L6", "BERT",
-    ]),
-]
+    sub_w = (c3w - 0.7) / 2
+    lcol = c3x + 0.2
+    rcol = c3x + 0.2 + sub_w + 0.3
 
-model_y = top - 0.1
-model_section_mids = []
-for sec_name, sec_col, items in model_sections:
-    sec_h = len(items) * 0.32 + 0.35
-    draw_section_bg(x - 0.1, model_y - sec_h, mw + 0.2, sec_h,
-                    sec_col, alpha=0.10, label=sec_name, label_size=6)
-    mid_y_acc = 0
-    for j, item in enumerate(items):
-        iy = model_y - 0.35 - j * 0.32
-        ax.text(x + 0.2, iy, item, fontsize=5.5, color="#2C3E50",
-                va="center", zorder=3)
-        mid_y_acc += iy
-    section_mid = mid_y_acc / len(items) if items else model_y - sec_h / 2
-    model_section_mids.append((x, section_mid, sec_col))
-    model_y -= sec_h + 0.15
+    model_rows = [
+        (
+            ("DNA / Genomics", [
+                "Enformer", "Borzoi / Flashzoi", "Evo 1 & Evo 2",
+                "GENA-LM (BERT)", "Nucleotide Transformer v1-v3",
+                "HyenaDNA", "Caduceus",
+            ]),
+            ("Protein", [
+                "ESM-1b / ESM-1v", "ESM-2 (8M -- 15B)", "ESM-C (300M -- 6B)",
+                "ESM-3", "ProtT5-XL", "Boltz-2 (structure)",
+            ]),
+        ),
+        (
+            ("Molecule", [
+                "ChemBERTa-2", "MoLFormer", "RDKit fingerprints",
+                "MolE", "MiniMol", "MHG-GNN",
+            ]),
+            ("Text / LLM", [
+                "MiniLM", "BERT", "LLaMA 3.x",
+                "OpenAI ada/large", "Cohere v3",
+                "Voyage 3", "Google embedding",
+            ]),
+        ),
+        (
+            ("Single-cell", [
+                "scGPT", "Geneformer v1 / v2", "UCE",
+                "TranscriptFormer", "Tahoe (70M -- 3B)",
+                "Cell2Sentence", "scVI / scanVI / totalVI",
+            ]),
+            ("Morphology & PPI", [
+                "SubCell ViT (contrast.)", "SubCell MAE (reconstruct.)",
+                "4ch / 3ch / 2ch variants",
+                "CLS / mean / attention pool",
+                "---",
+                "STRING node2vec", "SPACE functional emb.",
+            ]),
+        ),
+    ]
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# COLUMN 4: EMBEDDING STRATEGIES
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-x = cx["strategy"]
-sw = 2.8
-draw_column_header(x, top + 0.15, sw, "Embedding Strategies")
+    yy = bot + card_h - 1.15
+    for left_cat, right_cat in model_rows:
+        left_name, left_items = left_cat
+        right_name, right_items = right_cat
+        n = max(len(left_items), len(right_items))
+        sub_h = 0.55 + n * 0.35
 
-strategies_data = [
-    ("Standard Pooling", "mean | max | cls"),
-    ("Attention Pool", "gated, 1536-dim"),
-    ("TPM-Weighted", "isoform average"),
-    ("Annotation-Weighted", "residue pooling"),
-    ("Expression-Context", "concatenation"),
-    ("Region-Specific", "full | exons | introns"),
-    ("Perturbation Agg.", "mean across images/wells"),
-]
-strategy_boxes = []
-for i, (lab, sub) in enumerate(strategies_data):
-    by = top - (i + 1) * (bh + gap)
-    b = draw_box(x, by, sw, bh, C["strategy"], lab, fontsize=6.5, bold=True,
-                 sublabel=sub, sublabel_size=5)
-    strategy_boxes.append(b)
+        for col_x, (cat_name, items) in [(lcol, left_cat), (rcol, right_cat)]:
+            rbox(col_x, yy - sub_h, sub_w, sub_h, fc="white", ec=p["bdr"], lw=1, zorder=3)
+            ax.text(col_x + 0.15, yy - 0.15, cat_name,
+                    fontsize=10, fontweight="bold", color=p["accent"],
+                    va="top", zorder=4)
+            ty = yy - 0.5
+            for item in items:
+                if item == "---":
+                    divider(col_x + 0.15, ty + 0.12, sub_w - 0.3, p["bdr"], alpha=0.5)
+                    ty -= 0.15
+                    continue
+                ax.text(col_x + 0.25, ty, item, fontsize=8.5,
+                        color=TXT["dark"], va="top", zorder=4)
+                ty -= 0.35
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# COLUMN 5: OUTPUT
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-x = cx["output"]
-ow = 2.5
-draw_column_header(x, top + 0.15, ow, "Output (AnnData)")
+        yy -= sub_h + 0.25
 
-output_data = [
-    (".obsm", "embedding matrices"),
-    (".obs", "annotations & metadata"),
-    (".uns", "model metadata"),
-    (".npz", "standalone matrices"),
-]
-output_boxes = []
-for i, (lab, sub) in enumerate(output_data):
-    by = top - (i + 1) * (bh + gap)
-    b = draw_box(x, by, ow, bh, C["output"], lab, fontsize=7, bold=True,
-                 sublabel=sub, sublabel_size=5)
-    output_boxes.append(b)
+    # =================================================================
+    #  COLUMN 4 -- OUTPUT
+    # =================================================================
+    p = PAL["output"]
+    rbox(c4x, bot, c4w, card_h, fc=p["bg"], ec=p["bdr"], lw=2)
+    hbar(c4x, bot + card_h - 0.65, c4w, 0.65, p["hdr"], "OUTPUT", fs=13)
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# COLUMN 6: ANALYSIS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-x = cx["analysis"]
-aw = 8.8
-draw_column_header(x, top + 0.15, aw, "Analysis & Visualization")
+    yy = bot + card_h - 1.3
+    output_items = [
+        ("Embeddings", [
+            "Unified dense vectors",
+            "768d -- 15360d",
+            "float32 / float16",
+        ]),
+        ("Storage", [
+            "AnnData .obsm",
+            "NumPy arrays",
+            "Parquet / CSV",
+        ]),
+        ("Multi-modal", [
+            "Gene + Protein + Mol",
+            "DNA + Text + Image",
+            "Cross-model similarity",
+        ]),
+        ("Strategies", [
+            "CLS token pooling",
+            "Mean pooling",
+            "Attention pooling",
+            "Per-token / per-patch",
+        ]),
+    ]
+    for section, items in output_items:
+        ax.text(c4x + 0.2, yy, section, fontsize=10.5, fontweight="bold",
+                color=p["accent"], va="top", zorder=4)
+        yy -= 0.42
+        for item in items:
+            ax.text(c4x + 0.3, yy, item, fontsize=8.5,
+                    color=TXT["dark"], va="top", zorder=4)
+            yy -= 0.35
+        yy -= 0.3
+        if yy > bot + 1:
+            divider(c4x + 0.15, yy + 0.2, c4w - 0.3, p["bdr"])
+            yy -= 0.1
 
-# embpy.tl
-tl_top = top - 0.1
-tl_items = [
-    "compute_similarity  (cosine | pearson | spearman)",
-    "compute_distance_matrix  (euclidean | cosine | correlation)",
-    "compute_knn_overlap  (neighbourhood agreement)",
-    "rank_perturbations  (by distance or similarity)",
-    "pseudobulk_embeddings  (aggregate by group via scanpy)",
-    "leiden | cluster_embeddings  (k-means | spectral)",
-    "compute_umap | compute_tsne  (CPU & GPU via rapids)",
-    "phenotypic_activity  (mAP, chunked cosine, CPU & GPU)",
-    "benchmark_embeddings  (cross-validated regression)",
-    "compute_metrics | cell_eval | phenocopy_score",
-    "annotate_molecules | annotate_gene_perturbations",
-    "embed_vcf  (SNP context extraction & embedding)",
-]
-tl_h = len(tl_items) * 0.28 + 0.35
-draw_section_bg(x - 0.1, tl_top - tl_h, aw + 0.2, tl_h,
-                "#2980B9", alpha=0.08, label="embpy.tl  --  Analysis Tools", label_size=6.5)
-for j, item in enumerate(tl_items):
-    iy = tl_top - 0.38 - j * 0.28
-    ax.text(x + 0.2, iy, item, fontsize=5.5, color="#2C3E50", va="center", zorder=3)
+    # =================================================================
+    #  COLUMN 5 -- ANALYSIS
+    # =================================================================
+    p = PAL["analysis"]
+    rbox(c5x, bot, c5w, card_h, fc=p["bg"], ec=p["bdr"], lw=2)
+    hbar(c5x, bot + card_h - 0.65, c5w, 0.65, p["hdr"], "ANALYSIS", fs=13)
 
-# embpy.pl
-pl_top = tl_top - tl_h - 0.2
-pl_items = [
-    "plot_similarity_heatmap | distance_heatmap | correlation_matrix",
-    "embedding_clustermap | cross_embedding_correlation | cross_model_similarity",
-    "plot_embedding_space | all_embeddings | umap_feature_panel",
-    "leiden_overview | plot_cluster_composition | dendrogram",
-    "embedding_distributions | embedding_norms | plot_perturbation_ranking",
-    "parallel_coordinates | radar_chart | star_coordinates",
-    "plot_cell_painting  (per-channel fluorescence)",
-    "plot_benchmark | plot_benchmark_comparison",
-]
-pl_h = len(pl_items) * 0.28 + 0.35
-draw_section_bg(x - 0.1, pl_top - pl_h, aw + 0.2, pl_h,
-                "#27AE60", alpha=0.08, label="embpy.pl  --  Visualization (20+ functions)", label_size=6.5)
-for j, item in enumerate(pl_items):
-    iy = pl_top - 0.38 - j * 0.28
-    ax.text(x + 0.2, iy, item, fontsize=5.5, color="#2C3E50", va="center", zorder=3)
+    yy = bot + card_h - 1.2
 
-# embpy.pp
-pp_top = pl_top - pl_h - 0.2
-pp_items = [
-    "preprocess_counts  (normalize | log1p | HVG | scale, CPU & GPU)",
-    "cell_painting_to_subcell | prepare_subcell_canvas | max_projection_z",
-    "reduce_embeddings  (construct perturbation embedding matrices)",
-    "load_depmap  (DepMap / CCLE datasets)",
-]
-pp_h = len(pp_items) * 0.28 + 0.35
-draw_section_bg(x - 0.1, pp_top - pp_h, aw + 0.2, pp_h,
-                "#E67E22", alpha=0.08, label="embpy.pp  --  Preprocessing", label_size=6.5)
-for j, item in enumerate(pp_items):
-    iy = pp_top - 0.38 - j * 0.28
-    ax.text(x + 0.2, iy, item, fontsize=5.5, color="#2C3E50", va="center", zorder=3)
+    # -- Tools (tl)
+    ax.text(c5x + 0.2, yy, "Tools  (embpy.tl)", fontsize=11, fontweight="bold",
+            color=p["accent"], va="top", zorder=4)
+    yy -= 0.45
+    tl_items = [
+        "compute_similarity", "compute_distance_matrix",
+        "rank_perturbations", "phenotypic_activity",
+        "compute_umap / compute_tsne",
+        "cluster_embeddings / leiden",
+        "find_nearest_neighbors",
+        "pseudobulk_embeddings",
+        "benchmark_embeddings",
+        "annotate_genes / annotate_drugs",
+        "embed_vcf (SNP embeddings)",
+    ]
+    for item in tl_items:
+        ax.text(c5x + 0.3, yy, item, fontsize=8.5,
+                color=TXT["dark"], va="top", zorder=4, family="monospace")
+        yy -= 0.38
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ARROWS: Input -> Resolution
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-def box_right(b):
-    return (b[0] + b[2], b[1] + b[3] / 2)
+    yy -= 0.15
+    divider(c5x + 0.15, yy + 0.1, c5w - 0.3, p["hdr"], alpha=0.4)
+    yy -= 0.25
 
-def box_left(b):
-    return (b[0], b[1] + b[3] / 2)
+    # -- Plotting (pl)
+    ax.text(c5x + 0.2, yy, "Plotting  (embpy.pl)", fontsize=11, fontweight="bold",
+            color=p["accent"], va="top", zorder=4)
+    yy -= 0.45
+    pl_items = [
+        "plot_similarity_heatmap",
+        "plot_embedding_space / umap",
+        "dendrogram / cluster_property",
+        "correlation_matrix",
+        "cross_model_similarity",
+        "radar_chart / parallel_coords",
+        "plot_cell_painting",
+        "plot_benchmark",
+    ]
+    for item in pl_items:
+        ax.text(c5x + 0.3, yy, item, fontsize=8.5,
+                color=TXT["dark"], va="top", zorder=4, family="monospace")
+        yy -= 0.38
 
-# Gene -> GeneResolver, ProteinResolver
-arrow(*box_right(input_boxes[0]), *box_left(resolver_boxes[0]), colour=C["input"], lw=0.8)
-arrow_curve(*box_right(input_boxes[0]), *box_left(resolver_boxes[1]), colour=C["input"], lw=0.6, rad=0.1)
+    yy -= 0.15
+    divider(c5x + 0.15, yy + 0.1, c5w - 0.3, p["hdr"], alpha=0.4)
+    yy -= 0.25
 
-# Protein -> ProteinResolver
-arrow(*box_right(input_boxes[1]), *box_left(resolver_boxes[1]), colour=C["input"], lw=0.8)
+    # -- Preprocessing (pp)
+    ax.text(c5x + 0.2, yy, "Preprocessing  (embpy.pp)", fontsize=11, fontweight="bold",
+            color=p["accent"], va="top", zorder=4)
+    yy -= 0.45
+    pp_items = [
+        "Cell Painting -> SubCell remap",
+        "Max Z-projection",
+        "Rescale / resize / crop",
+        "PerturbationProcessor",
+        "load_depmap / load_lamin",
+    ]
+    for item in pp_items:
+        ax.text(c5x + 0.3, yy, item, fontsize=8.5,
+                color=TXT["dark"], va="top", zorder=4, family="monospace")
+        yy -= 0.38
 
-# Chemical -> DrugResolver
-arrow(*box_right(input_boxes[2]), *box_left(resolver_boxes[2]), colour=C["input"], lw=0.8)
+    # ── Save ──────────────────────────────────────────────────────
+    for ext in ("png", "svg", "pdf"):
+        path = os.path.join(OUT_DIR, f"embpy_architecture.{ext}")
+        fig.savefig(path, dpi=DPI, bbox_inches="tight",
+                    facecolor=fig.get_facecolor())
+        print(f"Saved: {path}")
+    plt.close()
 
-# Morphology -> Morph resolvers
-arrow(*box_right(input_boxes[4]), *box_left(morph_res_boxes[0]), colour=C["input"], lw=0.8)
-arrow_curve(*box_right(input_boxes[4]), *box_left(morph_res_boxes[1]), colour=C["input"], lw=0.6, rad=0.1)
 
-# Gene -> GeneAnnotator, TextResolver
-arrow_curve(*box_right(input_boxes[0]), *box_left(annotator_boxes[1]), colour=C["input"], lw=0.5, rad=0.2)
-arrow_curve(*box_right(input_boxes[0]), *box_left(resolver_boxes[3]), colour=C["input"], lw=0.5, rad=0.15)
-
-# Chemical -> MolAnnotator
-arrow_curve(*box_right(input_boxes[2]), *box_left(annotator_boxes[0]), colour=C["input"], lw=0.5, rad=0.2)
-
-# GeneResolver -> Morph resolvers (gene symbol resolution)
-arrow_curve(*box_right(resolver_boxes[0]), *box_left(morph_res_boxes[0]),
-            colour=C["resolver"], lw=0.6, rad=0.15)
-# DrugResolver -> Morph resolvers (compound name resolution)
-arrow_curve(*box_right(resolver_boxes[2]), *box_left(morph_res_boxes[0]),
-            colour=C["resolver"], lw=0.6, rad=0.15)
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ARROWS: Resolution -> Models (broad arrows)
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-models_x = cx["models"]
-
-# GeneResolver -> DNA models
-arrow(cx["resolve"] + bw, resolver_boxes[0][1] + bh / 2,
-      models_x, model_section_mids[0][1],
-      colour=C["model_dna"], lw=1.0)
-
-# ProteinResolver -> Protein models
-arrow(cx["resolve"] + bw, resolver_boxes[1][1] + bh / 2,
-      models_x, model_section_mids[1][1],
-      colour=C["model_prot"], lw=1.0)
-
-# DrugResolver -> Molecule models
-arrow(cx["resolve"] + bw, resolver_boxes[2][1] + bh / 2,
-      models_x, model_section_mids[2][1],
-      colour=C["model_mol"], lw=1.0)
-
-# Single-Cell (direct from input)
-arrow(cx["input"] + bw, input_boxes[3][1] + bh / 2,
-      models_x, model_section_mids[3][1],
-      colour=C["model_sc"], lw=1.0)
-
-# Morph preprocessing -> Morphology models
-arrow(cx["resolve"] + bw, morph_res_boxes[2][1] + bh / 2,
-      models_x, model_section_mids[4][1],
-      colour=C["model_morph"], lw=1.0)
-
-# TextResolver -> Text models
-arrow(cx["resolve"] + bw, resolver_boxes[3][1] + bh / 2,
-      models_x, model_section_mids[5][1],
-      colour=C["model_text"], lw=1.0)
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ARROWS: Models -> Strategies -> Output -> Analysis
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Broad arrow: Models -> Strategies
-strat_mid_y = sum(b[1] + bh / 2 for b in strategy_boxes) / len(strategy_boxes)
-for _, my, mc in model_section_mids:
-    arrow(models_x + mw, my, cx["strategy"], strat_mid_y,
-          colour=C["arrow"], lw=0.6)
-
-# Strategies -> Output
-out_mid_y = sum(b[1] + bh / 2 for b in output_boxes) / len(output_boxes)
-for b in strategy_boxes:
-    arrow(cx["strategy"] + sw, b[1] + bh / 2,
-          cx["output"], out_mid_y,
-          colour=C["arrow"], lw=0.5)
-
-# Annotators -> .obs
-arrow(cx["resolve"] + bw, annotator_boxes[1][1] + bh / 2,
-      cx["output"], output_boxes[1][1] + bh / 2,
-      colour=C["annotator"], lw=0.7)
-
-# Output -> Analysis
-analysis_mid_y = (tl_top + pp_top - pp_h) / 2
-for b in output_boxes:
-    arrow(cx["output"] + ow, b[1] + bh / 2,
-          cx["analysis"] - 0.1, analysis_mid_y,
-          colour=C["output"], lw=0.6)
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Title
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-ax.text(16, 17.6, "embpy", fontsize=20, fontweight="bold", ha="center",
-        color=C["header"], fontstyle="italic")
-ax.text(16, 17.2, "Unified Biological Perturbation Embedding Framework",
-        fontsize=10, ha="center", color="#7F8C8D")
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# Save
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-fig.savefig("docs/_static/embpy_architecture_detailed.png",
-            dpi=300, bbox_inches="tight", facecolor="white", pad_inches=0.3)
-fig.savefig("docs/_static/embpy_architecture_detailed.svg",
-            bbox_inches="tight", facecolor="white", pad_inches=0.3)
-fig.savefig("docs/_static/embpy_architecture_detailed.pdf",
-            bbox_inches="tight", facecolor="white", pad_inches=0.3)
-print("Saved PNG, SVG, and PDF")
+if __name__ == "__main__":
+    main()

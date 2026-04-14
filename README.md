@@ -6,7 +6,7 @@
 [badge-tests]: https://img.shields.io/github/actions/workflow/status/grpinto/embpy/test.yaml?branch=main
 [badge-docs]: https://img.shields.io/readthedocs/embpy
 
-**embpy** is a Python package for generating embeddings of biological perturbations and cell lines using 60+ foundation models through a unified interface.
+**embpy** is a Python package for generating embeddings of biological perturbations and cell lines using 130+ foundation models through a unified interface.
 
 Given a perturbation (genetic, chemical, or morphological) and/or single-cell expression data, embpy resolves the underlying biological sequences and images, routes them to the appropriate foundation models, and returns dense vector representations ready for downstream machine learning.
 
@@ -19,10 +19,7 @@ Given a perturbation (genetic, chemical, or morphological) and/or single-cell ex
 ## Architecture
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: light)" srcset="docs/_static/embpy_architecture_detailed.svg">
-    <img src="docs/_static/embpy_architecture_detailed.png" alt="embpy architecture" width="1000"/>
-  </picture>
+  <img src="docs/embpy_architecture.png" alt="embpy architecture" width="1000"/>
 </p>
 
 <details>
@@ -131,7 +128,7 @@ flowchart LR
 
 ## Key Features
 
-- **60+ foundation models** across DNA, protein, molecule, single-cell, morphology, and text modalities
+- **130+ foundation models** across DNA, protein, molecule, single-cell, morphology, text, and PPI modalities
 - **Unified `BioEmbedder` interface** -- one class to access all models with automatic sequence resolution
 - **Multi-species support** -- embed and annotate genes from any Ensembl-supported organism (human, mouse, rat, zebrafish, fly, worm, yeast, ...) with automatic species-aware sequence resolution via Ensembl REST, UniProt, MyGene.info, and STRING-DB
 - **`embed_adata()`** -- embed cells and perturbations together in a single call

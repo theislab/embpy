@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import traceback
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
@@ -1968,7 +1969,7 @@ class BioEmbedder:
         pooling_strategy: str = "attention_pool",
         local_dir: str | None = None,
         aggregate: str = "mean",
-        max_images: int | None = None,
+        max_images: int | None = 5,
         plate_type: str | None = None,
         jump_profiles_dir: str | None = None,
         **kwargs,
@@ -2005,13 +2006,18 @@ class BioEmbedder:
             ``"mean"`` averages embeddings across images; ``"none"``
             returns the first image embedding only.
         max_images
-            Cap on the number of images to embed.
+            Maximum number of images to download and embed.  Defaults
+            to ``5`` to avoid long downloads.  Pass ``None`` to fetch
+            all available images for the perturbation.
         plate_type
             JUMP plate type (``"crispr"``, ``"orf"``, ``"compound"``).
             Inferred from *perturbation_type* when ``None``.
         jump_profiles_dir
             Directory containing JUMP profile parquets (for
-            ``source="precomputed"``).
+            ``source="precomputed"``).  When ``None``, defaults to
+            ``data/embeddings/morphology_embeddings/JUMP/`` within the
+            project.  If the parquet is not present it is automatically
+            downloaded from the Cell Painting Gallery S3 bucket.
 
         Returns
         -------
@@ -2212,33 +2218,45 @@ class BioEmbedder:
             except Exception:
                 return []
 
-        images = []
+        # Cap the antibody list *before* downloading so we only fetch
+        # what the user actually requested.
+        if max_images is not None:
+            antibodies = antibodies[:max_images]
+
         cache_dir = None
         if local_dir is not None:
             cache_dir = _Path(local_dir) / perturbation
             cache_dir.mkdir(parents=True, exist_ok=True)
 
-        for ab in antibodies:
+        def _unpack_ab(ab):
             if isinstance(ab, dict):
-                ab_id = ab.get("id", "")
-                plate = ab.get("_plate", 1)
-                position = ab.get("_position", "A1")
-                sample = ab.get("_sample", 1)
-            else:
-                ab_id = str(ab)
-                plate, position, sample = 1, "A1", 1
+                return (
+                    ab.get("id", ""),
+                    ab.get("_plate", 1),
+                    ab.get("_position", "A1"),
+                    ab.get("_sample", 1),
+                )
+            return str(ab), 1, "A1", 1
+
+        def _fetch_one(ab):
+            ab_id, plate, position, sample = _unpack_ab(ab)
             try:
                 img = fetch_hpa_if_image(ab_id, plate, position, sample)
-                images.append(img)
-
                 if cache_dir is not None:
                     _save_hpa_channels(
                         img, cache_dir, ab_id, plate, position, sample,
                     )
+                return img
             except Exception as exc:
                 logging.warning("Failed to fetch HPA image: %s", exc)
-        if max_images is not None:
-            images = images[:max_images]
+                return None
+
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=min(8, len(antibodies))) as pool:
+            results = list(pool.map(_fetch_one, antibodies))
+
+        images = [r for r in results if r is not None]
         return images
 
     @staticmethod
@@ -2249,7 +2267,12 @@ class BioEmbedder:
         profiles_dir: str | None,
         aggregate: str,
     ) -> np.ndarray:
-        """Load pre-computed JUMP profiles from parquet."""
+        """Load pre-computed JUMP profiles from parquet.
+
+        When the parquet file is not found locally it is automatically
+        downloaded from the Cell Painting Gallery S3 bucket into
+        *profiles_dir* (or the default cache directory).
+        """
         from pathlib import Path as _Path
 
         import pandas as pd
@@ -2259,18 +2282,7 @@ class BioEmbedder:
         if plate_type is None:
             plate_type = "compound" if perturbation_type == "compound" else "crispr"
 
-        fname = f"{plate_type}_standard.parquet"
-        if profiles_dir is not None:
-            pq_path = _Path(profiles_dir) / fname
-        else:
-            pq_path = (
-                _Path(__file__).resolve().parent / "data" / "datasets" / "JUMP" / fname
-            )
-        if not pq_path.exists():
-            raise FileNotFoundError(
-                f"JUMP profile parquet not found at {pq_path}. "
-                "Download it or pass jump_profiles_dir explicitly."
-            )
+        pq_path = _resolve_jump_parquet_path(plate_type, profiles_dir)
 
         df = pd.read_parquet(pq_path)
 
@@ -2308,6 +2320,91 @@ class BioEmbedder:
         if aggregate == "mean":
             return subset.mean(axis=0).values.astype(np.float32)
         return subset.iloc[0].values.astype(np.float32)
+
+
+# ------------------------------------------------------------------
+# JUMP S3 URLs for pre-computed profile parquets (most processed)
+# ------------------------------------------------------------------
+_JUMP_S3_BASE = (
+    "https://cellpainting-gallery.s3.amazonaws.com/"
+    "cpg0016-jump-assembled/source_all/workspace/profiles_assembled"
+)
+_JUMP_PARQUET_URLS: dict[str, str] = {
+    "crispr": (
+        f"{_JUMP_S3_BASE}/CRISPR/v1.0a/"
+        "profiles_wellpos_cc_var_mad_outlier_featselect_sphering_harmony_PCA_corrected.parquet"
+    ),
+    "orf": (
+        f"{_JUMP_S3_BASE}/ORF/v1.0a/"
+        "profiles_wellpos_cc_var_mad_outlier_featselect_sphering_harmony.parquet"
+    ),
+    "compound": (
+        f"{_JUMP_S3_BASE}/COMPOUND/v1.0/"
+        "profiles_var_mad_int_featselect_harmony.parquet"
+    ),
+}
+
+_DEFAULT_MORPHOLOGY_EMBEDDINGS_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    os.pardir, os.pardir, "data", "embeddings", "morphology_embeddings",
+)
+
+
+def _resolve_jump_parquet_path(
+    plate_type: str,
+    profiles_dir: str | None,
+) -> "pathlib.Path":
+    """Locate or auto-download the JUMP pre-computed profile parquet.
+
+    Resolution order:
+
+    1. If *profiles_dir* is given, look for
+       ``<profiles_dir>/<plate_type>/standard.parquet``.
+    2. Otherwise look under the default
+       ``data/embeddings/morphology_embeddings/JUMP/<plate_type>/standard.parquet``.
+    3. If the file does not exist, download it from the Cell Painting
+       Gallery S3 bucket (anonymous, no auth required).
+    """
+    import pathlib
+    import urllib.request
+
+    if profiles_dir is not None:
+        base = pathlib.Path(profiles_dir)
+    else:
+        base = pathlib.Path(os.path.normpath(_DEFAULT_MORPHOLOGY_EMBEDDINGS_DIR)) / "JUMP"
+
+    pq_path = base / plate_type / "standard.parquet"
+
+    if pq_path.exists():
+        return pq_path
+
+    url = _JUMP_PARQUET_URLS.get(plate_type)
+    if url is None:
+        raise ValueError(
+            f"Unknown JUMP plate type {plate_type!r}. "
+            f"Expected one of {list(_JUMP_PARQUET_URLS)}."
+        )
+
+    pq_path.parent.mkdir(parents=True, exist_ok=True)
+    logging.info(
+        "Downloading JUMP %s profiles from Cell Painting Gallery "
+        "(this may take a while for large files)...",
+        plate_type,
+    )
+    logging.info("  URL : %s", url)
+    logging.info("  Dest: %s", pq_path)
+
+    tmp_path = pq_path.with_suffix(".parquet.tmp")
+    try:
+        urllib.request.urlretrieve(url, str(tmp_path))
+        tmp_path.rename(pq_path)
+    except Exception:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+
+    logging.info("Download complete: %s", pq_path)
+    return pq_path
 
 
 # ------------------------------------------------------------------

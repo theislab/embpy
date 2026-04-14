@@ -81,14 +81,18 @@ def fetch_hpa_if_image(
     import requests
     from PIL import Image
 
+    from concurrent.futures import ThreadPoolExecutor
+
     short = strip_antibody_id(antibody)
-    planes = []
-    for ch in HPA_IF_CHANNELS:
+
+    def _dl(ch: str) -> np.ndarray:
         url = f"{HPA_IMAGE_BASE}/{short}/{plate}_{position}_{sample}_{ch}.jpg"
         resp = requests.get(url)
         resp.raise_for_status()
-        img = Image.open(io.BytesIO(resp.content)).convert("L")
-        planes.append(np.asarray(img, dtype=np.uint8))
+        return np.asarray(Image.open(io.BytesIO(resp.content)).convert("L"), dtype=np.uint8)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        planes = list(pool.map(_dl, HPA_IF_CHANNELS))
     return np.stack(planes, axis=0)
 
 
