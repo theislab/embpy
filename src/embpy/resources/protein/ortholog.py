@@ -132,6 +132,7 @@ class OrthologResolver:
         self.rate_limit_delay = rate_limit_delay
         self.request_timeout = request_timeout
         self._cache: dict[tuple[str, str], list[OrthologResult]] = {}
+        self._symbol_cache: dict[str, str] = {}
 
     @staticmethod
     def _normalize(species: str) -> str:
@@ -185,6 +186,7 @@ class OrthologResolver:
         if orthology_type != "all":
             results = [r for r in results if r.orthology_type == orthology_type]
 
+        self._resolve_symbols(results)
         return results
 
     def get_orthologs_batch(
@@ -273,7 +275,7 @@ class OrthologResolver:
         )
         params = {
             "type": "orthologues",
-            "format": "condensed",
+            "sequence": "none",
         }
         headers = {"Content-Type": "application/json"}
 
@@ -310,13 +312,14 @@ class OrthologResolver:
         for hom in homologies:
             target = hom.get("target", {})
             tgt_species = target.get("species", "").lower().replace(" ", "_")
+            tgt_id = target.get("id", "")
 
             results.append(OrthologResult(
                 source_symbol=symbol,
                 source_species=source_species,
-                target_symbol=target.get("gene_symbol", target.get("id", "")),
+                target_symbol=tgt_id,
                 target_species=tgt_species,
-                target_ensembl_id=target.get("id", ""),
+                target_ensembl_id=tgt_id,
                 orthology_type=hom.get("type", ""),
                 perc_id=float(hom.get("source", {}).get("perc_id", 0)),
                 perc_pos=float(hom.get("source", {}).get("perc_pos", 0)),
@@ -329,3 +332,44 @@ class OrthologResolver:
             len(results), symbol, source_species,
         )
         return results
+
+    def _resolve_symbols(self, results: list[OrthologResult]) -> None:
+        """Resolve Ensembl gene IDs to gene symbols for the given results.
+
+        Only queries the API for IDs not already in the symbol cache.
+        Mutates target_symbol in place.
+        """
+        unresolved = [
+            r.target_ensembl_id
+            for r in results
+            if r.target_ensembl_id not in self._symbol_cache
+            and r.target_ensembl_id
+        ]
+        unresolved = list(set(unresolved))
+
+        if unresolved:
+            batch_size = 50
+            for i in range(0, len(unresolved), batch_size):
+                batch = unresolved[i : i + batch_size]
+                time.sleep(self.rate_limit_delay)
+                try:
+                    resp = requests.post(
+                        f"{_ENSEMBL_REST}/lookup/id",
+                        json={"ids": batch},
+                        headers={"Content-Type": "application/json"},
+                        timeout=self.request_timeout,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    for eid, info in data.items():
+                        self._symbol_cache[eid] = (
+                            info.get("display_name") or eid
+                        )
+                except requests.RequestException as exc:
+                    logger.warning("Ensembl ID lookup failed: %s", exc)
+                    for eid in batch:
+                        self._symbol_cache.setdefault(eid, eid)
+
+        for r in results:
+            if r.target_ensembl_id in self._symbol_cache:
+                r.target_symbol = self._symbol_cache[r.target_ensembl_id]

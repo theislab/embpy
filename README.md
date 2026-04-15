@@ -18,10 +18,6 @@ Given a perturbation (genetic, chemical, or morphological) and/or single-cell ex
 
 ## Architecture
 
-<p align="center">
-  <img src="docs/embpy_architecture.png" alt="embpy architecture" width="1000"/>
-</p>
-
 <details>
 <summary>Mermaid diagram (click to expand)</summary>
 
