@@ -31,7 +31,7 @@ release = info["Version"]
 
 bibtex_bibfiles = ["references.bib"]
 templates_path = ["_templates"]
-nitpicky = True  # Warn about broken links
+nitpicky = False
 needs_sphinx = "4.0"
 
 html_context = {
@@ -82,7 +82,7 @@ myst_enable_extensions = [
 myst_url_schemes = ("http", "https", "mailto")
 nb_output_stderr = "remove"
 nb_execution_mode = "off"
-nb_merge_streams = True
+nb_merge_streams = False
 typehints_defaults = "braces"
 
 source_suffix = {

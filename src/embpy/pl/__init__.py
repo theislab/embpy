@@ -1,6 +1,46 @@
 # Domain subpackages:
 #   pl.protein      -- cross-species protein embedding plots
 #   pl.morphology   -- Cell Painting / morphology plots
+
+__all__ = [
+    # clustering
+    "dendrogram",
+    "leiden_overview",
+    "plot_cluster_composition",
+    # distributions
+    "embedding_distributions",
+    "embedding_norms",
+    "plot_perturbation_ranking",
+    # embedding_space
+    "all_embeddings",
+    "plot_embedding_space",
+    "umap_feature_panel",
+    # heatmaps
+    "cluster_property_heatmap",
+    "correlation_matrix",
+    "cross_embedding_correlation",
+    "cross_model_similarity",
+    "distance_heatmap",
+    "embedding_clustermap",
+    "knn_overlap",
+    "plot_similarity_heatmap",
+    # comparisons
+    "parallel_coordinates",
+    "radar_chart",
+    "star_coordinates",
+    "tsne_feature_panel",
+    # benchmark
+    "plot_benchmark",
+    "plot_benchmark_comparison",
+    # morphology
+    "plot_cell_painting",
+    # protein / cross-species
+    "plot_conservation_barplot",
+    "plot_identity_vs_similarity",
+    "plot_ortholog_similarity",
+    "plot_species_umap",
+]
+
 from .clustering import (
     dendrogram,
     leiden_overview,
