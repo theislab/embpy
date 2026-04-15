@@ -1,5 +1,11 @@
+# pp -- preprocessing subpackages
+#
+# Domain subpackage structure:
+#   pp/morphology/   -- single-cell morphology image preprocessing
+#   pp/singlecell/   -- single-cell RNA-seq preprocessing
+
 from .basic import PerturbationProcessor, reduce_embeddings
-from .sc_preprocessing import preprocess_counts
+from .singlecell.preprocessing import preprocess_counts
 from .depmap_handler import (
     DepMapDatasetCard,
     depmap_info,
@@ -13,7 +19,7 @@ from .lamin_handler import (
     list_lamin_datasets,
     load_lamin,
 )
-from .morphology_preprocessing import (
+from .morphology.preprocessing import (
     CELL_PAINTING_CHANNELS,
     CELL_PAINTING_COLORS,
     SUBCELL_CANVAS_HEIGHT,
