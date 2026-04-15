@@ -1,3 +1,6 @@
+# Domain subpackages:
+#   pl.protein      -- cross-species protein embedding plots
+#   pl.morphology   -- Cell Painting / morphology plots
 from .clustering import (
     dendrogram,
     leiden_overview,
@@ -30,4 +33,10 @@ from .comparisons import (
     tsne_feature_panel,
 )
 from .benchmark import plot_benchmark, plot_benchmark_comparison
-from .cell_painting import plot_cell_painting
+from .morphology.cell_painting import plot_cell_painting
+from .protein.cross_species import (
+    plot_conservation_barplot,
+    plot_identity_vs_similarity,
+    plot_ortholog_similarity,
+    plot_species_umap,
+)

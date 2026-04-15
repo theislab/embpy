@@ -1,3 +1,6 @@
+# Domain subpackages:
+#   tl/protein/   - weighted embeddings, cross-species analysis
+#   tl/genomics/  - SNP/variant embedding utilities
 from .clustering import cluster_embeddings, find_nearest_neighbors, leiden
 from .dimred import compute_tsne, compute_umap
 from .similarity import (
@@ -47,8 +50,13 @@ from .metrics import (
     rank_genes_groups,
 )
 from .pipeline import list_embedding_models, list_use_cases, run_cell_eval, run_pipeline
-from .weighted_protein_embedding import WeightedProteinEmbedder
-from .snp_utils import (
+from .protein.cross_species import (
+    build_cross_species_adata,
+    identity_vs_similarity,
+    ortholog_similarity_matrix,
+)
+from .protein.weighted_embedding import WeightedProteinEmbedder
+from .genomics.snp_utils import (
     SequenceProvider,
     SNPContext,
     SNPEmbedder,

@@ -552,6 +552,18 @@ class BioEmbedder:
         inst = self._get_model(model)
         mtype = inst.model_type
 
+        if id_type != "sequence" and mtype == "protein":
+            from embpy.resources.gene_resolver import detect_identifier_type
+            detected = detect_identifier_type(identifier)
+            if detected == "protein_sequence":
+                logging.info(
+                    "Auto-detected raw protein sequence (id_type was %r); "
+                    "embedding directly. Pass id_type='sequence' explicitly "
+                    "to suppress this message.",
+                    id_type,
+                )
+                id_type = "sequence"
+
         if id_type == "sequence":
             input_data = identifier
         elif mtype == "dna":
