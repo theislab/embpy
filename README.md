@@ -173,6 +173,21 @@ emb = embedder.embed_molecule("CC(=O)OC1=CC=CC=C1C(=O)O", model="chemberta2MTR")
 print(emb.shape)  # (768,)
 ```
 
+### Embed sequences from a FASTA file
+
+```python
+# Embed all sequences from a FASTA/FASTQ file (plain or gzipped)
+adata = embedder.embed_fasta("proteins.fasta", model="esm2_650M")
+print(adata)           # AnnData with .obs metadata and .obsm embeddings
+print(adata.obsm["X_esm2_650M"].shape)  # (n_sequences, 1280)
+
+# DNA sequences auto-detected from character set
+adata = embedder.embed_fasta("reads.fastq.gz", model="nt_v2_500m")
+
+# Explicit seq_type when needed
+adata = embedder.embed_fasta("ambiguous.fa", model="esm2_650M", seq_type="protein")
+```
+
 ### Embed cells from an AnnData
 
 ```python

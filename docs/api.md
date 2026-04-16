@@ -51,6 +51,17 @@
     BioEmbedder.embed_descriptions_batch
 ```
 
+### File-based Embedding
+
+```{eval-rst}
+.. currentmodule:: embpy
+
+.. autosummary::
+    :toctree: generated
+
+    BioEmbedder.embed_fasta
+```
+
 ### Cell and AnnData Embedding
 
 ```{eval-rst}
