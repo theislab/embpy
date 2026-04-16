@@ -446,6 +446,9 @@ Resolvers fetch biological sequences and identifiers; annotators add rich metada
     pp.load_lamin
     pp.list_lamin_datasets
     pp.lamin_info
+    pp.load_scperturb
+    pp.list_scperturb_datasets
+    pp.scperturb_info
 ```
 
 ### Morphology Preprocessing

@@ -19,6 +19,12 @@ from .lamin_handler import (
     list_lamin_datasets,
     load_lamin,
 )
+from .scperturb_handler import (
+    ScPerturbDatasetCard,
+    list_scperturb_datasets,
+    load_scperturb,
+    scperturb_info,
+)
 from .morphology.preprocessing import (
     CELL_PAINTING_CHANNELS,
     CELL_PAINTING_COLORS,
@@ -47,14 +53,18 @@ __all__ = [
     "HFHandler",
     "LaminDatasetCard",
     "PerturbationProcessor",
+    "ScPerturbDatasetCard",
     "depmap_info",
     "lamin_info",
     "list_depmap_datasets",
     "list_lamin_datasets",
+    "list_scperturb_datasets",
     "load_depmap",
     "load_lamin",
+    "load_scperturb",
     "preprocess_counts",
     "reduce_embeddings",
+    "scperturb_info",
     # morphology preprocessing
     "CELL_PAINTING_CHANNELS",
     "CELL_PAINTING_COLORS",
