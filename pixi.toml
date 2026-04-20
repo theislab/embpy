@@ -41,8 +41,8 @@ python = ">=3.11,<3.14"
 pip = ">=24.0"
 
 # Scientific stack (all pre-built)
-numpy = ">=2.0,<2.3"
-pandas = ">=2.3"
+numpy = ">=1.26,<3"
+pandas = ">=2.2"
 scipy = ">=1.11"
 scikit-learn = ">=1.3"
 matplotlib-base = "*"
@@ -76,7 +76,6 @@ cirpy = "*"
 minimol = "*"
 session-info = "*"
 # Model wrappers (PyPI only)
-esm = ">=3.2.0"
 borzoi-pytorch = ">=0.4.3"
 enformer-pytorch = ">=0.8.10"
 torch-geometric = ">=2.5"
@@ -102,9 +101,27 @@ platforms = ["linux-64"]
 pytorch = { version = ">=2.5.1", channel = "pytorch" }
 pytorch-cuda = { version = "12.4.*", channel = "pytorch" }
 
-# Single-cell foundation models (scGPT, Geneformer, UCE, Tahoe, ...)
+# ESM-3 (Evolutionary Scale Modeling). Kept as its own feature because
+# `esm>=3.2.0` hard-pins `transformers<4.48.2`, which conflicts with helical
+# (which needs `transformers==4.49.0`).
+[feature.esm3.pypi-dependencies]
+esm = ">=3.2.0"
+
+# Single-cell foundation models (scGPT, Geneformer, UCE, Tahoe, ...).
+# helical hard-pins `scipy==1.13.1` (ALL versions) and older helical versions
+# also pin `transformers==4.49.0` and `pandas==2.2.2`. We mirror those pins on
+# the conda side so the conda solver doesn't pick newer versions that PyPI
+# `helical` can't satisfy. Also pin numpy<2 because scipy 1.13 predates
+# numpy 2.x support.
+[feature.helical.dependencies]
+scipy = "==1.13.1"
+transformers = "==4.49.0"
+pandas = "==2.2.2"
+numpy = ">=1.26,<2.0"
+python = ">=3.11,<3.13"
+
 [feature.helical.pypi-dependencies]
-helical = "*"
+helical = ">=1.5.1"
 
 # scanpy / pertpy / lamindb integration
 [feature.scanpy.dependencies]
@@ -144,7 +161,7 @@ embpy = { path = ".", editable = true, extras = ["dev", "test"] }
 # ---------------------------------------------------------------------------
 [environments]
 # Default CPU env for anyone who just wants to try embpy.
-default = { features = ["cpu", "morphology", "scanpy", "jupyter"], solve-group = "cpu" }
+default = { features = ["cpu", "morphology", "scanpy", "esm3", "jupyter"], solve-group = "cpu" }
 
 # GPU env with CUDA 12.4 PyTorch and everything compatible with the modern
 # transformers/scipy stack. NOTE: helical is NOT here -- it hard-pins
@@ -157,6 +174,7 @@ gpu = { features = [
   "pertpy",
   "ppi",
   "lamindb",
+  "esm3",
   "jupyter",
 ], solve-group = "gpu" }
 
@@ -168,7 +186,7 @@ helical-gpu = { features = ["gpu", "morphology", "helical", "jupyter"] }
 helical-cpu = { features = ["cpu", "morphology", "helical", "jupyter"] }
 
 # CPU env that also pulls the docs + dev extras. Useful for tutorial work.
-dev = { features = ["cpu", "morphology", "scanpy", "jupyter", "dev", "docs"], solve-group = "cpu" }
+dev = { features = ["cpu", "morphology", "scanpy", "esm3", "jupyter", "dev", "docs"], solve-group = "cpu" }
 
 # Documentation build env.
 docs = { features = ["cpu", "morphology", "scanpy", "docs"], solve-group = "cpu" }

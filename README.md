@@ -488,7 +488,7 @@ Pre-defined environments (switch with `pixi shell -e <name>`):
 | -------------- | ----------------------------------------------------------- |
 | `default`      | CPU PyTorch + core embpy + scanpy + morphology + jupyter    |
 | `gpu`          | CUDA 12.4 PyTorch + pertpy + lamindb + ppi + jupyter        |
-| `helical-gpu`  | Standalone env with `helical` (single-cell FMs) on GPU. Separate solve-group because helical hard-pins `transformers==4.49.0` and `scipy==1.13.1`, which are incompatible with the main envs. |
+| `helical-gpu`  | Standalone env with `helical` (single-cell FMs) on GPU. Lives in its own solve-group with conda pins for `scipy==1.13.1`, `transformers==4.49.0`, `pandas==2.2.2`, `numpy<2`; **does not include ESM-3** (incompatible `transformers` pin). |
 | `helical-cpu`  | Same as `helical-gpu` but CPU only                          |
 | `dev`          | CPU + test + lint + docs tooling (for contributing)         |
 | `docs`         | CPU + Sphinx toolchain (`pixi run -e docs build-docs`)      |
@@ -675,7 +675,7 @@ your env.
 
 ```bash
 # Inside your activated env:
-pip install --upgrade "pyarrow>=15" "numpy>=2.0,<2.3"
+pip install --upgrade "pyarrow>=15" "numpy>=1.26,<3"
 
 # And force Python to ignore user-site-packages:
 export PYTHONNOUSERSITE=1

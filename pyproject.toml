@@ -31,7 +31,9 @@ dependencies = [
   "huggingface-hub>=0.35,<1.0.0",
   "ipywidgets",
   "matplotlib",
-  "numpy>=2.0,<2.3",
+  # Intentionally permissive: scipy 1.13 (needed by helical) pre-dates numpy 2,
+  # while modern torch / transformers work fine with numpy 2. Both are ok.
+  "numpy>=1.26,<3",
   "pysam>=0.22",
   "pandas>=2.2",
   "pyarrow>=14.0.2",

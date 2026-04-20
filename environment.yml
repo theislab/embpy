@@ -18,7 +18,7 @@ dependencies:
   - pip>=24.0
 
   # Scientific stack -- aligned with pyproject.toml (numpy 2.x).
-  - numpy>=2.0,<2.3
+  - numpy>=1.26,<3
   - pandas>=2.3
   - scipy>=1.11
   - scikit-learn>=1.3
