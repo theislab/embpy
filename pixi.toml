@@ -31,6 +31,14 @@ channels = ["conda-forge", "bioconda", "pytorch", "nvidia"]
 # macOS platforms are still listed so the CPU env works on a Mac laptop.
 platforms = ["linux-64", "osx-arm64"]
 
+# Activation env vars that apply to every `pixi run` / `pixi shell` call.
+# Setting PYTHONNOUSERSITE=1 stops Python from picking up stale packages in
+# ~/.local/lib/pythonX.Y/site-packages (old `pip install --user` leftovers),
+# which otherwise silently shadow the pixi env's numpy/pandas/anndata and
+# cause `_ARRAY_API not found` / `CXXABI_1.3.15 not found` errors.
+[activation.env]
+PYTHONNOUSERSITE = "1"
+
 # ---------------------------------------------------------------------------
 # Core dependencies -- these are available everywhere (CPU and GPU).
 # Binary-heavy packages (rdkit, pysam, pyarrow, pytorch) come from conda-forge

@@ -13,7 +13,7 @@ Given a perturbation (genetic, chemical, or morphological) and/or single-cell ex
 ## Workflow
 
 <p align="center">
-  <img src="docs/_static/embpy_workflow.png" alt="embpy workflow" width="800"/>
+  <img src="docs/embpy_architecture.png" alt="embpy architecture" width="800"/>
 </p>
 
 ## Architecture
