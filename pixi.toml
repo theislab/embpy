@@ -146,17 +146,26 @@ embpy = { path = ".", editable = true, extras = ["dev", "test"] }
 # Default CPU env for anyone who just wants to try embpy.
 default = { features = ["cpu", "morphology", "scanpy", "jupyter"], solve-group = "cpu" }
 
-# GPU env with everything pure-Python + CUDA 12.4 PyTorch.
+# GPU env with CUDA 12.4 PyTorch and everything compatible with the modern
+# transformers/scipy stack. NOTE: helical is NOT here -- it hard-pins
+# transformers==4.49.0 and scipy==1.13.1 which conflicts with the rest of the
+# stack. Use the standalone `helical` environment below if you need it.
 gpu = { features = [
   "gpu",
   "morphology",
   "scanpy",
   "pertpy",
-  "helical",
   "ppi",
   "lamindb",
   "jupyter",
 ], solve-group = "gpu" }
+
+# Standalone env for helical (single-cell foundation models). helical hard-pins
+# several dependencies (transformers==4.49.0, scipy==1.13.1), so it cannot
+# share a solve-group with the main envs.
+# Usage: pixi install -e helical && pixi shell -e helical
+helical-gpu = { features = ["gpu", "morphology", "helical", "jupyter"] }
+helical-cpu = { features = ["cpu", "morphology", "helical", "jupyter"] }
 
 # CPU env that also pulls the docs + dev extras. Useful for tutorial work.
 dev = { features = ["cpu", "morphology", "scanpy", "jupyter", "dev", "docs"], solve-group = "cpu" }

@@ -484,12 +484,14 @@ pixi run verify
 
 Pre-defined environments (switch with `pixi shell -e <name>`):
 
-| Env       | Contents                                                    |
-| --------- | ----------------------------------------------------------- |
-| `default` | CPU PyTorch + core embpy + scanpy + morphology + jupyter    |
-| `gpu`     | CUDA 12.4 PyTorch + helical + pertpy + lamindb + ppi + jupyter |
-| `dev`     | CPU + test + lint + docs tooling (for contributing)         |
-| `docs`    | CPU + Sphinx toolchain (`pixi run -e docs build-docs`)      |
+| Env            | Contents                                                    |
+| -------------- | ----------------------------------------------------------- |
+| `default`      | CPU PyTorch + core embpy + scanpy + morphology + jupyter    |
+| `gpu`          | CUDA 12.4 PyTorch + pertpy + lamindb + ppi + jupyter        |
+| `helical-gpu`  | Standalone env with `helical` (single-cell FMs) on GPU. Separate solve-group because helical hard-pins `transformers==4.49.0` and `scipy==1.13.1`, which are incompatible with the main envs. |
+| `helical-cpu`  | Same as `helical-gpu` but CPU only                          |
+| `dev`          | CPU + test + lint + docs tooling (for contributing)         |
+| `docs`         | CPU + Sphinx toolchain (`pixi run -e docs build-docs`)      |
 
 Common tasks (run with `pixi run <task>`):
 
