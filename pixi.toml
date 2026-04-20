@@ -69,6 +69,11 @@ pyensembl = ">=2.3.13"
 # HuggingFace + transformers runtime
 huggingface_hub = ">=0.35,<1.0"
 transformers = ">=4.45,<5.0"
+# sentencepiece is required by T5Tokenizer (used by ProtT5 and many other HF
+# models). transformers does NOT pull it in automatically, so add it here.
+sentencepiece = ">=0.1.99"
+# protobuf is needed to load some slow -> fast tokenizer conversions.
+protobuf = ">=3.20"
 ipywidgets = "*"
 requests = "*"
 tqdm = "*"
@@ -141,6 +146,43 @@ transformers = ">=4.45,<4.51"
 [feature.seqmodels.pypi-dependencies]
 borzoi-pytorch = ">=0.4.3"
 enformer-pytorch = ">=0.8.10"
+
+# Boltz-2 (structure-informed protein embeddings). Kept as its own feature +
+# environment because `boltz>=2` hard-pins `numpy<2.0`, which is incompatible
+# with the rest of the stack (modern pytorch / scanpy / anndata are on numpy
+# 2.x). Linux-64 only because boltz uses CUDA kernels via `cuequivariance`.
+[feature.boltz]
+platforms = ["linux-64"]
+
+# Mirror boltz's hard pins on the conda side so the conda solver doesn't pick
+# newer versions that the PyPI `boltz` package can't accept. Without these,
+# pixi will pick e.g. scikit-learn==1.8 and then fail the PyPI resolve.
+# Mirror boltz's hard pins on the conda side. Boltz is VERY strict about these
+# versions (see https://github.com/jwohlwend/boltz/blob/main/pyproject.toml).
+# Without these mirrors, the conda solver picks newer versions that the pypi
+# resolver then rejects.
+[feature.boltz.dependencies]
+# Python: boltz requires 3.10-3.12 (not 3.13 yet).
+python = ">=3.11,<3.13"
+numpy = ">=1.26,<2.0"
+scipy = "==1.13.1"
+scikit-learn = "==1.6.1"
+pandas = ">=2.2.2"
+biopython = "==1.84"
+numba = "==0.61.0"
+pyyaml = "==6.0.2"
+requests = "==2.32.3"
+rdkit = ">=2024.3.2"
+# wandb==0.18.7 (pinned transitively by boltz) requires protobuf<6. Our base
+# asks for protobuf>=3.20 (for sentencepiece/T5 tokenizer conversions), so we
+# just clamp the upper bound here to the last 5.x series.
+protobuf = ">=3.20,<6"
+pytorch = { version = ">=2.5.1", channel = "pytorch" }
+pytorch-cuda = { version = "12.4.*", channel = "pytorch" }
+
+[feature.boltz.pypi-dependencies]
+# `boltz[cuda]` pulls in the CUDA-enabled flash-attention / triton kernels.
+boltz = { version = ">=2.0", extras = ["cuda"] }
 
 # Single-cell foundation models (scGPT, Geneformer, UCE, Tahoe, ...).
 # helical 2.0.0 hard-pins `torch==2.7.0`, `scipy==1.13.1`, `pandas==2.2.2`,
@@ -260,6 +302,12 @@ helical-cpu = { features = ["helical", "morphology", "jupyter"] }
 # Opt-in env for MiniMol (molecule GNN). Separate because torch-sparse has
 # broken build metadata and the resolve is slow.
 minimol = { features = ["cpu", "morphology", "minimol", "jupyter"], solve-group = "minimol" }
+
+# Standalone env for Boltz-2 (structure-informed protein embeddings). boltz
+# hard-pins numpy<2.0 which conflicts with the main stack, so it gets its own
+# environment. Linux-64 + CUDA only. Usage:
+#   pixi install -e boltz && pixi shell -e boltz
+boltz = { features = ["boltz", "morphology", "jupyter"] }
 
 # CPU env that also pulls the docs + dev extras. Useful for tutorial work.
 dev = { features = ["cpu", "morphology", "scanpy", "esm3", "seqmodels", "jupyter", "dev", "docs"], solve-group = "cpu" }
