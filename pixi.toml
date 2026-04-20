@@ -21,12 +21,14 @@
 #   pixi run -e docs build-docs    # build the Sphinx docs
 # ---------------------------------------------------------------------------
 
-[project]
+[workspace]
 name = "embpy"
 version = "0.0.1"
 description = "A package for biological embeddings in the perturbation experimental space"
 authors = ["Goncalo Rei Pinto <goncalo.pinto@helmholtz-munich.de>"]
 channels = ["conda-forge", "bioconda", "pytorch", "nvidia"]
+# Only linux-64 gets the GPU env (no NVIDIA on macOS / Apple Silicon).
+# macOS platforms are still listed so the CPU env works on a Mac laptop.
 platforms = ["linux-64", "osx-arm64", "osx-64"]
 
 # ---------------------------------------------------------------------------
@@ -88,10 +90,13 @@ torch-geometric = ">=2.5"
 pytorch = { version = ">=2.5.1", channel = "pytorch" }
 cpuonly = { channel = "pytorch" }
 
-# CUDA 12.4 PyTorch
+# CUDA 12.4 PyTorch -- linux-64 only (macOS has no NVIDIA GPUs).
+[feature.gpu]
+platforms = ["linux-64"]
+
 [feature.gpu.dependencies]
 pytorch = { version = ">=2.5.1", channel = "pytorch" }
-pytorch-cuda = { version = "12.4", channel = "pytorch" }
+pytorch-cuda = { version = "12.4.*", channel = "pytorch" }
 
 # Single-cell foundation models (scGPT, Geneformer, UCE, Tahoe, ...)
 [feature.helical.pypi-dependencies]
