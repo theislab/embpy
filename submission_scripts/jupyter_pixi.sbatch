@@ -6,18 +6,24 @@
 #
 #   sbatch submission_scripts/jupyter_pixi.sbatch
 #
-# After it starts, the connection info is printed to slurm_jupyter_<JOBID>.txt
-# (URL + token + exact SSH tunnel command for your laptop).
+# After it starts, the connection info (URL + token) is written to:
+#   submission_scripts/logs/jupyter_pixi_<JOBID>.out
+#
+# To connect from VSCode / Cursor (Remote-SSH on the login node):
+#   1. `cat` the .out file to get the URL.
+#   2. Open any .ipynb, click the kernel picker (top right).
+#   3. "Select Another Kernel..." -> "Existing Jupyter Server..."
+#   4. Paste the URL exactly as printed (uses the COMPUTE NODE hostname).
+#   Cursor's Remote-SSH routes the traffic automatically -- no ssh -L needed.
 #
 # One-time setup on the login node BEFORE the first sbatch:
-#
 #   cd /lustre/groups/ml01/workspace/goncalo.pinto/embpy
 #   pixi install -e gpu        # resolves + downloads ~1 GB, only done once
 # -----------------------------------------------------------------------------
 
 #SBATCH --job-name=embpy-jpt
-#SBATCH -o slurm_jupyter_%j.txt
-#SBATCH -e slurm_error_%j.txt
+#SBATCH -o submission_scripts/logs/jupyter_pixi_%j.out
+#SBATCH -e submission_scripts/logs/jupyter_pixi_%j.err
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=20
@@ -49,10 +55,9 @@ PORT=$(/usr/bin/shuf -i 8000-9000 -n 1)
 export JUPYTER_TOKEN=$(openssl rand -hex 32)
 
 # -----------------------------------------------------------------------------
-# Write connection instructions to the output log BEFORE Jupyter starts.
+# Write connection instructions to stdout (SLURM captures into the .out file).
 # -----------------------------------------------------------------------------
-LOG="slurm_jupyter_${SLURM_JOB_ID}.txt"
-cat <<END >> "$LOG"
+cat <<END
 
 ################################################################################
                  JupyterLab (pixi gpu env) -- connection info
@@ -64,33 +69,55 @@ Token        : ${JUPYTER_TOKEN}
 Project dir  : ${PROJECT_DIR}
 Pixi env     : gpu  (.pixi/envs/gpu/)
 
--- Step 1: from your laptop, open an SSH tunnel ------------------------------
-   ssh -L ${PORT}:${HOSTNAME}:${PORT} ${USER}@hpc-build01.scidom.de
+--- CONNECT FROM VSCode / Cursor (Remote-SSH to the login node) --------------
 
--- Step 2: open in your browser ----------------------------------------------
-   http://localhost:${PORT}/?token=${JUPYTER_TOKEN}
+  1. Open any .ipynb, click the kernel picker (top right).
+  2. "Select Another Kernel..." -> "Existing Jupyter Server..."
+  3. Paste this URL exactly (compute node hostname, NOT localhost):
 
--- Step 3: when done ---------------------------------------------------------
-   scancel ${SLURM_JOB_ID}
+       http://${HOSTNAME}:${PORT}/?token=${JUPYTER_TOKEN}
+
+  Cursor's Remote-SSH connection reaches ${HOSTNAME} automatically -- no
+  manual ssh tunnel needed.
+
+--- CONNECT FROM A BROWSER ON YOUR LAPTOP ------------------------------------
+
+  1. From your laptop, open an SSH tunnel to the compute node:
+
+       ssh -L ${PORT}:${HOSTNAME}:${PORT} ${USER}@hpc-build01.scidom.de
+
+  2. Open this URL in your browser:
+
+       http://localhost:${PORT}/?token=${JUPYTER_TOKEN}
+
+--- WHEN DONE ----------------------------------------------------------------
+
+  scancel ${SLURM_JOB_ID}
 
 END
 
 # -----------------------------------------------------------------------------
 # Smoke-check GPU is visible to the pixi env before launching Jupyter.
 # -----------------------------------------------------------------------------
-echo "----- nvidia-smi -----" >> "$LOG"
-nvidia-smi >> "$LOG" 2>&1 || true
-echo "----- torch sees:  -----" >> "$LOG"
+echo "----- nvidia-smi -----"
+nvidia-smi || true
+echo "----- torch sees:  -----"
 pixi run -e gpu python -c \
-  "import torch; print(f'torch={torch.__version__} cuda={torch.cuda.is_available()} gpus={torch.cuda.device_count()}')" \
-  >> "$LOG" 2>&1
+  "import torch; print(f'torch={torch.__version__} cuda={torch.cuda.is_available()} gpus={torch.cuda.device_count()}')"
 
 # -----------------------------------------------------------------------------
-# Launch JupyterLab inside the pixi gpu env. No LD_LIBRARY_PATH hack needed --
-# conda-forge's pytorch-cuda package plus pixi's activation script take care
-# of CUDA_HOME, LD_LIBRARY_PATH, and NVIDIA toolkit paths automatically.
+# Launch JupyterLab inside the pixi gpu env.
+#
+# Note: `pixi run -e gpu jupyter ...` would invoke the `jupyter` TASK defined
+# in pixi.toml (which already supplies `lab --no-browser --ip 0.0.0.0`) and
+# duplicate our flags. Use `pixi run -e gpu -- jupyter-lab ...` to run the
+# binary directly instead of the task.
+#
+# No LD_LIBRARY_PATH hack needed -- conda-forge's pytorch-cuda package plus
+# pixi's activation script take care of CUDA_HOME, LD_LIBRARY_PATH, and NVIDIA
+# toolkit paths automatically.
 # -----------------------------------------------------------------------------
-exec pixi run -e gpu jupyter lab \
+exec pixi run -e gpu -- jupyter-lab \
     --port=${PORT} \
     --no-browser \
     --ip=0.0.0.0 \
