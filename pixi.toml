@@ -115,6 +115,13 @@ pillow = ">=10"
 [feature.ppi.dependencies]
 h5py = "*"
 
+# Jupyter (used by default/gpu/dev envs so notebooks work everywhere).
+[feature.jupyter.dependencies]
+jupyterlab = ">=4.0"
+ipykernel = "*"
+ipywidgets = "*"
+notebook = "*"
+
 # Docs
 [feature.docs.pypi-dependencies]
 embpy = { path = ".", editable = true, extras = ["doc"] }
@@ -128,7 +135,7 @@ embpy = { path = ".", editable = true, extras = ["dev", "test"] }
 # ---------------------------------------------------------------------------
 [environments]
 # Default CPU env for anyone who just wants to try embpy.
-default = { features = ["cpu", "morphology", "scanpy"], solve-group = "cpu" }
+default = { features = ["cpu", "morphology", "scanpy", "jupyter"], solve-group = "cpu" }
 
 # GPU env with everything pure-Python + CUDA 12.4 PyTorch.
 gpu = { features = [
@@ -139,10 +146,11 @@ gpu = { features = [
   "helical",
   "ppi",
   "lamindb",
+  "jupyter",
 ], solve-group = "gpu" }
 
 # CPU env that also pulls the docs + dev extras. Useful for tutorial work.
-dev = { features = ["cpu", "morphology", "scanpy", "dev", "docs"], solve-group = "cpu" }
+dev = { features = ["cpu", "morphology", "scanpy", "jupyter", "dev", "docs"], solve-group = "cpu" }
 
 # Documentation build env.
 docs = { features = ["cpu", "morphology", "scanpy", "docs"], solve-group = "cpu" }
@@ -155,6 +163,15 @@ docs = { features = ["cpu", "morphology", "scanpy", "docs"], solve-group = "cpu"
 verify = "python -c \"from embpy.embedder import BioEmbedder; e = BioEmbedder(device='cpu'); print(f'embpy ok -- device={e.device}, models={len(e.list_available_models())}')\""
 # Jupyter kernel that uses THIS pixi env (so notebooks pick up the pinned deps).
 install-kernel = "python -m ipykernel install --user --name embpy --display-name 'Python (embpy)'"
+# Launch jupyter-lab bound to this env. Override port/host with args:
+#   pixi run jupyter --port 8899 --ip 0.0.0.0
+jupyter = "jupyter lab --no-browser --ip 0.0.0.0"
+
+[feature.gpu.tasks]
+# GPU smoke test (assumes CUDA is visible: run on a GPU node or with CUDA_VISIBLE_DEVICES set).
+verify-gpu = "python -c \"import torch; from embpy.embedder import BioEmbedder; e = BioEmbedder(device='auto'); print(f'torch={torch.__version__} cuda={torch.cuda.is_available()} device={e.device} gpus={torch.cuda.device_count()}')\""
+# Register the GPU env as a separate jupyter kernel so notebooks can pick it up explicitly.
+install-kernel-gpu = "python -m ipykernel install --user --name embpy-gpu --display-name 'Python (embpy-gpu)'"
 
 [feature.dev.tasks]
 test = "pytest -xvs tests/"

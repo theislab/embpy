@@ -486,10 +486,38 @@ Pre-defined environments (switch with `pixi shell -e <name>`):
 
 | Env       | Contents                                                    |
 | --------- | ----------------------------------------------------------- |
-| `default` | CPU PyTorch + core embpy + scanpy + morphology              |
-| `gpu`     | CUDA 12.4 PyTorch + helical + pertpy + lamindb + ppi        |
+| `default` | CPU PyTorch + core embpy + scanpy + morphology + jupyter    |
+| `gpu`     | CUDA 12.4 PyTorch + helical + pertpy + lamindb + ppi + jupyter |
 | `dev`     | CPU + test + lint + docs tooling (for contributing)         |
 | `docs`    | CPU + Sphinx toolchain (`pixi run -e docs build-docs`)      |
+
+Common tasks (run with `pixi run <task>`):
+
+| Task                 | What it does                                              |
+| -------------------- | --------------------------------------------------------- |
+| `verify`             | Smoke-test the install on CPU                             |
+| `jupyter`            | Launch JupyterLab on `0.0.0.0` (any port / ip via args)   |
+| `install-kernel`     | Register this env as a `Python (embpy)` Jupyter kernel    |
+| `-e gpu verify-gpu`  | Smoke-test the GPU install (needs a visible CUDA device)  |
+| `-e gpu install-kernel-gpu` | Register the GPU env as `Python (embpy-gpu)`       |
+
+### Running GPU JupyterLab on a SLURM cluster
+
+A ready-to-use SLURM launcher lives at
+[`submission_scripts/jupyter_pixi.sbatch`](submission_scripts/jupyter_pixi.sbatch).
+Unlike the old conda-based script, it does **not** need any
+`LD_LIBRARY_PATH` hacks -- conda-forge's `pytorch-cuda` handles all of
+that automatically.
+
+```bash
+# One-time, on the login node:
+cd /path/to/embpy
+pixi install -e gpu            # resolves + downloads ~1 GB once
+
+# Every time you want a GPU notebook:
+sbatch submission_scripts/jupyter_pixi.sbatch
+cat slurm_jupyter_<JOBID>.txt  # token, host, port, SSH tunnel command
+```
 
 Add your own extras after activation:
 
