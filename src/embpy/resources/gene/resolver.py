@@ -803,8 +803,9 @@ class GeneResolver:
 
         Returns
         -------
-        list of dicts, each with keys ``"id"``, ``"start"``, ``"end"``,
-        ``"strand"``, ``"sequence"``; or ``None`` on failure.
+        list of dicts, each with keys ``"id"``, ``"seq_region_name"``
+        (chromosome), ``"start"``, ``"end"``, ``"strand"``,
+        ``"sequence"``; or ``None`` on failure.
         """
         try:
             if id_type == "symbol":
@@ -835,6 +836,7 @@ class GeneResolver:
                 return None
 
             gene_strand = gene_info.get("strand", 1)
+            chrom = gene_info.get("seq_region_name", "")
             exons_sorted = sorted(exons, key=lambda e: e["start"])
 
             regions: list[dict[str, str | int]] = []
@@ -842,7 +844,7 @@ class GeneResolver:
             if region == "exons":
                 for i, ex in enumerate(exons_sorted):
                     seq = self._fetch_region_sequence(
-                        gene_info.get("seq_region_name", ""),
+                        chrom,
                         ex["start"],
                         ex["end"],
                         gene_strand,
@@ -851,6 +853,7 @@ class GeneResolver:
                     if seq:
                         regions.append({
                             "id": ex.get("id", f"exon_{i + 1}"),
+                            "seq_region_name": chrom,
                             "start": ex["start"],
                             "end": ex["end"],
                             "strand": gene_strand,
@@ -863,7 +866,7 @@ class GeneResolver:
                     if intron_end < intron_start:
                         continue
                     seq = self._fetch_region_sequence(
-                        gene_info.get("seq_region_name", ""),
+                        chrom,
                         intron_start,
                         intron_end,
                         gene_strand,
@@ -872,6 +875,7 @@ class GeneResolver:
                     if seq:
                         regions.append({
                             "id": f"intron_{i + 1}",
+                            "seq_region_name": chrom,
                             "start": intron_start,
                             "end": intron_end,
                             "strand": gene_strand,
@@ -1219,3 +1223,256 @@ class GeneResolver:
         gene_ids = df["Gene stable ID"].dropna().unique().tolist()
         logging.info(f"Fetching protein sequences for {len(gene_ids)} genes from BioMart...")
         return self.get_protein_sequences_batch(gene_ids, id_type="ensembl_id", organism=organism)
+
+    # ------------------------------------------------------------------
+    # Chromosome-level helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_local_chrom(self, chromosome: str) -> str | None:
+        """Map a chromosome name to the contig name used by the local FASTA.
+
+        Returns the matching contig name, or ``None`` if no local genome
+        is available or the contig is not found.
+        """
+        if self._genome_fasta is None:
+            return None
+        available = set(self._genome_fasta.references)
+        if chromosome in available:
+            return chromosome
+        alt = f"chr{chromosome}" if not chromosome.startswith("chr") else chromosome[3:]
+        if alt in available:
+            return alt
+        return None
+
+    def get_chromosome_sequence(
+        self,
+        chromosome: str,
+        start: int,
+        end: int,
+        strand: int = 1,
+        organism: str = "human",
+    ) -> str | None:
+        """Fetch the DNA sequence of an arbitrary chromosomal region.
+
+        If a local genome has been downloaded (via
+        :meth:`download_genome`), the sequence is extracted instantly
+        from the indexed FASTA. Otherwise falls back to the Ensembl
+        REST API.
+
+        Parameters
+        ----------
+        chromosome
+            Chromosome name (e.g. ``"17"``, ``"X"``, ``"MT"``).
+            Both ``"17"`` and ``"chr17"`` are accepted -- the method
+            resolves the naming convention automatically.
+        start
+            1-based start coordinate.
+        end
+            1-based end coordinate (inclusive).
+        strand
+            ``1`` for forward, ``-1`` for reverse complement.
+        organism
+            Species name (default ``"human"``).
+
+        Returns
+        -------
+        str or None
+            The DNA sequence, or ``None`` on failure.
+
+        Examples
+        --------
+        >>> resolver = GeneResolver()
+        >>> seq = resolver.get_chromosome_sequence("17", 7687490, 7687590)
+        >>> len(seq)
+        101
+        """
+        self._load_genome_if_available()
+        contig = self._resolve_local_chrom(chromosome)
+        if contig is not None:
+            try:
+                # pysam uses 0-based half-open coordinates
+                seq = self._genome_fasta.fetch(contig, start - 1, end)
+                if strand == -1:
+                    seq = self._reverse_complement(seq)
+                logging.info(
+                    "get_chromosome_sequence: local extraction "
+                    "%s:%d-%d (%d bp)",
+                    contig, start, end, len(seq),
+                )
+                return seq
+            except Exception as e:  # noqa: BLE001
+                logging.debug(
+                    "Local chromosome fetch failed for %s:%d-%d: %s",
+                    contig, start, end, e,
+                )
+
+        # Fallback: Ensembl REST API
+        return self._fetch_region_sequence(
+            chromosome, start, end, strand, organism=organism,
+        )
+
+    def list_chromosome_genes(
+        self,
+        chromosome: str,
+        organism: str = "human",
+        start: int | None = None,
+        end: int | None = None,
+        biotype: str | None = "protein_coding",
+    ) -> list[dict[str, str | int]]:
+        """List genes located on a chromosome (or a region thereof).
+
+        If ``pyensembl`` data is available locally, the query is
+        resolved offline (fastest). Otherwise falls back to the
+        Ensembl REST ``/overlap/region`` endpoint.
+
+        Parameters
+        ----------
+        chromosome
+            Chromosome name (e.g. ``"17"``, ``"X"``).
+        organism
+            Species name.
+        start
+            Optional 1-based start coordinate to restrict the query
+            to a sub-region.
+        end
+            Optional 1-based end coordinate.
+        biotype
+            Filter by gene biotype (e.g. ``"protein_coding"``).
+            Pass ``None`` to return all biotypes.
+
+        Returns
+        -------
+        list[dict]
+            Each dict has keys ``"id"`` (Ensembl gene ID),
+            ``"external_name"`` (gene symbol), ``"biotype"``,
+            ``"start"``, ``"end"``, ``"strand"``,
+            ``"seq_region_name"`` (chromosome), and
+            ``"description"``.
+        """
+        # ---- Try local pyensembl first --------------------------------
+        if self.ensembl is not None:
+            try:
+                local_results = self._list_chromosome_genes_local(
+                    chromosome, start, end, biotype,
+                )
+                if local_results is not None:
+                    return local_results
+            except Exception as e:  # noqa: BLE001
+                logging.debug(
+                    "Local chromosome gene listing failed, "
+                    "falling back to API: %s", e,
+                )
+
+        # ---- Fallback: Ensembl REST API --------------------------------
+        return self._list_chromosome_genes_api(
+            chromosome, organism, start, end, biotype,
+        )
+
+    def _list_chromosome_genes_local(
+        self,
+        chromosome: str,
+        start: int | None,
+        end: int | None,
+        biotype: str | None,
+    ) -> list[dict[str, str | int]] | None:
+        """Use pyensembl for local gene listing. Returns None if unavailable."""
+        if self.ensembl is None:
+            return None
+
+        try:
+            gene_ids = self.ensembl.gene_ids()
+        except Exception:  # noqa: BLE001
+            return None
+
+        results = []
+        for gid in gene_ids:
+            try:
+                gene = self.ensembl.gene_by_id(gid)
+            except Exception:  # noqa: BLE001
+                continue
+
+            # Filter by chromosome
+            if gene.contig != chromosome and gene.contig != f"chr{chromosome}":
+                alt = chromosome[3:] if chromosome.startswith("chr") else chromosome
+                if gene.contig != alt:
+                    continue
+
+            # Filter by coordinate range
+            if start is not None and end is not None:
+                if gene.end < start or gene.start > end:
+                    continue
+
+            # Filter by biotype
+            if biotype and getattr(gene, "biotype", None) != biotype:
+                continue
+
+            strand_int = 1 if gene.strand == "+" else -1
+            results.append({
+                "id": gene.gene_id,
+                "external_name": gene.gene_name or "",
+                "biotype": getattr(gene, "biotype", ""),
+                "seq_region_name": gene.contig,
+                "start": gene.start,
+                "end": gene.end,
+                "strand": strand_int,
+                "description": "",
+            })
+
+        results.sort(key=lambda g: g["start"])
+        logging.info(
+            "Found %d genes on chr%s (local pyensembl, %s)",
+            len(results), chromosome, biotype or "all biotypes",
+        )
+        return results
+
+    def _list_chromosome_genes_api(
+        self,
+        chromosome: str,
+        organism: str,
+        start: int | None,
+        end: int | None,
+        biotype: str | None,
+    ) -> list[dict[str, str | int]]:
+        """Fetch gene list from the Ensembl REST /overlap/region endpoint."""
+        region_str = chromosome
+        if start is not None and end is not None:
+            region_str = f"{chromosome}:{start}-{end}"
+
+        url = (
+            f"https://rest.ensembl.org/overlap/region/{organism}/{region_str}"
+            f"?feature=gene"
+        )
+        if biotype:
+            url += f"&biotype={biotype}"
+
+        try:
+            resp = _ensembl_get(
+                url, headers={"Content-Type": "application/json"}, timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except requests.RequestException as e:
+            logging.error(
+                "Failed to list genes on %s:%s: %s", organism, region_str, e,
+            )
+            return []
+
+        results = []
+        for gene in data:
+            results.append({
+                "id": gene.get("id", ""),
+                "external_name": gene.get("external_name", ""),
+                "biotype": gene.get("biotype", ""),
+                "seq_region_name": gene.get("seq_region_name", chromosome),
+                "start": gene.get("start", 0),
+                "end": gene.get("end", 0),
+                "strand": gene.get("strand", 0),
+                "description": gene.get("description", ""),
+            })
+        results.sort(key=lambda g: g["start"])
+        logging.info(
+            "Found %d genes on %s:%s (API, %s)",
+            len(results), organism, region_str,
+            biotype or "all biotypes",
+        )
+        return results

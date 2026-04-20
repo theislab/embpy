@@ -51,6 +51,17 @@
     BioEmbedder.embed_descriptions_batch
 ```
 
+### File-based Embedding
+
+```{eval-rst}
+.. currentmodule:: embpy
+
+.. autosummary::
+    :toctree: generated
+
+    BioEmbedder.embed_fasta
+```
+
 ### Cell and AnnData Embedding
 
 ```{eval-rst}
@@ -435,6 +446,9 @@ Resolvers fetch biological sequences and identifiers; annotators add rich metada
     pp.load_lamin
     pp.list_lamin_datasets
     pp.lamin_info
+    pp.load_scperturb
+    pp.list_scperturb_datasets
+    pp.scperturb_info
 ```
 
 ### Morphology Preprocessing

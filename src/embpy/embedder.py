@@ -710,7 +710,7 @@ class BioEmbedder:
         self,
         identifiers: list[str],
         model: str,
-        id_type: Literal["symbol", "ensembl_id", "uniprot_id"] = "symbol",
+        id_type: Literal["symbol", "ensembl_id", "uniprot_id", "sequence"] = "symbol",
         organism: str = "human",
         pooling_strategy: str = "mean",
         isoform: Literal["canonical", "all"] = "canonical",
@@ -721,24 +721,28 @@ class BioEmbedder:
         Parameters
         ----------
         identifiers
-            List of gene identifiers.
+            List of gene identifiers or raw amino-acid sequences
+            (when ``id_type="sequence"``).
         model
             Protein model name.
         id_type
-            Type of identifiers.
+            Type of identifiers.  Use ``"sequence"`` to embed raw
+            amino-acid strings directly without resolver lookup.
         organism
             Organism name.
         pooling_strategy
             Pooling strategy.
         isoform
-            ``"canonical"`` or ``"all"``.
+            ``"canonical"`` or ``"all"``.  Ignored when
+            ``id_type="sequence"``.
         **kwargs
             Forwarded to the model.
 
         Returns
         -------
         dict[str, np.ndarray]
-            When ``isoform="canonical"`` -- maps identifier to embedding.
+            When ``isoform="canonical"`` or ``id_type="sequence"``
+            -- maps identifier (or sequence) to embedding.
         dict[str, dict[str, np.ndarray]]
             When ``isoform="all"`` -- maps identifier to
             ``{isoform_accession: embedding}``.
@@ -747,13 +751,26 @@ class BioEmbedder:
         if inst.model_type != "protein":
             raise ValueError(f"Model '{model}' is not a protein model.")
 
+        if id_type == "sequence":
+            results: dict[str, np.ndarray] = {}
+            for seq in identifiers:
+                try:
+                    results[seq] = inst.embed(
+                        input=seq,
+                        pooling_strategy=pooling_strategy,
+                        **kwargs,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    logging.warning(f"Failed to embed protein sequence: {e}")
+            return results
+
         if isoform == "canonical":
             seqs = self.protein_resolver.get_canonical_sequences_batch(
                 identifiers,
                 id_type,
                 organism,
             )
-            results: dict[str, np.ndarray] = {}
+            results = {}
             for ident, seq in seqs.items():
                 try:
                     results[ident] = inst.embed(
@@ -2332,6 +2349,242 @@ class BioEmbedder:
         if aggregate == "mean":
             return subset.mean(axis=0).values.astype(np.float32)
         return subset.iloc[0].values.astype(np.float32)
+
+    # ------------------------------------------------------------------
+    # FASTA / FASTQ file embedding
+    # ------------------------------------------------------------------
+
+    _FASTA_EXTENSIONS: dict[str, str] = {
+        ".fasta": "fasta",
+        ".fa": "fasta",
+        ".fna": "fasta",
+        ".faa": "fasta",
+        ".fastq": "fastq",
+        ".fq": "fastq",
+    }
+
+    _DNA_CHARS = frozenset("ACGTNUacgtnu")
+
+    def embed_fasta(
+        self,
+        path: str | os.PathLike[str],
+        model: str,
+        seq_type: Literal["dna", "protein"] | None = None,
+        pooling_strategy: str = "mean",
+        obsm_key: str | None = None,
+        **kwargs: Any,
+    ):
+        """Embed all sequences from a FASTA or FASTQ file.
+
+        Supports plain and gzip-compressed files.  The method
+        auto-detects the file format from the extension and optionally
+        infers whether sequences are DNA or protein when *seq_type*
+        is not provided.
+
+        Parameters
+        ----------
+        path
+            Path to a FASTA/FASTQ file.  Recognised extensions:
+            ``.fasta``, ``.fa``, ``.fna``, ``.faa`` (FASTA),
+            ``.fastq``, ``.fq`` (FASTQ).  A trailing ``.gz`` is
+            handled transparently.
+        model
+            Model name registered with this embedder.
+        seq_type
+            ``"dna"`` or ``"protein"``.  When ``None`` the type is
+            resolved using a three-tier fallback:
+
+            1. **Infer from model** -- if the model is a DNA or
+               protein model the type is set accordingly.
+            2. **Auto-detect from sequences** -- the first 100
+               sequences are inspected; if they consist exclusively
+               of ``{A, C, G, T, N, U}`` the type is set to
+               ``"dna"``, otherwise ``"protein"``.
+            3. **Fail** -- a ``ValueError`` is raised asking the
+               caller to specify *seq_type* explicitly.
+        pooling_strategy
+            Passed to the underlying model.
+        obsm_key
+            Key used to store embeddings in ``adata.obsm``.
+            Defaults to ``"X_{model}"``.
+        **kwargs
+            Forwarded to the model ``embed`` call.
+
+        Returns
+        -------
+        anndata.AnnData
+            An :class:`~anndata.AnnData` object with:
+
+            * ``.obs`` -- ``sequence_id``, ``sequence_length``,
+              ``description``, ``seq_type``
+            * ``.obsm[obsm_key]`` -- embedding matrix
+              (n_sequences x embedding_dim)
+            * ``.uns`` -- ``model``, ``pooling_strategy``,
+              ``source_file``, ``n_sequences``, ``n_failed``
+        """
+        import gzip
+        from pathlib import Path
+
+        import anndata as ad
+        from Bio import SeqIO
+
+        filepath = Path(path)
+
+        # -- detect file format -----------------------------------------
+        is_gz = filepath.suffix.lower() == ".gz"
+        stem = filepath.with_suffix("") if is_gz else filepath
+        fmt = self._FASTA_EXTENSIONS.get(stem.suffix.lower())
+        if fmt is None:
+            raise ValueError(
+                f"Unrecognised file extension {stem.suffix!r}.  "
+                f"Supported: {', '.join(sorted(self._FASTA_EXTENSIONS))}"
+            )
+
+        # -- parse sequences --------------------------------------------
+        handle = gzip.open(filepath, "rt") if is_gz else open(filepath)  # noqa: SIM115
+        try:
+            records = list(SeqIO.parse(handle, fmt))
+        finally:
+            handle.close()
+
+        if not records:
+            raise ValueError(f"No sequences found in {filepath}")
+
+        seq_ids: list[str] = []
+        descriptions: list[str] = []
+        sequences: list[str] = []
+        for rec in records:
+            seq_ids.append(rec.id)
+            descriptions.append(rec.description)
+            sequences.append(str(rec.seq))
+
+        # -- resolve seq_type -------------------------------------------
+        resolved_seq_type = self._resolve_seq_type(
+            seq_type, model, sequences,
+        )
+
+        # -- embed sequences --------------------------------------------
+        inst = self._get_model(model)
+        embeddings: list[np.ndarray | None] = []
+        n_failed = 0
+        for i, seq in enumerate(sequences):
+            try:
+                emb = inst.embed(
+                    input=seq,
+                    pooling_strategy=pooling_strategy,
+                    **kwargs,
+                )
+                embeddings.append(emb)
+            except Exception as e:  # noqa: BLE001
+                logging.warning(
+                    "Failed to embed sequence %s (%s): %s",
+                    seq_ids[i], seq[:30] + "...", e,
+                )
+                embeddings.append(None)
+                n_failed += 1
+
+        # -- build AnnData ----------------------------------------------
+        emb_dim = next(
+            (e.shape[-1] for e in embeddings if e is not None), 0,
+        )
+        emb_matrix = np.full(
+            (len(sequences), emb_dim), np.nan, dtype=np.float32,
+        )
+        for i, emb in enumerate(embeddings):
+            if emb is not None:
+                emb_matrix[i] = emb
+
+        import pandas as pd
+
+        obs = pd.DataFrame({
+            "sequence_id": seq_ids,
+            "sequence_length": [len(s) for s in sequences],
+            "description": descriptions,
+            "seq_type": resolved_seq_type,
+        })
+        obs.index = obs["sequence_id"].astype(str)
+        # ensure unique index
+        if obs.index.duplicated().any():
+            obs.index = pd.Index(
+                [f"{sid}_{i}" for i, sid in enumerate(obs.index)]
+            )
+
+        key = obsm_key or f"X_{model}"
+        adata = ad.AnnData(obs=obs)
+        adata.obsm[key] = emb_matrix
+        adata.uns["embed_fasta"] = {
+            "model": model,
+            "pooling_strategy": pooling_strategy,
+            "source_file": str(filepath),
+            "n_sequences": len(sequences),
+            "n_failed": n_failed,
+        }
+
+        n_ok = len(sequences) - n_failed
+        logging.info(
+            "embed_fasta: embedded %d/%d sequences from %s "
+            "(model=%s, seq_type=%s)",
+            n_ok, len(sequences), filepath.name, model, resolved_seq_type,
+        )
+        return adata
+
+    def _resolve_seq_type(
+        self,
+        explicit: Literal["dna", "protein"] | None,
+        model: str,
+        sequences: list[str],
+    ) -> str:
+        """Resolve sequence type with three-tier fallback."""
+        if explicit is not None:
+            logging.info("embed_fasta: using explicit seq_type=%r", explicit)
+            return explicit
+
+        # Tier 1: infer from model type
+        try:
+            inst = self._get_model(model)
+            mtype = getattr(inst, "model_type", None)
+            if mtype == "dna":
+                logging.info(
+                    "embed_fasta: inferred seq_type='dna' from model %r",
+                    model,
+                )
+                return "dna"
+            if mtype == "protein":
+                logging.info(
+                    "embed_fasta: inferred seq_type='protein' from model %r",
+                    model,
+                )
+                return "protein"
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Tier 2: auto-detect from character set
+        sample = sequences[:100]
+        all_dna = all(
+            set(seq.upper()).issubset(self._DNA_CHARS) for seq in sample if seq
+        )
+        if all_dna:
+            logging.info(
+                "embed_fasta: auto-detected seq_type='dna' "
+                "from sequence character set",
+            )
+            return "dna"
+        else:
+            has_non_dna = any(
+                not set(seq.upper()).issubset(self._DNA_CHARS)
+                for seq in sample if seq
+            )
+            if has_non_dna:
+                logging.info(
+                    "embed_fasta: auto-detected seq_type='protein' "
+                    "from sequence character set",
+                )
+                return "protein"
+
+        raise ValueError(
+            "Could not determine sequence type automatically.  "
+            "Please specify seq_type='dna' or seq_type='protein'."
+        )
 
 
 # ------------------------------------------------------------------

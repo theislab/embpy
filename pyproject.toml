@@ -26,15 +26,14 @@ dependencies = [
   "biopython",
   "broad-babel>=0.1",
   "cirpy",
-  "borzoi-pytorch>=0.4.3",
-  "enformer-pytorch>=0.8.10",
-  "esm>=3.2.0",
   "huggingface-hub>=0.35,<1.0.0",
   "ipywidgets",
   "matplotlib",
-  "numpy>=2.0,<2.3",
+  # Intentionally permissive: scipy 1.13 (needed by helical) pre-dates numpy 2,
+  # while modern torch / transformers work fine with numpy 2. Both are ok.
+  "numpy>=1.26,<3",
   "pysam>=0.22",
-  "pandas>=2.3.0",
+  "pandas>=2.2",
   "pyarrow>=14.0.2",
   "pyensembl>=2.3.13",
   "rdkit",
@@ -45,26 +44,53 @@ dependencies = [
   "session-info",
   "torch-geometric>=2.5",
   "transformers>=4.45.0,<5.0.0",
-  "minimol",
 ]
 
-torch-cpu = [
-  "torch>=2.5.1",
-]
-torch-cu121 = [
-  "torch>=2.5.1+cu121",
-]
-torch-cu124 = [
-  "torch>=2.5.1+cu124",
-]
-torch-cu128 = [
-  "torch>=2.5.1+cu128",
-]
-torch-cu130 = [
-  "torch>=2.5.1+cu130",
-]
 optional-dependencies.torch = [
   "torch>=2.5.1",
+]
+# CPU-only PyTorch (pulled from the standard PyPI index).
+optional-dependencies.torch-cpu = [
+  "torch>=2.5.1",
+]
+# CUDA builds of PyTorch. Use with --extra-index-url (or the provided uv/pixi
+# config) pointing to https://download.pytorch.org/whl/cuXXX
+optional-dependencies.torch-cu121 = [
+  "torch>=2.5.1",
+]
+optional-dependencies.torch-cu124 = [
+  "torch>=2.5.1",
+]
+optional-dependencies.torch-cu128 = [
+  "torch>=2.5.1",
+]
+optional-dependencies.torch-cu130 = [
+  "torch>=2.5.1",
+]
+# ESM-3 / ESM-C wrappers. Kept separate because `esm>=3.2.0` hard-pins
+# `transformers<4.48.2`, which conflicts with helical (needs >=4.49.0) and a
+# few other packages. ESM-2 / ProtT5 do NOT need this extra -- they go through
+# HuggingFace `transformers` directly.
+optional-dependencies.esm3 = [
+  "esm>=3.2.0",
+]
+# DNA/RNA sequence model wrappers. borzoi-pytorch hard-pins
+# `transformers<4.51.0`, so it cannot coexist with helical (needs >=4.53).
+# Kept optional so users without DNA sequence use-cases aren't forced onto an
+# older transformers. The other DNA wrappers (Evo, Caduceus) are in their own
+# extras and don't need this.
+optional-dependencies.seqmodels = [
+  "borzoi-pytorch>=0.4.3",
+  "enformer-pytorch>=0.8.10",
+]
+# MiniMol molecule GNN. Kept separate because it transitively depends on
+# `torch-sparse`, `torch-scatter` etc. which fail to build via pip unless
+# torch is pre-installed (the packages don't declare torch as a build-time
+# dep). The other molecule models (ChemBERTa, MolFormer, RDKit, MHG-GNN,
+# MolE) work without this extra.
+# Recommended install path: use conda/pixi which ships pre-built binaries.
+optional-dependencies.minimol = [
+  "minimol",
 ]
 optional-dependencies.evo = [
   "evo-model>=0.3",
@@ -72,7 +98,7 @@ optional-dependencies.evo = [
 optional-dependencies.evo2 = [
   "evo2",
 ]
-# Caduceus — requires mamba-ssm, a CUDA extension compiled against your torch.
+# Caduceus -- requires mamba-ssm, a CUDA extension compiled against your torch.
 # Install the matching torch-cu* extra FIRST, then:
 #   pip install embpy[caduceus]
 # If the build fails, try:
@@ -104,8 +130,33 @@ optional-dependencies.scanpy = [
 optional-dependencies.morphology = [
   "pillow>=10",
 ]
+# "all" = every extra that installs cleanly via plain pip/uv (no compiler,
+# no CUDA toolkit, compatible with numpy 2.x). Intentionally excludes:
+#   * torch-cu* CUDA variants -- pick one explicitly (see all-cu124 etc)
+#   * caduceus, evo2 -- need a CUDA toolchain to build mamba-ssm
+#   * boltz>=2 -- hard-pins numpy<2, conflicts with our numpy>=2
+#   * esm3 -- pins transformers<4.48.2, conflicts with helical and others
+#   * helical -- transitively needs the igraph C library (louvain) which
+#     pip cannot build; use conda/pixi for helical instead
+#   * minimol -- transitive torch-sparse build chain; use conda/pixi instead
+# Install those explicitly in a separate env if you need them.
 optional-dependencies.all = [
-  "embpy[torch,evo,evo2,caduceus,boltz,ppi,helical,lamindb,pertpy,scanpy,morphology]",
+  "embpy[torch,ppi,lamindb,pertpy,scanpy,morphology,seqmodels]",
+]
+# Convenience bundles that combine "all" with a specific torch build. These
+# intentionally omit caduceus/evo2 so a plain `pip install embpy[all-cu124]`
+# does not fail on users without a working CUDA toolchain.
+optional-dependencies.all-cpu = [
+  "embpy[all,torch-cpu]",
+]
+optional-dependencies.all-cu121 = [
+  "embpy[all,torch-cu121]",
+]
+optional-dependencies.all-cu124 = [
+  "embpy[all,torch-cu124]",
+]
+optional-dependencies.all-cu128 = [
+  "embpy[all,torch-cu128]",
 ]
 optional-dependencies.dev = [
   "pre-commit",
@@ -138,6 +189,80 @@ urls.Source = "https://github.com/grpinto/embpy"
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+# ---------------------------------------------------------------------------
+# uv (https://docs.astral.sh/uv/) configuration.
+#
+# `uv` is a fast drop-in pip replacement that honors these tables. With the
+# config below, users can just run:
+#
+#   uv sync --extra all-cu124      # GPU install, CUDA 12.4
+#   uv sync --extra all-cpu        # CPU-only install
+#   uv pip install -e ".[dev,doc]" # editable dev install
+#
+# without having to remember the correct --extra-index-url for torch wheels.
+# ---------------------------------------------------------------------------
+[tool.uv]
+# Resolve the normal PyPI index AND the matching PyTorch CUDA wheel index.
+# Using "explicit = true" means packages only come from these indexes if they
+# are explicitly requested via [tool.uv.sources] -- prevents polluting
+# unrelated packages with the torch index.
+conflicts = [
+  [
+    { extra = "torch-cpu" },
+    { extra = "torch-cu121" },
+    { extra = "torch-cu124" },
+    { extra = "torch-cu128" },
+    { extra = "torch-cu130" },
+  ],
+]
+
+# Several PyG-adjacent packages (torch-sparse, torch-scatter, torch-cluster,
+# pyg-lib) do NOT declare `torch` in `build-system.requires`, so their build
+# isolation env is missing torch and `setup.py` crashes. uv lets us inject
+# those build-time deps without disabling build isolation globally.
+[tool.uv.extra-build-dependencies]
+torch-sparse = [{ requirement = "torch>=2.5.1", match-runtime = true }]
+torch-scatter = [{ requirement = "torch>=2.5.1", match-runtime = true }]
+torch-cluster = [{ requirement = "torch>=2.5.1", match-runtime = true }]
+torch-spline-conv = [{ requirement = "torch>=2.5.1", match-runtime = true }]
+pyg-lib = [{ requirement = "torch>=2.5.1", match-runtime = true }]
+mamba-ssm = [{ requirement = "torch>=2.5.1", match-runtime = true }]
+causal-conv1d = [{ requirement = "torch>=2.5.1", match-runtime = true }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu121"
+url = "https://download.pytorch.org/whl/cu121"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cpu", extra = "torch-cpu" },
+  { index = "pytorch-cu121", extra = "torch-cu121" },
+  { index = "pytorch-cu124", extra = "torch-cu124" },
+  { index = "pytorch-cu128", extra = "torch-cu128" },
+  { index = "pytorch-cu130", extra = "torch-cu130" },
+]
 
 [tool.hatch.envs.default]
 installer = "uv"

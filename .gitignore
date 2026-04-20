@@ -47,3 +47,12 @@ activations_debug.log
 # Experimental / operational directories
 cellflow_operational/
 
+
+activations_debug.log
+embedding_job.log
+cellflow_operational/
+output/
+err/
+slurm_error_*.txt
+slurm_jupyter_*.txt
+.pixi/

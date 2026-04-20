@@ -13,7 +13,7 @@ Given a perturbation (genetic, chemical, or morphological) and/or single-cell ex
 ## Workflow
 
 <p align="center">
-  <img src="docs/_static/embpy_workflow.png" alt="embpy workflow" width="800"/>
+  <img src="docs/embpy_architecture.png" alt="embpy architecture" width="800"/>
 </p>
 
 ## Architecture
@@ -171,6 +171,21 @@ for iso_id, emb in isoforms.items():
 ```python
 emb = embedder.embed_molecule("CC(=O)OC1=CC=CC=C1C(=O)O", model="chemberta2MTR")
 print(emb.shape)  # (768,)
+```
+
+### Embed sequences from a FASTA file
+
+```python
+# Embed all sequences from a FASTA/FASTQ file (plain or gzipped)
+adata = embedder.embed_fasta("proteins.fasta", model="esm2_650M")
+print(adata)           # AnnData with .obs metadata and .obsm embeddings
+print(adata.obsm["X_esm2_650M"].shape)  # (n_sequences, 1280)
+
+# DNA sequences auto-detected from character set
+adata = embedder.embed_fasta("reads.fastq.gz", model="nt_v2_500m")
+
+# Explicit seq_type when needed
+adata = embedder.embed_fasta("ambiguous.fa", model="esm2_650M", seq_type="protein")
 ```
 
 ### Embed cells from an AnnData
@@ -415,98 +430,216 @@ adata = annotate_proteins(adata, column="gene")
 
 ## Installation
 
-Requires **Python 3.11+**. Choose the method that best fits your workflow.
+Requires **Python 3.11+**. Installing embpy means pulling in PyTorch,
+RDKit, pysam, HuggingFace transformers, and a long tail of model-specific
+packages -- historically this has been the single biggest friction point
+for new users. We now ship three supported install paths, ordered from
+*most reproducible* to *most familiar*:
 
-### Option 1: Mamba / Conda (recommended for HPC)
+| Path                   | When to use                                                          |
+| ---------------------- | -------------------------------------------------------------------- |
+| **[Pixi](#option-1-pixi-recommended)** (recommended) | You want *one command* that works. Lockfile-backed, cross-platform, handles CUDA + RDKit + pysam automatically. |
+| **[uv](#option-2-uv)** | You already manage envs with venv/virtualenv and just want something 10-100x faster than pip. |
+| **[Conda / mamba](#option-3-conda--mamba)** | You're on an HPC cluster with existing conda tooling. |
+| **[pip](#option-4-plain-pip)** | Fallback. Works but you'll need to juggle the torch CUDA index yourself. |
 
-The fastest way to get a fully working environment with GPU support, RDKit,
-and all compiled dependencies resolved automatically.
+> **TL;DR** -- on a fresh machine:
+>
+> ```bash
+> curl -fsSL https://pixi.sh/install.sh | bash
+> git clone https://github.com/theislab/embpy.git && cd embpy
+> pixi install              # CPU (default)
+> pixi shell                # activate
+> pixi run verify           # smoke test
+> ```
+
+---
+
+### Option 1: Pixi (recommended)
+
+[Pixi](https://pixi.sh) gives you a **lockfile-backed, reproducible**
+environment across Linux / macOS (Apple Silicon + Intel). It mixes
+conda-forge (for the binary-heavy packages: PyTorch, RDKit, pysam,
+pyarrow) with PyPI (for everything pure-Python), which is exactly the
+combination that has historically been painful to set up by hand.
 
 ```bash
-# GPU environment (CUDA 12.4)
+# 1. install pixi (one-time, ~15 MB)
+curl -fsSL https://pixi.sh/install.sh | bash
+
+# 2. clone and install
 git clone https://github.com/theislab/embpy.git
 cd embpy
-mamba env create -f environment.yml
-mamba activate embpy
+
+# CPU install (default env)
+pixi install
+pixi shell                    # activate
+pixi run verify               # smoke-test
+
+# GPU install (CUDA 12.4)
+pixi install -e gpu
+pixi shell -e gpu
+pixi run verify
 ```
 
+Pre-defined environments (switch with `pixi shell -e <name>`):
+
+| Env            | Contents                                                    |
+| -------------- | ----------------------------------------------------------- |
+| `default`      | CPU PyTorch + core embpy + scanpy + morphology + jupyter    |
+| `gpu`          | CUDA 12.4 PyTorch + pertpy + lamindb + ppi + jupyter        |
+| `helical-gpu`  | Standalone env with `helical` (single-cell FMs) on GPU. Lives in its own solve-group with conda pins for `scipy==1.13.1`, `transformers==4.49.0`, `pandas==2.2.2`, `numpy<2`; **does not include ESM-3** (incompatible `transformers` pin). |
+| `helical-cpu`  | Same as `helical-gpu` but CPU only                          |
+| `dev`          | CPU + test + lint + docs tooling (for contributing)         |
+| `docs`         | CPU + Sphinx toolchain (`pixi run -e docs build-docs`)      |
+
+Common tasks (run with `pixi run <task>`):
+
+| Task                 | What it does                                              |
+| -------------------- | --------------------------------------------------------- |
+| `verify`             | Smoke-test the install on CPU                             |
+| `jupyter`            | Launch JupyterLab on `0.0.0.0` (any port / ip via args)   |
+| `install-kernel`     | Register this env as a `Python (embpy)` Jupyter kernel    |
+| `-e gpu verify-gpu`  | Smoke-test the GPU install (needs a visible CUDA device)  |
+| `-e gpu install-kernel-gpu` | Register the GPU env as `Python (embpy-gpu)`       |
+
+### Running GPU JupyterLab on a SLURM cluster
+
+A ready-to-use SLURM launcher lives at
+[`submission_scripts/jupyter_pixi.sbatch`](submission_scripts/jupyter_pixi.sbatch).
+Unlike the old conda-based script, it does **not** need any
+`LD_LIBRARY_PATH` hacks -- conda-forge's `pytorch-cuda` handles all of
+that automatically.
+
 ```bash
-# CPU-only environment
+# One-time, on the login node:
+cd /path/to/embpy
+pixi install -e gpu            # resolves + downloads ~1 GB once
+
+# Every time you want a GPU notebook:
+sbatch submission_scripts/jupyter_pixi.sbatch
+cat slurm_jupyter_<JOBID>.txt  # token, host, port, SSH tunnel command
+```
+
+Add your own extras after activation:
+
+```bash
+pixi shell -e gpu
+pip install "embpy[boltz]"       # Boltz-2 (needs CUDA)
+pip install "embpy[caduceus]"    # mamba-ssm (needs CUDA nvcc)
+pip install "embpy[evo2]"        # Evo 2
+```
+
+---
+
+### Option 2: uv
+
+[uv](https://docs.astral.sh/uv/) is a 10-100x faster drop-in replacement
+for pip. Thanks to the `[tool.uv]` block in `pyproject.toml`, you do
+**not** have to remember `--extra-index-url` for the right CUDA wheel --
+uv picks it up automatically from the extra you select.
+
+```bash
+# install uv (one-time)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone and sync
+git clone https://github.com/theislab/embpy.git
+cd embpy
+
+# CPU install
+uv sync --extra all-cpu
+
+# GPU install (CUDA 12.4)
+uv sync --extra all-cu124
+
+# Development install (editable, with tests + docs)
+uv sync --extra dev --extra test --extra doc
+
+# Activate the uv-managed env
+source .venv/bin/activate
+```
+
+You can also install directly from GitHub without cloning:
+
+```bash
+uv pip install "embpy[all-cu124] @ git+https://github.com/theislab/embpy.git@main"
+```
+
+---
+
+### Option 3: Conda / mamba
+
+```bash
+git clone https://github.com/theislab/embpy.git
+cd embpy
+
+# GPU environment (CUDA 12.4)
+mamba env create -f environment.yml
+mamba activate embpy
+
+# -- or -- CPU-only environment
 mamba env create -f environment-cpu.yml
 mamba activate embpy-cpu
 ```
 
-The environment files install PyTorch, RDKit, and the core scientific stack
-via conda-forge, then install embpy and its Python-only dependencies via pip.
-
-To add optional extras after activation:
-
-```bash
-pip install ".[evo2,helical]"    # add Evo2 + single-cell models
-pip install ".[all]"             # everything
-```
-
-### Option 2: uv (fastest pip alternative)
-
-[uv](https://docs.astral.sh/uv/) is a drop-in pip replacement that resolves
-and installs packages 10-100x faster.
+Both files install PyTorch, RDKit, pysam and the scientific stack from
+conda-forge / pytorch / bioconda (pre-built binaries, no compilation),
+then install embpy and its Python-only dependencies via pip. Optional
+extras can be added any time:
 
 ```bash
-# Install uv if you don't have it
-pip install uv
-
-# CPU install
-uv pip install git+https://github.com/theislab/embpy.git@main
-
-# GPU install (CUDA 12.4)
-uv pip install "embpy[torch-cu124]" --extra-index-url https://download.pytorch.org/whl/cu124
-
-# Full GPU install with all extras
-uv pip install "embpy[all-cu124]" --extra-index-url https://download.pytorch.org/whl/cu124
-
-# Development install (editable)
-git clone https://github.com/theislab/embpy.git
-cd embpy
-uv pip install -e ".[dev,test]"
+pip install ".[helical]"    # single-cell foundation models
+pip install ".[pertpy]"     # pertpy metadata annotation
+pip install ".[boltz]"      # Boltz-2 (needs CUDA)
+pip install ".[caduceus]"   # mamba-ssm (needs CUDA nvcc)
 ```
 
-### Option 3: pip
+---
+
+### Option 4: Plain pip
+
+Works, but you are responsible for matching PyTorch to your CUDA
+toolkit and for compiling binary deps (`pysam`, `rdkit`, ...) yourself.
 
 ```bash
-# Base install (CPU) -- includes all HuggingFace models
-pip install git+https://github.com/theislab/embpy.git@main
+# CPU
+pip install "embpy[all-cpu] @ git+https://github.com/theislab/embpy.git@main"
 
-# GPU install -- pick your CUDA version
-pip install "embpy[torch-cu121]" --extra-index-url https://download.pytorch.org/whl/cu121
-pip install "embpy[torch-cu124]" --extra-index-url https://download.pytorch.org/whl/cu124
-pip install "embpy[torch-cu128]" --extra-index-url https://download.pytorch.org/whl/cu128
-
-# Full GPU install (CUDA 12.4)
-pip install "embpy[all-cu124]" --extra-index-url https://download.pytorch.org/whl/cu124
+# GPU (CUDA 12.4)
+pip install "embpy[all-cu124] @ git+https://github.com/theislab/embpy.git@main" \
+  --extra-index-url https://download.pytorch.org/whl/cu124
 ```
+
+---
 
 ### Optional extras
 
-Install only what you need:
+Mix and match beyond the default install:
 
-| Extra | What it enables |
-|---|---|
-| *(base)* | GENA-LM, NT v1/v2/v3, HyenaDNA, ESM-2/C, ProtT5, ChemBERTa, MolFormer, RDKit |
-| `caduceus` | Caduceus (SSM/Mamba DNA model, requires CUDA) |
-| `evo` | Evo v1/v1.5 |
-| `evo2` | Evo 2 |
-| `helical` | Single-cell foundation models (scGPT, Geneformer, UCE, TranscriptFormer, Tahoe, Cell2Sentence) |
-| `boltz` | Boltz-2 structure embeddings (requires CUDA) |
-| `ppi` | PPI GNN encoder |
-| `pertpy` | pertpy metadata annotation |
-| `scanpy` | scanpy integration |
-| `all` | Everything above |
+| Extra       | What it enables                                              | Install path |
+| ----------- | ------------------------------------------------------------ | ------------ |
+| *(base)*    | DNA (GENA-LM, NT v1/v2/v3, HyenaDNA, Borzoi, Enformer), Protein (ESM-1/2, ProtT5), Molecule (ChemBERTa, MolFormer, RDKit), text, PPI resolvers | pip / uv / pixi |
+| `ppi`       | PPI GNN encoder                                              | pip / uv / pixi |
+| `pertpy`    | pertpy metadata annotation                                   | pip / uv / pixi |
+| `lamindb`   | LaminDB dataset loading                                      | pip / uv / pixi |
+| `scanpy`    | scanpy integration                                           | pip / uv / pixi |
+| `morphology`| Cell Painting image preprocessing (Pillow)                   | pip / uv / pixi |
+| `ntv3`      | Nucleotide Transformer v3 (needs transformers >= 5.0)        | pip / uv / pixi |
+| `all`       | All extras above that install cleanly via pure pip/uv        | pip / uv / pixi |
+| `all-cpu`   | `all` + CPU PyTorch                                          | pip / uv / pixi |
+| `all-cu121` | `all` + CUDA 12.1 PyTorch                                    | pip / uv / pixi |
+| `all-cu124` | `all` + CUDA 12.4 PyTorch                                    | pip / uv / pixi |
+| `all-cu128` | `all` + CUDA 12.8 PyTorch                                    | pip / uv / pixi |
+| `esm3`      | ESM-3 / ESM-C (pins `transformers<4.48.2`, cannot coexist with `helical`) | pip / uv / pixi (own env) |
+| `helical`   | Single-cell foundation models (scGPT, Geneformer, UCE, Tahoe, Cell2Sentence) -- transitively needs the `igraph` C library | **conda / pixi only** (pixi `gpu` env includes it) |
+| `minimol`   | MiniMol molecule GNN (needs pre-built `torch-sparse`, `torch-scatter`) | **conda / pixi only** |
+| `evo`       | Evo v1 / v1.5                                                | pip (slow) / pixi |
+| `evo2`      | Evo 2                                                        | **conda / pixi** (needs CUDA) |
+| `caduceus`  | Caduceus (mamba-ssm, **requires CUDA nvcc**)                 | **conda / pixi** |
+| `boltz`     | Boltz-2 structure embeddings (**requires CUDA**, pins `numpy<2`) | separate env only |
 
-```bash
-# Mix and match
-pip install "embpy[torch-cu124,helical,evo2,pertpy]" \
-  --extra-index-url https://download.pytorch.org/whl/cu124
-```
+---
 
 ### Verifying the installation
 
@@ -517,6 +650,99 @@ embedder = BioEmbedder(device="auto")
 print(f"Device: {embedder.device}")
 print(f"Models: {len(embedder.list_available_models())} available")
 ```
+
+Or as a shell one-liner (works inside any of the envs above):
+
+```bash
+pixi run verify               # pixi users
+python -c "from embpy.embedder import BioEmbedder; e=BioEmbedder(device='cpu'); print('ok', e.device, len(e.list_available_models()))"
+```
+
+---
+
+### Troubleshooting
+
+Three issues account for **the vast majority** of install problems. If
+any of these look familiar, start here:
+
+<details>
+<summary><b><code>AttributeError: _ARRAY_API not found</code> / "compiled using NumPy 1.x cannot be run in NumPy 2.x"</b></summary>
+
+This means `pyarrow` (or another compiled package) was built against
+NumPy 1.x but your environment has NumPy 2.x. The usual cause is a
+leftover install in `~/.local/lib/python3.12/site-packages` shadowing
+your env.
+
+```bash
+# Inside your activated env:
+pip install --upgrade "pyarrow>=15" "numpy>=1.26,<3"
+
+# And force Python to ignore user-site-packages:
+export PYTHONNOUSERSITE=1
+```
+
+For Jupyter, add `"env": {"PYTHONNOUSERSITE": "1"}` (and `-s` to the
+python `argv`) in your kernel's `kernel.json`. The pixi / conda envs
+shipped here set this automatically.
+</details>
+
+<details>
+<summary><b><code>error: Failed building wheel for rdkit / pysam / mamba-ssm</code></b></summary>
+
+Plain pip tries to compile these from source. Don't -- use conda-forge
+or pixi instead, where they come as pre-built binaries:
+
+```bash
+# pixi (recommended)
+pixi install
+
+# or conda/mamba
+mamba install -c conda-forge rdkit "pysam>=0.22"
+```
+
+`mamba-ssm` (needed by the `caduceus` extra) also needs `nvcc` from a
+matching CUDA toolkit:
+
+```bash
+pip install mamba-ssm --no-build-isolation
+```
+</details>
+
+<details>
+<summary><b>torch installed CPU-only when I wanted CUDA (or vice-versa)</b></summary>
+
+PyTorch ships different wheels per CUDA version on a *separate* index
+(`https://download.pytorch.org/whl/cuXXX`). If you use pixi or uv with
+the `all-cu124` extra, the correct wheel is picked automatically. With
+plain pip you must pass `--extra-index-url`:
+
+```bash
+pip install "embpy[all-cu124]" \
+  --extra-index-url https://download.pytorch.org/whl/cu124
+```
+
+Verify with:
+
+```python
+import torch
+print(torch.__version__, torch.cuda.is_available(), torch.version.cuda)
+```
+</details>
+
+<details>
+<summary><b>Install is very slow</b></summary>
+
+Plain pip's dependency resolver can take several minutes on an env this
+size. Switch to uv or pixi:
+
+```bash
+# uv -- parallel downloads, fast resolver
+uv sync --extra all-cu124
+
+# pixi -- solve once, reuse lockfile forever
+pixi install
+```
+</details>
 
 ## Tutorials
 
