@@ -1,34 +1,53 @@
+# Conda/mamba environment for embpy with CUDA 12.4 PyTorch.
+# -----------------------------------------------------------------------------
+# Usage:
+#   mamba env create -f environment.yml
+#   mamba activate embpy
+#
+# For a fully reproducible (lockfile-backed) install, prefer pixi.toml instead:
+#   pixi install -e gpu && pixi shell -e gpu
+# -----------------------------------------------------------------------------
 name: embpy
 channels:
   - conda-forge
+  - bioconda
   - pytorch
   - nvidia
 dependencies:
   - python>=3.11,<3.14
   - pip>=24.0
 
-  # Core scientific stack
-  - numpy>=1.26,<2.0
+  # Scientific stack -- aligned with pyproject.toml (numpy 2.x).
+  - numpy>=2.0,<2.3
   - pandas>=2.3
   - scipy>=1.11
   - scikit-learn>=1.3
-  - matplotlib
+  - matplotlib-base
   - seaborn
+  - pyarrow>=15
 
-  # AnnData / scverse ecosystem
+  # AnnData / scverse
   - anndata
   - scanpy>=1.10
 
-  # PyTorch (GPU -- adjust cuda version as needed)
+  # PyTorch (GPU -- CUDA 12.4). Comes pre-built from the pytorch channel,
+  # so we do NOT install torch via pip afterwards.
   - pytorch::pytorch>=2.5.1
   - pytorch::pytorch-cuda=12.4
 
-  # Bioinformatics
+  # Binary bioinformatics deps (pip versions are fragile on HPC).
   - conda-forge::biopython
   - conda-forge::pyensembl>=2.3.13
   - conda-forge::rdkit
+  - bioconda::pysam>=0.22
 
-  # JUMP Cell Painting utilities
+  # Pure-Python extras added via pip. We deliberately use a minimal "-e ."
+  # so heavy compile-from-source extras (evo, caduceus, boltz, evo2) are
+  # opt-in -- add them later with:
+  #   pip install ".[helical]"           # single-cell foundation models
+  #   pip install ".[pertpy]"            # pertpy metadata
+  #   pip install ".[boltz]"             # Boltz-2 (needs CUDA)
+  #   pip install ".[caduceus]"          # mamba-ssm (needs CUDA nvcc)
   - pip:
       - broad-babel>=0.1
-      - -e ".[helical,pertpy,evo,caduceus,ppi]"
+      - -e .
