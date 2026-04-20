@@ -85,12 +85,16 @@ torch-geometric = ">=2.5"
 # Features -- toggle these on via `[environments]` below.
 # ---------------------------------------------------------------------------
 
-# CPU-only PyTorch (default)
+# CPU-only PyTorch (default). Pulled from conda-forge, which ships pytorch
+# builds for linux-64, osx-arm64, and osx-64. The `pytorch` conda channel
+# itself no longer publishes osx-64 builds of pytorch >= 2.5, so pinning
+# `channel = "pytorch"` here would break macOS installs.
 [feature.cpu.dependencies]
-pytorch = { version = ">=2.5.1", channel = "pytorch" }
-cpuonly = { channel = "pytorch" }
+pytorch = ">=2.5.1,<3.0"
 
-# CUDA 12.4 PyTorch -- linux-64 only (macOS has no NVIDIA GPUs).
+# CUDA 12.4 PyTorch -- linux-64 only (macOS has no NVIDIA GPUs). The `pytorch`
+# channel is required here because conda-forge doesn't ship the CUDA runtime
+# metapackages (`pytorch-cuda`).
 [feature.gpu]
 platforms = ["linux-64"]
 
