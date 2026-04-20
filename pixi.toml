@@ -29,7 +29,7 @@ authors = ["Goncalo Rei Pinto <goncalo.pinto@helmholtz-munich.de>"]
 channels = ["conda-forge", "bioconda", "pytorch", "nvidia"]
 # Only linux-64 gets the GPU env (no NVIDIA on macOS / Apple Silicon).
 # macOS platforms are still listed so the CPU env works on a Mac laptop.
-platforms = ["linux-64", "osx-arm64", "osx-64"]
+platforms = ["linux-64", "osx-arm64"]
 
 # ---------------------------------------------------------------------------
 # Core dependencies -- these are available everywhere (CPU and GPU).
@@ -73,11 +73,7 @@ embpy = { path = ".", editable = true }
 # pure-Python / PyPI-only deps that embpy imports directly:
 broad-babel = ">=0.1"
 cirpy = "*"
-minimol = "*"
 session-info = "*"
-# Model wrappers (PyPI only)
-borzoi-pytorch = ">=0.4.3"
-enformer-pytorch = ">=0.8.10"
 torch-geometric = ">=2.5"
 
 # ---------------------------------------------------------------------------
@@ -103,25 +99,92 @@ pytorch-cuda = { version = "12.4.*", channel = "pytorch" }
 
 # ESM-3 (Evolutionary Scale Modeling). Kept as its own feature because
 # `esm>=3.2.0` hard-pins `transformers<4.48.2`, which conflicts with helical
-# (which needs `transformers==4.49.0`).
+# (which needs `transformers>=4.53`). Mirror the transformers pin on the
+# conda side so the solver doesn't pick a newer version that esm can't use.
+[feature.esm3.dependencies]
+transformers = ">=4.45,<4.48.2"
+
 [feature.esm3.pypi-dependencies]
 esm = ">=3.2.0"
 
+# minimol (small-molecule fingerprints). Transitively pulls torch-sparse,
+# which has broken build metadata (missing torch as build dep). Kept opt-in
+# because not everyone needs it, and resolution is slow on macOS.
+[feature.minimol.pypi-dependencies]
+minimol = "*"
+
+# torch-sparse etc. have broken build metadata (don't declare torch as a
+# build dep). Disable build isolation so they inherit the env's torch.
+[feature.minimol.pypi-options]
+no-build-isolation = [
+  "torch-sparse",
+  "torch-scatter",
+  "torch-cluster",
+  "torch-spline-conv",
+  "pyg-lib",
+]
+
+# DNA/RNA sequence model wrappers. borzoi-pytorch pins transformers<4.51.0,
+# enformer-pytorch is permissive. Grouped into an opt-in feature so they don't
+# pin the whole environment's transformers version.
+[feature.seqmodels.dependencies]
+transformers = ">=4.45,<4.51"
+
+[feature.seqmodels.pypi-dependencies]
+borzoi-pytorch = ">=0.4.3"
+enformer-pytorch = ">=0.8.10"
+
 # Single-cell foundation models (scGPT, Geneformer, UCE, Tahoe, ...).
-# helical hard-pins `scipy==1.13.1` (ALL versions) and older helical versions
-# also pin `transformers==4.49.0` and `pandas==2.2.2`. We mirror those pins on
+# helical 2.0.0 hard-pins `torch==2.7.0`, `scipy==1.13.1`, `pandas==2.2.2`,
+# `numpy>=2.1.3,<2.3`, and needs `transformers>=4.53`. We mirror those pins on
 # the conda side so the conda solver doesn't pick newer versions that PyPI
-# `helical` can't satisfy. Also pin numpy<2 because scipy 1.13 predates
-# numpy 2.x support.
+# `helical` can't satisfy.
+#
+# IMPORTANT: pytorch is pulled from conda-forge here (NOT the `pytorch` channel)
+# because the `pytorch` channel does not ship pytorch==2.7. conda-forge's
+# pytorch 2.7.* builds include CUDA support on linux-64, so GPU still works.
+# Helical env is linux-64 only. helical has many brittle PyPI deps (loompy,
+# scib, mamba-ssm) that either don't build on macOS or have no conda-forge
+# packages for osx. Users on Mac should use the CPU default env without
+# helical.
+[feature.helical]
+platforms = ["linux-64"]
+
+# Only mirror the big-ticket hard pins on the conda side. Everything else
+# (accelerate, datasets, einops, loompy, scib, ...) is let through to PyPI so
+# pip's resolver can take helical's own constraints into account without
+# fighting the conda solver.
 [feature.helical.dependencies]
+pytorch = { version = "==2.7.0", channel = "conda-forge" }
 scipy = "==1.13.1"
-transformers = "==4.49.0"
+transformers = ">=4.53,<5"
 pandas = "==2.2.2"
-numpy = ">=1.26,<2.0"
+numpy = ">=2.1.3,<2.3"
 python = ">=3.11,<3.13"
+# Transitive deps of helical's `datasets==3.6.0` pin. conda's default solve
+# picks versions that violate what datasets==3.6.0 accepts, so we clamp them.
+dill = "<0.3.9"
+fsspec = "<=2025.3.0"
 
 [feature.helical.pypi-dependencies]
-helical = ">=1.5.1"
+helical = "==2.0.0"
+
+# GPU add-on specifically for the helical env. We do NOT reuse the top-level
+# `gpu` feature because that pins pytorch to the `pytorch` channel, which
+# doesn't have pytorch==2.7. Here we just request the CUDA-enabled build of
+# pytorch 2.7 from conda-forge.
+[feature.helical-gpu]
+platforms = ["linux-64"]
+
+# Declare that the TARGET system will have CUDA 12 available, so the solver
+# picks the cuda* build variants of pytorch even when running on a non-GPU
+# build host.
+[feature.helical-gpu.system-requirements]
+cuda = "12"
+
+[feature.helical-gpu.dependencies]
+# Restrict conda-forge pytorch 2.7.0 to its CUDA-enabled build variant.
+pytorch = { version = "==2.7.0", channel = "conda-forge", build = "cuda*" }
 
 # scanpy / pertpy / lamindb integration
 [feature.scanpy.dependencies]
@@ -161,7 +224,7 @@ embpy = { path = ".", editable = true, extras = ["dev", "test"] }
 # ---------------------------------------------------------------------------
 [environments]
 # Default CPU env for anyone who just wants to try embpy.
-default = { features = ["cpu", "morphology", "scanpy", "esm3", "jupyter"], solve-group = "cpu" }
+default = { features = ["cpu", "morphology", "scanpy", "esm3", "seqmodels", "jupyter"], solve-group = "cpu" }
 
 # GPU env with CUDA 12.4 PyTorch and everything compatible with the modern
 # transformers/scipy stack. NOTE: helical is NOT here -- it hard-pins
@@ -175,6 +238,7 @@ gpu = { features = [
   "ppi",
   "lamindb",
   "esm3",
+  "seqmodels",
   "jupyter",
 ], solve-group = "gpu" }
 
@@ -182,11 +246,15 @@ gpu = { features = [
 # several dependencies (transformers==4.49.0, scipy==1.13.1), so it cannot
 # share a solve-group with the main envs.
 # Usage: pixi install -e helical && pixi shell -e helical
-helical-gpu = { features = ["gpu", "morphology", "helical", "jupyter"] }
-helical-cpu = { features = ["cpu", "morphology", "helical", "jupyter"] }
+helical-gpu = { features = ["helical", "helical-gpu", "morphology", "jupyter"] }
+helical-cpu = { features = ["helical", "morphology", "jupyter"] }
+
+# Opt-in env for MiniMol (molecule GNN). Separate because torch-sparse has
+# broken build metadata and the resolve is slow.
+minimol = { features = ["cpu", "morphology", "minimol", "jupyter"], solve-group = "minimol" }
 
 # CPU env that also pulls the docs + dev extras. Useful for tutorial work.
-dev = { features = ["cpu", "morphology", "scanpy", "esm3", "jupyter", "dev", "docs"], solve-group = "cpu" }
+dev = { features = ["cpu", "morphology", "scanpy", "esm3", "seqmodels", "jupyter", "dev", "docs"], solve-group = "cpu" }
 
 # Documentation build env.
 docs = { features = ["cpu", "morphology", "scanpy", "docs"], solve-group = "cpu" }

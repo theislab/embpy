@@ -26,8 +26,6 @@ dependencies = [
   "biopython",
   "broad-babel>=0.1",
   "cirpy",
-  "borzoi-pytorch>=0.4.3",
-  "enformer-pytorch>=0.8.10",
   "huggingface-hub>=0.35,<1.0.0",
   "ipywidgets",
   "matplotlib",
@@ -75,6 +73,15 @@ optional-dependencies.torch-cu130 = [
 # HuggingFace `transformers` directly.
 optional-dependencies.esm3 = [
   "esm>=3.2.0",
+]
+# DNA/RNA sequence model wrappers. borzoi-pytorch hard-pins
+# `transformers<4.51.0`, so it cannot coexist with helical (needs >=4.53).
+# Kept optional so users without DNA sequence use-cases aren't forced onto an
+# older transformers. The other DNA wrappers (Evo, Caduceus) are in their own
+# extras and don't need this.
+optional-dependencies.seqmodels = [
+  "borzoi-pytorch>=0.4.3",
+  "enformer-pytorch>=0.8.10",
 ]
 # MiniMol molecule GNN. Kept separate because it transitively depends on
 # `torch-sparse`, `torch-scatter` etc. which fail to build via pip unless
@@ -134,7 +141,7 @@ optional-dependencies.morphology = [
 #   * minimol -- transitive torch-sparse build chain; use conda/pixi instead
 # Install those explicitly in a separate env if you need them.
 optional-dependencies.all = [
-  "embpy[torch,ppi,lamindb,pertpy,scanpy,morphology]",
+  "embpy[torch,ppi,lamindb,pertpy,scanpy,morphology,seqmodels]",
 ]
 # Convenience bundles that combine "all" with a specific torch build. These
 # intentionally omit caduceus/evo2 so a plain `pip install embpy[all-cu124]`
