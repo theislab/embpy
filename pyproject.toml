@@ -131,6 +131,7 @@ optional-dependencies.scanpy = [
 ]
 optional-dependencies.morphology = [
   "pillow>=10",
+  "jump-portrait>=0.0.7",
 ]
 # "all" = every extra that installs cleanly via plain pip/uv (no compiler,
 # no CUDA toolkit, compatible with numpy 2.x). Intentionally excludes:

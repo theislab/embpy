@@ -246,9 +246,26 @@ pertpy = "*"
 [feature.lamindb.pypi-dependencies]
 lamindb = "*"
 
-# Morphology (Pillow is small -- part of everything by default would work too)
+# Morphology (Cell Painting / image-based assays).
+# Pillow handles basic image I/O.
 [feature.morphology.dependencies]
 pillow = ">=10"
+
+# JUMP Cell Painting data access. Separate feature because jump-portrait has
+# strict s3fs/fsspec version requirements that conflict with newer fsspec.
+# Only included in envs that can actually use it (gpu, default, dev), not
+# helical or boltz.
+[feature.jump.dependencies]
+# jump-portrait pins s3fs<2025, and s3fs requires fsspec to match its version.
+# We must pin fsspec to 2024.x so the s3fs constraint can be satisfied.
+fsspec = ">=2024.6.0,<2025"
+pyarrow = ">=23.0.1"
+# s3fs -> aiobotocore requires wrapt<2.0.0
+wrapt = ">=1.10.10,<2.0.0"
+
+[feature.jump.pypi-dependencies]
+# jump-portrait 0.1.0+ requires pyarrow>=23.0.1 and works with numpy 2.x.
+jump-portrait = ">=0.1.0"
 
 # PPI GNN encoder
 [feature.ppi.dependencies]
@@ -274,7 +291,7 @@ embpy = { path = ".", editable = true, extras = ["dev", "test"] }
 # ---------------------------------------------------------------------------
 [environments]
 # Default CPU env for anyone who just wants to try embpy.
-default = { features = ["cpu", "morphology", "scanpy", "esm3", "seqmodels", "jupyter"], solve-group = "cpu" }
+default = { features = ["cpu", "morphology", "jump", "scanpy", "esm3", "seqmodels", "jupyter"], solve-group = "cpu" }
 
 # GPU env with CUDA 12.4 PyTorch and everything compatible with the modern
 # transformers/scipy stack. NOTE: helical is NOT here -- it hard-pins
@@ -283,6 +300,7 @@ default = { features = ["cpu", "morphology", "scanpy", "esm3", "seqmodels", "jup
 gpu = { features = [
   "gpu",
   "morphology",
+  "jump",
   "scanpy",
   "pertpy",
   "ppi",
@@ -310,10 +328,10 @@ minimol = { features = ["cpu", "morphology", "minimol", "jupyter"], solve-group 
 boltz = { features = ["boltz", "morphology", "jupyter"] }
 
 # CPU env that also pulls the docs + dev extras. Useful for tutorial work.
-dev = { features = ["cpu", "morphology", "scanpy", "esm3", "seqmodels", "jupyter", "dev", "docs"], solve-group = "cpu" }
+dev = { features = ["cpu", "morphology", "jump", "scanpy", "esm3", "seqmodels", "jupyter", "dev", "docs"], solve-group = "cpu" }
 
 # Documentation build env.
-docs = { features = ["cpu", "morphology", "scanpy", "docs"], solve-group = "cpu" }
+docs = { features = ["cpu", "morphology", "jump", "scanpy", "docs"], solve-group = "cpu" }
 
 # ---------------------------------------------------------------------------
 # Tasks -- shortcuts for common commands (`pixi run <name>`).
