@@ -22,8 +22,8 @@
 # -----------------------------------------------------------------------------
 
 #SBATCH --job-name=embpy-jpt
-#SBATCH -o submission_scripts/logs/jupyter_pixi_%j.out
-#SBATCH -e submission_scripts/logs/jupyter_pixi_%j.err
+#SBATCH -o logs/jupyter_pixi_%j.out
+#SBATCH -e logs/jupyter_pixi_%j.err
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=20
