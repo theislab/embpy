@@ -75,18 +75,39 @@ def fetch_hpa_if_image(
     np.ndarray
         ``(4, H, W)`` uint8 array in RYBG channel order.
     """
+    short = strip_antibody_id(antibody)
+    url_prefix = f"{HPA_IMAGE_BASE}/{short}/{plate}_{position}_{sample}"
+    return fetch_hpa_if_image_by_prefix(url_prefix)
+
+
+def fetch_hpa_if_image_by_prefix(url_prefix: str) -> np.ndarray:
+    """Download a 4-channel HPA IF image given a full URL prefix.
+
+    Use this when the antibody/plate/position/sample components alone are
+    insufficient to reconstruct the URL (e.g. when the HPA path includes a
+    cell-line subdirectory like ``/5910/U-251/30_A11_2``).  The prefix is
+    appended with ``_<channel>.jpg`` for each of the four RYBG channels.
+
+    Parameters
+    ----------
+    url_prefix
+        Full URL minus the ``_<channel>.jpg`` suffix, e.g.
+        ``"https://images.proteinatlas.org/5910/U-251/30_A11_2"``.
+
+    Returns
+    -------
+    np.ndarray
+        ``(4, H, W)`` uint8 array in RYBG channel order.
+    """
     import io
+    from concurrent.futures import ThreadPoolExecutor
 
     import numpy as np
     import requests
     from PIL import Image
 
-    from concurrent.futures import ThreadPoolExecutor
-
-    short = strip_antibody_id(antibody)
-
     def _dl(ch: str) -> np.ndarray:
-        url = f"{HPA_IMAGE_BASE}/{short}/{plate}_{position}_{sample}_{ch}.jpg"
+        url = f"{url_prefix}_{ch}.jpg"
         resp = requests.get(url)
         resp.raise_for_status()
         return np.asarray(Image.open(io.BytesIO(resp.content)).convert("L"), dtype=np.uint8)
@@ -409,6 +430,47 @@ def get_hpa_antibodies(gene_or_ensembl: str) -> list[dict]:
     return data.get("Antibody", [])
 
 
+def get_hpa_antibodies_quiet(gene_or_ensembl: str) -> tuple[list[dict], str | None]:
+    """Return antibody entries without logging warnings (quiet version).
+
+    This function is used by ``embed_perturbation_morphology`` to collect
+    resolution information without printing intermediate warnings. A single
+    summary message is printed at the end by the caller.
+
+    Parameters
+    ----------
+    gene_or_ensembl
+        Gene symbol (e.g. ``"TP53"``) or Ensembl ID (``"ENSG00000141510"``).
+
+    Returns
+    -------
+    tuple[list[dict], str | None]
+        A tuple of (antibody_entries, gene_source).
+        ``gene_source`` describes how the gene was resolved (e.g.
+        ``"GeneResolver"``, ``"mygene"``, ``"Ensembl ID"``), or ``None``
+        if resolution failed.
+    """
+    import requests
+
+    ensembl_id, gene_source = _resolve_ensembl_id_quiet(gene_or_ensembl)
+    if not ensembl_id:
+        return [], None
+
+    url = f"{HPA_API_BASE}/{ensembl_id}.json"
+    try:
+        resp = requests.get(url)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return [], None
+
+    if isinstance(data, list) and data:
+        data = data[0]
+    if isinstance(data, str):
+        return [], gene_source
+    return data.get("Antibody", []), gene_source
+
+
 def _resolve_ensembl_id(gene_or_ensembl: str) -> str | None:
     """Return the Ensembl gene ID, resolving symbols via ``GeneResolver`` or ``mygene``."""
     if gene_or_ensembl.startswith("ENSG"):
@@ -445,3 +507,52 @@ def _resolve_ensembl_id(gene_or_ensembl: str) -> str | None:
     except Exception:
         logger.warning("mygene lookup failed for %r", gene_or_ensembl)
     return None
+
+
+def _resolve_ensembl_id_quiet(gene_or_ensembl: str) -> tuple[str | None, str | None]:
+    """Resolve Ensembl ID without logging warnings (quiet version).
+
+    Returns
+    -------
+    tuple[str | None, str | None]
+        A tuple of (ensembl_id, source). ``source`` describes how the ID
+        was resolved (e.g. ``"direct Ensembl ID"``, ``"GeneResolver"``,
+        ``"mygene"``).
+    """
+    if gene_or_ensembl.startswith("ENSG"):
+        return gene_or_ensembl, "direct Ensembl ID"
+
+    # Prefer embpy GeneResolver (pyensembl + MyGene REST + Ensembl REST)
+    try:
+        from embpy.resources.gene_resolver import GeneResolver
+
+        resolver = GeneResolver(organism="human")
+        ensembl_id = resolver.symbol_to_ensembl(gene_or_ensembl)
+        if ensembl_id:
+            return ensembl_id, "GeneResolver"
+    except Exception:
+        pass
+
+    # Fallback: direct mygene package
+    try:
+        import mygene
+
+        mg = mygene.MyGeneInfo()
+        result = mg.query(
+            gene_or_ensembl,
+            scopes="symbol,alias",
+            fields="ensembl.gene",
+            species="human",
+        )
+        hits = result.get("hits", [])
+        if hits:
+            ensembl = hits[0].get("ensembl", {})
+            if isinstance(ensembl, list):
+                ensembl = ensembl[0]
+            eid = ensembl.get("gene")
+            if eid:
+                return eid, "mygene"
+    except Exception:
+        pass
+
+    return None, None
