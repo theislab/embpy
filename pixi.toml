@@ -215,6 +215,23 @@ python = ">=3.11,<3.13"
 # picks versions that violate what datasets==3.6.0 accepts, so we clamp them.
 dill = "<0.3.9"
 fsspec = "<=2025.3.0"
+# Graph-community detection packages pulled in transitively by helical
+# (via scanpy/scib). Their PyPI wheels would compile igraph's C core from
+# source, which needs CMake. Grab pre-built conda-forge binaries instead.
+louvain = "*"
+leidenalg = "*"
+python-igraph = "*"
+# CMake as a build-time fallback in case any other PyPI dep still needs
+# to compile from source.
+cmake = ">=3.20"
+# Tahoe-x1 vendors llm-foundry code that uses the `catalogue` package
+# (spaCy/Thinc-style layer registry) to register attention implementations
+# and norm layers. Not declared by helical's own pyproject.
+catalogue = ">=2.0"
+# Tahoe-x1 also imports `torchmetrics` at module load time (SFTPreMetrics,
+# etc. from the vendored llm-foundry). Not declared by helical either.
+# Conda-forge ships prebuilt wheels compatible with pytorch==2.7.
+torchmetrics = ">=1.0"
 
 [feature.helical.pypi-dependencies]
 helical = "==2.0.0"

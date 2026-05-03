@@ -56,3 +56,9 @@ err/
 slurm_error_*.txt
 slurm_jupyter_*.txt
 .pixi/
+
+# Scratch files produced by model wrappers (e.g. UCE writes
+# test_counts.npz to CWD during processing). These are regenerated
+# on every run and can be multi-GB -- never commit them.
+*.npz
+test_counts.npz
