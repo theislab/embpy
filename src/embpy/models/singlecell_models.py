@@ -41,6 +41,89 @@ def _require_helical():  # type: ignore[no-untyped-def]
         ) from exc
 
 
+def _install_flash_attn_shim() -> None:
+    """Install a pure-PyTorch shim for the subset of `flash_attn` Tahoe uses.
+
+    Tahoe-x1 vendors LLM-Foundry code whose `modeling_mpt.py` does
+    `from flash_attn import bert_padding` at module import time and then,
+    inside every forward pass, calls `bert_padding.unpad_input(...)` --
+    even when `attn_impl="torch"`. If `flash_attn` is absent, Tahoe cannot
+    even load; if it is present as an empty stub, loading succeeds but
+    inference crashes with `AttributeError: module 'flash_attn.bert_padding'
+    has no attribute 'unpad_input'`.
+
+    Installing real `flash_attn` is impractical in generic environments
+    (requires custom CUDA build), so we install a minimal functional shim
+    that implements the two functions Tahoe actually calls
+    (`unpad_input` and `pad_input`) in pure PyTorch. The fast CUDA path is
+    never taken under `attn_impl="torch"`, so this is exercised only as a
+    padding utility and is numerically identical to the real thing.
+    """
+    import sys
+    import types
+
+    try:
+        import flash_attn  # type: ignore[import-not-found]
+
+        # Real flash_attn present -- only shim if bert_padding is broken.
+        if hasattr(flash_attn, "bert_padding") and hasattr(
+            flash_attn.bert_padding, "unpad_input"
+        ):
+            return
+    except ImportError:
+        pass
+
+    import torch
+
+    def unpad_input(hidden_states: "torch.Tensor", attention_mask: "torch.Tensor"):
+        """Flatten padded (batch, seqlen, ...) tensors down to non-pad tokens.
+
+        Mirrors ``flash_attn.bert_padding.unpad_input``. Returns
+        ``(hidden_states_flat, indices, cu_seqlens, max_seqlen_in_batch)``.
+        """
+        seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
+        indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
+        max_seqlen_in_batch = int(seqlens_in_batch.max().item()) if seqlens_in_batch.numel() else 0
+        cu_seqlens = torch.nn.functional.pad(
+            torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0)
+        )
+        flat = hidden_states.reshape(-1, *hidden_states.shape[2:])
+        flat_unpad = flat.index_select(0, indices)
+        return flat_unpad, indices, cu_seqlens, max_seqlen_in_batch
+
+    def pad_input(hidden_states: "torch.Tensor", indices: "torch.Tensor", batch: int, seqlen: int):
+        """Inverse of ``unpad_input``. Mirrors ``flash_attn.bert_padding.pad_input``."""
+        output = hidden_states.new_zeros((batch * seqlen, *hidden_states.shape[1:]))
+        output.index_copy_(0, indices, hidden_states)
+        return output.reshape(batch, seqlen, *hidden_states.shape[1:])
+
+    def index_first_axis(hidden_states: "torch.Tensor", indices: "torch.Tensor"):
+        """Mirrors ``flash_attn.bert_padding.index_first_axis``."""
+        return hidden_states.index_select(0, indices)
+
+    def unpad_input_for_concatenated_sequences(*args, **kwargs):  # pragma: no cover
+        raise NotImplementedError(
+            "unpad_input_for_concatenated_sequences is not implemented in the "
+            "flash_attn shim. This path is only triggered by packed-sequence "
+            "inputs, which Tahoe does not use with attn_impl='torch'."
+        )
+
+    bert_padding = types.ModuleType("flash_attn.bert_padding")
+    bert_padding.unpad_input = unpad_input  # type: ignore[attr-defined]
+    bert_padding.pad_input = pad_input  # type: ignore[attr-defined]
+    bert_padding.index_first_axis = index_first_axis  # type: ignore[attr-defined]
+    bert_padding.unpad_input_for_concatenated_sequences = (  # type: ignore[attr-defined]
+        unpad_input_for_concatenated_sequences
+    )
+
+    flash_attn_mod = types.ModuleType("flash_attn")
+    flash_attn_mod.bert_padding = bert_padding  # type: ignore[attr-defined]
+
+    sys.modules["flash_attn"] = flash_attn_mod
+    sys.modules["flash_attn.bert_padding"] = bert_padding
+    logger.debug("Installed pure-torch flash_attn.bert_padding shim for Tahoe-x1.")
+
+
 # ---------------------------------------------------------------------------
 # Model registry
 # ---------------------------------------------------------------------------
@@ -477,13 +560,7 @@ class TahoeWrapper(SingleCellWrapper):
 
     def load(self, device: str = "cpu") -> None:  # noqa: D102
         _require_helical()
-        import importlib.util
-        import sys
-        import types
-
-        if importlib.util.find_spec("flash_attn") is None:
-            sys.modules["flash_attn"] = types.ModuleType("flash_attn")
-            sys.modules["flash_attn.bert_padding"] = types.ModuleType("flash_attn.bert_padding")
+        _install_flash_attn_shim()
 
         from helical.models.tahoe import Tahoe, TahoeConfig  # type: ignore[import-not-found]
 

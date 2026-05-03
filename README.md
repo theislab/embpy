@@ -530,6 +530,40 @@ pip install "embpy[caduceus]"    # mamba-ssm (needs CUDA nvcc)
 pip install "embpy[evo2]"        # Evo 2
 ```
 
+#### Single-cell foundation models: a separate pixi env
+
+Notebook [`12_singlecell_foundation_models.ipynb`](docs/notebooks/12_singlecell_foundation_models.ipynb)
+uses the [helical](https://github.com/helicalAI/helical) package to load
+scGPT, Geneformer, UCE, TranscriptFormer, Tahoe-x1 and Cell2Sentence.
+Helical has a large set of rigid transitive dependencies
+(`datasets==3.6.0`, `scib`, `loompy`, `mamba-ssm`, ...) that force older
+`numpy`, `pandas`, `fsspec`, `dill` and `torch` versions than the main
+`gpu` env uses. Mixing them in a single resolver run fails every time, so
+helical lives in its own pixi environment: **`helical-gpu`**.
+
+Consequently, notebook 12 must be run from a different JupyterLab server
+than every other notebook in the repo. The repo ships a dedicated SLURM
+launcher,
+[`submission_scripts/jupyter_pixi_helical.sbatch`](submission_scripts/jupyter_pixi_helical.sbatch),
+that activates `helical-gpu` instead of `gpu`.
+
+```bash
+# One-time, on the login node. CONDA_OVERRIDE_CUDA tells the solver to
+# pick CUDA-enabled pytorch variants even when the login node itself is
+# CPU-only. The compute node it actually runs on has a real GPU.
+cd /path/to/embpy
+CONDA_OVERRIDE_CUDA=12.0 pixi install -e helical-gpu
+
+# Every time you want to run notebook 12:
+sbatch submission_scripts/jupyter_pixi_helical.sbatch
+cat submission_scripts/logs/jupyter_pixi_helical_<JOBID>.out  # URL + token
+```
+
+All other notebooks (DNA, protein, molecule, morphology, identifier
+handling, ...) run in the default `gpu` env via
+`jupyter_pixi.sbatch`. If you're not touching notebook 12, you can
+ignore `helical-gpu` entirely.
+
 ---
 
 ### Option 2: uv
