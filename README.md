@@ -789,7 +789,7 @@ pixi install
 | 05 | Text Embeddings | [05_text_embeddings.ipynb](docs/notebooks/05_text_embeddings.ipynb) |
 | 06 | PPI Embeddings | [06_ppi_embeddings.ipynb](docs/notebooks/06_ppi_embeddings.ipynb) |
 | 07 | Combined Analysis | [07_combined_analysis.ipynb](docs/notebooks/07_combined_analysis.ipynb) |
-| 08 | Visualization and Analysis | [08_visualization_and_analysis.ipynb](docs/notebooks/08_visualization_and_analysis.ipynb) |
+| 08 | *(merged into 04, plotting API demonstrated on real molecule data)* | -- |
 | 09 | Embedding Benchmark | [09_embedding_benchmark.ipynb](docs/notebooks/09_embedding_benchmark.ipynb) |
 | 10 | *(merged into 02)* | -- |
 | 11 | DepMap Analysis | [11_depmap_analysis.ipynb](docs/notebooks/11_depmap_analysis.ipynb) |

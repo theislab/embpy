@@ -39,7 +39,7 @@
 #SBATCH --qos=gpu_normal
 #SBATCH --gres=gpu:1
 #SBATCH --time=12:00:00
-# #SBATCH --constraint=a100_80gb
+#SBATCH --constraint=a100_80gb
 
 # -----------------------------------------------------------------------------
 # Environment hygiene: do NOT source conda/mamba here. pixi is fully isolated

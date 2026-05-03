@@ -25,7 +25,6 @@ notebooks/04_molecule_embeddings
 notebooks/05_text_embeddings
 notebooks/06_ppi_embeddings
 notebooks/07_combined_analysis
-notebooks/08_visualization_and_analysis
 notebooks/11_depmap_analysis
 notebooks/12_singlecell_foundation_models
 notebooks/13_morphology_jump_cell_painting
