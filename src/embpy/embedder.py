@@ -369,8 +369,18 @@ class BioEmbedder:
         # Text resolver for description-based embeddings
         self.text_resolver = TextResolver(organism=organism)
 
-        # Model cache and discovery
+        # Model cache and discovery.
+        #
+        # `model_cache` holds DNA/protein/molecule/text/morphology wrappers
+        # that subclass `BaseModelWrapper`. Single-cell foundation-model
+        # wrappers (scGPT, Geneformer, UCE, Tahoe, ...) subclass
+        # `SingleCellWrapper` instead, so they live in a separate cache.
+        # Both caches are keyed so that repeated calls to embed_cells /
+        # embed_perturbation / etc. reuse an already-loaded torch model
+        # instead of re-instantiating it on every call -- critical for
+        # chunked inference over large datasets.
         self.model_cache: dict[str, BaseModelWrapper] = {}
+        self._singlecell_cache: dict[tuple[str, str], Any] = {}
         self._available_models = self._discover_models()
 
         logging.info(
@@ -476,6 +486,225 @@ class BioEmbedder:
                     message += f" Available predefined models: {available_model_names}"
                 message += f" Original error: {str(e)}"
                 raise ModelNotFoundError(message) from e
+
+    @staticmethod
+    def _detect_vocab_type(var_names: Sequence[str], sample: int = 200) -> Literal["symbol", "ensembl_id", "mixed", "unknown"]:
+        """Guess the gene-identifier convention of an AnnData's ``var_names``.
+
+        Heuristic: sample up to ``sample`` names and check what fraction
+        look like Ensembl gene IDs (``ENSG`` / ``ENSMUSG`` / ``ENSRNOG`` /
+        ``ENSG0``... or any ``ENS[A-Z]+G\\d+`` prefix, optionally with a
+        trailing version suffix).
+
+        Returns
+        -------
+        str
+            ``"ensembl_id"`` if >= 80% match the Ensembl pattern,
+            ``"symbol"`` if <= 20% match (rest look like gene symbols),
+            ``"mixed"`` if in between, ``"unknown"`` if empty input.
+        """
+        import re
+
+        if len(var_names) == 0:
+            return "unknown"
+        head = list(var_names[: min(sample, len(var_names))])
+        pattern = re.compile(r"^ENS[A-Z]*G\d+(\.\d+)?$")
+        n_ens = sum(1 for v in head if pattern.match(str(v)))
+        frac = n_ens / len(head)
+        if frac >= 0.8:
+            return "ensembl_id"
+        if frac <= 0.2:
+            return "symbol"
+        return "mixed"
+
+    def _ensure_singlecell_vocabulary(
+        self,
+        adata,
+        model_key: str,
+        organism: str = "human",
+    ):
+        """Auto-convert ``adata.var_names`` to the format expected by a
+        single-cell foundation model.
+
+        Does nothing if the model's ``vocab_type`` is ``"any"`` or
+        ``"either"`` (the wrapper handles it internally), or if the
+        detected format already matches. Otherwise uses
+        :class:`GeneResolver` to remap symbols <-> Ensembl IDs via
+        pyensembl (fast, local) with MyGene.info and Ensembl REST
+        fallbacks for misses.
+
+        Parameters
+        ----------
+        adata
+            AnnData to inspect / convert. If conversion is needed the
+            returned AnnData is a sliced copy with rekeyed ``var_names``;
+            the original is left untouched.
+        model_key
+            Key into the single-cell model registry.
+        organism
+            Species name passed to ``GeneResolver`` (default ``"human"``).
+
+        Returns
+        -------
+        tuple[AnnData, dict]
+            The (possibly rewritten) AnnData and a small report dict
+            with the detected/target formats and number of mapped genes.
+        """
+        from .models.singlecell_models import _SC_MODEL_REGISTRY
+
+        card = _SC_MODEL_REGISTRY.get(model_key)
+        if card is None or card.vocab_type in ("any", "either"):
+            return adata, {"action": "none", "reason": f"vocab_type={getattr(card, 'vocab_type', '?')}"}
+
+        target = card.vocab_type  # "symbol" or "ensembl_id"
+        current = self._detect_vocab_type(adata.var_names)
+        if current == target or current == "unknown":
+            return adata, {"action": "none", "reason": f"already {current}"}
+        if current == "mixed":
+            logging.warning(
+                "adata.var_names for model '%s' look mixed (both symbols and "
+                "Ensembl IDs). Leaving untouched; expect poor vocabulary match.",
+                model_key,
+            )
+            return adata, {"action": "none", "reason": "mixed var_names"}
+
+        # Need to convert from `current` to `target`.
+        logging.info(
+            "Auto-converting adata.var_names for model '%s': %s -> %s (%d genes)",
+            model_key, current, target, adata.n_vars,
+        )
+
+        if current == "ensembl_id" and target == "symbol":
+            mapping = self.gene_resolver.ensembl_to_symbols_batch(
+                list(adata.var_names), organism=organism
+            )
+        elif current == "symbol" and target == "ensembl_id":
+            mapping = self.gene_resolver.symbols_to_ensembl_batch(
+                list(adata.var_names), organism=organism
+            )
+        else:
+            return adata, {"action": "none", "reason": f"unhandled {current}->{target}"}
+
+        new_names = [mapping.get(v) for v in adata.var_names]
+        keep_mask = np.array([n is not None and n != "" for n in new_names], dtype=bool)
+        n_mapped = int(keep_mask.sum())
+        if n_mapped == 0:
+            logging.error(
+                "Vocabulary conversion %s -> %s produced 0 mapped genes for "
+                "model '%s'. Returning original adata; embedding will likely fail.",
+                current, target, model_key,
+            )
+            return adata, {"action": "failed", "detected": current, "target": target, "n_mapped": 0}
+
+        out = adata[:, keep_mask].copy()
+        new_names_arr = np.array([n for n, keep in zip(new_names, keep_mask) if keep])
+        # Drop duplicates (multiple Ensembl IDs can map to the same symbol
+        # and vice versa). Keep first occurrence.
+        seen: set[str] = set()
+        unique_mask = np.zeros(len(new_names_arr), dtype=bool)
+        for i, n in enumerate(new_names_arr):
+            if n not in seen:
+                seen.add(n)
+                unique_mask[i] = True
+        if (~unique_mask).any():
+            logging.info(
+                "Dropped %d duplicate names during %s -> %s conversion.",
+                int((~unique_mask).sum()), current, target,
+            )
+            out = out[:, unique_mask].copy()
+            new_names_arr = new_names_arr[unique_mask]
+
+        # Preserve the original identifiers as a var column so they
+        # remain recoverable (e.g. for round-trip mapping after embedding).
+        orig_col = "original_ensembl_id" if current == "ensembl_id" else "original_gene_symbol"
+        orig_names = np.asarray(adata.var_names)[keep_mask]
+        out.var[orig_col] = orig_names[unique_mask] if (~unique_mask).any() else orig_names
+        out.var_names = new_names_arr
+        logging.info(
+            "Vocabulary conversion OK: %d -> %d genes mapped (%s -> %s).",
+            adata.n_vars, out.n_vars, current, target,
+        )
+        return out, {
+            "action": "converted",
+            "detected": current,
+            "target": target,
+            "n_mapped": n_mapped,
+            "n_out": out.n_vars,
+        }
+
+    def _get_or_load_singlecell_wrapper(
+        self,
+        model_key: str,
+        batch_size: int,
+        device_str: str,
+    ):
+        """Return a cached single-cell foundation-model wrapper, loading it
+        the first time.
+
+        The cache is keyed by ``(model_key, device_str)`` only;
+        ``batch_size`` is applied on every call so it can change between
+        chunks without forcing a reload.
+
+        This is what makes chunked inference over large datasets cheap:
+        a caller looping ``for chunk in chunks: embedder.embed_cells(chunk)``
+        pays the model-instantiation cost once, not per chunk.
+        """
+        from .models.singlecell_models import get_singlecell_wrapper
+
+        cache_key = (model_key, device_str)
+        cached = self._singlecell_cache.get(cache_key)
+        if cached is not None:
+            # Cheap attribute update -- do not re-run `.load()`.
+            try:
+                cached.batch_size = batch_size
+            except Exception:  # noqa: BLE001
+                pass
+            logging.debug("Reusing cached single-cell wrapper for '%s'", model_key)
+            return cached
+
+        logging.info("Loading single-cell wrapper for '%s' on %s ...", model_key, device_str)
+        wrapper = get_singlecell_wrapper(model_key, batch_size=batch_size)
+        wrapper.load(device_str)
+        self._singlecell_cache[cache_key] = wrapper
+        return wrapper
+
+    def clear_model_cache(self, *, which: Literal["all", "singlecell", "other"] = "all") -> None:
+        """Drop cached model wrappers and free associated GPU memory.
+
+        Parameters
+        ----------
+        which
+            Which cache(s) to clear. ``"all"`` drops both the single-cell
+            foundation-model cache and the DNA/protein/molecule/text/
+            morphology cache. ``"singlecell"`` clears only the single-cell
+            cache (useful when switching from foundation-model inference
+            to structure/morphology work). ``"other"`` clears only the
+            non-single-cell cache.
+
+        After dropping references, runs ``gc.collect()`` +
+        ``torch.cuda.empty_cache()`` so the allocator actually releases
+        the GPU memory back to the system.
+        """
+        import gc
+
+        if which in ("all", "singlecell"):
+            n = len(self._singlecell_cache)
+            self._singlecell_cache.clear()
+            logging.info("Cleared %d cached single-cell wrapper(s).", n)
+        if which in ("all", "other"):
+            n = len(self.model_cache)
+            self.model_cache.clear()
+            logging.info("Cleared %d cached model wrapper(s).", n)
+
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception:  # noqa: BLE001
+            pass
 
     def embed_gene(
         self,
@@ -1321,6 +1550,7 @@ class BioEmbedder:
         obsm_prefix: str = "X_",
         copy: bool = True,
         backend: Literal["cpu", "gpu"] = "cpu",
+        vocab_conversion: Literal["auto", "off"] = "auto",
     ):
         """Embed single cells from an AnnData object.
 
@@ -1477,12 +1707,27 @@ class BioEmbedder:
                     embs = wrapper.embed_cells(adata)
 
                 else:
-                    wrapper = get_singlecell_wrapper(
-                        model_key,
-                        batch_size=batch_size,
+                    # Foundation models (scGPT, Geneformer, UCE, Tahoe, ...)
+                    # are cached by (model_key, device) so repeated calls
+                    # to embed_cells -- e.g. chunked inference over a large
+                    # AnnData -- reuse the already-loaded torch model
+                    # instead of re-instantiating it on every call.
+                    wrapper = self._get_or_load_singlecell_wrapper(
+                        model_key, batch_size, device_str
                     )
-                    wrapper.load(device_str)
-                    embs = wrapper.embed_cells(adata)
+                    # Auto-adapt var_names to the model's vocabulary.
+                    # This is the difference between a silent zero-match
+                    # failure (e.g. passing Ensembl IDs to scGPT) and a
+                    # working embedding. Set vocab_conversion="off" to
+                    # opt out of the automatic GeneResolver roundtrip.
+                    if vocab_conversion == "auto":
+                        adata_for_model, report = self._ensure_singlecell_vocabulary(
+                            adata, model_key, organism=self.organism
+                        )
+                        metadata[f"{model_key}__vocab"] = report
+                    else:
+                        adata_for_model = adata
+                    embs = wrapper.embed_cells(adata_for_model)
 
                 adata.obsm[obsm_key] = embs
                 metadata[model_key] = {

@@ -131,7 +131,25 @@ def _install_flash_attn_shim() -> None:
 
 @dataclass(frozen=True)
 class SCModelCard:
-    """Metadata for a registered single-cell foundation model."""
+    """Metadata for a registered single-cell foundation model.
+
+    Attributes
+    ----------
+    vocab_type
+        Gene-identifier convention expected by the underlying model:
+
+        - ``"symbol"``  -- wants gene symbols (e.g. ``TP53``). Used by
+          scGPT, UCE, STATE, STACK, Cell2Sentence. Ensembl IDs produce
+          zero matches and the model silently returns empty embeddings.
+        - ``"ensembl_id"`` -- wants Ensembl gene IDs (e.g. ``ENSG00000141510``).
+        - ``"either"`` -- model accepts either format, typically because
+          helical performs an internal symbol->Ensembl mapping
+          (Geneformer, TranscriptFormer, Tahoe).
+        - ``"any"`` -- model is gene-identifier agnostic (PCA, scVI family).
+
+        This metadata drives the automatic ``BioEmbedder.embed_cells``
+        vocabulary-conversion step.
+    """
 
     key: str
     wrapper_class_name: str
@@ -140,6 +158,7 @@ class SCModelCard:
     embedding_dim: int | None = None
     variants: list[str] = field(default_factory=list)
     reference: str = ""
+    vocab_type: Literal["symbol", "ensembl_id", "either", "any"] = "symbol"
 
 
 _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
@@ -155,6 +174,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "geneformer_v1_6L": SCModelCard(
         key="geneformer_v1_6L",
         wrapper_class_name="GeneformerWrapper",
+        vocab_type="either",
         description="Geneformer v1 (6-layer, 10M params, 2048 input).",
         default_model_name="gf-6L-10M-i2048",
         variants=["gf-6L-10M-i2048"],
@@ -163,6 +183,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "geneformer_v1_12L": SCModelCard(
         key="geneformer_v1_12L",
         wrapper_class_name="GeneformerWrapper",
+        vocab_type="either",
         description="Geneformer v1 (12-layer, 40M params, 2048 input).",
         default_model_name="gf-12L-40M-i2048",
         variants=["gf-12L-40M-i2048"],
@@ -171,6 +192,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "geneformer_v1_12L_czi": SCModelCard(
         key="geneformer_v1_12L_czi",
         wrapper_class_name="GeneformerWrapper",
+        vocab_type="either",
         description="Geneformer v1 (12-layer) fine-tuned by CZI CELLxGENE.",
         default_model_name="gf-12L-40M-i2048-CZI-CellxGene",
         variants=["gf-12L-40M-i2048-CZI-CellxGene"],
@@ -180,6 +202,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "geneformer_v2_12L": SCModelCard(
         key="geneformer_v2_12L",
         wrapper_class_name="GeneformerWrapper",
+        vocab_type="either",
         description="Geneformer v2 (12-layer, 38M params, 4096 input, 95M cells).",
         default_model_name="gf-12L-38M-i4096",
         variants=["gf-12L-38M-i4096"],
@@ -188,6 +211,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "geneformer_v2_20L": SCModelCard(
         key="geneformer_v2_20L",
         wrapper_class_name="GeneformerWrapper",
+        vocab_type="either",
         description="Geneformer v2 (20-layer, 151M params, 4096 input).",
         default_model_name="gf-20L-151M-i4096",
         variants=["gf-20L-151M-i4096"],
@@ -196,6 +220,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "geneformer_v2_12L_cancer": SCModelCard(
         key="geneformer_v2_12L_cancer",
         wrapper_class_name="GeneformerWrapper",
+        vocab_type="either",
         description="Geneformer v2 (12-layer) cancer-tuned variant.",
         default_model_name="gf-12L-38M-i4096-CLcancer",
         variants=["gf-12L-38M-i4096-CLcancer"],
@@ -204,6 +229,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "geneformer_v2_12L_104M": SCModelCard(
         key="geneformer_v2_12L_104M",
         wrapper_class_name="GeneformerWrapper",
+        vocab_type="either",
         description="Geneformer v2 (12-layer, 104M cells).",
         default_model_name="gf-12L-104M-i4096",
         variants=["gf-12L-104M-i4096"],
@@ -212,6 +238,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "geneformer_v2_12L_104M_cancer": SCModelCard(
         key="geneformer_v2_12L_104M_cancer",
         wrapper_class_name="GeneformerWrapper",
+        vocab_type="either",
         description="Geneformer v2 (12-layer, 104M cells) cancer-tuned.",
         default_model_name="gf-12L-104M-i4096-CLcancer",
         variants=["gf-12L-104M-i4096-CLcancer"],
@@ -220,6 +247,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "geneformer_v2_18L": SCModelCard(
         key="geneformer_v2_18L",
         wrapper_class_name="GeneformerWrapper",
+        vocab_type="either",
         description="Geneformer v2 (18-layer, 316M params, largest).",
         default_model_name="gf-18L-316M-i4096",
         variants=["gf-18L-316M-i4096"],
@@ -237,6 +265,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "transcriptformer_metazoa": SCModelCard(
         key="transcriptformer_metazoa",
         wrapper_class_name="TranscriptFormerWrapper",
+        vocab_type="either",
         description="TranscriptFormer-Metazoa (112M cells, 12 species, 444M params).",
         default_model_name="tf_metazoa",
         variants=["tf_metazoa"],
@@ -245,6 +274,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "transcriptformer_exemplar": SCModelCard(
         key="transcriptformer_exemplar",
         wrapper_class_name="TranscriptFormerWrapper",
+        vocab_type="either",
         description="TranscriptFormer-Exemplar (110M cells, 5 species, 542M params).",
         default_model_name="tf_exemplar",
         variants=["tf_exemplar"],
@@ -253,6 +283,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "transcriptformer_sapiens": SCModelCard(
         key="transcriptformer_sapiens",
         wrapper_class_name="TranscriptFormerWrapper",
+        vocab_type="either",
         description="TranscriptFormer-Sapiens (57M human cells, 368M params).",
         default_model_name="tf_sapiens",
         variants=["tf_sapiens"],
@@ -262,6 +293,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "tahoe_70m": SCModelCard(
         key="tahoe_70m",
         wrapper_class_name="TahoeWrapper",
+        vocab_type="either",
         description="Tahoe-x1 70M parameter model.",
         default_model_name="70m",
         variants=["70m"],
@@ -269,6 +301,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "tahoe_1b": SCModelCard(
         key="tahoe_1b",
         wrapper_class_name="TahoeWrapper",
+        vocab_type="either",
         description="Tahoe-x1 1B parameter model.",
         default_model_name="1b",
         variants=["1b"],
@@ -276,6 +309,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "tahoe_3b": SCModelCard(
         key="tahoe_3b",
         wrapper_class_name="TahoeWrapper",
+        vocab_type="either",
         description="Tahoe-x1 3B parameter model.",
         default_model_name="3b",
         variants=["3b"],
@@ -313,24 +347,28 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
     "pca": SCModelCard(
         key="pca",
         wrapper_class_name="PCAEmbedding",
+        vocab_type="any",
         description="PCA on the expression matrix (classical baseline).",
     ),
     # --- scvi-tools ---
     "scvi": SCModelCard(
         key="scvi",
         wrapper_class_name="ScVIToolsWrapper",
+        vocab_type="any",
         description="scVI variational autoencoder (scvi-tools).",
         default_model_name="SCVI",
     ),
     "scanvi": SCModelCard(
         key="scanvi",
         wrapper_class_name="ScVIToolsWrapper",
+        vocab_type="any",
         description="scANVI semi-supervised VAE (scvi-tools).",
         default_model_name="SCANVI",
     ),
     "totalvi": SCModelCard(
         key="totalvi",
         wrapper_class_name="ScVIToolsWrapper",
+        vocab_type="any",
         description="totalVI joint RNA+protein VAE (scvi-tools).",
         default_model_name="TOTALVI",
     ),
