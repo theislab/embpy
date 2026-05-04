@@ -532,7 +532,7 @@ pip install "embpy[evo2]"        # Evo 2
 
 #### Single-cell foundation models: a separate pixi env
 
-Notebook [`12_singlecell_foundation_models.ipynb`](docs/notebooks/12_singlecell_foundation_models.ipynb)
+Notebook [`08_singlecell_foundation_models.ipynb`](docs/notebooks/08_singlecell_foundation_models.ipynb)
 uses the [helical](https://github.com/helicalAI/helical) package to load
 scGPT, Geneformer, UCE, TranscriptFormer, Tahoe-x1 and Cell2Sentence.
 Helical has a large set of rigid transitive dependencies
@@ -782,26 +782,22 @@ pixi install
 
 | # | Topic | Notebook |
 |---|---|---|
-| 01 | Identifiers and Preprocessing | [01_identifiers_and_preprocessing.ipynb](docs/notebooks/01_identifiers_and_preprocessing.ipynb) |
-| 02 | Gene (DNA) Embeddings | [02_gene_embeddings.ipynb](docs/notebooks/02_gene_embeddings.ipynb) |
-| 03 | Protein Embeddings + Isoforms | [03_protein_embeddings.ipynb](docs/notebooks/03_protein_embeddings.ipynb) |
-| 04 | Molecule Embeddings | [04_molecule_embeddings.ipynb](docs/notebooks/04_molecule_embeddings.ipynb) |
-| 05 | Text Embeddings | [05_text_embeddings.ipynb](docs/notebooks/05_text_embeddings.ipynb) |
-| 06 | PPI Embeddings | [06_ppi_embeddings.ipynb](docs/notebooks/06_ppi_embeddings.ipynb) |
-| 07 | Combined Analysis | [07_combined_analysis.ipynb](docs/notebooks/07_combined_analysis.ipynb) |
-| 08 | *(merged into 04, plotting API demonstrated on real molecule data)* | -- |
-| 09 | Embedding Benchmark | [09_embedding_benchmark.ipynb](docs/notebooks/09_embedding_benchmark.ipynb) |
-| 10 | *(merged into 02)* | -- |
-| 11 | DepMap Analysis | [11_depmap_analysis.ipynb](docs/notebooks/11_depmap_analysis.ipynb) |
-| 12 | Single-Cell Foundation Models | [12_singlecell_foundation_models.ipynb](docs/notebooks/12_singlecell_foundation_models.ipynb) |
-| 13 | JUMP Cell Painting | [13_jump_cell_painting.ipynb](docs/notebooks/13_jump_cell_painting.ipynb) |
-| 14 | Unified Embedding (embed_adata) | [14_unified_embedding.ipynb](docs/notebooks/14_unified_embedding.ipynb) |
-| 15 | Molecule Annotation | [15_molecule_annotation.ipynb](docs/notebooks/15_molecule_annotation.ipynb) |
-| 16 | Gene/Protein Annotation + Weighted Embeddings | [16_gene_protein_annotation.ipynb](docs/notebooks/16_gene_protein_annotation.ipynb) |
-| 17 | Cross-Species Ortholog Embeddings | [17_cross_species_embeddings.ipynb](docs/notebooks/17_cross_species_embeddings.ipynb) |
-| 18 | Text Knowledge Embeddings | [18_text_knowledge_embeddings.ipynb](docs/notebooks/18_text_knowledge_embeddings.ipynb) |
-| 19 | Boltz-2 Structure Embeddings | [19_boltz2_structure_embeddings.ipynb](docs/notebooks/19_boltz2_structure_embeddings.ipynb) |
-| 20 | Cell Line Context Annotation | [20_cellline_context.ipynb](docs/notebooks/20_cellline_context.ipynb) |
+| 01 | Identifiers, Resolvers & Data Loading            | [01_identifiers_and_preprocessing.ipynb](docs/notebooks/01_identifiers_and_preprocessing.ipynb) |
+| 02 | Gene & DNA Embeddings                             | [02_gene_embeddings.ipynb](docs/notebooks/02_gene_embeddings.ipynb) |
+| 03 | Protein Embeddings                                | [03_protein_embeddings.ipynb](docs/notebooks/03_protein_embeddings.ipynb) |
+| 04 | Boltz-2 Structure Embeddings                      | [04_boltz2_structure_embeddings.ipynb](docs/notebooks/04_boltz2_structure_embeddings.ipynb) |
+| 05 | Molecule (Drug) Embeddings                        | [05_molecule_embeddings.ipynb](docs/notebooks/05_molecule_embeddings.ipynb) |
+| 06 | Text Embeddings                                   | [06_text_embeddings.ipynb](docs/notebooks/06_text_embeddings.ipynb) |
+| 07 | PPI Network Embeddings                            | [07_ppi_embeddings.ipynb](docs/notebooks/07_ppi_embeddings.ipynb) |
+| 08 | Single-Cell Foundation Model Embeddings           | [08_singlecell_foundation_models.ipynb](docs/notebooks/08_singlecell_foundation_models.ipynb) |
+| 09 | JUMP Cell Painting Morphological Embeddings       | [09_morphology_jump_cell_painting.ipynb](docs/notebooks/09_morphology_jump_cell_painting.ipynb) |
+| 10 | Gene & Protein Annotation + Weighted Embeddings   | [10_gene_protein_annotation.ipynb](docs/notebooks/10_gene_protein_annotation.ipynb) |
+| 11 | Small Molecule Annotation                         | [11_molecule_annotation.ipynb](docs/notebooks/11_molecule_annotation.ipynb) |
+| 12 | Text Knowledge Embeddings                         | [12_text_knowledge_embeddings.ipynb](docs/notebooks/12_text_knowledge_embeddings.ipynb) |
+| 13 | Cell Line Context Annotation                      | [13_cellline_context.ipynb](docs/notebooks/13_cellline_context.ipynb) |
+| 14 | Cross-Species Ortholog Embeddings                 | [14_cross_species_embeddings.ipynb](docs/notebooks/14_cross_species_embeddings.ipynb) |
+| 15 | Unified Embedding with embed_adata                | [15_unified_embedding.ipynb](docs/notebooks/15_unified_embedding.ipynb) |
+| 16 | DepMap Cancer Dependency Analysis                 | [16_depmap_analysis.ipynb](docs/notebooks/16_depmap_analysis.ipynb) |
 
 ## Package Structure
 

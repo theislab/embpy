@@ -1,7 +1,12 @@
-"""Single-cell foundation model wrappers via the Helical package.
+"""Single-cell foundation model wrappers.
 
 Provides a unified interface for extracting cell embeddings from
-state-of-the-art single-cell RNA-seq foundation models:
+state-of-the-art single-cell RNA-seq foundation models as well as for
+decoding embeddings back into gene-expression space (for encoder-decoder
+models).
+
+Encoder-only foundation models (via `helical <https://github.com/helicalAI/helical>`_,
+``pip install helical``):
 
 * **scGPT** -- 33M cells, transformer-based
 * **Geneformer** -- 30-104M cells, multiple sizes and cancer-tuned variants
@@ -10,16 +15,25 @@ state-of-the-art single-cell RNA-seq foundation models:
 * **Tahoe-x1** -- cell + gene embeddings, 70M/1B/3B
 * **Cell2Sentence-Scale** -- LLM-based, 2B/27B
 
-All models are accessed through the `helical <https://github.com/helicalAI/helical>`_
-package, which must be installed separately::
+Encoder-decoder models (usable in a basal -> perturbed flow-matching /
+``cellflow``-style setup: encode cells to latent, predict latent shift,
+then decode back to expression):
 
-    pip install helical
+* **PCA** -- classical baseline (sklearn / cuml)
+* **scVI family** (scvi-tools) -- scVI, scANVI, totalVI
+* **STATE** (Arc Institute, ``pip install arc-state``) -- SE-600M
+  transformer encoder with a binary decoder head that maps latents to
+  per-gene log-probabilities.
+* **Stack** (Arc Institute, ``pip install arc-stack``) -- tabular-attention
+  encoder plus an in-context generation head that synthesises new cell
+  profiles conditioned on a base-context AnnData.
 """
 
 from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -149,6 +163,15 @@ class SCModelCard:
 
         This metadata drives the automatic ``BioEmbedder.embed_cells``
         vocabulary-conversion step.
+    supports_decode
+        ``True`` when the wrapper implements :meth:`SingleCellWrapper.decode_cells`
+        (i.e. the model is an encoder-decoder whose latent space can be
+        projected back to gene-expression). Currently: PCA, scVI family,
+        STATE.
+    supports_generation
+        ``True`` when the wrapper implements :meth:`SingleCellWrapper.generate_cells`
+        (i.e. the model can synthesise whole cell profiles, typically
+        conditioned on a base context). Currently: Stack.
     """
 
     key: str
@@ -159,6 +182,8 @@ class SCModelCard:
     variants: list[str] = field(default_factory=list)
     reference: str = ""
     vocab_type: Literal["symbol", "ensembl_id", "either", "any"] = "symbol"
+    supports_decode: bool = False
+    supports_generation: bool = False
 
 
 _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
@@ -335,6 +360,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
         wrapper_class_name="StateEmbeddingWrapper",
         description="STATE embedding model (Arc Institute, SE-600M).",
         reference="https://github.com/ArcInstitute/state",
+        supports_decode=True,
     ),
     # --- Stack (Arc Institute) ---
     "stack": SCModelCard(
@@ -342,6 +368,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
         wrapper_class_name="StackWrapper",
         description="Stack encoder-decoder (150M+ cells, tabular attention, Arc Institute).",
         reference="https://github.com/ArcInstitute/stack",
+        supports_generation=True,
     ),
     # --- PCA (classical baseline) ---
     "pca": SCModelCard(
@@ -349,6 +376,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
         wrapper_class_name="PCAEmbedding",
         vocab_type="any",
         description="PCA on the expression matrix (classical baseline).",
+        supports_decode=True,
     ),
     # --- scvi-tools ---
     "scvi": SCModelCard(
@@ -357,6 +385,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
         vocab_type="any",
         description="scVI variational autoencoder (scvi-tools).",
         default_model_name="SCVI",
+        supports_decode=True,
     ),
     "scanvi": SCModelCard(
         key="scanvi",
@@ -364,6 +393,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
         vocab_type="any",
         description="scANVI semi-supervised VAE (scvi-tools).",
         default_model_name="SCANVI",
+        supports_decode=True,
     ),
     "totalvi": SCModelCard(
         key="totalvi",
@@ -371,6 +401,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
         vocab_type="any",
         description="totalVI joint RNA+protein VAE (scvi-tools).",
         default_model_name="TOTALVI",
+        supports_decode=True,
     ),
 }
 
@@ -389,9 +420,17 @@ class SingleCellWrapper(ABC):
     per-cell embedding vectors.
 
     Subclasses must implement :meth:`load` and :meth:`embed_cells`.
+    Encoder-decoder models may additionally override :meth:`decode_cells`
+    (latent -> gene-expression) and/or :meth:`generate_cells` (in-context
+    synthesis of whole cell profiles).
     """
 
     model_type: Literal["single_cell"] = "single_cell"
+
+    # Capability flags -- subclasses override. Keeps the runtime check
+    # consistent with the SCModelCard metadata.
+    supports_decode: bool = False
+    supports_generation: bool = False
 
     def __init__(
         self,
@@ -424,6 +463,74 @@ class SingleCellWrapper(ABC):
         -------
         np.ndarray of shape ``(n_cells, embedding_dim)``
         """
+
+    def decode_cells(
+        self,
+        latent: np.ndarray,
+        *,
+        gene_names: Sequence[str] | None = None,
+        adata: Any = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Decode latent cell representations back to gene-expression space.
+
+        This method is only implemented by encoder-decoder wrappers
+        (PCA, scVI family, STATE). For foundation encoders without a
+        reusable decoder head (scGPT, Geneformer, UCE, ...), calling
+        this raises :class:`NotImplementedError`.
+
+        Parameters
+        ----------
+        latent : np.ndarray of shape ``(n_cells, embedding_dim)``
+            Cell-level latents produced by :meth:`embed_cells` or by an
+            external model (e.g. a flow-matching network trained in the
+            latent space).
+        gene_names : sequence of str or None
+            Genes to decode to. ``None`` means "whatever the fitted
+            decoder produces" (i.e. the genes used at training/embed
+            time). Required for STATE because its decoder is
+            parametrised by per-gene protein embeddings.
+        adata : anndata.AnnData or None
+            Optional original AnnData (used by scvi-tools to recover
+            per-cell library size and batch/label obs columns when
+            decoding).
+        **kwargs
+            Additional model-specific options.
+
+        Returns
+        -------
+        np.ndarray of shape ``(n_cells, n_genes)``
+            Decoded gene-expression (normalized-expression, log-probs, or
+            reconstructed linear-scale values; see subclass docstring).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement decode_cells(). "
+            "Only encoder-decoder wrappers (pca, scvi, scanvi, totalvi, "
+            "state) expose a decoder."
+        )
+
+    def generate_cells(
+        self,
+        base_adata: Any,
+        test_adata: Any,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Generate new cell profiles via in-context generation.
+
+        Currently only :class:`StackWrapper` implements this: it uses
+        ``base_adata`` as a donor-conditioned context and predicts
+        gene-expression for each cell in ``test_adata`` using the same
+        gene list as at training time.
+
+        Returns
+        -------
+        np.ndarray of shape ``(n_test_cells, n_genes)``
+            Generated gene-expression values aligned to ``test_adata.var``.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement generate_cells(). "
+            "Only in-context generation wrappers (stack) expose this."
+        )
 
     @property
     def embedding_dim(self) -> int:
@@ -662,7 +769,22 @@ class StateEmbeddingWrapper(SingleCellWrapper):
 
     STATE (State Transition / Embedding) is a foundation model for
     predicting cellular perturbation responses. The SE (State Embedding)
-    component produces cell embeddings from scRNA-seq count data.
+    component produces cell embeddings from scRNA-seq count data and
+    exposes a *binary decoder* that maps latents back to per-gene
+    log-probabilities, which is what makes STATE usable as the encoder/
+    decoder pair in flow-matching (cellflow-style) perturbation
+    pipelines.
+
+    Encoder path: :meth:`embed_cells` -> ``state.emb.Inference.encode_adata``
+    (concatenates the per-cell ``emb`` with the per-dataset ``ds_emb``).
+
+    Decoder path: :meth:`decode_cells` -> ``Inference.decode_from_adata``.
+    The decoder takes a latent matrix and a list of target genes and
+    returns per-cell log-probabilities of shape ``(n_cells, n_genes)``.
+    The target genes are embedded on-the-fly via the ``protein_embeds``
+    dictionary loaded at :meth:`load` time, so you can decode to
+    arbitrary gene panels (not only the genes that appeared at
+    encode-time).
 
     Requires the ``arc-state`` package::
 
@@ -689,8 +811,12 @@ class StateEmbeddingWrapper(SingleCellWrapper):
             model_folder="/path/to/SE-600M",
         )
         wrapper.load("cuda")
-        embs = wrapper.embed_cells(adata)
+        z = wrapper.embed_cells(adata)
+        # decode to the same gene panel that was used at encode time
+        logprobs = wrapper.decode_cells(z, gene_names=adata.var_names)
     """
+
+    supports_decode: bool = True
 
     def __init__(
         self,
@@ -770,6 +896,94 @@ class StateEmbeddingWrapper(SingleCellWrapper):
             )
         return np.asarray(embeddings, dtype=np.float32)
 
+    def decode_cells(  # noqa: D102
+        self,
+        latent: np.ndarray,
+        *,
+        gene_names: Sequence[str] | None = None,
+        adata: Any = None,
+        read_depth: float = 4.0,
+        batch_size: int = 64,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Decode STATE latents back to per-gene log-probabilities.
+
+        Wraps :meth:`state.emb.Inference.decode_from_adata`. The latent
+        matrix should be the exact output of :meth:`embed_cells` (i.e.
+        per-cell ``emb`` concatenated with per-dataset ``ds_emb``) or a
+        predicted latent from a downstream flow-matching model.
+
+        Parameters
+        ----------
+        latent : np.ndarray of shape ``(n_cells, emb_dim + ds_emb_dim)``
+            Cell-level latents. The last ``model.z_dim_ds`` columns are
+            treated as the dataset embedding, consistent with how STATE
+            concatenates them at encode time.
+        gene_names : sequence of str
+            Target genes to decode to. Must be provided because STATE's
+            decoder is parametrised by per-gene protein embeddings; the
+            loader looks each gene up in ``self.protein_embeds`` (missing
+            genes get a zero vector).
+        adata : anndata.AnnData, optional
+            If supplied its ``var_names`` are used when ``gene_names`` is
+            ``None``.
+        read_depth : float
+            Desired task read-depth passed to the decoder (default 4.0,
+            matching STATE's own RDA default).
+        batch_size : int
+            Decoder batch size.
+        """
+        del kwargs  # unused
+        if self._inferer is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+
+        if gene_names is None and adata is not None:
+            gene_names = list(adata.var_names)
+        if gene_names is None:
+            raise ValueError(
+                "StateEmbeddingWrapper.decode_cells requires `gene_names` "
+                "(or an `adata` whose var_names will be used). STATE's "
+                "decoder is gene-parametric and cannot infer a target "
+                "panel on its own."
+            )
+
+        import anndata as ad
+        import pandas as pd
+
+        latent_arr = np.asarray(latent, dtype=np.float32)
+        n_cells = latent_arr.shape[0]
+
+        # Build a minimal AnnData scaffold whose obsm carries the latent
+        # and whose var_names are the target genes.
+        scaffold = ad.AnnData(
+            X=np.zeros((n_cells, len(gene_names)), dtype=np.float32),
+            obs=pd.DataFrame(index=[f"cell_{i}" for i in range(n_cells)]),
+            var=pd.DataFrame(index=list(gene_names)),
+        )
+        emb_key = "X_state_decode"
+        scaffold.obsm[emb_key] = latent_arr
+
+        batches = list(
+            self._inferer.decode_from_adata(
+                scaffold,
+                gene_names,
+                emb_key=emb_key,
+                read_depth=read_depth,
+                batch_size=batch_size,
+            )
+        )
+        if not batches:
+            return np.empty((n_cells, len(gene_names)), dtype=np.float32)
+
+        concatenated = np.concatenate(
+            [np.atleast_2d(np.asarray(b, dtype=np.float32)) for b in batches],
+            axis=0,
+        )
+        # Some checkpoints emit a trailing singleton dim; normalise.
+        if concatenated.ndim == 3 and concatenated.shape[-1] == 1:
+            concatenated = concatenated[..., 0]
+        return concatenated
+
 
 class StackWrapper(SingleCellWrapper):
     """Wrapper for Stack single-cell foundation model (Arc Institute).
@@ -777,6 +991,17 @@ class StackWrapper(SingleCellWrapper):
     Stack is a large-scale encoder-decoder model trained on 150M+
     single cells using tabular attention. It supports in-context
     learning and produces cell embeddings from raw count data.
+
+    Encoder path: :meth:`embed_cells` -> ``stack.cli.embedding.extract_embeddings``.
+
+    Generation path: :meth:`generate_cells` -> Stack's in-context
+    generation head (``model.get_incontext_generation``) via the same
+    wrapper that ``stack-generation`` uses on the CLI. Unlike a pure
+    latent-to-expression decoder, Stack synthesises cell profiles by
+    conditioning on a *base-context* AnnData: give it a donor-specific
+    base adata and a *test* adata whose cells you want to predict, and
+    it returns a ``(n_test_cells, n_genes)`` matrix aligned to the
+    training gene list.
 
     Requires the ``arc-stack`` package::
 
@@ -800,7 +1025,10 @@ class StackWrapper(SingleCellWrapper):
         )
         wrapper.load("cuda")
         embs = wrapper.embed_cells(adata)
+        preds = wrapper.generate_cells(base_adata, test_adata)
     """
+
+    supports_generation: bool = True
 
     def __init__(
         self,
@@ -862,6 +1090,130 @@ class StackWrapper(SingleCellWrapper):
             )
         return np.asarray(embeddings, dtype=np.float32)
 
+    def generate_cells(  # noqa: D102
+        self,
+        base_adata: Any,
+        test_adata: Any,
+        *,
+        split_column: str | None = None,
+        split_values: Sequence[str] | None = None,
+        gene_name_col: str | None = None,
+        prompt_ratio: float = 0.25,
+        context_ratio: float = 0.4,
+        context_ratio_min: float = 0.2,
+        mask_rate: float = 1.0,
+        num_steps: int | None = 5,
+        mode: str = "mdm",
+        num_workers: int = 4,
+        random_seed: int | None = None,
+        show_progress: bool = False,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Run Stack's in-context generation for ``test_adata``.
+
+        This is the *decoder-analog* for Stack: rather than mapping a
+        latent code back to expression, Stack conditions on a donor
+        "base context" (e.g. cells from a specific donor in
+        ``base_adata.obs[split_column]``) and synthesises gene-expression
+        for each cell in ``test_adata`` using the same gene list as at
+        training time.
+
+        Parameters
+        ----------
+        base_adata
+            Donor-specific context AnnData. Must contain ``split_column``
+            in ``obs`` unless only one donor is present.
+        test_adata
+            Cells to synthesise predictions for. Its ``var`` should
+            overlap the training gene list.
+        split_column
+            Column in ``base_adata.obs`` that identifies donors /
+            contexts. Required if ``base_adata`` contains multiple
+            donors.
+        split_values
+            Optional subset of donor identifiers to run generation for.
+        gene_name_col, prompt_ratio, context_ratio, context_ratio_min,
+        mask_rate, num_steps, mode, num_workers, random_seed,
+        show_progress
+            Forwarded to ``stack.cli.generation.generate``.
+
+        Returns
+        -------
+        np.ndarray of shape ``(n_test_cells, n_genes)``
+            Predictions concatenated across donor splits, in the order
+            ``generate`` returned them.
+        """
+        del kwargs  # unused
+        if self._checkpoint is None or self._genelist is None:
+            raise ValueError(
+                "StackWrapper.generate_cells requires both 'checkpoint' "
+                "and 'genelist' to be set at construction time."
+            )
+        try:
+            from stack.cli.generation import generate  # type: ignore[import-not-found]
+        except ImportError as exc:
+            raise ImportError(
+                "The 'arc-stack' package is required for Stack in-context "
+                "generation. Install with: pip install arc-stack"
+            ) from exc
+
+        import tempfile
+        import os
+
+        # generate() wants file paths, so persist the in-memory AnnDatas
+        # to a temp dir and hand it the paths. This also matches the
+        # default backed="r" read path that ``generate`` uses to keep
+        # memory bounded on large donor contexts.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_path = os.path.join(tmpdir, "base.h5ad")
+            test_path = os.path.join(tmpdir, "test.h5ad")
+            base_adata.write_h5ad(base_path)
+            test_adata.write_h5ad(test_path)
+
+            if split_column is None:
+                # Single-donor shortcut: inject a placeholder split.
+                import anndata as ad
+                import pandas as pd
+                placeholder = ad.read_h5ad(base_path)
+                placeholder.obs["__embpy_split__"] = "ALL"
+                placeholder.write_h5ad(base_path)
+                split_column = "__embpy_split__"
+                split_values = ["ALL"]
+
+            generations = generate(
+                checkpoint_path=self._checkpoint,
+                base_adata_path=base_path,
+                test_adata_path=test_path,
+                genelist_path=self._genelist,
+                split_column=split_column,
+                split_values=list(split_values) if split_values else None,
+                gene_name_col=gene_name_col or self._gene_name_col,
+                prompt_ratio=prompt_ratio,
+                context_ratio=context_ratio,
+                context_ratio_min=context_ratio_min,
+                mask_rate=mask_rate,
+                num_steps=num_steps,
+                mode=mode,
+                batch_size=self.batch_size,
+                num_workers=num_workers,
+                random_seed=random_seed,
+                device=self.device,
+                show_progress=show_progress,
+            )
+
+        if not generations:
+            raise RuntimeError(
+                "stack.cli.generation.generate() returned no splits; "
+                "check that `split_column` and `split_values` match "
+                "values in base_adata.obs."
+            )
+
+        pieces = []
+        for split_val, pred_adata in generations.items():
+            logger.info("Stack generation: split=%s -> %s", split_val, pred_adata.shape)
+            pieces.append(np.asarray(pred_adata.X, dtype=np.float32))
+        return np.concatenate(pieces, axis=0)
+
 
 # ---------------------------------------------------------------------------
 # Classical / statistical wrappers
@@ -869,11 +1221,17 @@ class StackWrapper(SingleCellWrapper):
 
 
 class PCAEmbedding(SingleCellWrapper):
-    """PCA on the expression matrix as a classical embedding baseline.
+    """PCA on the expression matrix as a classical encoder-decoder baseline.
 
     Runs sklearn PCA (CPU) or rapids_singlecell/cuml PCA (GPU) on
     log-normalized counts (or raw counts if no processed layer is
     available).  Optionally restricts to highly variable genes.
+
+    After :meth:`embed_cells`, the fitted PCA object, optional
+    ``StandardScaler`` and HVG column mask are cached on the wrapper so
+    that :meth:`decode_cells` can invert the transform and produce
+    (n_cells, n_genes) reconstructions. The decoder writes zeros into
+    non-HVG columns when HVG restriction was used at fit time.
 
     Parameters
     ----------
@@ -893,10 +1251,13 @@ class PCAEmbedding(SingleCellWrapper):
 
     Example::
 
-        wrapper = PCAEmbedding(n_components=50, backend="gpu")
+        wrapper = PCAEmbedding(n_components=50, backend="cpu")
         wrapper.load()
-        embs = wrapper.embed_cells(adata)  # (n_cells, 50)
+        embs = wrapper.embed_cells(adata)        # (n_cells, 50)
+        recon = wrapper.decode_cells(embs)       # (n_cells, n_genes)
     """
+
+    supports_decode: bool = True
 
     def __init__(
         self,
@@ -914,6 +1275,12 @@ class PCAEmbedding(SingleCellWrapper):
         self.layer = layer
         self.scale = scale
         self.backend = backend
+        # Cached fit state for decode_cells.
+        self._pca: Any = None
+        self._scaler: Any = None
+        self._hvg_mask: np.ndarray | None = None
+        self._n_genes_full: int | None = None
+        self._var_names: Sequence[str] | None = None
 
     def load(self, device: str = "cpu") -> None:  # noqa: D102
         self.device = device
@@ -931,9 +1298,14 @@ class PCAEmbedding(SingleCellWrapper):
         else:
             X = np.asarray(X, dtype=np.float64)
 
+        self._n_genes_full = X.shape[1]
+        self._var_names = list(adata.var_names)
+
+        hvg_mask: np.ndarray | None = None
         if self.use_hvg and "highly_variable" in adata.var.columns:
             hvg_mask = adata.var["highly_variable"].values.astype(bool)
             X = X[:, hvg_mask]
+        self._hvg_mask = hvg_mask
 
         n_comp = min(self.n_components, X.shape[0], X.shape[1])
 
@@ -941,12 +1313,15 @@ class PCAEmbedding(SingleCellWrapper):
             try:
                 from cuml.decomposition import PCA as cuPCA  # type: ignore[import-untyped]
                 from cuml.preprocessing import StandardScaler as cuScaler  # type: ignore[import-untyped]
-                if self.scale:
-                    X = cuScaler().fit_transform(X)
+                scaler = cuScaler() if self.scale else None
+                if scaler is not None:
+                    X = scaler.fit_transform(X)
                 pca = cuPCA(n_components=n_comp, random_state=0)
                 result = pca.fit_transform(X)
                 result = np.asarray(result, dtype=np.float32)
                 var_explained = float(pca.explained_variance_ratio_.sum()) * 100
+                self._pca = pca
+                self._scaler = scaler
             except ImportError:
                 import rapids_singlecell as rsc  # type: ignore[import-untyped]
                 import anndata as ad
@@ -958,14 +1333,21 @@ class PCAEmbedding(SingleCellWrapper):
                 var_explained = float(
                     adata_tmp.uns["pca"]["variance_ratio"].sum()
                 ) * 100
+                # rapids_singlecell path does not expose a reusable fitted
+                # PCA object, so decode_cells is not available here.
+                self._pca = None
+                self._scaler = None
         else:
             from sklearn.decomposition import PCA
             from sklearn.preprocessing import StandardScaler
-            if self.scale:
-                X = StandardScaler().fit_transform(X)
+            scaler = StandardScaler() if self.scale else None
+            if scaler is not None:
+                X = scaler.fit_transform(X)
             pca = PCA(n_components=n_comp, random_state=0)
             result = pca.fit_transform(X).astype(np.float32)
             var_explained = pca.explained_variance_ratio_.sum() * 100
+            self._pca = pca
+            self._scaler = scaler
 
         logger.info(
             "PCA (backend=%s): %d -> %d components (%.1f%% variance explained)",
@@ -974,17 +1356,56 @@ class PCAEmbedding(SingleCellWrapper):
         )
         return result
 
+    def decode_cells(  # noqa: D102
+        self,
+        latent: np.ndarray,
+        *,
+        gene_names: Sequence[str] | None = None,
+        adata: Any = None,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        del gene_names, adata, kwargs  # unused
+        if self._pca is None:
+            raise RuntimeError(
+                "PCAEmbedding.decode_cells requires a previous call to "
+                "embed_cells() with backend='cpu' or backend='gpu' "
+                "(cuml path). The rapids_singlecell fallback does not "
+                "expose a reusable fitted PCA object."
+            )
+
+        latent = np.asarray(latent, dtype=np.float64)
+        X_hvg = self._pca.inverse_transform(latent)
+        if self._scaler is not None:
+            X_hvg = self._scaler.inverse_transform(X_hvg)
+        X_hvg = np.asarray(X_hvg, dtype=np.float32)
+
+        if self._hvg_mask is not None and self._n_genes_full is not None:
+            full = np.zeros(
+                (latent.shape[0], self._n_genes_full), dtype=np.float32
+            )
+            full[:, self._hvg_mask] = X_hvg
+            return full
+        return X_hvg
+
     @property
     def embedding_dim(self) -> int:  # noqa: D102
         return self.n_components
 
 
 class ScVIToolsWrapper(SingleCellWrapper):
-    """Flexible wrapper around scvi-tools models.
+    """Flexible wrapper around scvi-tools models (encoder + decoder).
 
     Supports scVI, scANVI, totalVI, and any future scvi-tools model
     that follows the ``setup_anndata`` / ``train`` /
     ``get_latent_representation`` pattern.
+
+    After :meth:`embed_cells`, the trained model and the processed
+    AnnData are cached so that :meth:`decode_cells` can route arbitrary
+    latent points ``z`` through the generative module, i.e.
+    ``module.generative(z, library, batch_index)``, and return the
+    (n_cells, n_genes) expected-expression matrix (NB mean / ``px_rate``).
+    This is exactly the decoder hook that flow-matching / cellflow
+    setups use in the perturbation literature.
 
     Parameters
     ----------
@@ -1015,8 +1436,11 @@ class ScVIToolsWrapper(SingleCellWrapper):
 
         wrapper = ScVIToolsWrapper(model_class="SCVI", n_latent=30)
         wrapper.load("cuda")
-        embs = wrapper.embed_cells(adata)  # (n_cells, 30)
+        z = wrapper.embed_cells(adata)            # (n_cells, 30)
+        expr = wrapper.decode_cells(z)            # (n_cells, n_genes)
     """
+
+    supports_decode: bool = True
 
     def __init__(
         self,
@@ -1045,6 +1469,9 @@ class ScVIToolsWrapper(SingleCellWrapper):
         self.protein_expression_obsm_key = protein_expression_obsm_key
         self.layer = layer
         self._scvi_kwargs = kwargs
+        # Cached state for decode_cells.
+        self._trained_model: Any = None
+        self._trained_adata: Any = None
 
     def load(self, device: str = "cpu") -> None:  # noqa: D102
         self.device = device
@@ -1145,7 +1572,143 @@ class ScVIToolsWrapper(SingleCellWrapper):
             self.model_class_name, model.history_["elbo_train"].shape[0],
             latent.shape,
         )
+        # Cache so decode_cells can reuse the trained generative module.
+        self._trained_model = model
+        self._trained_adata = adata_work
         return np.asarray(latent, dtype=np.float32)
+
+    def decode_cells(  # noqa: D102
+        self,
+        latent: np.ndarray,
+        *,
+        gene_names: Sequence[str] | None = None,
+        adata: Any = None,
+        library_size: float | np.ndarray | None = None,
+        batch_index: int | np.ndarray | None = None,
+        labels: int | np.ndarray | None = None,
+        return_raw: bool = False,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        """Decode a latent matrix to expected gene-expression.
+
+        Routes ``z`` through the trained generative module. The returned
+        matrix is the NB/ZINB mean ``px_rate`` (i.e.
+        ``library_size * px_scale``), the same object that
+        ``model.get_normalized_expression`` scales to a target library
+        size. Use ``return_raw=True`` to get the raw per-cell NB mean
+        without enforcing a library size.
+
+        Parameters
+        ----------
+        latent
+            Latent codes, shape ``(n_cells, n_latent)``.
+        gene_names
+            Ignored (scvi-tools always decodes to the full training gene set).
+        adata
+            Ignored here; kept for API compatibility.
+        library_size
+            Scalar or per-cell log-library-size used by the decoder. If
+            ``None``, defaults to ``log(1e4)`` (as in
+            ``get_normalized_expression``).
+        batch_index
+            Scalar or per-cell batch index fed to the decoder (defaults
+            to 0, matching the behaviour of ``transform_batch=None``).
+        labels
+            Only used by scANVI (per-cell class index). Defaults to 0.
+        return_raw
+            If ``True``, return ``px_scale`` instead of ``px_rate``
+            (i.e. the decoder's multinomial logits before library
+            scaling).
+        """
+        del gene_names, adata, kwargs  # unused
+        if self._trained_model is None:
+            raise RuntimeError(
+                "ScVIToolsWrapper.decode_cells requires a prior call to "
+                "embed_cells() so the generative module is trained and "
+                "cached."
+            )
+
+        import torch
+
+        model = self._trained_model
+        module = model.module
+        device = next(module.parameters()).device
+        module.eval()
+
+        z = torch.as_tensor(np.asarray(latent), device=device, dtype=torch.float32)
+        n = z.shape[0]
+
+        if library_size is None:
+            lib = torch.full(
+                (n, 1), float(np.log(1e4)), device=device, dtype=torch.float32,
+            )
+        elif np.ndim(library_size) == 0:
+            lib = torch.full(
+                (n, 1), float(library_size), device=device, dtype=torch.float32,
+            )
+        else:
+            lib = torch.as_tensor(
+                np.asarray(library_size).reshape(n, 1),
+                device=device, dtype=torch.float32,
+            )
+
+        if batch_index is None:
+            bidx = torch.zeros((n, 1), device=device, dtype=torch.long)
+        elif np.ndim(batch_index) == 0:
+            bidx = torch.full(
+                (n, 1), int(batch_index), device=device, dtype=torch.long,
+            )
+        else:
+            bidx = torch.as_tensor(
+                np.asarray(batch_index).reshape(n, 1),
+                device=device, dtype=torch.long,
+            )
+
+        gen_kwargs: dict[str, Any] = {
+            "z": z,
+            "library": lib,
+            "batch_index": bidx,
+        }
+
+        # scANVI also requires a label index y.
+        if self.model_class_name == "SCANVI":
+            if labels is None:
+                yidx = torch.zeros((n, 1), device=device, dtype=torch.long)
+            elif np.ndim(labels) == 0:
+                yidx = torch.full(
+                    (n, 1), int(labels), device=device, dtype=torch.long,
+                )
+            else:
+                yidx = torch.as_tensor(
+                    np.asarray(labels).reshape(n, 1),
+                    device=device, dtype=torch.long,
+                )
+            gen_kwargs["y"] = yidx
+
+        with torch.no_grad():
+            outputs = module.generative(**gen_kwargs)
+
+        # scvi-tools returns either a dict with ``px`` (torch distribution)
+        # or a ``px_rate`` / ``px_scale`` tensor depending on the version.
+        if return_raw:
+            key_candidates = ("px_scale", "px")
+        else:
+            key_candidates = ("px_rate", "px")
+        tensor: torch.Tensor | None = None
+        for key in key_candidates:
+            if key in outputs:
+                val = outputs[key]
+                if hasattr(val, "mean"):  # torch Distribution
+                    tensor = val.mean
+                else:
+                    tensor = val
+                break
+        if tensor is None:
+            raise RuntimeError(
+                "scvi-tools generative output did not expose 'px_rate' / "
+                f"'px_scale' / 'px'; got keys: {list(outputs.keys())}"
+            )
+        return tensor.detach().cpu().float().numpy()
 
     @property
     def embedding_dim(self) -> int:  # noqa: D102

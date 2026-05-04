@@ -1680,6 +1680,9 @@ class BioEmbedder:
                     )
                     wrapper.load(device_str)
                     embs = wrapper.embed_cells(adata)
+                    # Park the fitted wrapper so decode_cells() can reuse
+                    # the sklearn/cuml PCA + scaler for inverse_transform.
+                    self._singlecell_cache[(model_key, device_str)] = wrapper
 
                 elif model_key in ("scvi", "scanvi", "totalvi"):
                     model_cls_name = model_key.upper()
@@ -1705,6 +1708,10 @@ class BioEmbedder:
                     )
                     wrapper.load(device_str)
                     embs = wrapper.embed_cells(adata)
+                    # Park the trained scvi-tools model so decode_cells()
+                    # can route arbitrary latents through its generative
+                    # module without retraining.
+                    self._singlecell_cache[(model_key, device_str)] = wrapper
 
                 else:
                     # Foundation models (scGPT, Geneformer, UCE, Tahoe, ...)
@@ -1753,6 +1760,177 @@ class BioEmbedder:
             adata.n_obs,
         )
         return adata
+
+    def decode_cells(
+        self,
+        adata=None,
+        *,
+        latent=None,
+        model: str = "scvi",
+        obsm_key: str | None = None,
+        gene_names: Sequence[str] | None = None,
+        write_layer: str | None = None,
+        **decode_kwargs: Any,
+    ):
+        """Decode cell embeddings back to gene-expression space.
+
+        Companion to :meth:`embed_cells` that routes a latent matrix
+        through the *same* fitted encoder-decoder wrapper that produced
+        it. This is the decoder hook used by flow-matching / cellflow
+        style perturbation pipelines: encode basal + perturbed cells to
+        a shared latent, learn a transport map there, then decode the
+        predicted latent back to counts with this method.
+
+        Requires a prior :meth:`embed_cells` call with the same
+        ``model`` key so the trained wrapper is cached for this device.
+        For STATE / Stack, instantiate the wrapper manually (checkpoint +
+        gene-list paths cannot be supplied through :meth:`embed_cells`).
+
+        Parameters
+        ----------
+        adata : anndata.AnnData, optional
+            AnnData that holds the latent to decode. Used both to pick
+            the latent from ``obsm[obsm_key]`` and to recover
+            ``var_names`` for gene-parametric decoders (STATE).
+        latent : np.ndarray, optional
+            Alternative to ``adata`` + ``obsm_key``: pass the latent
+            matrix directly.
+        model : str
+            Encoder-decoder registry key: ``"pca"``, ``"scvi"``,
+            ``"scanvi"``, ``"totalvi"``, or ``"state"``.
+        obsm_key : str, optional
+            Override key used to pull the latent from ``adata.obsm``.
+            Defaults to ``f"X_{model}"``.
+        gene_names : sequence of str, optional
+            Target genes to decode to (STATE only). Defaults to
+            ``adata.var_names`` when ``adata`` is supplied.
+        write_layer : str, optional
+            If set and ``adata`` is supplied, the decoded expression is
+            written to ``adata.layers[write_layer]``.
+        **decode_kwargs
+            Forwarded to the wrapper's ``decode_cells`` (e.g.
+            ``library_size``, ``batch_index`` for scVI, ``read_depth``
+            for STATE).
+
+        Returns
+        -------
+        np.ndarray of shape ``(n_cells, n_genes)``
+            Decoded expression (NB mean / log-probs / linear recon,
+            depending on the model; see the wrapper docstring).
+        """
+        from .models.singlecell_models import singlecell_info
+
+        card = singlecell_info(model)
+        if not card.supports_decode:
+            raise ValueError(
+                f"Model '{model}' does not expose a decoder "
+                f"(wrapper_class={card.wrapper_class_name}). "
+                "Supported: pca, scvi, scanvi, totalvi, state."
+            )
+
+        if latent is None:
+            if adata is None:
+                raise ValueError(
+                    "decode_cells needs either `latent` or `adata` "
+                    "(+ optional `obsm_key`)."
+                )
+            key = obsm_key or f"X_{model}"
+            if key not in adata.obsm:
+                raise KeyError(
+                    f"{key!r} not present in adata.obsm. Run embed_cells "
+                    f"with models=[{model!r}] first, or pass `obsm_key`."
+                )
+            latent_arr = np.asarray(adata.obsm[key])
+        else:
+            latent_arr = np.asarray(latent)
+
+        if gene_names is None and adata is not None:
+            gene_names = list(adata.var_names)
+
+        device_str = str(self.device)
+        cache_key = (model, device_str)
+        wrapper = self._singlecell_cache.get(cache_key)
+        if wrapper is None:
+            raise RuntimeError(
+                f"No fitted '{model}' wrapper cached for device "
+                f"{device_str!r}. Call `embed_cells(adata, models=["
+                f"'{model}'])` first (for STATE/Stack, instantiate the "
+                "wrapper manually with the checkpoint path and pass it to "
+                "`wrapper.embed_cells` / `wrapper.decode_cells` directly)."
+            )
+
+        decoded = wrapper.decode_cells(
+            latent_arr,
+            gene_names=gene_names,
+            adata=adata,
+            **decode_kwargs,
+        )
+
+        if write_layer is not None and adata is not None:
+            if decoded.shape[1] != adata.n_vars:
+                raise ValueError(
+                    "Decoded matrix has %d genes but adata has %d "
+                    "var_names; cannot write to adata.layers." % (
+                        decoded.shape[1], adata.n_vars,
+                    )
+                )
+            adata.layers[write_layer] = decoded
+
+        return decoded
+
+    def generate_cells(
+        self,
+        base_adata,
+        test_adata,
+        *,
+        model: str = "stack",
+        wrapper=None,
+        **generate_kwargs: Any,
+    ):
+        """Run in-context generation to synthesise new cell profiles.
+
+        Currently only supported by the Stack wrapper. Unlike
+        :meth:`decode_cells`, this does NOT consume a latent matrix: it
+        conditions on a donor-specific ``base_adata`` context and
+        synthesises gene-expression for every cell in ``test_adata``.
+
+        Parameters
+        ----------
+        base_adata : anndata.AnnData
+            Donor-conditioned base context.
+        test_adata : anndata.AnnData
+            Cells to predict for.
+        model : str
+            Registry key (currently only ``"stack"``).
+        wrapper : SingleCellWrapper, optional
+            Already-constructed wrapper. Required for Stack because its
+            checkpoint and gene-list paths cannot be expressed through
+            ``embed_cells``.
+        **generate_kwargs
+            Forwarded to the wrapper's ``generate_cells`` (split_column,
+            split_values, prompt_ratio, ...).
+        """
+        from .models.singlecell_models import singlecell_info
+
+        card = singlecell_info(model)
+        if not card.supports_generation:
+            raise ValueError(
+                f"Model '{model}' does not expose an in-context "
+                f"generation head. Supported: stack."
+            )
+
+        if wrapper is None:
+            device_str = str(self.device)
+            wrapper = self._singlecell_cache.get((model, device_str))
+        if wrapper is None:
+            raise RuntimeError(
+                f"No '{model}' wrapper available. For Stack, instantiate "
+                "it manually with `StackWrapper(checkpoint=..., "
+                "genelist=...)`, call `.load(device)`, and pass it via "
+                "the `wrapper=` kwarg."
+            )
+
+        return wrapper.generate_cells(base_adata, test_adata, **generate_kwargs)
 
     def embed_adata(
         self,
