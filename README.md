@@ -791,13 +791,10 @@ pixi install
 | 07 | PPI Network Embeddings                            | [07_ppi_embeddings.ipynb](docs/notebooks/07_ppi_embeddings.ipynb) |
 | 08 | Single-Cell Foundation Model Embeddings           | [08_singlecell_foundation_models.ipynb](docs/notebooks/08_singlecell_foundation_models.ipynb) |
 | 09 | JUMP Cell Painting Morphological Embeddings       | [09_morphology_jump_cell_painting.ipynb](docs/notebooks/09_morphology_jump_cell_painting.ipynb) |
-| 10 | Gene & Protein Annotation + Weighted Embeddings   | [10_gene_protein_annotation.ipynb](docs/notebooks/10_gene_protein_annotation.ipynb) |
-| 11 | Small Molecule Annotation                         | [11_molecule_annotation.ipynb](docs/notebooks/11_molecule_annotation.ipynb) |
-| 12 | Text Knowledge Embeddings                         | [12_text_knowledge_embeddings.ipynb](docs/notebooks/12_text_knowledge_embeddings.ipynb) |
-| 13 | Cell Line Context Annotation                      | [13_cellline_context.ipynb](docs/notebooks/13_cellline_context.ipynb) |
-| 14 | Cross-Species Ortholog Embeddings                 | [14_cross_species_embeddings.ipynb](docs/notebooks/14_cross_species_embeddings.ipynb) |
-| 15 | Unified Embedding with embed_adata                | [15_unified_embedding.ipynb](docs/notebooks/15_unified_embedding.ipynb) |
-| 16 | DepMap Cancer Dependency Analysis                 | [16_depmap_analysis.ipynb](docs/notebooks/16_depmap_analysis.ipynb) |
+| 10 | Annotation & Entity Context (genes, proteins, molecules, cell lines, text) | [10_annotation_and_context.ipynb](docs/notebooks/10_annotation_and_context.ipynb) |
+| 11 | Cross-Species Ortholog Embeddings                 | [11_cross_species_embeddings.ipynb](docs/notebooks/11_cross_species_embeddings.ipynb) |
+| 12 | Unified Embedding with embed_adata                | [12_unified_embedding.ipynb](docs/notebooks/12_unified_embedding.ipynb) |
+| 13 | DepMap Cancer Dependency Analysis                 | [13_depmap_analysis.ipynb](docs/notebooks/13_depmap_analysis.ipynb) |
 
 ## Package Structure
 

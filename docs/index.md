@@ -27,11 +27,8 @@ notebooks/06_text_embeddings
 notebooks/07_ppi_embeddings
 notebooks/08_singlecell_foundation_models
 notebooks/09_morphology_jump_cell_painting
-notebooks/10_gene_protein_annotation
-notebooks/11_molecule_annotation
-notebooks/12_text_knowledge_embeddings
-notebooks/13_cellline_context
-notebooks/14_cross_species_embeddings
-notebooks/15_unified_embedding
-notebooks/16_depmap_analysis
+notebooks/10_annotation_and_context
+notebooks/11_cross_species_embeddings
+notebooks/12_unified_embedding
+notebooks/13_depmap_analysis
 ```

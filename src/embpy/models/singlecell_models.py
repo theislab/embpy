@@ -1690,6 +1690,11 @@ class ScVIToolsWrapper(SingleCellWrapper):
 
         # scvi-tools returns either a dict with ``px`` (torch distribution)
         # or a ``px_rate`` / ``px_scale`` tensor depending on the version.
+        # NOTE: torch.Tensor also has a ``.mean`` method, so we must not use
+        # ``hasattr(val, "mean")`` as the branch predicate. Plain tensors
+        # are forwarded as-is; only objects that are NOT a tensor (i.e.
+        # torch.distributions.Distribution instances) have ``.mean`` read
+        # as the distribution mean tensor.
         if return_raw:
             key_candidates = ("px_scale", "px")
         else:
@@ -1698,8 +1703,11 @@ class ScVIToolsWrapper(SingleCellWrapper):
         for key in key_candidates:
             if key in outputs:
                 val = outputs[key]
-                if hasattr(val, "mean"):  # torch Distribution
-                    tensor = val.mean
+                if isinstance(val, torch.Tensor):
+                    tensor = val
+                elif hasattr(val, "mean"):  # torch Distribution or similar
+                    mean_attr = val.mean
+                    tensor = mean_attr() if callable(mean_attr) else mean_attr
                 else:
                     tensor = val
                 break
