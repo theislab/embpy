@@ -235,6 +235,12 @@ torchmetrics = ">=1.0"
 
 [feature.helical.pypi-dependencies]
 helical = "==2.0.0"
+# scvi-tools is used by notebook 12 to produce a scVI VAE latent. It is
+# not a helical dependency, but users often want to compare scVI against
+# the foundation models in the same notebook. Pinned loosely so pip's
+# resolver can pick a version compatible with helical's transformers /
+# torch / numpy / pandas pins.
+scvi-tools = ">=1.2"
 
 # GPU add-on specifically for the helical env. We do NOT reuse the top-level
 # `gpu` feature because that pins pytorch to the `pytorch` channel, which
