@@ -1,29 +1,36 @@
 #!/bin/bash
 # -----------------------------------------------------------------------------
-# SLURM launcher: JupyterLab running inside the pixi `gpu` env on a GPU node.
+# SLURM launcher: JupyterLab running inside the pixi `arc-gpu` env on a GPU
+# node.
+#
+# WHY A SEPARATE SCRIPT?
+#   The Arc Institute models (arc-state, arc-stack) require a newer scientific
+#   stack (pytorch>=2.7, scipy>=1.15, transformers>=4.52, numpy>=2.2) than the
+#   helical foundation-models stack can tolerate. They therefore live in their
+#   own pixi environment (`arc-gpu`) with its own launcher script.
+#
+#   Notebook 08 (single-cell foundation models) section 13c -- STATE encode+
+#   decode and Stack in-context generation -- is the only part of the repo
+#   that needs this env. The other sections of notebook 08 run in the
+#   `helical-gpu` env (see jupyter_pixi_helical.sbatch).
 #
 # Usage (from the repo root, where pixi.toml lives):
 #
-#   sbatch submission_scripts/jupyter_pixi.sbatch
+#   sbatch submission_scripts/jupyter_pixi_arc.sbatch
 #
 # After it starts, the connection info (URL + token) is written to:
-#   submission_scripts/logs/jupyter_pixi_<JOBID>.out
-#
-# To connect from VSCode / Cursor (Remote-SSH on the login node):
-#   1. `cat` the .out file to get the URL.
-#   2. Open any .ipynb, click the kernel picker (top right).
-#   3. "Select Another Kernel..." -> "Existing Jupyter Server..."
-#   4. Paste the URL exactly as printed (uses the COMPUTE NODE hostname).
-#   Cursor's Remote-SSH routes the traffic automatically -- no ssh -L needed.
+#   submission_scripts/logs/jupyter_pixi_arc_<JOBID>.out
 #
 # One-time setup on the login node BEFORE the first sbatch:
 #   cd /lustre/groups/ml01/workspace/goncalo.pinto/embpy
-#   pixi install -e gpu        # resolves + downloads ~1 GB, only done once
+#   CONDA_OVERRIDE_CUDA=12.0 pixi install -e arc-gpu
+#   # (CONDA_OVERRIDE_CUDA lets the solver pick CUDA-enabled variants when
+#   #  the login node itself is CPU-only.)
 # -----------------------------------------------------------------------------
 
-#SBATCH --job-name=embpy-jpt
-#SBATCH -o logs/jupyter_pixi_%j.out
-#SBATCH -e logs/jupyter_pixi_%j.err
+#SBATCH --job-name=embpy-arc
+#SBATCH -o logs/jupyter_pixi_arc_%j.out
+#SBATCH -e logs/jupyter_pixi_arc_%j.err
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=20
@@ -32,7 +39,7 @@
 #SBATCH --qos=gpu_normal
 #SBATCH --gres=gpu:1
 #SBATCH --time=12:00:00
-# #SBATCH --constraint=a100_80gb
+#SBATCH --constraint=a100_80gb
 
 # -----------------------------------------------------------------------------
 # Environment hygiene: do NOT source conda/mamba here. pixi is fully isolated
@@ -40,34 +47,26 @@
 # -----------------------------------------------------------------------------
 set -euo pipefail
 
-# Make pixi available in non-interactive SLURM shells.
 export PATH="$HOME/.pixi/bin:$PATH"
-
-# Keep user-site-packages from leaking into the pixi env.
 export PYTHONNOUSERSITE=1
 
-# Project containing pixi.toml (edit if you cloned it elsewhere).
 PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
-# Pick a random port and a strong token.
 PORT=$(/usr/bin/shuf -i 8000-9000 -n 1)
 export JUPYTER_TOKEN=$(openssl rand -hex 32)
 
-# -----------------------------------------------------------------------------
-# Write connection instructions to stdout (SLURM captures into the .out file).
-# -----------------------------------------------------------------------------
 cat <<END
 
 ################################################################################
-                 JupyterLab (pixi gpu env) -- connection info
+             JupyterLab (pixi arc-gpu env) -- connection info
 ################################################################################
 
 Compute node : ${HOSTNAME}
 Port         : ${PORT}
 Token        : ${JUPYTER_TOKEN}
 Project dir  : ${PROJECT_DIR}
-Pixi env     : gpu  (.pixi/envs/gpu/)
+Pixi env     : arc-gpu  (.pixi/envs/arc-gpu/)
 
 --- CONNECT FROM VSCode / Cursor (Remote-SSH to the login node) --------------
 
@@ -76,9 +75,6 @@ Pixi env     : gpu  (.pixi/envs/gpu/)
   3. Paste this URL exactly (compute node hostname, NOT localhost):
 
        http://${HOSTNAME}:${PORT}/?token=${JUPYTER_TOKEN}
-
-  Cursor's Remote-SSH connection reaches ${HOSTNAME} automatically -- no
-  manual ssh tunnel needed.
 
 --- CONNECT FROM A BROWSER ON YOUR LAPTOP ------------------------------------
 
@@ -97,27 +93,31 @@ Pixi env     : gpu  (.pixi/envs/gpu/)
 END
 
 # -----------------------------------------------------------------------------
-# Smoke-check GPU is visible to the pixi env before launching Jupyter.
+# Smoke-check GPU is visible to the arc-gpu env and arc-state / arc-stack
+# imports cleanly. `|| echo ...` keeps `set -e` from killing the whole job if
+# the smoke test hiccups on a version-lookup corner case -- Jupyter itself
+# will still launch.
 # -----------------------------------------------------------------------------
 echo "----- nvidia-smi -----"
 nvidia-smi || true
-echo "----- torch sees:  -----"
-pixi run -e gpu python -c \
-  "import torch; print(f'torch={torch.__version__} cuda={torch.cuda.is_available()} gpus={torch.cuda.device_count()}')"
+echo "----- torch + arc-state + arc-stack see:  -----"
+pixi run -e arc-gpu python -c "
+import torch
+from importlib.metadata import version
+def _v(pkg):
+    try:
+        return version(pkg)
+    except Exception:
+        return '(installed but version lookup failed)'
+print(f'torch={torch.__version__} cuda={torch.cuda.is_available()} '
+      f'gpus={torch.cuda.device_count()} '
+      f'arc-state={_v(\"arc-state\")} arc-stack={_v(\"arc-stack\")}')
+" || echo "(smoke test failed -- Jupyter will still launch)"
 
 # -----------------------------------------------------------------------------
-# Launch JupyterLab inside the pixi gpu env.
-#
-# Note: `pixi run -e gpu jupyter ...` would invoke the `jupyter` TASK defined
-# in pixi.toml (which already supplies `lab --no-browser --ip 0.0.0.0`) and
-# duplicate our flags. Use `pixi run -e gpu -- jupyter-lab ...` to run the
-# binary directly instead of the task.
-#
-# No LD_LIBRARY_PATH hack needed -- conda-forge's pytorch-cuda package plus
-# pixi's activation script take care of CUDA_HOME, LD_LIBRARY_PATH, and NVIDIA
-# toolkit paths automatically.
+# Launch JupyterLab inside the pixi arc-gpu env.
 # -----------------------------------------------------------------------------
-exec pixi run -e gpu -- jupyter-lab \
+exec pixi run -e arc-gpu -- jupyter-lab \
     --port=${PORT} \
     --no-browser \
     --ip=0.0.0.0 \
