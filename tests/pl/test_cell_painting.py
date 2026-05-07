@@ -1,4 +1,4 @@
-"""Tests for embpy.pl.cell_painting."""
+"""Tests for embpy.pl.morphology.cell_painting."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ matplotlib = pytest.importorskip("matplotlib")
 import matplotlib
 matplotlib.use("Agg")
 
-from embpy.pl.cell_painting import _mono_cmap, plot_cell_painting
+from embpy.pl.morphology.cell_painting import _mono_cmap, plot_cell_painting
 from embpy.pp.morphology_preprocessing import CELL_PAINTING_CHANNELS
 
 RNG = np.random.default_rng(99)

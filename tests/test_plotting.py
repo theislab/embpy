@@ -266,6 +266,33 @@ class TestPlotSimilarityHeatmap:
         assert isinstance(fig, Figure)
         plt_close(fig)
 
+    def test_into_external_axes(self, tiny_adata):
+        """plot_similarity_heatmap accepts ax= and draws into it without creating a fig."""
+        import matplotlib.pyplot as plt
+
+        from embpy.pl import plot_similarity_heatmap
+
+        fig, ax = plt.subplots()
+        out = plot_similarity_heatmap(
+            adata=tiny_adata, obsm_key="X_test", metric="cosine", ax=ax,
+        )
+        assert out is fig
+        assert len(ax.collections) > 0
+        plt_close(fig)
+
+    def test_label_col_used_for_ticks(self, synthetic_adata):
+        """label_col= picks tick labels from a chosen obs column."""
+        from embpy.pl import plot_similarity_heatmap
+
+        fig = plot_similarity_heatmap(
+            adata=synthetic_adata, obsm_key="X_emb_a", metric="cosine",
+            label_col="identifier",
+        )
+        ax = fig.axes[0]
+        ytick_labels = [t.get_text() for t in ax.get_yticklabels()]
+        assert any("gene_" in lbl for lbl in ytick_labels)
+        plt_close(fig)
+
 
 class TestDistanceHeatmap:
     def test_euclidean(self, tiny_adata):
@@ -433,6 +460,157 @@ class TestScanpyDependentPl:
         )
         assert isinstance(fig, Figure)
         plt_close(fig)
+
+
+# ===================================================================
+# pl/ embedding-space additions (PCA + annotate, panel, highlight)
+# ===================================================================
+
+
+class TestPlotEmbeddingSpacePCA:
+    """compute_pca-backed branch of plot_embedding_space (no scanpy needed)."""
+
+    def test_pca_method_creates_obsm_and_axes(self, synthetic_adata):
+        from embpy.pl import plot_embedding_space
+
+        fig = plot_embedding_space(
+            synthetic_adata, obsm_key="X_emb_a", method="pca",
+            color="perturbation_type",
+        )
+        assert isinstance(fig, Figure)
+        assert "X_pca_X_emb_a" in synthetic_adata.obsm
+        ax = fig.axes[0]
+        assert "PC1" in ax.get_xlabel()
+        assert "%" in ax.get_xlabel()
+        plt_close(fig)
+
+    def test_annotate_draws_text_per_observation(self, tiny_adata):
+        from embpy.pl import plot_embedding_space
+
+        fig = plot_embedding_space(
+            tiny_adata, obsm_key="X_test", method="pca", annotate=True,
+        )
+        ax = fig.axes[0]
+        text_count = sum(1 for t in ax.texts if t.get_text())
+        assert text_count >= tiny_adata.n_obs
+        plt_close(fig)
+
+    def test_annotate_col_uses_obs_column(self, synthetic_adata):
+        from embpy.pl import plot_embedding_space
+
+        fig = plot_embedding_space(
+            synthetic_adata, obsm_key="X_emb_a", method="pca",
+            annotate=True, annotate_col="identifier",
+        )
+        ax = fig.axes[0]
+        labels = {t.get_text() for t in ax.texts}
+        assert any("gene_" in lbl for lbl in labels)
+        plt_close(fig)
+
+    def test_into_external_ax(self, tiny_adata):
+        import matplotlib.pyplot as plt
+
+        from embpy.pl import plot_embedding_space
+
+        fig, ax = plt.subplots()
+        out = plot_embedding_space(
+            tiny_adata, obsm_key="X_test", method="pca", ax=ax,
+        )
+        assert out is fig
+        plt_close(fig)
+
+    def test_invalid_method_raises(self, tiny_adata):
+        from embpy.pl import plot_embedding_space
+
+        with pytest.raises(ValueError, match="Unknown method"):
+            plot_embedding_space(
+                tiny_adata, obsm_key="X_test",
+                method="not_a_method",  # type: ignore[arg-type]
+            )
+
+
+class TestEmbeddingColorPanel:
+    def test_panel_count_matches_color_keys(self, synthetic_adata):
+        from embpy.pl import embedding_color_panel
+
+        synthetic_adata.obs["category2"] = ["cat_a"] * 15 + ["cat_b"] * 15
+        fig = embedding_color_panel(
+            synthetic_adata,
+            color_keys=["perturbation_type", "category2"],
+            obsm_key="X_emb_a",
+            method="pca",
+            ncols=2,
+        )
+        assert isinstance(fig, Figure)
+        visible_axes = [a for a in fig.axes if a.get_visible()]
+        assert len([a for a in visible_axes if a.collections]) >= 2
+        plt_close(fig)
+
+    def test_extra_grid_axes_hidden(self, synthetic_adata):
+        from embpy.pl import embedding_color_panel
+
+        fig = embedding_color_panel(
+            synthetic_adata,
+            color_keys=["perturbation_type"],
+            obsm_key="X_emb_a",
+            method="pca",
+            ncols=2,
+        )
+        hidden = [a for a in fig.axes if not a.get_visible()]
+        assert len(hidden) >= 1
+        plt_close(fig)
+
+    def test_no_obsm_keys_raises(self):
+        from embpy.pl import embedding_color_panel
+
+        adata = AnnData(
+            obs=pd.DataFrame({"x": [1, 2, 3]}, index=pd.Index(list("abc"))),
+        )
+        with pytest.raises(ValueError):
+            embedding_color_panel(adata, color_keys=["x"])
+
+
+class TestHighlightGeneSets:
+    def test_highlights_set_members(self, synthetic_adata):
+        from embpy.pl import highlight_gene_sets
+
+        gene_ids = synthetic_adata.obs["identifier"].tolist()
+        sets = {
+            "first_three": gene_ids[:3],
+            "next_three": gene_ids[3:6],
+        }
+        fig = highlight_gene_sets(
+            synthetic_adata, gene_sets=sets, obsm_key="X_emb_a",
+            method="pca", label_col="identifier", ncols=2, annotate=True,
+        )
+        assert isinstance(fig, Figure)
+        visible_axes = [a for a in fig.axes if a.get_visible()]
+        assert len(visible_axes) == 2
+        for ax in visible_axes:
+            assert len(ax.collections) >= 2
+            assert "n=3" in ax.get_title()
+        plt_close(fig)
+
+    def test_handles_unknown_members_gracefully(self, synthetic_adata):
+        from embpy.pl import highlight_gene_sets
+
+        sets = {"only_unknown": ["nonexistent_gene_1", "nonexistent_gene_2"]}
+        fig = highlight_gene_sets(
+            synthetic_adata, gene_sets=sets, obsm_key="X_emb_a",
+            method="pca", label_col="identifier",
+        )
+        ax = next(a for a in fig.axes if a.get_visible())
+        assert "n=0" in ax.get_title()
+        plt_close(fig)
+
+    def test_invalid_method_raises(self, tiny_adata):
+        from embpy.pl import highlight_gene_sets
+
+        with pytest.raises(ValueError, match="Unknown"):
+            highlight_gene_sets(
+                tiny_adata, gene_sets={"a": ["0"]}, obsm_key="X_test",
+                method="bogus",  # type: ignore[arg-type]
+            )
 
 
 # ===================================================================
