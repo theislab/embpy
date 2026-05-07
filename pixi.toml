@@ -147,6 +147,52 @@ transformers = ">=4.45,<4.51"
 borzoi-pytorch = ">=0.4.3"
 enformer-pytorch = ">=0.8.10"
 
+# ---------------------------------------------------------------------------
+# Evo 2 (Arc Institute long-context DNA LM, StripedHyena 2 architecture via
+# Vortex). Linux-64 + CUDA 12 only.
+#
+# Hardware: needs an Ampere (SM 8.0) GPU or newer. On A100 / H100 the model
+# runs in BF16; FP8 inference requires Ada (SM 8.9) or Hopper (SM 9.0).
+#
+# Heavy native-CUDA transitive deps (flash-attn, mamba-ssm, transformer_engine,
+# vortex-ai) are pulled from PyPI; pre-built wheels exist for common
+# torch+CUDA combos but pip will fall back to building from source if no wheel
+# matches. We provide ninja / cmake / packaging on the conda side to make
+# that fallback succeed.
+#
+# Kept in its own feature because mamba-ssm / transformer_engine versions
+# usually conflict with the helical and esm3 stacks. The `evo2` environment
+# below combines this feature with the standard `gpu` + tutorial deps so
+# notebooks/02_gene_embeddings.ipynb can run section 2.7 (Evo2) end-to-end.
+#
+# Usage:
+#   pixi install -e evo2
+#   sbatch submission_scripts/jupyter_pixi_evo2.sbatch
+# ---------------------------------------------------------------------------
+[feature.evo2]
+platforms = ["linux-64"]
+
+[feature.evo2.system-requirements]
+cuda = "12"
+
+[feature.evo2.dependencies]
+python = ">=3.11,<3.13"
+# Build helpers in case PyPI falls back to compiling flash-attn / mamba-ssm
+# from source (no matching wheel for the resolved torch + CUDA combo).
+ninja = "*"
+cmake = ">=3.20"
+packaging = "*"
+
+[feature.evo2.pypi-dependencies]
+# Pulls vortex-ai, transformer_engine, flash-attn, mamba-ssm transitively.
+evo2 = ">=0.3"
+
+[feature.evo2.pypi-options]
+# These ship pre-built CUDA wheels but their build metadata declares torch
+# only as a runtime dep. If pip falls back to a sdist build, disabling build
+# isolation lets them find the env's pre-installed torch.
+no-build-isolation = ["flash-attn", "mamba-ssm", "transformer_engine"]
+
 # Boltz-2 (structure-informed protein embeddings). Kept as its own feature +
 # environment because `boltz>=2` hard-pins `numpy<2.0`, which is incompatible
 # with the rest of the stack (modern pytorch / scanpy / anndata are on numpy
@@ -417,6 +463,22 @@ minimol = { features = ["cpu", "morphology", "minimol", "jupyter"], solve-group 
 # environment. Linux-64 + CUDA only. Usage:
 #   pixi install -e boltz && pixi shell -e boltz
 boltz = { features = ["boltz", "morphology", "jupyter"] }
+
+# Standalone env for Evo 2 (long-context DNA LM, A100/H100 required).
+# Combines the evo2 feature with the standard tutorial stack so
+# notebooks/02_gene_embeddings.ipynb runs end-to-end including Evo2.
+# Usage:
+#   pixi install -e evo2
+#   sbatch submission_scripts/jupyter_pixi_evo2.sbatch
+evo2 = { features = [
+  "gpu",
+  "evo2",
+  "seqmodels",
+  "morphology",
+  "scanpy",
+  "pertpy",
+  "jupyter",
+] }
 
 # CPU env that also pulls the docs + dev extras. Useful for tutorial work.
 dev = { features = ["cpu", "morphology", "jump", "scanpy", "esm3", "seqmodels", "jupyter", "dev", "docs"], solve-group = "cpu" }
