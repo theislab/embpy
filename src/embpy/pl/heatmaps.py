@@ -21,9 +21,11 @@ def plot_similarity_heatmap(
     obsm_key: str | None = None,
     metric: str = "cosine",
     labels: list[str] | None = None,
+    label_col: str | None = None,
     title: str = "Perturbation Similarity",
     figsize: tuple[float, float] = (10, 8),
     cmap: str = "RdBu_r",
+    ax: Any = None,
     **kwargs: Any,
 ) -> Figure:
     """Heatmap of pairwise perturbation similarities.
@@ -43,12 +45,17 @@ def plot_similarity_heatmap(
         Similarity metric (``"cosine"``, ``"pearson"``, ``"spearman"``).
     labels
         Tick labels for rows/columns.
+    label_col
+        Column in ``adata.obs`` to use for tick labels (overrides
+        ``adata.obs_names``). Ignored if *labels* is provided.
     title
         Plot title.
     figsize
-        Figure size.
+        Figure size (used only when *ax* is ``None``).
     cmap
         Colormap.
+    ax
+        Optional matplotlib ``Axes`` to draw into.
     **kwargs
         Passed to ``seaborn.heatmap``.
 
@@ -61,9 +68,19 @@ def plot_similarity_heatmap(
             raise ValueError("Provide either 'similarity_matrix' or both 'adata' and 'obsm_key'.")
         similarity_matrix = tl.compute_similarity(adata, obsm_key=obsm_key, metric=metric)
         if labels is None:
+            if label_col and label_col in adata.obs.columns:
+                labels = adata.obs[label_col].astype(str).tolist()
+            else:
+                labels = _labels_from_adata(adata)
+    elif labels is None and adata is not None:
+        if label_col and label_col in adata.obs.columns:
+            labels = adata.obs[label_col].astype(str).tolist()
+        else:
             labels = _labels_from_adata(adata)
 
-    fig, ax = plt.subplots(figsize=figsize)
+    created = ax is None
+    fig, ax = (plt.subplots(figsize=figsize) if created else (ax.figure, ax))
+
     hm_kw: dict[str, Any] = {"vmin": -1, "vmax": 1, "center": 0, "square": True, "linewidths": 0.5}
     hm_kw.update(kwargs)
     sns.heatmap(
@@ -73,7 +90,8 @@ def plot_similarity_heatmap(
         **hm_kw,
     )
     ax.set_title(title)
-    fig.tight_layout()
+    if created:
+        fig.tight_layout()
     return fig
 
 

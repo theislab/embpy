@@ -13,8 +13,14 @@ __all__ = [
     "plot_perturbation_ranking",
     # embedding_space
     "all_embeddings",
+    "embedding_color_panel",
+    "highlight_gene_sets",
     "plot_embedding_space",
     "umap_feature_panel",
+    # diagnostics
+    "category_centroid_similarity",
+    "knn_label_purity",
+    "within_vs_between_similarity",
     # heatmaps
     "cluster_property_heatmap",
     "correlation_matrix",
@@ -41,10 +47,22 @@ __all__ = [
     "plot_species_umap",
 ]
 
+from .benchmark import plot_benchmark, plot_benchmark_comparison
 from .clustering import (
     dendrogram,
     leiden_overview,
     plot_cluster_composition,
+)
+from .comparisons import (
+    parallel_coordinates,
+    radar_chart,
+    star_coordinates,
+    tsne_feature_panel,
+)
+from .diagnostics import (
+    category_centroid_similarity,
+    knn_label_purity,
+    within_vs_between_similarity,
 )
 from .distributions import (
     embedding_distributions,
@@ -53,6 +71,8 @@ from .distributions import (
 )
 from .embedding_space import (
     all_embeddings,
+    embedding_color_panel,
+    highlight_gene_sets,
     plot_embedding_space,
     umap_feature_panel,
 )
@@ -66,13 +86,6 @@ from .heatmaps import (
     knn_overlap,
     plot_similarity_heatmap,
 )
-from .comparisons import (
-    parallel_coordinates,
-    radar_chart,
-    star_coordinates,
-    tsne_feature_panel,
-)
-from .benchmark import plot_benchmark, plot_benchmark_comparison
 from .morphology.cell_painting import plot_cell_painting
 from .protein.cross_species import (
     plot_conservation_barplot,
