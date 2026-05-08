@@ -62,3 +62,6 @@ slurm_jupyter_*.txt
 # on every run and can be multi-GB -- never commit them.
 *.npz
 test_counts.npz
+
+
+/lustre/groups/ml01/workspace/goncalo.pinto/embpy/hg38_chroms/chr17.fa
