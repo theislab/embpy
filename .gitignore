@@ -63,5 +63,9 @@ slurm_jupyter_*.txt
 *.npz
 test_counts.npz
 
-
-/lustre/groups/ml01/workspace/goncalo.pinto/embpy/hg38_chroms/chr17.fa
+# Reference genome FASTA files (hg38 chromosomes etc.) -- multi-MB
+# per file, downloaded on demand by tl.genomics.snp_utils, never
+# commit them.
+hg38_chroms/
+*.fa
+*.fasta
