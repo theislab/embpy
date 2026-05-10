@@ -994,6 +994,21 @@ The companion plots in `outputs/<root>/plots/` give:
 
 ## Action adapters and cross-encoder transfer
 
+![Phase 3 workflow: action adapters, encoder x adapter sweep, leave-one-encoder-out transfer](assets/phase3_workflow.png)
+
+The figure above summarises the three new pieces:
+
+1. **World model with a swappable adapter** -- the foundation embedder
+   stays frozen; the adapter (linear / mlp / lora) is the *only*
+   trainable bridge to the dynamics token width.
+2. **Encoder x adapter ablation sweep** -- a 5x6 grid that holds the
+   train/test split and embedding cache fixed, so any difference in the
+   summary tables is attributable to the (encoder, adapter) pair.
+3. **Leave-one-encoder-out (LOEO) transfer** -- two SLURM array stages
+   (pretrain reuse on the diagonal, off-diagonal fine-tunes through
+   `apply_encoder_swap`) producing one heatmap per metric per swap
+   strategy.
+
 ### Why an adapter sweep matters
 
 The foundation model that produces the action embedding (Borzoi, ESM2,
