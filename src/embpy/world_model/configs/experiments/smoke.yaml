@@ -24,6 +24,13 @@ data:
   pin_memory: false
   n_sequences_per_epoch: 64
 
+# The smoke test runs the precomputed path. scripts/smoke_test.py
+# generates a tiny synthetic NPZ at runtime if the configured CSV is
+# missing, so the smoke target stays self-contained.
+action_embedding:
+  source: "precomputed"
+  path: ""
+
 split:
   split_by: "perturbation"
   train_fraction: 0.8

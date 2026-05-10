@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -16,8 +17,10 @@ from ..preprocessing import log_normalize_counts, select_highly_variable_genes
 from .base import (
     GeneIndexer,
     PerturbationSequenceDataset,
-    load_gene_embedding_table,
 )
+
+if TYPE_CHECKING:
+    from ..embeddings.provider import ActionEmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +43,9 @@ class NadigSequenceDataset(PerturbationSequenceDataset):
     def from_h5ad(
         cls,
         h5ad_path: str | Path,
-        gene_embedding_path: str | Path,
         *,
+        provider: "ActionEmbeddingProvider | None" = None,
+        gene_embedding_path: str | Path | None = None,
         perturbation_key: str = "perturbation",
         control_label: str = "non-targeting",
         n_top_genes: int = 5000,
@@ -53,8 +57,9 @@ class NadigSequenceDataset(PerturbationSequenceDataset):
     ) -> tuple["NadigSequenceDataset", np.ndarray, GeneIndexer, list[str]]:
         """Build a dataset from a Nadig ``.h5ad`` file.
 
-        Returns the same tuple as
-        :meth:`ReplogleSequenceDataset.from_h5ad`.
+        Exactly one of ``provider`` or ``gene_embedding_path`` must be
+        set. The path form is accepted for backward compatibility and
+        is wrapped in a :class:`PrecomputedProvider` internally.
         """
         adata = _load_adata(h5ad_path)
         if perturbation_key not in adata.obs.columns:
@@ -78,9 +83,9 @@ class NadigSequenceDataset(PerturbationSequenceDataset):
             str(label) for label in np.unique(labels) if str(label) != control_label
         ]
 
-        gene_table, indexer = load_gene_embedding_table(
-            gene_embedding_path, symbols=unique_perturbed,
-        )
+        provider = _resolve_provider(provider, gene_embedding_path)
+        gene_table, indexer = provider.build_table(unique_perturbed)
+
         dataset = cls(
             expression=x,
             perturbation_labels=labels,
@@ -92,6 +97,30 @@ class NadigSequenceDataset(PerturbationSequenceDataset):
             rng=rng,
         )
         return dataset, gene_table, indexer, gene_symbols
+
+
+def _resolve_provider(
+    provider: "ActionEmbeddingProvider | None",
+    gene_embedding_path: str | Path | None,
+) -> "ActionEmbeddingProvider":
+    if provider is not None and gene_embedding_path is not None:
+        raise ValueError(
+            "Pass either provider= or gene_embedding_path=, not both."
+        )
+    if provider is not None:
+        return provider
+    if gene_embedding_path is None:
+        raise ValueError(
+            "from_h5ad requires either an ActionEmbeddingProvider or a "
+            "legacy gene_embedding_path."
+        )
+    from ..embeddings.precomputed import PrecomputedProvider  # noqa: PLC0415
+
+    logger.warning(
+        "NadigSequenceDataset.from_h5ad: gene_embedding_path is "
+        "deprecated -- pass an ActionEmbeddingProvider instead.",
+    )
+    return PrecomputedProvider(gene_embedding_path)
 
 
 __all__ = ["NadigSequenceDataset"]

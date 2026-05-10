@@ -328,12 +328,18 @@ def build_world_model(
     use_action_token: bool = True,
     decoder_hidden_dims: tuple[int, ...] = (512, 1024),
     enable_decoder: bool = True,
+    action_adapter_cfg: Any = None,
     **_unused: Any,
 ) -> WorldModel:
     """One-call factory for the default architecture.
 
     All components share ``d_model``. Use the lower-level constructors
     directly to mix and match widths or use a custom encoder.
+
+    ``action_adapter_cfg`` (an ``ActionAdapterConfig`` from
+    :mod:`configs`) selects the adapter kind in front of the dynamics
+    token. ``None`` keeps the legacy single-Linear default and is
+    byte-equivalent to the pre-Phase-3 path.
     """
     from .encoders.state_stack_encoder import build_state_stack_encoder  # avoid circular import
 
@@ -351,6 +357,7 @@ def build_world_model(
         d_model=d_model,
         pool="mean",
         freeze_embeddings=True,
+        adapter_cfg=action_adapter_cfg,
     )
     dynamics = GPTAutoregressiveDynamics(
         d_model=d_model,

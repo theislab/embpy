@@ -14,6 +14,8 @@ We use plain :mod:`dataclasses` rather than Hydra/OmegaConf. The reasons:
 from __future__ import annotations
 
 from .base import (
+    ActionAdapterConfig,
+    ActionEmbeddingConfig,
     DataConfig,
     DynamicsConfig,
     EncoderConfig,
@@ -29,6 +31,8 @@ from .base import (
 )
 
 __all__ = [
+    "ActionAdapterConfig",
+    "ActionEmbeddingConfig",
     "DataConfig",
     "DynamicsConfig",
     "EncoderConfig",

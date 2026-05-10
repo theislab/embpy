@@ -1,23 +1,21 @@
-"""Replogle 2022 perturb-seq adapter.
+"""Replogle perturb-seq adapter.
 
-The on-disk format is a standard ``.h5ad`` with:
+Wraps the per-cell-type AnnData files from the Replogle 2022
+``perturb-seq`` releases (``K562_essential``, ``RPE1_genome_wide``,
+etc.). The adapter is dataset-aware about ``cell_type`` so a single
+file containing multiple lines can be filtered down at load time.
 
-* ``adata.X``                 -- raw counts (CSR sparse).
-* ``adata.obs[perturbation_key]`` -- gene symbol of the targeted gene
-  ("non-targeting" for controls).
-* ``adata.var_names``         -- gene symbols matching the embedding table.
-* ``adata.obs[cell_type_key]`` -- ``"K562"`` or ``"RPE1"``.
-
-This adapter loads the AnnData, runs the package preprocessing (HVG
-filter + log1p) and hands a :class:`PerturbationSequenceDataset` to the
-caller.
+Action embeddings are obtained via an injected
+:class:`ActionEmbeddingProvider`. The legacy ``gene_embedding_path``
+argument is still accepted for backward compatibility and routed
+through a transient :class:`PrecomputedProvider`.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -25,13 +23,15 @@ from ..preprocessing import log_normalize_counts, select_highly_variable_genes
 from .base import (
     GeneIndexer,
     PerturbationSequenceDataset,
-    load_gene_embedding_table,
 )
+
+if TYPE_CHECKING:
+    from ..embeddings.provider import ActionEmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
 
-def _load_adata(path: str | Path) -> Any:
+def _load_adata(path: str | Path):  # type: ignore[no-untyped-def]
     try:
         import anndata as ad  # noqa: PLC0415
     except ImportError as exc:
@@ -43,14 +43,15 @@ def _load_adata(path: str | Path) -> Any:
 
 
 class ReplogleSequenceDataset(PerturbationSequenceDataset):
-    """Replogle K562 / RPE1 perturb-seq sequence dataset."""
+    """Replogle 2022 perturb-seq sequence dataset."""
 
     @classmethod
     def from_h5ad(
         cls,
         h5ad_path: str | Path,
-        gene_embedding_path: str | Path,
         *,
+        provider: "ActionEmbeddingProvider | None" = None,
+        gene_embedding_path: str | Path | None = None,
         perturbation_key: str = "perturbation",
         control_label: str = "non-targeting",
         cell_type_key: str | None = "cell_type",
@@ -64,21 +65,11 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
     ) -> tuple[ReplogleSequenceDataset, np.ndarray, GeneIndexer, list[str]]:
         """Build a dataset from a Replogle ``.h5ad`` file.
 
-        Returns
-        -------
-        dataset
-            The :class:`ReplogleSequenceDataset` instance.
-        gene_embedding_table
-            ``(n_pert_rows + 1, embedding_dim)`` table aligned to the
-            indexer.
-        indexer
-            :class:`GeneIndexer` mapping perturbation labels to action indices.
-        gene_symbols
-            Final list of gene symbols after HVG filtering, in column
-            order of ``dataset.expression``.
+        Exactly one of ``provider`` or ``gene_embedding_path`` must be
+        set. The path form is accepted for backward compatibility and
+        is wrapped in a :class:`PrecomputedProvider` internally.
         """
         adata = _load_adata(h5ad_path)
-
         if perturbation_key not in adata.obs.columns:
             raise KeyError(
                 f"'{perturbation_key}' not in adata.obs (got {list(adata.obs.columns)})"
@@ -110,10 +101,8 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
             str(label) for label in np.unique(labels) if str(label) != control_label
         ]
 
-        gene_table, indexer = load_gene_embedding_table(
-            gene_embedding_path,
-            symbols=unique_perturbed,
-        )
+        provider = _resolve_provider(provider, gene_embedding_path)
+        gene_table, indexer = provider.build_table(unique_perturbed)
 
         dataset = cls(
             expression=x,
@@ -126,6 +115,32 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
             rng=rng,
         )
         return dataset, gene_table, indexer, gene_symbols
+
+
+def _resolve_provider(
+    provider: "ActionEmbeddingProvider | None",
+    gene_embedding_path: str | Path | None,
+) -> "ActionEmbeddingProvider":
+    if provider is not None and gene_embedding_path is not None:
+        raise ValueError(
+            "Pass either provider= or gene_embedding_path=, not both."
+        )
+    if provider is not None:
+        return provider
+    if gene_embedding_path is None:
+        raise ValueError(
+            "from_h5ad requires either an ActionEmbeddingProvider or a "
+            "legacy gene_embedding_path."
+        )
+    # Lazy import: keeps the dataset module free of the embeddings
+    # subpackage at import time, so circular imports stay impossible.
+    from ..embeddings.precomputed import PrecomputedProvider  # noqa: PLC0415
+
+    logger.warning(
+        "ReplogleSequenceDataset.from_h5ad: gene_embedding_path is "
+        "deprecated -- pass an ActionEmbeddingProvider instead.",
+    )
+    return PrecomputedProvider(gene_embedding_path)
 
 
 __all__ = ["ReplogleSequenceDataset"]

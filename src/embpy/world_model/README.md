@@ -762,3 +762,418 @@ Expected: every line prints `OK <path>`. Submit smallest first
 (`train_single_nadig.sbatch`); `logs/wm-nadig_<jobid>.out` should print
 "Run single_nadig -- output_dir=outputs/world_model/single_nadig"
 within seconds of the job starting.
+
+## Action embeddings
+
+The world model treats a perturbation as the embedding of the perturbed
+gene(s). Where that embedding *comes from* is selected at config time
+through the `action_embedding` block. Two backends ship with the
+package:
+
+| backend         | source                                | used for                                                         |
+| --------------- | ------------------------------------- | ---------------------------------------------------------------- |
+| `precomputed`   | CSV / NPZ on disk (legacy code path)  | reproducing prior runs, swapping in any custom embedding         |
+| `bio_embedder`  | `embpy.embedder.BioEmbedder`          | foundation-model embeddings (Borzoi, ESM2, ESMC, prot_t5, ...)   |
+
+Both backends return the same `(table, indexer)` tuple downstream code
+expects, so the rest of the world model is identical regardless of the
+source.
+
+### Provider abstraction
+
+The seam is `world_model/data/embeddings/provider.py::ActionEmbeddingProvider`:
+
+```python
+class ActionEmbeddingProvider(ABC):
+    @property
+    def name(self) -> str: ...
+    @property
+    def embedding_dim(self) -> int: ...
+    def embed(self, symbols) -> np.ndarray: ...
+    def build_table(self, symbols) -> tuple[np.ndarray, GeneIndexer]: ...
+```
+
+Adding a third backend (e.g. fetching from a vector DB) is roughly:
+
+1. Subclass `ActionEmbeddingProvider`, implement `embed` (the default
+   `build_table` is fine).
+2. Register it in `data/embeddings/registry.py::build_provider` under a
+   new `source: "<your_backend>"` value.
+3. Optional: persist a richer `ProviderMetadata` for `action_embedding_meta.json`.
+
+### Cache layout
+
+`BioEmbedderProvider` writes an NPZ archive per cache key:
+
+```
+{cache_dir}/{model_name}/{region}_{pooling}_{organism}.npz
+{cache_dir}/{model_name}/{region}_{pooling}_{organism}.npz.lock   # fcntl advisory lock
+```
+
+Each NPZ holds two arrays: `symbols: object[N]` and `embeddings:
+float32[N, D]`. Subsequent calls with the same key only embed the
+*new* symbols and merge them into the archive via a temp-file +
+`os.replace` atomic rename (so readers always see the old or the new
+file, never a half-written one). The default `cache_dir` is
+`outputs/_cache/action_embeddings/`.
+
+### Switching the action representation
+
+Same Replogle config, swap `model_name`:
+
+```bash
+# (a) precomputed (default; legacy NPZ / CSV)
+pixi run -e gpu python -m embpy.world_model.scripts.train \
+    --config src/embpy/world_model/configs/experiments/single_replogle.yaml
+
+# (b) BioEmbedder + ESM2 (650M)
+pixi run -e gpu python -m embpy.world_model.scripts.train \
+    --config src/embpy/world_model/configs/experiments/single_replogle_esm2.yaml
+
+# (c) BioEmbedder + Borzoi (DNA, exons only) -- one-line CLI override
+pixi run -e gpu python -m embpy.world_model.scripts.train \
+    --config src/embpy/world_model/configs/experiments/single_replogle_esm2.yaml \
+    action_embedding.model_name=borzoi_v0 \
+    action_embedding.region=exons
+```
+
+Pre-cache the embeddings before launching training (recommended so the
+first epoch starts immediately):
+
+```bash
+pixi run -e gpu python -m embpy.world_model.scripts.embed_perturbations \
+    --dataset replogle \
+    --h5ad data/datasets/replogle/replogle_2022_k562_essential.h5ad \
+    --model esm2_650M \
+    --output outputs/_cache/action_embeddings/esm2_650M/full_mean_human.npz
+```
+
+### Supported `model_name` values
+
+These come straight from `embpy.embedder.MODEL_REGISTRY`. Selected
+representatives by modality:
+
+| modality | examples                                                                      |
+| -------- | ----------------------------------------------------------------------------- |
+| DNA      | `enformer_human_rough`, `borzoi_v0..v3`, `flashzoi_v0..v3`, `evo1_8k`, `evo2_7b`, `nt_v2_500m`, `hyenadna_*`, `gena_lm_*` |
+| Protein  | `esm2_8M`..`esm2_15B`, `esmc_300m`..`6b`, `esm3_*`, `prot_t5_xl`              |
+| Text     | `minilm_l6_v2`, `bert_base_uncased`, `llama3.x_*`                             |
+
+Run `python -c "from embpy.embedder import MODEL_REGISTRY; print(sorted(MODEL_REGISTRY))"`
+for the full, env-aware list.
+
+### Action-embedding debug checklist
+
+| symptom                                          | what to inspect                                                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| Loss does not move; baselines beat the model     | `cat outputs/<run>/action_embedding_meta.json` -- check `embedding_dim` is non-zero and `n_unresolved` is small |
+| Half the test perturbations show identical predictions | Same file -- `n_unresolved` near `n_symbols` means rows are zero, the model has no signal for those genes  |
+| Transfer training blows up after pretrain        | Check `embedding_dim` in `outputs/<run>/pretrain/action_embedding_meta.json` vs `finetune/action_embedding_meta.json` -- they must match |
+| Slow first epoch                                 | Run `scripts/embed_perturbations.py` first to populate the cache                                             |
+| Want to revert from BioEmbedder to precomputed   | Set `action_embedding.source: precomputed` and `action_embedding.path: <your_npz>` (or leave empty to fall back to `data.gene_embedding_path`); no retraining needed if you just want to re-evaluate |
+
+Inspect the cache directly:
+
+```bash
+ls outputs/_cache/action_embeddings/
+ls outputs/_cache/action_embeddings/esm2_650M/        # one folder per model
+python -c "import numpy as np; a=np.load('outputs/_cache/action_embeddings/esm2_650M/full_mean_human.npz', allow_pickle=True); print(len(a['symbols']), a['embeddings'].shape)"
+```
+
+## Ablating the action encoder
+
+Once the provider abstraction is wired in, "which action encoder
+matters?" becomes a one-config-file question. The ablation harness
+trains the *same* world model on the *same* dataset with the *same*
+train/test split, swapping only the `action_embedding` block, then
+emits a single CSV that puts every backend on the same row.
+
+### One-liner: run the sweep locally on CPU
+
+```bash
+# Two-spec smoke ablation: text + protein, on top of smoke.yaml. <10 min on a laptop.
+pixi run -e gpu python -m embpy.world_model.scripts.ablate_action_encoder \
+    --base-config src/embpy/world_model/configs/experiments/smoke.yaml \
+    --grid src/embpy/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --output-root outputs/ablation_smoke \
+    --only minilm,esm2_650m
+```
+
+### One-liner: run the sweep on the cluster
+
+```bash
+# Single job that walks the grid sequentially:
+sbatch src/embpy/world_model/scripts/slurm/ablate_action_encoder.sbatch
+
+# Or fan out one spec per array task (5 specs in the default grid):
+sbatch --array=0-4 src/embpy/world_model/scripts/slurm/ablate_action_encoder.sbatch
+
+# Or use submit_all.sh, which also pre-warms the BioEmbedder cache and chains the aggregator + report:
+bash src/embpy/world_model/scripts/submit_all.sh --ablate-action-encoder \
+    --base-config src/embpy/world_model/configs/experiments/single_replogle.yaml \
+    --grid src/embpy/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --array
+```
+
+### Adding a new backend to the grid
+
+Zero lines of Python. Add one row to the grid YAML:
+
+```yaml
+# src/embpy/world_model/configs/experiments/ablation_action_encoder.yaml
+grid:
+  - key: flashzoi
+    model_name: flashzoi_v0
+    region: full
+    pooling: mean
+    notes: "DNA, 3x faster Borzoi"
+```
+
+`spec.key` becomes the per-run sub-directory (`<output_root>/flashzoi/`)
+and the column key in `summary_wide.csv`. Re-run the sweep --
+previously-completed specs are detected via the action-embedding cache
+and skipped at the resolver layer.
+
+### How to read `summary_wide.csv`
+
+`summary_wide.csv` is the headline artifact. One row per spec, columns
+in order:
+
+| column                                | meaning                                                          |
+| ------------------------------------- | ---------------------------------------------------------------- |
+| `grid_key`                            | spec identifier (e.g. `borzoi`)                                  |
+| `model_name`, `id_type`, `region`, `pooling` | the action-embedding overrides applied                    |
+| `status`                              | `"ok"` or `"failed"`                                             |
+| `embedding_dim`, `n_unresolved`       | from `action_embedding_meta.json`                                |
+| `wall_clock_s`, `peak_gpu_mem_mb`     | from the runner's per-spec `_ablation_run.json`                  |
+| `final_train_loss`, `final_val_loss`  | scraped from `train_log.csv`                                     |
+| `error`                               | populated only when `status == "failed"`                         |
+| `r2`, `mse`, `pearson`, `deg_overlap_top_k`, ... | one column per metric in `world_model_metrics.csv`    |
+
+Quick comparisons from the long form:
+
+```python
+import pandas as pd
+df = pd.read_csv("outputs/ablation_action_replogle/summary_long.csv")
+df.query("metric == 'r2' and status == 'ok'").sort_values("value", ascending=False)
+```
+
+The companion plots in `outputs/<root>/plots/` give:
+
+* `metric_bar_<metric>.png` -- one bar per spec, easiest visual sort.
+* `embedding_dim_vs_<metric>.png` -- does adding capacity (larger
+  embedding_dim) actually help? (often: no, by a lot.)
+* `pareto_<metric>_vs_walltime.png` -- the Pareto frontier between
+  quality and training cost.
+
+### What to do when a spec fails
+
+1. Check `logs/<job>.err` (or `outputs/<root>/<key>/_ablation_run.json` for the in-process traceback).
+2. Inspect `outputs/<root>/<key>/action_embedding_meta.json`. The two
+   most common failure modes are:
+   * `embedding_dim == 0` -- every symbol failed to resolve. Usually a
+     bad `id_type` (DNA models need `symbol` or `ensembl_id`, never
+     `uniprot_id`) or the wrong `organism`.
+   * `n_unresolved == n_symbols` -- the resolver works but the model
+     itself is failing. Likely an optional dep missing (Evo, Boltz, ...).
+3. Re-run only the failing spec without redoing the others:
+   ```bash
+   pixi run -e gpu python -m embpy.world_model.scripts.ablate_action_encoder \
+       --base-config src/embpy/world_model/configs/experiments/single_replogle.yaml \
+       --grid src/embpy/world_model/configs/experiments/ablation_action_encoder.yaml \
+       --output-root outputs/ablation_action_replogle \
+       --only flashzoi
+   ```
+4. Re-run the aggregator on its own (no retraining of any spec):
+   ```bash
+   pixi run -e gpu python -m embpy.world_model.evaluation.ablation.aggregate \
+       --output-root outputs/ablation_action_replogle \
+       --grid src/embpy/world_model/configs/experiments/ablation_action_encoder.yaml
+   ```
+
+
+## Action adapters and cross-encoder transfer
+
+### Why an adapter sweep matters
+
+The foundation model that produces the action embedding (Borzoi, ESM2,
+NT-V2, ...) stays frozen. The only learned bridge between its output
+dimension and the dynamics token width is a small projection -- the
+*adapter*. With Phase 1/2 you got a single `nn.Linear`; Phase 3 lets
+you swap in `MLP` (more non-linear capacity) or `LoRA` (a frozen base
+linear plus a low-rank residual). The adapter sweep tells you, for the
+*same* foundation embeddings, how much of the headroom is attributable
+to extra adapter capacity vs the foundation model itself.
+
+### Why the leave-one-encoder-out matrix matters
+
+Real transfer scenarios rarely fix the encoder: you might want to
+pretrain on a dataset for which DNA-CRISPR coverage is good (Borzoi
+shines) and fine-tune on one where protein-context perturbations
+dominate (ESM2 shines). The leave-one-encoder-out (LOEO) matrix
+trains 5x5 cells: rows = pretrain encoder X, columns = fine-tune
+encoder Y. The diagonal is the same-encoder transfer baseline; the
+off-diagonal cells let you compare three explicit swap strategies:
+
+* `reset_adapter`     -- keep dynamics + state encoder + decoder; rebuild only the adapter.
+* `learn_alignment`   -- freeze everything; learn a small `Linear(d_Y, d_X)` against shared symbols, then prepend it to the original frozen adapter.
+* `reset_all_action`  -- rebuild the entire action encoder; only dynamics + state encoder survive.
+
+If `learn_alignment` rows are close to the diagonal, your encoders agree
+geometrically once you bridge them; if `reset_all_action` is stronger,
+the original action encoder was the bottleneck.
+
+### Three commands
+
+Adapter sweep (smoke run on CPU):
+
+```bash
+pixi run -e gpu python -m embpy.world_model.scripts.ablate_action_adapter \
+    --base-config src/embpy/world_model/configs/experiments/smoke.yaml \
+    --grid src/embpy/world_model/configs/experiments/ablation_action_adapter.yaml \
+    --output-root outputs/ablation_adapter_smoke \
+    --only linear,lora_r4
+```
+
+Encoder x adapter cross sweep (30 cells; expect 6-12h on a single A100
+for full Replogle, much less for smoke):
+
+```bash
+pixi run -e gpu python -m embpy.world_model.scripts.ablate_encoder_x_adapter \
+    --base-config src/embpy/world_model/configs/experiments/single_replogle.yaml \
+    --encoder-grid src/embpy/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --adapter-grid src/embpy/world_model/configs/experiments/ablation_action_adapter.yaml \
+    --output-root outputs/cross_replogle
+```
+
+Leave-one-encoder-out (5 pretrains + 20 off-diagonal fine-tunes):
+
+```bash
+pixi run -e gpu python -m embpy.world_model.scripts.leave_one_encoder_out \
+    --base-config src/embpy/world_model/configs/experiments/transfer.yaml \
+    --grid src/embpy/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --strategy reset_adapter \
+    --output-root outputs/lone_replogle
+```
+
+On the cluster, the `--lone` flag launches the whole DAG:
+
+```bash
+bash src/embpy/world_model/scripts/submit_all.sh --lone \
+    --base-config src/embpy/world_model/configs/experiments/transfer.yaml \
+    --grid src/embpy/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --strategy reset_adapter \
+    --output-root outputs/lone_replogle
+```
+
+### Reading the heatmap and `summary_wide.csv`
+
+`outputs/lone_replogle/<strategy>/heatmaps/<metric>.png` is a 5x5 grid
+where the rows are pretrain encoders and the columns are fine-tune
+encoders. To argue something like *"encoder Y closes the gap with
+encoder X under `learn_alignment`"*, look up the cell `X -> Y` and
+compare against the diagonal `X -> X` cell. If
+`learn_alignment[X][Y] / learn_alignment[X][X] > 0.95` for the metric
+you care about, the alignment bridge is recovering most of the within-
+encoder performance. The same comparison across strategies tells you
+which swap is the cheapest path to recover the diagonal.
+
+`summary_wide.csv` (in `outputs/ablation_adapter_*/`) has one row per
+adapter spec and one column per metric, plus `kind`, `hidden_dim`,
+`lora_rank`, and a closed-form `param_count`. A quick pandas one-liner
+to find the best metric per parameter-count bucket:
+
+```python
+import pandas as pd
+df = pd.read_csv("outputs/ablation_adapter_replogle/summary_wide.csv")
+df.sort_values("r2", ascending=False)[["grid_key", "kind", "param_count", "r2"]]
+```
+
+### What to do when a swap fails
+
+* **Dim mismatch with `swap_strategy="none"`** -- the helper raises with
+  the exact `(d_pretrain, d_finetune)` tuple. Either align the encoders
+  via `transfer.pretrain_action_encoder = transfer.finetune_action_encoder`,
+  or pick `reset_adapter` / `learn_alignment` / `reset_all_action`.
+* **Frozen-grad assertion failure** -- a downstream optimizer is
+  expecting a gradient on the adapter's frozen `W0`. Inspect the log
+  line `[swap=<strategy>] trainable params: total=N {...}` -- the
+  `action_encoder` count must drop accordingly.
+* **`alignment_loss` does not decrease** -- `_train_alignment` logs
+  the per-epoch MSE. If it plateaus high, the two encoders place
+  shared symbols in incompatible geometries; switch to
+  `reset_all_action` and accept paying the full retrain cost on the
+  action side.
+* **`learn_alignment needs at least 2 shared perturbation symbols`** --
+  Nadig and Replogle perturbation sets are disjoint enough that the
+  intersection is empty; switch to `reset_adapter` or pre-process the
+  AnnDatas to a shared symbol vocabulary.
+
+## Phase 3 debug checklist
+
+Adapter parity regression test (the one that pins `kind="linear"`
+byte-equivalent to the pre-Phase-3 `nn.Linear`):
+
+```bash
+pixi run -e gpu pytest -k adapter_factory_parity src/embpy/world_model/tests
+```
+
+Param counts for each adapter at the same `(d_in, d_model)`:
+
+```bash
+pixi run -e gpu python -c "
+from embpy.world_model.models.action.adapters import LinearAdapter, MLPAdapter, LoRAAdapter
+adapters = [
+    ('linear',     LinearAdapter(1280, 256)),
+    ('mlp_h512',   MLPAdapter(1280, 256, hidden_dim=512, dropout=0.0)),
+    ('mlp_h1024',  MLPAdapter(1280, 256, hidden_dim=1024, dropout=0.0)),
+    ('lora_r4',    LoRAAdapter(1280, 256, rank=4, alpha=1.0)),
+    ('lora_r16',   LoRAAdapter(1280, 256, rank=16, alpha=1.0)),
+    ('lora_r64',   LoRAAdapter(1280, 256, rank=64, alpha=1.0)),
+]
+for name, ad in adapters:
+    n_train = sum(p.numel() for p in ad.parameters() if p.requires_grad)
+    n_total = sum(p.numel() for p in ad.parameters())
+    print(f'{name:10s} trainable={n_train:>8d} total={n_total:>8d}')
+"
+```
+
+Run a 2-spec adapter sweep on smoke.yaml end-to-end on CPU:
+
+```bash
+pixi run -e gpu python -m embpy.world_model.scripts.ablate_action_adapter \
+    --base-config src/embpy/world_model/configs/experiments/smoke.yaml \
+    --grid src/embpy/world_model/configs/experiments/ablation_action_adapter.yaml \
+    --output-root outputs/ablation_adapter_smoke \
+    --only linear,lora_r4
+```
+
+Run a 3-encoder leave-one-encoder-out diagonal sweep on CPU:
+
+```bash
+pixi run -e gpu python -m embpy.world_model.scripts.leave_one_encoder_out \
+    --base-config src/embpy/world_model/configs/experiments/transfer.yaml \
+    --grid src/embpy/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --strategy reset_adapter \
+    --output-root outputs/lone_smoke \
+    --diagonal-only --only enformer:enformer,esm2_650m:esm2_650m,minilm:minilm
+```
+
+Re-render the adapter aggregation without retraining anything:
+
+```bash
+pixi run -e gpu python -m embpy.world_model.evaluation.ablation.aggregate \
+    --mode adapter \
+    --output-root outputs/ablation_adapter_replogle \
+    --grid src/embpy/world_model/configs/experiments/ablation_action_adapter.yaml
+```
+
+Compare any two specs head-to-head from `summary_long.csv`:
+
+```python
+import pandas as pd
+df = pd.read_csv("outputs/ablation_adapter_replogle/summary_long.csv")
+print(df[df.grid_key.isin(["linear", "lora_r16"])].pivot_table(
+    index="metric", columns="grid_key", values="value", aggfunc="first"
+))
+```

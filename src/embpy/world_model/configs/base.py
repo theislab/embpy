@@ -3,15 +3,17 @@
 The schema is a tree of small dataclasses keyed by component:
 
     WorldModelConfig
-      |- data:      DataConfig
-      |- encoder:   EncoderConfig
-      |- dynamics:  DynamicsConfig
-      |- loss:      LossConfig
-      |- optim:     OptimConfig
-      |- train:     TrainConfig
-      |- split:     SplitConfig
-      |- transfer:  TransferConfig
-      |- eval:      EvalConfig
+      |- data:              DataConfig
+      |- encoder:           EncoderConfig
+      |- dynamics:          DynamicsConfig
+      |- loss:              LossConfig
+      |- optim:             OptimConfig
+      |- train:             TrainConfig
+      |- split:             SplitConfig
+      |- transfer:          TransferConfig
+      |- eval:              EvalConfig
+      |- action_embedding:  ActionEmbeddingConfig
+      |- action_adapter:    ActionAdapterConfig
       |- seed: int
       |- run_name: str
       |- output_dir: str
@@ -145,7 +147,16 @@ class SplitConfig:
 
 @dataclass
 class TransferConfig:
-    """Pretrain on one dataset, fine-tune on a fraction of another."""
+    """Pretrain on one dataset, fine-tune on a fraction of another.
+
+    The new ``pretrain_action_encoder`` / ``finetune_action_encoder``
+    fields let a single transfer run mix two different
+    :class:`ActionEmbeddingConfig` blocks (one per phase). Resolution
+    rule: when either field is ``None``, fall back to the run's
+    top-level ``action_embedding``. ``swap_strategy`` then picks how the
+    fine-tune model reuses the pretrained weights when the two providers
+    disagree on dimension or identity.
+    """
 
     enabled: bool = False
 
@@ -164,6 +175,20 @@ class TransferConfig:
     freeze_encoder_during_finetune: bool = False
     freeze_dynamics_during_finetune: bool = False
 
+    pretrain_action_encoder: "ActionEmbeddingConfig | None" = None
+    """If None, fall back to the run's top-level ``action_embedding``."""
+
+    finetune_action_encoder: "ActionEmbeddingConfig | None" = None
+    """If None, fall back to the run's top-level ``action_embedding``."""
+
+    swap_strategy: str = "none"
+    """One of ``{"none", "reset_adapter", "learn_alignment", "reset_all_action"}``."""
+
+    alignment_epochs: int = 5
+    """Only used when ``swap_strategy == "learn_alignment"``."""
+
+    alignment_lr: float = 1e-3
+
 
 @dataclass
 class EvalConfig:
@@ -181,6 +206,80 @@ class EvalConfig:
 
 
 @dataclass
+class ActionEmbeddingConfig:
+    """How to materialise the action (perturbation) embedding table.
+
+    Two backends are supported:
+
+    * ``"precomputed"`` -- read a CSV / NPZ from ``path``. If ``path``
+      is empty, falls back to :attr:`DataConfig.gene_embedding_path`
+      so the legacy YAMLs keep working unchanged.
+    * ``"bio_embedder"`` -- delegate to :class:`embpy.embedder.BioEmbedder`.
+      ``model_name`` must be a key in ``embpy.embedder.MODEL_REGISTRY``.
+    """
+
+    source: str = "precomputed"
+    """One of ``{"precomputed", "bio_embedder"}``."""
+
+    path: str = ""
+    """``precomputed`` only -- CSV / NPZ. Empty means fall back to data.gene_embedding_path."""
+
+    model_name: str = "esm2_650M"
+    """``bio_embedder`` only -- key in :attr:`embpy.embedder.MODEL_REGISTRY`."""
+
+    organism: str = "human"
+    id_type: str = "symbol"
+    """``bio_embedder`` only -- one of ``{"symbol", "ensembl_id"}``."""
+
+    region: str = "full"
+    """``bio_embedder`` (DNA only) -- one of ``{"full", "exons", "introns"}``."""
+
+    pooling_strategy: str = "mean"
+
+    resolver_backend: str = "api"
+    """``bio_embedder`` only -- one of ``{"api", "local"}``."""
+
+    mart_file: str | None = None
+    chromosome_folder: str | None = None
+    device: str = "auto"
+
+    cache_dir: str = "outputs/_cache/action_embeddings"
+    """Disk cache root. Use ``""`` to disable caching (not recommended)."""
+
+    extra_kwargs: dict[str, Any] = field(default_factory=dict)
+    """Forwarded to :meth:`BioEmbedder.embed_genes_batch` (e.g. ``biotype``)."""
+
+
+@dataclass
+class ActionAdapterConfig:
+    """Adapter that maps the foundation embedding dim to the dynamics ``d_model``.
+
+    ``kind="linear"`` reproduces the pre-Phase-3 single ``nn.Linear``
+    projection byte-equivalently (regression-tested). ``"mlp"`` and
+    ``"lora"`` add small trainable capacity on top of the still-frozen
+    foundation model.
+    """
+
+    kind: str = "linear"
+    """One of ``{"linear", "mlp", "lora"}``."""
+
+    hidden_dim: int = 512
+    """Hidden width for ``kind="mlp"``."""
+
+    dropout: float = 0.0
+    """Dropout for ``kind="mlp"`` (between layers) and ``"lora"`` (on the LoRA path)."""
+
+    activation: str = "gelu"
+    """One of ``{"gelu", "relu"}`` -- used by ``kind="mlp"`` only."""
+
+    lora_rank: int = 0
+    """Rank of the LoRA residual. ``0`` -> degenerates to W0 only (frozen baseline)."""
+
+    lora_alpha: float = 1.0
+    """LoRA scale: residual is multiplied by ``alpha / rank`` before being added to W0."""
+
+
+@dataclass
 class WorldModelConfig:
     data: DataConfig = field(default_factory=DataConfig)
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
@@ -191,6 +290,8 @@ class WorldModelConfig:
     split: SplitConfig = field(default_factory=SplitConfig)
     transfer: TransferConfig = field(default_factory=TransferConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
+    action_embedding: ActionEmbeddingConfig = field(default_factory=ActionEmbeddingConfig)
+    action_adapter: ActionAdapterConfig = field(default_factory=ActionAdapterConfig)
 
     seed: int = 0
     run_name: str = "wm_run"
@@ -201,6 +302,16 @@ class WorldModelConfig:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+# Fields whose declared default is ``None`` but whose YAML override may
+# arrive as a dict. We materialise the dict into the dataclass type
+# named here so the rest of the merge stays uniform.
+_OPTIONAL_DATACLASS_FIELDS: dict[str, type] = {}
+
+
+def _register_optional_dataclass_field(field_name: str, dc_type: type) -> None:
+    _OPTIONAL_DATACLASS_FIELDS[field_name] = dc_type
 
 
 def _merge_into_dataclass(dc: Any, overrides: dict[str, Any]) -> Any:
@@ -218,9 +329,17 @@ def _merge_into_dataclass(dc: Any, overrides: dict[str, Any]) -> Any:
         new = overrides[f.name]
         if is_dataclass(cur) and isinstance(new, dict):
             _merge_into_dataclass(cur, new)
+        elif cur is None and isinstance(new, dict) and f.name in _OPTIONAL_DATACLASS_FIELDS:
+            sub = _OPTIONAL_DATACLASS_FIELDS[f.name]()
+            _merge_into_dataclass(sub, new)
+            setattr(dc, f.name, sub)
         else:
             setattr(dc, f.name, new)
     return dc
+
+
+_register_optional_dataclass_field("pretrain_action_encoder", ActionEmbeddingConfig)
+_register_optional_dataclass_field("finetune_action_encoder", ActionEmbeddingConfig)
 
 
 def load_yaml_config(path: str | Path) -> WorldModelConfig:
@@ -273,6 +392,8 @@ def apply_cli_overrides(cfg: WorldModelConfig, overrides: list[str]) -> WorldMod
 
 
 __all__ = [
+    "ActionAdapterConfig",
+    "ActionEmbeddingConfig",
     "DataConfig",
     "DynamicsConfig",
     "EncoderConfig",

@@ -48,6 +48,7 @@ from __future__ import annotations
 
 from . import configs, data, evaluation, models, training, utils
 from .configs import (
+    ActionEmbeddingConfig,
     DataConfig,
     DynamicsConfig,
     EncoderConfig,
@@ -57,19 +58,30 @@ from .configs import (
     WorldModelConfig,
     load_yaml_config,
 )
+from .data import (
+    ActionEmbeddingProvider,
+    BioEmbedderProvider,
+    PrecomputedProvider,
+    build_provider,
+)
 from .models.world_model import WorldModel, build_world_model
 from .training import WorldModelTrainer
 
 __all__ = [
+    "ActionEmbeddingConfig",
+    "ActionEmbeddingProvider",
+    "BioEmbedderProvider",
     "DataConfig",
     "DynamicsConfig",
     "EncoderConfig",
     "LossConfig",
     "OptimConfig",
+    "PrecomputedProvider",
     "TrainConfig",
     "WorldModel",
     "WorldModelConfig",
     "WorldModelTrainer",
+    "build_provider",
     "build_world_model",
     "configs",
     "data",

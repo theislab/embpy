@@ -20,6 +20,10 @@ data:
   num_workers: 4
   pin_memory: true
 
+action_embedding:
+  source: "precomputed"
+  path: ""
+
 split:
   split_by: "perturbation"
   train_fraction: 0.8

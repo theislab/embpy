@@ -24,6 +24,16 @@ data:
   num_workers: 4
   pin_memory: true
 
+# A single action_embedding block applies to BOTH phases. The
+# pretrain phase additionally honours transfer.pretrain_gene_embedding_path
+# (legacy precomputed-source override) so the existing path-based YAMLs
+# keep working without changes. To use BioEmbedder for both phases,
+# set source: bio_embedder and a model_name -- pretrain and fine-tune
+# will share the same cache file.
+action_embedding:
+  source: "precomputed"
+  path: ""
+
 split:
   split_by: "perturbation"
   train_fraction: 0.8
