@@ -3,18 +3,23 @@
 The schema is a tree of small dataclasses keyed by component:
 
     WorldModelConfig
-      |- data:     DataConfig
-      |- encoder:  EncoderConfig
-      |- dynamics: DynamicsConfig
-      |- loss:     LossConfig
-      |- optim:    OptimConfig
-      |- train:    TrainConfig
+      |- data:      DataConfig
+      |- encoder:   EncoderConfig
+      |- dynamics:  DynamicsConfig
+      |- loss:      LossConfig
+      |- optim:     OptimConfig
+      |- train:     TrainConfig
+      |- split:     SplitConfig
+      |- transfer:  TransferConfig
+      |- eval:      EvalConfig
       |- seed: int
       |- run_name: str
       |- output_dir: str
+      |- mode: str
 
-Every component-level config maps 1:1 to a constructor in this package,
-so swapping a value in YAML is sufficient to swap the underlying module.
+YAML files override defaults; unknown keys raise KeyError so typos
+surface immediately. Dotted CLI overrides (encoder.d_model=512) are
+also supported via :func:`apply_cli_overrides`.
 """
 
 from __future__ import annotations
@@ -23,8 +28,6 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
-# yaml is a soft dep: it ships with anndata's runtime, but we still
-# guard the import so importing the schema works in lean environments.
 try:
     import yaml  # type: ignore[import-not-found]
 
@@ -38,7 +41,7 @@ class DataConfig:
     """Where to find data and how to assemble training tuples."""
 
     dataset: str = "replogle"
-    """One of ``{"replogle", "nadig"}``. Picks the adapter in :mod:`world_model.data.datasets`."""
+    """One of ``{"replogle", "nadig"}``."""
 
     h5ad_path: str = ""
     """Absolute path to the .h5ad file."""
@@ -47,39 +50,28 @@ class DataConfig:
     """CSV / NPZ table mapping gene_symbol -> embedding vector."""
 
     perturbation_key: str = "perturbation"
-    """Column in ``adata.obs`` naming the perturbed gene."""
-
     control_label: str = "non-targeting"
-    """Value of ``perturbation_key`` that flags control cells."""
-
     cell_type_key: str | None = "cell_type"
-    """Optional column for context-aware control sampling. ``None`` disables it."""
 
     n_top_genes: int = 5000
-    """Highly-variable-gene filter applied during preprocessing. Set <= 0 to disable."""
-
     log_normalize: bool = True
-    """Apply log1p(library-size normalize) on the way in."""
 
     stack_size: int = 4
-    """K -- number of past observations stacked into the state encoder."""
-
     sequence_length: int = 8
-    """T -- length of the (state, action) sequence presented to the dynamics."""
+    n_pert: int = 2
 
     batch_size: int = 64
     val_fraction: float = 0.1
     num_workers: int = 4
     pin_memory: bool = True
 
+    n_sequences_per_epoch: int | None = None
+    """Override for dataset epoch length. ``None`` uses the dataset default."""
+
 
 @dataclass
 class EncoderConfig:
-    """Configuration for the state-stack encoder."""
-
     kind: str = "transformer"
-    """One of ``{"transformer", "mlp"}`` -- selects the implementation."""
-
     d_model: int = 256
     n_layers: int = 2
     n_heads: int = 4
@@ -89,26 +81,17 @@ class EncoderConfig:
 
 @dataclass
 class DynamicsConfig:
-    """Configuration for the autoregressive dynamics."""
-
     kind: str = "gpt"
-    """Currently only ``"gpt"`` is implemented; here for forward compat."""
-
     d_model: int = 256
     n_layers: int = 6
     n_heads: int = 8
     dropout: float = 0.1
     max_sequence_length: int = 64
-    """Upper bound on T used to size the positional embedding table."""
-
     use_action_token: bool = True
-    """If False, dynamics reduces to a state-only causal transformer (ablation)."""
 
 
 @dataclass
 class LossConfig:
-    """Weights of the multi-term training objective."""
-
     latent_mse: float = 1.0
     decoder_mse: float = 0.5
     info_nce: float = 0.0
@@ -117,47 +100,104 @@ class LossConfig:
 
 @dataclass
 class OptimConfig:
-    """AdamW + cosine schedule defaults."""
-
     lr: float = 3e-4
     weight_decay: float = 1e-2
     betas: tuple[float, float] = (0.9, 0.95)
     grad_clip: float | None = 1.0
     scheduler: str = "cosine"
-    """One of ``{"cosine", "constant", "linear_warmup"}``."""
-
     warmup_steps: int = 1000
 
 
 @dataclass
 class TrainConfig:
-    """Training-loop specific knobs."""
-
     n_epochs: int = 50
     log_every_n_steps: int = 50
     eval_every_n_epochs: int = 1
     save_every_n_epochs: int = 5
     device: str = "auto"
-    """``"auto"`` resolves to cuda > mps > cpu."""
-
     amp: bool = True
-    """Enable autocast + GradScaler on CUDA. Ignored on CPU/MPS."""
+    enable_tensorboard: bool = True
+    enable_csv_log: bool = True
+
+
+@dataclass
+class SplitConfig:
+    """Train/test split policy.
+
+    The default splits by perturbation identity, which is the
+    scientifically meaningful out-of-distribution setting. ``"cell"``
+    is a configurable fallback for sanity checks.
+    """
+
+    split_by: str = "perturbation"
+    """One of ``{"perturbation", "cell"}``."""
+
+    train_fraction: float = 0.8
+    """Fraction of held units (perturbations or cells) used for training."""
+
+    seed: int = 0
+    cache_path: str | None = None
+    """Optional path under output_dir where the split is persisted as NPZ."""
+
+    keep_control_in_test: bool = True
+    """Whether the test split keeps access to control cells (needed by baselines)."""
+
+
+@dataclass
+class TransferConfig:
+    """Pretrain on one dataset, fine-tune on a fraction of another."""
+
+    enabled: bool = False
+
+    pretrain_h5ad_path: str = ""
+    pretrain_dataset: str = "nadig"
+    pretrain_gene_embedding_path: str = ""
+    pretrain_epochs: int = 30
+
+    finetune_fraction: float = 0.1
+    """Fraction of training perturbations (or cells) used for fine-tuning."""
+
+    finetune_epochs: int = 20
+    pretrain_checkpoint: str | None = None
+    """If set, skip the pretrain phase and load this checkpoint."""
+
+    freeze_encoder_during_finetune: bool = False
+    freeze_dynamics_during_finetune: bool = False
+
+
+@dataclass
+class EvalConfig:
+    """Knobs for the end-of-training evaluation pipeline."""
+
+    n_control_samples_per_pert: int = 32
+    """How many control cells to sample when predicting each perturbation."""
+
+    use_cell_eval: bool = True
+    """If True, attempt to import and run the ``cell_eval`` package."""
+
+    deg_top_k: int = 50
+    save_predictions: bool = True
+    """Persist real and predicted AnnData under outputs/<run>/eval/."""
 
 
 @dataclass
 class WorldModelConfig:
-    """Top-level config tying everything together."""
-
     data: DataConfig = field(default_factory=DataConfig)
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
     dynamics: DynamicsConfig = field(default_factory=DynamicsConfig)
     loss: LossConfig = field(default_factory=LossConfig)
     optim: OptimConfig = field(default_factory=OptimConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
+    split: SplitConfig = field(default_factory=SplitConfig)
+    transfer: TransferConfig = field(default_factory=TransferConfig)
+    eval: EvalConfig = field(default_factory=EvalConfig)
 
     seed: int = 0
     run_name: str = "wm_run"
     output_dir: str = "outputs/world_model"
+
+    mode: str = "single"
+    """One of ``{"single", "transfer"}``."""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -184,11 +224,7 @@ def _merge_into_dataclass(dc: Any, overrides: dict[str, Any]) -> Any:
 
 
 def load_yaml_config(path: str | Path) -> WorldModelConfig:
-    """Load a :class:`WorldModelConfig` from a YAML file.
-
-    Unspecified keys fall back to dataclass defaults. Unknown keys raise
-    :class:`KeyError` so typos surface immediately.
-    """
+    """Load a :class:`WorldModelConfig` from a YAML file."""
     if not _HAS_YAML:
         raise ImportError("PyYAML is required to load YAML configs. Install with: pip install pyyaml")
     with open(path) as fp:
@@ -199,13 +235,54 @@ def load_yaml_config(path: str | Path) -> WorldModelConfig:
     return _merge_into_dataclass(cfg, raw)
 
 
+def apply_cli_overrides(cfg: WorldModelConfig, overrides: list[str]) -> WorldModelConfig:
+    """Apply a list of dotted ``key.subkey=value`` overrides to ``cfg`` in place.
+
+    Values are parsed with ``yaml.safe_load`` so YAML scalar conventions
+    (``true``, ``null``, ``1.0e-3``, lists) all work. Unknown keys raise
+    :class:`KeyError` to keep typo detection on par with YAML loading.
+    """
+    if not overrides:
+        return cfg
+    if not _HAS_YAML:
+        raise ImportError("PyYAML is required for CLI overrides.")
+    for spec in overrides:
+        if "=" not in spec:
+            raise ValueError(f"CLI override must be 'key=value', got {spec!r}")
+        key, raw_value = spec.split("=", 1)
+        value = yaml.safe_load(raw_value)
+        path = key.split(".")
+        target: Any = cfg
+        for part in path[:-1]:
+            if not is_dataclass(target):
+                raise KeyError(f"Cannot descend into non-dataclass at {part!r}")
+            field_names = {f.name for f in fields(target)}
+            if part not in field_names:
+                raise KeyError(
+                    f"Unknown key {key!r} (no field {part!r} on {type(target).__name__})"
+                )
+            target = getattr(target, part)
+        last = path[-1]
+        if not is_dataclass(target):
+            raise KeyError(f"Cannot set {last!r} on non-dataclass {type(target).__name__}")
+        field_names = {f.name for f in fields(target)}
+        if last not in field_names:
+            raise KeyError(f"Unknown key {key!r} (no field {last!r} on {type(target).__name__})")
+        setattr(target, last, value)
+    return cfg
+
+
 __all__ = [
     "DataConfig",
     "DynamicsConfig",
     "EncoderConfig",
+    "EvalConfig",
     "LossConfig",
     "OptimConfig",
+    "SplitConfig",
     "TrainConfig",
+    "TransferConfig",
     "WorldModelConfig",
+    "apply_cli_overrides",
     "load_yaml_config",
 ]

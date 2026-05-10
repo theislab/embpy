@@ -208,6 +208,7 @@ class PerturbationSequenceDataset:
         control_label: str = "non-targeting",
         rng: np.random.Generator | None = None,
         n_sequences_per_epoch: int | None = None,
+        allowed_cell_indices: np.ndarray | None = None,
     ) -> None:
         if expression.ndim != 2:
             raise ValueError(f"expression must be 2D, got shape {expression.shape}")
@@ -226,25 +227,29 @@ class PerturbationSequenceDataset:
         self.rng = rng if rng is not None else np.random.default_rng()
         self.n_genes = int(expression.shape[1])
 
+        if allowed_cell_indices is None:
+            allowed_mask = np.ones(self.expression.shape[0], dtype=bool)
+        else:
+            allowed_mask = np.zeros(self.expression.shape[0], dtype=bool)
+            allowed_mask[np.asarray(allowed_cell_indices, dtype=np.int64)] = True
+        self._allowed_mask = allowed_mask
+
         is_control = self.perturbation_labels == control_label
-        self.control_idx = np.flatnonzero(is_control)
-        self.perturbed_idx = np.flatnonzero(~is_control)
+        self.control_idx = np.flatnonzero(is_control & allowed_mask)
+        self.perturbed_idx = np.flatnonzero((~is_control) & allowed_mask)
         if self.control_idx.size == 0:
-            raise ValueError(f"No control cells (label={control_label!r}) found.")
+            raise ValueError(f"No control cells (label={control_label!r}) in allowed subset.")
         if self.perturbed_idx.size == 0:
-            raise ValueError("No perturbed cells found.")
+            raise ValueError("No perturbed cells in allowed subset.")
 
         # Bucket perturbed cells by label so the K-frame stack draws come
-        # from the same condition. This is the key inductive bias: the
-        # encoder sees a clean within-condition stack rather than a mix
-        # of conditions.
+        # from the same condition (key inductive bias).
         self._cells_by_label: dict[str, np.ndarray] = {}
-        for label in np.unique(self.perturbation_labels):
-            self._cells_by_label[str(label)] = np.flatnonzero(self.perturbation_labels == label)
+        for label in np.unique(self.perturbation_labels[allowed_mask]):
+            mask = (self.perturbation_labels == label) & allowed_mask
+            self._cells_by_label[str(label)] = np.flatnonzero(mask)
 
-        # Pool of "next-step" labels we can sample at each step. We keep
-        # all labels (control + perturbed) so the model also learns the
-        # identity action.
+        # Sampleable labels include the control: the model also learns the identity action.
         self._sampleable_labels = sorted(self._cells_by_label.keys())
 
         if n_sequences_per_epoch is None:
@@ -252,9 +257,10 @@ class PerturbationSequenceDataset:
         self.n_sequences_per_epoch = int(n_sequences_per_epoch)
 
         logger.info(
-            "PerturbationSequenceDataset: cells=%d, genes=%d, perts=%d, controls=%d, "
+            "PerturbationSequenceDataset: cells_used=%d/%d, genes=%d, perts=%d, controls=%d, "
             "T=%d, K=%d, n_pert=%d, sequences/epoch=%d",
-            self.expression.shape[0], self.n_genes, len(self._sampleable_labels) - 1,
+            int(allowed_mask.sum()), self.expression.shape[0], self.n_genes,
+            len(self._sampleable_labels) - 1,
             self.control_idx.size, self.sequence_length, self.stack_size, self.n_pert,
             self.n_sequences_per_epoch,
         )
@@ -314,6 +320,44 @@ class PerturbationSequenceDataset:
             "next_expression": torch.from_numpy(next_expression),
             "perturbations": labels,
         }
+
+    # ------------------------------------------------------------------
+    # Subset / view helpers
+    # ------------------------------------------------------------------
+
+    def subset(
+        self,
+        cell_indices: np.ndarray,
+        *,
+        n_sequences_per_epoch: int | None = None,
+        rng: np.random.Generator | None = None,
+    ) -> PerturbationSequenceDataset:
+        """Return a new dataset that draws sequences only from ``cell_indices``.
+
+        The underlying expression matrix and indexer are *shared* (not
+        copied); only the sampling pool changes. Used to enforce
+        train/test splits without duplicating arrays in memory.
+        """
+        return type(self)(
+            expression=self.expression,
+            perturbation_labels=self.perturbation_labels,
+            indexer=self.indexer,
+            sequence_length=self.sequence_length,
+            stack_size=self.stack_size,
+            n_pert=self.n_pert,
+            control_label=self.control_label,
+            rng=rng if rng is not None else self.rng,
+            n_sequences_per_epoch=n_sequences_per_epoch,
+            allowed_cell_indices=np.asarray(cell_indices, dtype=np.int64),
+        )
+
+    def available_perturbations(self) -> list[str]:
+        """Sorted list of perturbation labels present in the allowed subset."""
+        return [lbl for lbl in self._sampleable_labels if lbl != self.control_label]
+
+    def expression_view(self, cell_indices: np.ndarray) -> np.ndarray:
+        """Return ``(len(cell_indices), n_genes)`` slice of the expression matrix."""
+        return self.expression[np.asarray(cell_indices, dtype=np.int64)]
 
 
 __all__ = [

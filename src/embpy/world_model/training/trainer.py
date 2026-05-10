@@ -1,22 +1,18 @@
-"""Minimal config-driven trainer for the world model.
+"""Hook-based training loop for the world model.
 
-Pure PyTorch; no Lightning or Accelerate dependency. Designed for two
-audiences:
-
-1. Single-GPU (or CPU) experiments started directly from the
-   :mod:`world_model.scripts.train` entry-point.
-2. Programmatic use from notebooks where the user wants to call
-   ``trainer.fit(loader)`` and inspect ``trainer.history``.
-
-Distributed training is out of scope -- if you need it, wrap the
-underlying :class:`torch.nn.Module` in DDP yourself; the loss helpers
-and the model class are DDP-friendly.
+Pure PyTorch; no Lightning or Accelerate dependency. The trainer
+delegates everything except the forward/backward/step kernel to a
+small set of pluggable :class:`world_model.training.hooks.Hook`
+instances. Default hooks: console + CSV + TensorBoard + checkpointing
++ end-of-training loss plot. Drop them by passing ``hooks=[...]`` to
+override.
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -25,12 +21,18 @@ from torch.utils.data import DataLoader
 
 from ..configs import LossConfig, OptimConfig, TrainConfig
 from ..utils.checkpoint import save_checkpoint
+from .hooks import (
+    CSVLossLogger,
+    CheckpointHook,
+    ConsoleLogger,
+    Hook,
+    HookState,
+    LossPlotter,
+    TensorBoardLogger,
+)
 from .schedulers import build_scheduler
 
 if TYPE_CHECKING:
-    # WorldModel is only used as a type annotation. Importing it at
-    # runtime would create a cycle: world_model -> training.losses
-    # -> training -> trainer -> world_model.
     from ..models.world_model import WorldModel
 
 logger = logging.getLogger(__name__)
@@ -43,16 +45,14 @@ class WorldModelTrainer:
     ----------
     model
         The composed world model.
-    optim_cfg
-        Optimizer configuration.
-    loss_cfg
-        Multi-term loss configuration.
-    train_cfg
-        Training-loop knobs (epochs, AMP, device, ...).
-    output_dir
-        Where to write checkpoints. Created if it does not exist.
-    run_name
-        Used as the checkpoint filename prefix.
+    optim_cfg, loss_cfg, train_cfg
+        Hyperparameter configs.
+    output_dir, run_name
+        Where to write checkpoints / logs.
+    hooks
+        Optional override for the default hook list. ``None`` builds the
+        package default (console + CSV + TB + checkpoint + plotter). Pass
+        ``[]`` to disable hooks entirely (silent training).
     """
 
     def __init__(
@@ -63,6 +63,7 @@ class WorldModelTrainer:
         train_cfg: TrainConfig,
         output_dir: str | Path = "outputs/world_model",
         run_name: str = "wm_run",
+        hooks: list[Hook] | None = None,
     ) -> None:
         self.model = model
         self.optim_cfg = optim_cfg
@@ -89,6 +90,9 @@ class WorldModelTrainer:
         self.history: dict[str, list[float]] = {"train_loss": [], "val_loss": []}
         self.global_step = 0
 
+        self.hooks: list[Hook] = hooks if hooks is not None else self._default_hooks()
+        self.state = HookState(output_dir=self.output_dir, run_name=run_name)
+
     # ------------------------------------------------------------------
     # Public training API
     # ------------------------------------------------------------------
@@ -106,29 +110,35 @@ class WorldModelTrainer:
             total_steps=total_steps,
             warmup_steps=self.optim_cfg.warmup_steps,
         )
+        # Wire any checkpoint hooks now that optimizer / scheduler exist.
+        for h in self.hooks:
+            if isinstance(h, CheckpointHook):
+                h.model = self.model
+                h.optimizer = self.optimizer
+                h.scheduler = self.scheduler
+
+        self._fire("on_train_start")
 
         for epoch in range(1, self.train_cfg.n_epochs + 1):
+            self.state.epoch = epoch
+            self._fire("on_epoch_start")
             t0 = time.time()
-            train_loss = self._train_one_epoch(train_loader, epoch)
+            train_loss = self._train_one_epoch(train_loader)
             self.history["train_loss"].append(train_loss)
+            self.state.train_loss = train_loss
 
             if val_loader is not None and (epoch % self.train_cfg.eval_every_n_epochs == 0):
                 val_loss = self.evaluate(val_loader)
                 self.history["val_loss"].append(val_loss)
-                logger.info(
-                    "[epoch %d/%d] train=%.4f val=%.4f (%.1fs)",
-                    epoch, self.train_cfg.n_epochs, train_loss, val_loss, time.time() - t0,
-                )
+                self.state.val_loss = val_loss
             else:
-                logger.info(
-                    "[epoch %d/%d] train=%.4f (%.1fs)",
-                    epoch, self.train_cfg.n_epochs, train_loss, time.time() - t0,
-                )
+                self.state.val_loss = None
 
-            if epoch % self.train_cfg.save_every_n_epochs == 0:
-                self._save("ckpt_epoch%03d.pt" % epoch, epoch=epoch)
+            self.state.extra["epoch_time_s"] = time.time() - t0
+            self._fire("on_epoch_end")
 
         self._save(f"{self.run_name}_final.pt", epoch=self.train_cfg.n_epochs)
+        self._fire("on_train_end")
         return self.history
 
     @torch.no_grad()
@@ -150,15 +160,27 @@ class WorldModelTrainer:
             n += bsz
         return total / max(n, 1)
 
+    def load_state(self, ckpt_path: str | Path, *, strict: bool = False) -> None:
+        """Load model weights (and optionally optimizer/scheduler) from a checkpoint.
+
+        Used by the transfer setup to seed fine-tuning with the
+        pretrained weights.
+        """
+        from ..utils.checkpoint import load_checkpoint  # noqa: PLC0415
+
+        payload = load_checkpoint(ckpt_path, map_location=self.device)
+        missing = self.model.load_state_dict(payload["state_dict"], strict=strict)
+        logger.info("Loaded weights from %s (missing/unexpected: %s)", ckpt_path, missing)
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _train_one_epoch(self, loader: DataLoader, epoch: int) -> float:
+    def _train_one_epoch(self, loader: DataLoader) -> float:
         self.model.train()
         running = 0.0
         n = 0
-        for step, batch in enumerate(loader, start=1):
+        for batch in loader:
             batch = self._move_batch(batch)
             self.optimizer.zero_grad(set_to_none=True)
 
@@ -173,38 +195,51 @@ class WorldModelTrainer:
 
             if self.use_amp:
                 self.scaler.scale(loss).backward()
+                grad_norm = None
                 if self.optim_cfg.grad_clip is not None:
                     self.scaler.unscale_(self.optimizer)
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.optim_cfg.grad_clip)
+                    grad_norm = float(torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.optim_cfg.grad_clip,
+                    ))
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
                 loss.backward()
+                grad_norm = None
                 if self.optim_cfg.grad_clip is not None:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.optim_cfg.grad_clip)
+                    grad_norm = float(torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), self.optim_cfg.grad_clip,
+                    ))
                 self.optimizer.step()
 
             if self.scheduler is not None:
                 self.scheduler.step()
 
             self.global_step += 1
+            self.state.global_step = self.global_step
+            self.state.lr = float(self.optimizer.param_groups[0]["lr"])
+            self.state.grad_norm = grad_norm
+            self.state.components = {k: float(v) for k, v in components.items()}
+
+            self._fire("on_step_end")
+
             bsz = batch["obs_stack"].size(0)
             running += float(loss.item()) * bsz
             n += bsz
-
-            if step % self.train_cfg.log_every_n_steps == 0:
-                comp_str = " ".join(f"{k}={float(v):.4f}" for k, v in components.items())
-                logger.info("epoch %d step %d %s", epoch, step, comp_str)
         return running / max(n, 1)
 
     def _move_batch(self, batch: dict[str, Any]) -> dict[str, torch.Tensor]:
-        moved: dict[str, torch.Tensor] = {}
+        moved: dict[str, Any] = {}
         for k, v in batch.items():
             if isinstance(v, torch.Tensor):
                 moved[k] = v.to(self.device, non_blocking=True)
             else:
                 moved[k] = v
         return moved
+
+    def _fire(self, event: str) -> None:
+        for h in self.hooks:
+            getattr(h, event)(self.state)
 
     def _save(self, filename: str, epoch: int) -> None:
         path = self.output_dir / filename
@@ -215,6 +250,16 @@ class WorldModelTrainer:
             scheduler_state_dict=self.scheduler.state_dict() if self.scheduler is not None else None,
             metadata={"epoch": epoch, "global_step": self.global_step, "run_name": self.run_name},
         )
+
+    def _default_hooks(self) -> list[Hook]:
+        out: list[Hook] = [ConsoleLogger(log_every_n_steps=self.train_cfg.log_every_n_steps)]
+        if self.train_cfg.enable_csv_log:
+            out.append(CSVLossLogger())
+        if self.train_cfg.enable_tensorboard:
+            out.append(TensorBoardLogger())
+        out.append(CheckpointHook(every_n_epochs=self.train_cfg.save_every_n_epochs))
+        out.append(LossPlotter())
+        return out
 
     @staticmethod
     def _resolve_device(spec: str) -> torch.device:
@@ -230,7 +275,6 @@ class WorldModelTrainer:
     def _split_params_for_weight_decay(
         model: torch.nn.Module,
     ) -> tuple[list[torch.nn.Parameter], list[torch.nn.Parameter]]:
-        # Standard AdamW recipe: do not decay biases or LayerNorm weights.
         decay: list[torch.nn.Parameter] = []
         no_decay: list[torch.nn.Parameter] = []
         for name, p in model.named_parameters():

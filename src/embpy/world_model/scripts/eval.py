@@ -1,14 +1,15 @@
-"""End-to-end evaluation script.
+"""Evaluate a trained world model and produce the full report.
 
 Loads a checkpoint produced by :mod:`world_model.scripts.train` and
-runs autoregressive rollouts on the validation split, printing the
-aggregated metrics.
+runs the perturbation evaluation pipeline (cell-eval-style metrics +
+baselines + plots + report.md). Used by the ``eval_only.sbatch``
+launcher when you want to re-evaluate without re-training.
 
 Usage:
 
     python -m embpy.world_model.scripts.eval \\
-        --config src/embpy/world_model/configs/replogle.yaml \\
-        --checkpoint outputs/world_model/replogle_k562_essential/replogle_k562_essential_final.pt
+        --config src/embpy/world_model/configs/experiments/single_replogle.yaml \\
+        --checkpoint outputs/world_model/single_replogle/single_replogle_final.pt
 """
 
 from __future__ import annotations
@@ -17,10 +18,12 @@ import argparse
 import logging
 from pathlib import Path
 
-from embpy.world_model.configs import WorldModelConfig, load_yaml_config
+import torch
+
+from embpy.world_model.configs import WorldModelConfig, apply_cli_overrides, load_yaml_config
 from embpy.world_model.data import build_dataloaders
-from embpy.world_model.evaluation import imagined_rollout
 from embpy.world_model.models.world_model import build_world_model
+from embpy.world_model.scripts.train import _run_eval_and_report
 from embpy.world_model.utils import load_checkpoint, seed_everything, setup_logging
 
 logger = logging.getLogger(__name__)
@@ -31,36 +34,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--device", type=str, default="auto")
+    parser.add_argument("overrides", nargs="*")
     return parser.parse_args(argv)
-
-
-def _resolve_device(spec: str):
-    import torch  # noqa: PLC0415
-
-    if spec == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        return torch.device("cpu")
-    return torch.device(spec)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     cfg: WorldModelConfig = load_yaml_config(args.config)
+    cfg = apply_cli_overrides(cfg, args.overrides)
     output_dir = Path(cfg.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
     setup_logging(level=logging.INFO, log_file=output_dir / "eval.log")
     seed_everything(cfg.seed)
 
-    _, val_loader, gene_table, indexer, gene_symbols = build_dataloaders(
-        cfg.data, seed=cfg.seed,
+    artifacts = build_dataloaders(
+        cfg.data,
+        split_cfg=cfg.split,
+        seed=cfg.seed,
+        output_dir=output_dir,
     )
-    n_genes = len(gene_symbols)
-
-    import torch  # noqa: PLC0415
+    n_genes = len(artifacts.gene_symbols)
 
     model = build_world_model(
         n_genes=n_genes,
-        gene_embedding_table=torch.from_numpy(gene_table),
+        gene_embedding_table=torch.from_numpy(artifacts.gene_table),
         encoder_kind=cfg.encoder.kind,
         d_model=cfg.encoder.d_model,
         stack_size=cfg.data.stack_size,
@@ -74,9 +71,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     payload = load_checkpoint(args.checkpoint, map_location="cpu")
     model.load_state_dict(payload["state_dict"], strict=False)
-    device = _resolve_device(args.device)
-    metrics = imagined_rollout(model, val_loader, device=device)
-    logger.info("Final metrics: %s", metrics)
+
+    _run_eval_and_report(cfg, output_dir, model, artifacts)
 
 
 if __name__ == "__main__":  # pragma: no cover

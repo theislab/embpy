@@ -111,52 +111,70 @@ src/embpy/world_model/
     architecture.png                       the diagram embedded above
   configs/
     __init__.py
-    base.py                                dataclass schema + YAML loader
-    nadig.yaml                             Nadig 2024 Jurkat config
-    replogle.yaml                          Replogle 2022 K562 essential config
+    base.py                                dataclass schema + YAML loader + CLI overrides
+    nadig.yaml                             legacy single-config (kept for back-compat)
+    replogle.yaml                          legacy single-config
+    experiments/
+      single_nadig.yaml                    Setup 1: 80/20 on Nadig
+      single_replogle.yaml                 Setup 2: 80/20 on Replogle
+      transfer.yaml                        Setup 3: pretrain Nadig -> fine-tune p% Replogle
+      smoke.yaml                           Tiny CPU smoke-test config
   data/
     __init__.py
-    dataloader.py                          build_dataloaders(...)
+    dataloader.py                          build_dataloaders(...) -> DataArtifacts
     preprocessing.py                       HVG, log1p, collate
+    splits.py                              perturbation- and cell-aware splits (NPZ cached)
     datasets/
       __init__.py
-      base.py                              PerturbationSequenceDataset, GeneIndexer
+      base.py                              PerturbationSequenceDataset (now with .subset())
       nadig.py                             Nadig adapter
       replogle.py                          Replogle adapter
   models/
     __init__.py
     blocks.py                              MLP, attention, transformer block
     world_model.py                         composed WorldModel + factory
-    encoders/
-      __init__.py
-      state_stack_encoder.py               transformer + MLP variants
-    action/
-      __init__.py
-      gene_embedding_action.py             pretrained-embedding action encoder
-    dynamics/
-      __init__.py
-      gpt_autoregressive.py                Decision-Transformer-style dynamics
-    decoders/
-      __init__.py
-      expression_decoder.py                d -> G MLP decoder
+    encoders/state_stack_encoder.py        transformer + MLP variants
+    action/gene_embedding_action.py        pretrained-embedding action encoder
+    dynamics/gpt_autoregressive.py         Decision-Transformer-style dynamics
+    decoders/expression_decoder.py         d -> G MLP decoder
   training/
     __init__.py
     losses.py                              latent / delta / Gaussian / InfoNCE
     schedulers.py                          cosine + linear warmup
-    trainer.py                             WorldModelTrainer
+    hooks.py                               Hook ABC + Console / CSV / TB / Plot / Checkpoint
+    trainer.py                             WorldModelTrainer (hook-based)
   evaluation/
     __init__.py
-    metrics.py                             L2, cosine, R^2, delta-Pearson
+    metrics.py                             L2, cosine, R^2, delta-Pearson (latent-space)
     rollouts.py                            imagined_rollout(...)
+    perturbation_eval.py                   end-to-end harness (model + every baseline)
+    cell_eval_runner.py                    cell_eval wrapper + internal fallback metrics
+    prep.py                                AnnData prep for cell_eval
+    plots.py                               PNG + SVG plotters used by train.py
+    report.py                              report.md generator
+    baselines/
+      __init__.py                          ALL_BASELINES registry
+      base.py                              Baseline ABC + BaselineTrainData
+      identity.py                          IdentityBaseline (sanity floor)
+      control_mean.py                      ControlMeanBaseline
+      mean.py                              MeanBaseline (global perturbed mean)
+      additive.py                          AdditiveBaseline (control + delta_p)
+      linear.py                            LinearRegressionBaseline (Ridge)
   utils/
-    __init__.py
-    checkpoint.py                          save / load model bundles
-    logging.py                             setup_logging / get_logger
-    seeding.py                             seed_everything
+    checkpoint.py / logging.py / seeding.py
   scripts/
     __init__.py
-    train.py                               python -m ... .scripts.train
-    eval.py                                python -m ... .scripts.eval
+    train.py                               single + transfer; full eval at the end
+    eval.py                                eval_only entry point
+    run_baselines.py                       fit + evaluate all baselines on the same split
+    smoke_test.py                          end-to-end CPU smoke test
+    submit_all.sh                          submit every SLURM setup in one command
+    slurm/
+      train_single_nadig.sbatch
+      train_single_replogle.sbatch
+      train_transfer.sbatch                parameterised over FRACTION
+      run_baselines.sbatch
+      eval_only.sbatch
   tests/
     __init__.py
     test_state_stack_encoder.py
@@ -165,6 +183,9 @@ src/embpy/world_model/
     test_world_model.py
     test_losses.py
     test_dataset.py
+    test_baselines.py                      every baseline on synthetic data
+    test_splits.py                         determinism + roundtrip
+    test_hooks.py                          hook lifecycle + CSV writer
 ```
 
 ## Module-by-module
@@ -276,26 +297,293 @@ already point at these locations. Edit them to retarget.
 
 ## Train
 
+The package now ships **three training setups**, all driven by the same
+`scripts/train.py` entry point. The YAML config alone selects which one
+runs (no special branches in the code):
+
+| Setup                       | Config                                                | Mode flag      |
+| --------------------------- | ----------------------------------------------------- | -------------- |
+| `single_nadig`              | `configs/experiments/single_nadig.yaml`               | `mode: single` |
+| `single_replogle`           | `configs/experiments/single_replogle.yaml`            | `mode: single` |
+| `transfer_nadig_to_replogle`| `configs/experiments/transfer.yaml`                   | `mode: transfer` |
+
+### Locally
+
 ```bash
-python -m embpy.world_model.scripts.train \
-    --config src/embpy/world_model/configs/replogle.yaml
+# single-dataset (Nadig)
+pixi run -e gpu python -m embpy.world_model.scripts.train \
+    --config src/embpy/world_model/configs/experiments/single_nadig.yaml
+
+# single-dataset (Replogle)
+pixi run -e gpu python -m embpy.world_model.scripts.train \
+    --config src/embpy/world_model/configs/experiments/single_replogle.yaml
+
+# transfer: pretrain on Nadig, fine-tune on 10% of Replogle
+pixi run -e gpu python -m embpy.world_model.scripts.train \
+    --config src/embpy/world_model/configs/experiments/transfer.yaml \
+    transfer.finetune_fraction=0.10
 ```
 
-This will:
+Dotted CLI overrides (`encoder.d_model=512`, `train.n_epochs=20`,
+`split.split_by=cell`, etc.) are accepted as positional arguments after
+`--config`; unknown keys raise immediately so typos surface.
 
-1. Load the AnnData, run HVG selection + `log1p`,
-2. Build the gene embedding table aligned to the perturbed genes,
-3. Construct `(state, action, next_state)` sequence batches,
-4. Train the world model with the multi-term objective,
-5. Save checkpoints under `outputs/world_model/<run_name>/`.
+### On SLURM (pixi gpu env)
+
+The launchers under `world_model/scripts/slurm/` activate the existing
+pixi `gpu` env exactly like `submission_scripts/jupyter_pixi.sbatch`:
+
+```bash
+# single setups
+sbatch src/embpy/world_model/scripts/slurm/train_single_nadig.sbatch
+sbatch src/embpy/world_model/scripts/slurm/train_single_replogle.sbatch
+
+# transfer at p in {1, 5, 10, 25, 50}%
+for p in 0.01 0.05 0.10 0.25 0.50; do
+    FRACTION=$p sbatch src/embpy/world_model/scripts/slurm/train_transfer.sbatch
+done
+
+# everything in one shot: train (3 setups) -> baselines -> compare/report
+# chained via `sbatch --dependency=afterok:...`.
+bash src/embpy/world_model/scripts/submit_all.sh
+```
+
+`submit_all.sh` submits, for each of the three setups:
+
+```
+train_<setup>  -->  run_baselines  -->  compare + make_report
+```
+
+so when the chain finishes, every `outputs/<run_id>/` ends up with a
+`comparison.csv`, `comparison.png`, and `report.md` automatically.
+Skip a setup with `SKIP_NADIG=1`, `SKIP_REPLOGLE=1`, `SKIP_TRANSFER=1`.
+
+Defaults: `--gres=gpu:1`, `--cpus-per-task=8`, `--mem=64G`,
+`--time=24:00:00`. The partition / qos lines are commented; uncomment
+and / or set via env (`PARTITION=gpu_p QOS=gpu_normal sbatch ...`)
+to match your cluster.
+
+Per-script summary:
+
+| Script                          | Purpose                                                              |
+| ------------------------------- | -------------------------------------------------------------------- |
+| `train_single_nadig.sbatch`     | Setup 1: train on Nadig only.                                        |
+| `train_single_replogle.sbatch`  | Setup 2: train on Replogle only.                                     |
+| `train_transfer.sbatch`         | Setup 3: pretrain on Nadig, fine-tune on `FRACTION` of Replogle.     |
+| `run_baselines.sbatch`          | Fit + evaluate every baseline against the saved split.               |
+| `eval_only.sbatch`              | Re-evaluate a finished checkpoint without retraining.                |
+| `compare.sbatch`                | Build `comparison.csv` + `comparison.png` + `report.md`.             |
+
+### Train/test split policy
+
+The default and recommended split is **by perturbation identity**
+(`split.split_by: perturbation`): test perturbations are *unseen* by
+the model, which is the scientifically meaningful generalisation
+setting. Set `split.split_by: cell` for a per-cell sanity check (any
+sufficiently expressive model trivially memorises this -- never
+report headline numbers from cell-level splits).
+
+Splits are computed once and persisted to
+`outputs/<run_id>/splits/<dataset>.npz`. Every subsequent run
+(world model, baselines, eval-only) reuses the same file, so model and
+baselines are compared on byte-identical train/test indices.
 
 ## Evaluate
 
 ```bash
-python -m embpy.world_model.scripts.eval \
-    --config src/embpy/world_model/configs/replogle.yaml \
-    --checkpoint outputs/world_model/replogle_k562_essential/replogle_k562_essential_final.pt
+# evaluate a checkpoint (model + baselines + plots + report)
+pixi run -e gpu python -m embpy.world_model.scripts.eval \
+    --config src/embpy/world_model/configs/experiments/single_replogle.yaml \
+    --checkpoint outputs/world_model/single_replogle/single_replogle_final.pt
+
+# or via SLURM
+CONFIG=src/embpy/world_model/configs/experiments/single_replogle.yaml \
+CKPT=outputs/world_model/single_replogle/single_replogle_final.pt \
+    sbatch src/embpy/world_model/scripts/slurm/eval_only.sbatch
 ```
+
+The full pipeline runs:
+
+1. cell-eval-style metrics (MSE, MAE, R^2, Pearson, Spearman, DEG
+   overlap@K) per perturbation and aggregated.
+2. Plots: loss curves, predicted-vs-real scatter, per-perturbation R^2
+   violin, DEG overlap bar, baseline-vs-model comparison. Saved as
+   PNG + SVG under `outputs/<run_id>/plots/`.
+3. `outputs/<run_id>/report.md` -- self-contained markdown summary
+   with config dump, metric tables, and embedded plots.
+
+## Baselines
+
+Five small baselines under `evaluation/baselines/` share a
+`Baseline` interface (`fit`, `predict`, `name`):
+
+| Baseline           | Predicts                                          | Beats identity when                                              |
+| ------------------ | ------------------------------------------------- | ---------------------------------------------------------------- |
+| `IdentityBaseline` | `control_template`                                | never (sanity floor)                                             |
+| `ControlMeanBaseline` | train-control mean                              | never (no perturbation signal)                                   |
+| `MeanBaseline`     | mean of all train-perturbed cells                  | global response direction is informative                          |
+| `AdditiveBaseline` | `control + delta(p)` if `p` seen in train          | only for cell-level splits or when p was observed                |
+| `LinearRegressionBaseline` | Ridge: action embedding -> per-gene delta  | gene embedding carries the perturbation signal                   |
+
+Run them against the same split as a world-model run:
+
+```bash
+pixi run -e gpu python -m embpy.world_model.scripts.run_baselines \
+    --config src/embpy/world_model/configs/experiments/single_replogle.yaml \
+    --checkpoint outputs/world_model/single_replogle/single_replogle_final.pt
+
+# or via SLURM
+CONFIG=src/embpy/world_model/configs/experiments/single_replogle.yaml \
+CKPT=outputs/world_model/single_replogle/single_replogle_final.pt \
+    sbatch src/embpy/world_model/scripts/slurm/run_baselines.sbatch
+```
+
+Outputs:
+
+* `outputs/<run_id>/baselines.csv`  -- one row per (baseline, metric).
+* `outputs/<run_id>/comparison.csv` -- wide format, world model + every baseline.
+* `outputs/<run_id>/plots/comparison.png` -- bar chart per metric.
+
+## Comparison and final report (standalone)
+
+After `train.py` and `run_baselines.py` have produced their CSVs the
+final comparison + report can be regenerated independently:
+
+```bash
+# build comparison.csv + comparison.png
+pixi run -e gpu python -m embpy.world_model.scripts.compare \
+    --run-dir outputs/world_model/single_replogle
+
+# render report.md from whatever already exists in run-dir
+pixi run -e gpu python -m embpy.world_model.scripts.make_report \
+    --run-dir outputs/world_model/single_replogle
+```
+
+These two scripts read only files on disk (`config.yaml`,
+`baselines.csv`, `world_model_metrics.csv`, `comparison.csv`,
+`plots/*.png`, `eval/per_pert_*.csv`); they require no model state, so
+they are safely re-runnable.
+
+### Adding a new baseline
+
+1. Drop a file `evaluation/baselines/my_baseline.py` defining a
+   subclass of `Baseline`. Implement `fit(data)` and
+   `predict(perturbations, control_template)`.
+2. Register it in `evaluation/baselines/__init__.py` by adding it to
+   the `ALL_BASELINES` registry. That's it -- it now participates in
+   `run_baselines.py` and the plotting / report pipeline.
+
+### Adding a new metric
+
+Two layers exist:
+
+1. Reusable numpy helpers in `evaluation/metrics.py`
+   (`mse`, `mae`, `r2_score`, `pearson_corr`, `spearman_corr`,
+   `deg_overlap_top_k`). Any new helper added there should also be
+   re-exported from `evaluation/__init__.py`.
+2. The metric *set* used by the comparison pipeline lives in
+   `evaluation/cell_eval_runner.py::_internal_metrics`. Add a column
+   there to make the new metric flow through `comparison.csv`,
+   `comparison.png`, and `report.md` automatically. When `cell_eval`
+   is installed and `eval.use_cell_eval=true`, metrics come from
+   cell-eval directly -- add it upstream there for a real STATE
+   evaluation.
+
+Minimal template:
+
+```python
+# evaluation/metrics.py
+def my_metric(real: np.ndarray, pred: np.ndarray) -> float:
+    """One-line description."""
+    return float(...)
+
+# evaluation/cell_eval_runner.py::_internal_metrics
+rows.append({
+    ...,
+    "my_metric": my_metric(real_mean, pred_mean),
+    ...,
+})
+```
+
+## How do I test that it runs?
+
+A complete end-to-end smoke test that finishes in well under five
+minutes on a laptop without GPU:
+
+```bash
+pixi run -e gpu python -m embpy.world_model.scripts.smoke_test
+```
+
+This runs the same code path as a real run on a tiny Nadig subset
+(256 HVGs, 2 epochs, 64 sequences/epoch, batch size 8, all baselines,
+the full eval pipeline) and asserts that all expected output files
+(`train_log.csv`, `report.md`, `comparison.csv`, `plots/loss_curves.png`,
+`plots/comparison.png`) exist before exiting.
+
+## Output layout
+
+Every run / baseline pass / comparison job writes into the same
+`outputs/<run_id>/` directory so chaining and re-runs stay coherent:
+
+```
+outputs/<run_id>/
+  config.yaml                        resolved config (used by make_report.py)
+  train.log / baselines.log / ...    one log file per script
+  splits/<dataset>.npz               deterministic train/test indices
+  ckpt_epoch<NNN>.pt                 periodic checkpoints
+  <run_name>_final.pt                end-of-training checkpoint
+  train_log.csv                      per-epoch metrics (CSV; mirror of TB)
+  tb/                                TensorBoard event files
+  eval/
+    real.h5ad                        test cells (true expression)
+    pred_<name>.h5ad                 model / baseline predictions
+    per_pert_<name>.csv              per-perturbation metric tables
+  baselines.csv                      long format: (baseline, metric, value)
+  world_model_metrics.csv            single-row world-model summary
+  comparison.csv                     wide format: world model + every baseline
+  plots/
+    loss_curves.png/.svg
+    scatter_world_model.png/.svg
+    perpert_r2.png/.svg
+    deg_overlap.png/.svg
+    comparison.png/.svg
+  report.md                          single self-contained markdown summary
+```
+
+## How to read the plots and report
+
+* `plots/loss_curves.png` -- per-epoch train/val loss. Both should
+  decrease together; a growing gap indicates overfitting (drop
+  `train.n_epochs` or raise `optim.weight_decay` / `dynamics.dropout`).
+* `plots/scatter_world_model.png` -- predicted vs real *mean*
+  expression per perturbation. Points should cluster around the
+  identity line; systematic bias appears as a slope.
+* `plots/perpert_r2.png` -- distribution of R^2 across test
+  perturbations. A wide tail of negative values means the model is
+  worse than control on those perturbations.
+* `plots/deg_overlap.png` -- top-K differentially expressed gene
+  overlap per perturbation. A robust target is ~0.4-0.6 for K=50;
+  random baselines hover around K/G.
+* `plots/comparison.png` -- world model vs every baseline on each
+  aggregated metric. The world model should beat every baseline on
+  at least the headline ones (R^2, delta-cosine, DEG overlap).
+* `report.md` -- one self-contained markdown file embedding the
+  config, the metric tables, and links to all plots.
+
+## Training diagnostics
+
+The trainer routes everything through pluggable hooks
+(`training/hooks.py`):
+
+* per-step train loss, learning rate, gradient norm, every loss
+  component -> stdout (every `train.log_every_n_steps`),
+* per-epoch train/val loss + components -> CSV at
+  `outputs/<run_id>/train_log.csv` and TensorBoard at
+  `outputs/<run_id>/tb/`,
+* loss curves + report rendered automatically at end of training.
+
+Drop hooks by passing `hooks=[]` to `WorldModelTrainer.__init__`; add
+custom ones by subclassing `Hook`.
 
 ## Tests
 
@@ -319,33 +607,158 @@ the suite finishes in seconds on CPU.
 * Cui et al. *GenePT: A simple but hard-to-beat foundation model for
   genes and cells built from ChatGPT.* 2023.
 
-## Next steps / how to debug each component in isolation
+## Debug checklist (component-by-component)
 
-The package is designed so every component is independently testable.
-A typical debugging flow:
+Every component can be exercised in isolation. Commands assume the
+repo root and `pixi run -e gpu` for the GPU env.
 
-1. **Encoder.** Run `tests/test_state_stack_encoder.py`; on a real
-   batch verify `encoder(batch["obs_stack"]).std()` is in a sane range
-   (target ~ 1.0 once trained -- if it collapses to ~0, lower the
-   encoder dropout or increase the encoder LR).
-2. **Action encoder.** Run `tests/test_gene_embedding_action.py`;
-   inspect `action_encoder(batch["action_indices"])` and confirm two
-   different perturbations produce *different* tokens (cosine
-   similarity well below 1.0).
-3. **Dynamics.** Run `tests/test_gpt_autoregressive.py`; the
-   `test_dynamics_is_causal` test exercises the causal mask. Once
-   training, monitor `latent_mse` -- it should drop below the
-   variance of the encoder output (`s_target.var()`).
-4. **Decoder.** Replace the trained encoder/dynamics by their
-   identity and confirm `decoder(s_target)` reconstructs `x_target`
-   well; if not, the decoder is the bottleneck.
-5. **Dataset.** Use `tests/test_dataset.py` as a template, then call
-   `len(dataset)` and `dataset[0]` in a notebook to verify shapes and
-   labels make sense for your data layout.
-6. **Trainer.** Set `n_epochs=1`, `n_top_genes=512`,
-   `batch_size=8` and `n_sequences_per_epoch=64` for a smoke run.
-   Check that `loss.backward()` does not fail (already exercised in
-   `tests/test_world_model.py`).
-7. **Rollouts.** Once `latent_mse` is meaningful, run
-   `imagined_rollout(model, val_loader)` and watch
-   `delta_pearson` -- this is the standard headline metric.
+### Data
+
+```bash
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_dataset.py
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_splits.py
+```
+
+Expected: every test passes. Sanity-check a real dataset interactively:
+
+```python
+from embpy.world_model.configs import DataConfig, SplitConfig
+from embpy.world_model.data import build_dataloaders
+art = build_dataloaders(DataConfig(...), split_cfg=SplitConfig())
+print(art.split.summary())
+print(art.train_dataset[0]["obs_stack"].shape)  # (T, K, G)
+```
+
+### Encoder
+
+```bash
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_state_stack_encoder.py
+```
+
+Expected output shape: `(B, T, d_model)`. Encoder collapse check:
+`encoder(batch["obs_stack"]).std() ~ 1.0` after a short training run.
+
+### Action encoder
+
+```bash
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_gene_embedding_action.py
+```
+
+Confirm two different perturbations produce *distinct* tokens (cosine
+similarity below 1).
+
+### Dynamics
+
+```bash
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_gpt_autoregressive.py
+```
+
+`test_dynamics_is_causal` enforces the causal mask: the dynamics
+output at position `t` must not depend on tokens at `t' > t`.
+
+### Loss
+
+```bash
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_losses.py
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_world_model.py
+```
+
+`test_world_model.py` exercises the composite loss: `loss.backward()`
+must succeed end-to-end.
+
+### Trainer hooks
+
+```bash
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_hooks.py
+```
+
+Checks: lifecycle order (start -> epoch loop -> end), CSV header +
+rows, console logger does not crash without TensorBoard.
+
+### Baselines
+
+```bash
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_baselines.py
+```
+
+Each baseline is run on a tiny synthetic dataset where the perturbation
+effect is a deterministic shift; the linear baseline must beat the
+identity baseline given the true action embeddings.
+
+### Baselines
+
+```bash
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_baselines.py
+```
+
+Each baseline is exercised on a tiny synthetic dataset where the
+perturbation effect is a deterministic shift; the linear baseline
+must beat the identity baseline given the true action embeddings.
+
+### Numpy metric helpers
+
+```bash
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_metrics.py
+```
+
+Closed-form expected values for `mse`, `mae`, `r2_score`,
+`pearson_corr`, `spearman_corr`, `deg_overlap_top_k` are checked.
+
+### AnnData prep + plotting
+
+```bash
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_prep.py
+pixi run -e gpu python -m pytest -x src/embpy/world_model/tests/test_plots.py
+```
+
+Verifies that `prep.build_real_anndata` / `prep.build_pred_anndata`
+produce aligned AnnData objects with the expected obs / var layout, and
+that every plotting helper writes both PNG and SVG.
+
+### Eval pipeline end-to-end (smoke test)
+
+```bash
+pixi run -e gpu python -m embpy.world_model.scripts.smoke_test
+```
+
+Must finish under five minutes on CPU and leave behind:
+
+```
+outputs/world_model/smoke/
+  config.yaml
+  train_log.csv
+  report.md
+  comparison.csv
+  baselines.csv
+  world_model_metrics.csv
+  plots/loss_curves.png
+  plots/comparison.png
+```
+
+### Compare / report (post-hoc)
+
+```bash
+# regenerate comparison.csv + comparison.png from a finished run
+pixi run -e gpu python -m embpy.world_model.scripts.compare \
+    --run-dir outputs/world_model/smoke
+
+# regenerate report.md from whatever exists in run-dir
+pixi run -e gpu python -m embpy.world_model.scripts.make_report \
+    --run-dir outputs/world_model/smoke
+```
+
+### SLURM submission
+
+Syntax-check every launcher without submitting (no actual job is queued):
+
+```bash
+for f in src/embpy/world_model/scripts/slurm/*.sbatch; do
+    bash -n "$f" && echo OK "$f"
+done
+bash -n src/embpy/world_model/scripts/submit_all.sh && echo OK submit_all.sh
+```
+
+Expected: every line prints `OK <path>`. Submit smallest first
+(`train_single_nadig.sbatch`); `logs/wm-nadig_<jobid>.out` should print
+"Run single_nadig -- output_dir=outputs/world_model/single_nadig"
+within seconds of the job starting.

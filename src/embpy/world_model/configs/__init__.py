@@ -17,10 +17,14 @@ from .base import (
     DataConfig,
     DynamicsConfig,
     EncoderConfig,
+    EvalConfig,
     LossConfig,
     OptimConfig,
+    SplitConfig,
     TrainConfig,
+    TransferConfig,
     WorldModelConfig,
+    apply_cli_overrides,
     load_yaml_config,
 )
 
@@ -28,9 +32,13 @@ __all__ = [
     "DataConfig",
     "DynamicsConfig",
     "EncoderConfig",
+    "EvalConfig",
     "LossConfig",
     "OptimConfig",
+    "SplitConfig",
     "TrainConfig",
+    "TransferConfig",
     "WorldModelConfig",
+    "apply_cli_overrides",
     "load_yaml_config",
 ]
