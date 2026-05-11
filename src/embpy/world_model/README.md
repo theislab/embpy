@@ -22,8 +22,12 @@ Pipeline overview:
    stack into a single state token `s_t in R^d`.
 2. **Gene-embedding action encoder.** The perturbed gene's symbol is
    looked up in a pretrained gene embedding table (e.g. GenePT,
-   gene2vec). Multi-gene perturbations are mean-pooled. A linear
-   projection brings the embedding to `R^d`, producing `a_t in R^d`.
+   gene2vec). The swappable `ActionAdapter` (Linear / MLP / LoRA) is
+   then applied **per gene** to project each of the `n_pert` rows into
+   `R^d`, and the resulting `(B, T, n_pert, d)` tensor is aggregated
+   over the perturbation axis (mean by default, sum optionally), with
+   padded slots masked out. The output is the action token
+   `a_t in R^d`.
 3. **GPT autoregressive dynamics.** State and action tokens are
    interleaved (`s_0, a_0, s_1, a_1, ...`) and fed through a causal
    transformer. The model reads next-state predictions
@@ -43,12 +47,15 @@ now a `StateBackboneProvider` dispatching between the in-repo
 Institute foundation models (`state` = SE-600M, `stack` = STACK). Cell
 embeddings are pre-computed once and cached on disk; the hot training
 path sees only `(B, T, K, E)` tensors. The action path goes through a
-frozen gene-embedding table and a trainable `ActionAdapter` (Linear /
-MLP / LoRA). State and action tokens are interleaved into a causal GPT
-that reads next-state predictions off the action-token positions. An
-optional `ExpressionDecoder` projects back to gene space. The full
-objective is a weighted sum of latent MSE, decoder MSE, and an optional
-InfoNCE term.*
+frozen gene-embedding table; the trainable `ActionAdapter` (Linear /
+MLP / LoRA) is applied **per gene** over the `n_pert` axis, and the
+resulting `(B, T, n_pert, d)` tensor is then aggregated (mean / sum,
+with padded slots masked) into the action token `a_t`. State and
+action tokens are interleaved into a causal GPT that reads next-state
+predictions off the action-token positions. An optional
+`ExpressionDecoder` projects back to gene space. The full objective is
+a weighted sum of latent MSE, decoder MSE, and an optional InfoNCE
+term.*
 
 ### Mapping the reference paper to transcriptomics
 
@@ -82,7 +89,20 @@ sharing the same vector space as any pretrained gene embedding the
 user wants to drop in (GenePT, gene2vec, scGPT gene-token weights,
 etc.). Index 0 is reserved for the control / non-targeting / padding
 token, which lets the model learn an "identity action" as well.
-Multi-gene perturbations are mean-pooled by default.
+
+Multi-gene perturbations follow a **project-then-aggregate** pipeline:
+the `ActionAdapter` (Linear / MLP / LoRA) is applied per gene over the
+`n_pert` axis -- `nn.Linear` broadcasts cleanly over arbitrary leading
+dims -- and the resulting `(B, T, n_pert, d)` tensor is aggregated by
+masked mean (or sum) into the action token. Padded slots (gene
+index 0) are excluded from the aggregation, and an all-padding
+timestep falls back to `proj(table[0])` so control timesteps still
+carry a meaningful signal. For the `Linear` adapter with `pool="mean"`
+this ordering is byte-equivalent to the legacy aggregate-then-project
+path (linearity of `W x + b` commutes with masked-mean); for the
+non-linear adapters it is strictly more expressive, since each
+perturbed gene undergoes its own non-linear transformation before the
+contributions are combined.
 
 ### Training objectives
 
@@ -239,8 +259,10 @@ notebooks.
   (default) and `MLPStateStackEncoder`. Both subclass
   `StateStackEncoder` and accept `(B, T, K, G)`, return `(B, T, d)`.
 * `action.gene_embedding_action` -- `GeneEmbeddingAction` looks up
-  perturbed-gene rows in a pretrained embedding table, mean-pools
-  multi-gene perturbations and projects to `d_model`.
+  perturbed-gene rows in a pretrained embedding table, projects each
+  row to `d_model` via the swappable `ActionAdapter` (Linear / MLP /
+  LoRA), and then aggregates over the `n_pert` axis (mean / sum, with
+  padded slots masked) into a single action token.
 * `dynamics.gpt_autoregressive` -- `GPTAutoregressiveDynamics`,
   Decision-Transformer-style causal transformer over interleaved
   `(s, a)` tokens. The next-state prediction is read off the
