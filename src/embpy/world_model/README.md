@@ -90,19 +90,53 @@ user wants to drop in (GenePT, gene2vec, scGPT gene-token weights,
 etc.). Index 0 is reserved for the control / non-targeting / padding
 token, which lets the model learn an "identity action" as well.
 
-Multi-gene perturbations follow a **project-then-aggregate** pipeline:
+#### What `n_pert` is, and what we aggregate over
+
+`n_pert` is the **maximum number of genes co-perturbed at a single
+timestep** in the dataset. For each `(b, t)` step,
+`gene_indices[b, t, :]` lists the indices of the genes perturbed at
+that step, right-padded with `0` (the reserved control / padding row)
+when the local cardinality is smaller than `n_pert`. Concretely, for
+a dataset with `n_pert = 2`:
+
+```
+double knockout of (A, B):  gene_indices[b, t, :] = [idx_A, idx_B]
+single  knockout of (A)  :  gene_indices[b, t, :] = [idx_A,    0]
+control (no targeting)   :  gene_indices[b, t, :] = [    0,    0]
+```
+
+The aggregation that produces the action token `a_t` is **over those
+co-perturbed gene slots at the same timestep** -- it is not across
+cells, not across time, and not across the embedding dimension. It is
+a permutation-invariant set-aggregator over the set of perturbed
+genes, which is the right inductive bias because biologically
+perturbing `{A, B}` is the same event as perturbing `{B, A}`.
+
+#### Project-then-aggregate pipeline
+
+Multi-gene perturbations follow a **project-then-aggregate** flow:
 the `ActionAdapter` (Linear / MLP / LoRA) is applied per gene over the
 `n_pert` axis -- `nn.Linear` broadcasts cleanly over arbitrary leading
 dims -- and the resulting `(B, T, n_pert, d)` tensor is aggregated by
-masked mean (or sum) into the action token. Padded slots (gene
-index 0) are excluded from the aggregation, and an all-padding
-timestep falls back to `proj(table[0])` so control timesteps still
-carry a meaningful signal. For the `Linear` adapter with `pool="mean"`
-this ordering is byte-equivalent to the legacy aggregate-then-project
-path (linearity of `W x + b` commutes with masked-mean); for the
-non-linear adapters it is strictly more expressive, since each
-perturbed gene undergoes its own non-linear transformation before the
-contributions are combined.
+masked mean (or sum) into a single `(B, T, d)` action token. Padded
+slots (gene index 0) are excluded from the aggregation, and an
+all-padding timestep falls back to `proj(table[0])` so control
+timesteps still carry a meaningful signal.
+
+For the same double-knockout `(A, B)` example, the encoder does:
+
+```
+e_A, e_B   = embed(idx_A), embed(idx_B)            in R^{E_g}     # lookup
+z_A, z_B   = ActionAdapter(e_A), ActionAdapter(e_B) in R^{d}       # per-gene project
+a_t        = (z_A + z_B) / 2                        in R^{d}       # mean-pool over n_pert
+```
+
+For the `Linear` adapter with `pool="mean"` this ordering is
+byte-equivalent to the legacy aggregate-then-project path (linearity
+of `W x + b` commutes with masked-mean); for the non-linear adapters
+it is strictly more expressive, since each co-perturbed gene
+undergoes its own non-linear transformation before the contributions
+are combined.
 
 ### Training objectives
 

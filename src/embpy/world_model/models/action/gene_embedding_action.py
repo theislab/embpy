@@ -5,29 +5,71 @@ action is the embedding of the perturbed gene in some pretrained gene
 embedding space (GenePT, gene2vec, BioEmbedder-backed foundation
 models, ...).
 
-For multi-gene perturbations (e.g. dual-CRISPR) the data flow is:
+What the ``n_pert`` axis represents
+-----------------------------------
+``n_pert`` is the **maximum number of genes co-perturbed at a single
+timestep** in the dataset (e.g. ``n_pert = 1`` for single-CRISPR
+screens like Replogle / Nadig, ``n_pert = 2`` for double knockouts,
+etc.). For each ``(b, t)`` step, ``gene_indices[b, t, :]`` lists the
+indices of the genes perturbed at that step, right-padded with the
+reserved row ``0`` (control / non-targeting / padding token) when the
+local cardinality is smaller than ``n_pert``.
 
-    lookup  : (B, T, n_pert)        -> (B, T, n_pert, E_g)
-    project : ActionAdapter applied per-gene over the trailing dim
-              (Linear / MLP / LoRA), broadcasting cleanly over leading dims
-              -> (B, T, n_pert, d_model)
-    aggregate : mean / sum across the n_pert axis, with padded slots
-                (gene index 0) masked out
+So for a double knockout of genes ``A`` and ``B`` at step ``t`` and a
+dataset with ``n_pert = 2``, ``gene_indices[b, t, :] = [idx_A, idx_B]``.
+For a single-gene knockout of ``A`` with the same global ``n_pert = 2``,
+``gene_indices[b, t, :] = [idx_A, 0]``. For an all-control step,
+``gene_indices[b, t, :] = [0, 0]``.
+
+Data flow (multi-gene perturbations)
+------------------------------------
+::
+
+    lookup    : (B, T, n_pert)        -> (B, T, n_pert, E_g)
+    project   : ActionAdapter applied PER GENE over the trailing dim
+                (Linear / MLP / LoRA), broadcasting cleanly over leading
+                dims     ->  (B, T, n_pert, d_model)
+    aggregate : mean / sum across the n_pert axis -- i.e. across the
+                co-perturbed genes at each (b, t) step -- with padded
+                slots (index 0) masked out
               -> (B, T, d_model)
 
-This ordering -- project then aggregate, rather than aggregate then
-project -- has two desirable properties:
+Worked example. Take a double knockout of (A, B) at step t, with
+``n_pert = 2``. The encoder:
 
-1. For the ``Linear`` adapter and ``pool="mean"`` it is **byte-equivalent**
-   to the legacy aggregate-then-project path (linearity of ``W @ . + b``
-   commutes with masked-mean when at least one slot is valid). The
-   all-padding edge case (control timesteps) is preserved explicitly by
-   falling back to ``proj(table[0])`` instead of zero.
-2. For the non-linear adapters (``MLP``, ``LoRA`` with dropout) it lets
-   each perturbed gene undergo its own non-linear projection before the
-   contributions are combined, which is strictly more expressive than
-   averaging in the raw E_g space and then applying one non-linearity.
+1. Looks up two gene vectors ``e_A, e_B in R^{E_g}`` from the
+   pretrained (frozen-by-default) embedding table.
+2. Applies the trainable ``ActionAdapter`` *independently to each*:
+   ``z_A = ActionAdapter(e_A)`` and ``z_B = ActionAdapter(e_B)``,
+   both in ``R^{d_model}``.
+3. Averages them (mean pool over the ``n_pert`` axis; padding ignored
+   if any slot equals 0):
+   ``a_t = (z_A + z_B) / 2  in R^{d_model}``.
 
+For a single-gene knockout (``n_pert == 1`` or all-but-one slot is
+padding) the average is a no-op and ``a_t = z_A``. For an all-control
+step, the encoder falls back to ``proj(table[0])`` (see the
+"control / all-padding edge case" block in ``forward``).
+
+The aggregator is permutation-invariant on purpose: biologically
+perturbing ``{A, B}`` is the same event as perturbing ``{B, A}``.
+
+Why project then aggregate (rather than the reverse)?
+-----------------------------------------------------
+
+1. For the ``Linear`` adapter and ``pool="mean"`` the two orderings
+   are **byte-equivalent** (linearity of ``W x + b`` commutes with
+   masked-mean when at least one slot is valid). The all-padding edge
+   case (control timesteps) is preserved explicitly by falling back to
+   ``proj(table[0])`` instead of zero.
+2. For the non-linear adapters (``MLP``, ``LoRA`` with dropout) it
+   lets each co-perturbed gene undergo its own non-linear projection
+   before the contributions are combined, which is strictly more
+   expressive than averaging in the raw ``E_g`` space and then
+   applying one non-linearity.
+
+Implementation notes
+--------------------
 Inputs are *long* indices into the embedding table, not raw float
 embeddings, which lets autograd ignore the embedding table when it is
 frozen and avoids materialising the full lookup tensor for every batch.
@@ -78,10 +120,13 @@ class GeneEmbeddingAction(nn.Module):
     d_model
         Output token width (matches the dynamics ``d_model``).
     pool
-        Aggregator across the ``n_pert`` axis, applied *after* the
-        per-gene projection: ``"mean"`` (default, padded slots masked)
-        or ``"sum"``. For single-gene perturbations (``n_pert == 1``)
-        both reduce to the identity.
+        Aggregator across the ``n_pert`` axis -- i.e. across the genes
+        that are co-perturbed at a single ``(b, t)`` step (e.g. the two
+        genes of a double knockout) -- applied *after* the per-gene
+        ``ActionAdapter`` projection: ``"mean"`` (default, padded slots
+        masked) or ``"sum"``. For single-gene perturbations
+        (``n_pert == 1`` or only one non-padded slot) both reduce to the
+        identity.
     freeze_embeddings
         If True, the embedding table's weights stay non-trainable.
     project_hidden
