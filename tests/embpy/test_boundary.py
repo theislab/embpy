@@ -82,3 +82,50 @@ def test_dotted_shim_imports_resolve_to_world_model(fresh_import_state):
         "Dotted imports through `embpy.world_model.X` must resolve to "
         "`world_model.X` (not load a parallel copy)."
     )
+
+
+# --- Audit step 1: lazy import surface ---------------------------------------
+
+
+_HEAVY_SUBPACKAGES = ("dt", "models", "pl", "pp", "resources", "tl")
+
+
+def test_import_embpy_does_not_eagerly_load_subpackages(fresh_import_state):
+    """`import embpy` must not eagerly walk the heavy subpackage tree.
+
+    Pre-step-1, `embpy/__init__.py` did
+    `from . import dt, models, pl, pp, resources, tl`, which transitively
+    pulled in anndata, scanpy, transformers, torch, pyarrow, ... and
+    cost minutes of cold-import on lustre. After step 1, those imports
+    are lazy. This test fails if any future PR puts them back.
+    """
+    importlib.import_module("embpy")
+    eager = [f"embpy.{sub}" for sub in _HEAVY_SUBPACKAGES if f"embpy.{sub}" in sys.modules]
+    assert not eager, (
+        f"`import embpy` eagerly loaded {eager}. embpy/__init__.py "
+        "must rely on the PEP-562 __getattr__ hook for these."
+    )
+
+
+def test_import_embpy_does_not_eagerly_load_embedder(fresh_import_state):
+    """`import embpy` must not pull `embpy.embedder` (3,600-line module)."""
+    importlib.import_module("embpy")
+    assert "embpy.embedder" not in sys.modules, (
+        "`import embpy` triggered `embpy.embedder`. The embedder is "
+        "loaded lazily on first `embpy.BioEmbedder` access; eager "
+        "imports here re-introduce the cold-import storm."
+    )
+
+
+def test_lazy_bioembedder_attr_access_still_works(fresh_import_state):
+    """`embpy.BioEmbedder` (and `from embpy import BioEmbedder`) still resolve."""
+    embpy = importlib.import_module("embpy")
+    cls_via_attr = embpy.BioEmbedder
+    from embpy import BioEmbedder as cls_via_from
+
+    from embpy.embedder import BioEmbedder as cls_direct
+
+    assert cls_via_attr is cls_direct
+    assert cls_via_from is cls_direct
+    # Touching it must have loaded embedder.py lazily exactly once.
+    assert "embpy.embedder" in sys.modules
