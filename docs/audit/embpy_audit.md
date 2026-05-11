@@ -1,28 +1,49 @@
 # embpy software-engineering audit
 
-Status: review-only.
+Status: steps 1-3 landed; steps 4-8 deferred.
 Scope: this audit documents what the current package looks like as of
-commit `43088dd` plus the Part A correctness landing in `f1b51cb`
-(`src/embpy/resources/gene/control.py`,
-`src/world_model/data/embeddings/sentinel.py`, status-aware
-provider rewrite, `resolve_symbol` alias chain, four test files) and
-the Part C package split (this PR -- `world_model` promoted to a
-top-level package under `src/`, see `docs/audit/package_split.md`).
+commit `43088dd` plus
 
-Part B steps 1-3 of the migration plan are intentionally **deferred to
-follow-up PRs**. The prompt allows this:
-"If a deeper restructure carries unacceptable risk now, stop after
-`embpy_audit.md` + Part A and explicitly say so." Two concrete reasons:
+  * the Part A correctness landing in `f1b51cb`
+    (`src/embpy/resources/gene/control.py`,
+    `src/world_model/data/embeddings/sentinel.py`, status-aware
+    provider rewrite, `resolve_symbol` alias chain, four test files),
+  * the Part C package split (`18896cf` + `882be61`: `world_model`
+    promoted to a top-level package under `src/`, see
+    `docs/audit/package_split.md`), and
+  * audit migration steps 1-3 (`f5f99cb`, `fde522f`, `79388bb`).
 
-* `src/embpy/embedder.py` is 3,599 lines and `embpy/__init__.py` eagerly
-  imports it (plus `dt`, `pl`, `pp`, `tl`, `resources`, `world_model`,
-  `errors`, …). Any restructure touching the registry must be paired
-  with a byte-equivalent regression test that imports the package
-  end-to-end. That test cannot be wired up until the eager-import
-  cascade is broken (audit step 6).
-* The Part A landing already moves the gene-mapping behaviour to a new
-  contract. Stacking a registry split on top doubles the diff that has
-  to be reviewed against a (currently broken) end-to-end pipeline.
+What landed in audit steps 1-3:
+
+* Step 1 (`f5f99cb`) -- `embpy/__init__.py` is now a PEP-562 lazy
+  facade. `import embpy` reads only `__init__.py`; subpackages and
+  `embpy.embedder` load on first attribute access. Public API
+  preserved (`embpy.BioEmbedder` etc. still work). Guarded by three
+  new tests in `tests/embpy/test_boundary.py`.
+* Step 2 (`fde522f`) -- `MODEL_REGISTRY` + the three DNA species sets
+  moved from `embedder.py` to `src/embpy/embedder_registry/flat.py`.
+  Re-exported from `embpy.embedder` so external imports keep working.
+* Step 3 (`79388bb`) -- registry split into seven per-modality
+  submodules (`dna.py`, `protein.py`, `molecule.py`, `text.py`,
+  `morphology.py`, `singlecell.py`, `api.py`). `flat.py` is now a
+  25-line merge. Guarded by `tests/embpy/test_registry_split.py`
+  (snapshot of all 106 entries + disjoint-modality assertions).
+
+Audit migration steps 4-8 (EmbedderDispatcher / BatchedEmbedder /
+IdentifierResolver extraction, resolver split, PerturbationMorphology
+extraction) remain **deferred to follow-up PRs**. The prompt allows
+this: "If a deeper restructure carries unacceptable risk now, stop
+after `embpy_audit.md` + Part A and explicitly say so." Two concrete
+reasons that still apply:
+
+* `src/embpy/embedder.py` is now 3,380 lines (down from 3,599 after
+  step 2's registry move) but still does eight jobs in one class.
+  Each extraction in steps 4-8 must be paired with a byte-equivalent
+  regression test against a working end-to-end pipeline.
+* The Part A landing already moved the gene-mapping behaviour to a
+  new contract; stacking the dispatcher / resolver / morphology
+  extractions on top would double the diff that has to be reviewed
+  against a (currently broken) end-to-end pipeline.
 
 The remainder of this document is structured as the prompt requested:
 nine sections, each with line-number citations.
@@ -395,38 +416,52 @@ package as part of the registry split.
 Numbered, minimally invasive. Each step is its own PR. Diff budget is
 the rough delta vs. the current tree.
 
-| # | Step | Goal | Diff budget | Regression-test bar |
-| --- | --- | --- | --- | --- |
-| 1 | Shrink `embpy/__init__.py` to re-export nothing eagerly. | Stop the cold-import storm. | -40 lines in `__init__.py`; +1 `CHANGELOG` note. | Existing `tests/test_basic.py` still passes. Notebook scripts that do `import embpy; embpy.BioEmbedder(...)` fail with a clear message pointing at the new path. (Acceptable transitional break -- documented.) |
-| 2 | Move `MODEL_REGISTRY` into `embpy.embedder_registry.flat` and re-export. | Per-modality split prep. | ~50 lines moved; `embpy.embedder` keeps a one-line shim. | `from embpy.embedder import MODEL_REGISTRY` returns the same dict object. |
-| 3 | Per-modality registry submodules (`dna.py`, `protein.py`, ...). Flat dict merges them. | Section 3 plan. | ~250 lines moved across 6 new files. | The merged dict is byte-equivalent (every key + every (Wrapper, path) tuple matches the pre-split flat dict). |
-| 4 | Extract `EmbedderDispatcher`. | Decoupling. | ~600 lines moved. | `BioEmbedder.embed_gene("TP53", ...)` returns the same array as before. |
-| 5 | Extract `BatchedEmbedder`. | Same. | ~400 lines moved. | `BioEmbedder.embed_genes_batch(...)` byte-equivalent against a frozen reference output. |
-| 6 | Extract `IdentifierResolver`. Consolidate `_resolve_seq_type` and `detect_identifier_type`. | DRY. | ~150 lines moved. | New `IdentifierResolver` unit-test, plus the existing classifier tests. |
-| 7 | Resolver split: `embpy.resources.gene._alias_resolver` (already in this PR) + extracted `_ensembl_get`, alias-chain orchestrator, and a `ResolutionError` taxonomy. | Section 4. | ~150 lines moved, ~80 added. | `tests/test_gene_resolver_aliases.py` (this PR) passes. New negative-cache assertion. |
-| 8 | Extract `PerturbationMorphology` from `BioEmbedder`. | Largest single chunk; ~700 LOC. | ~700 lines moved + 1 new test file. | Synthetic JUMP fixture under `tests/data/`. |
-| 9 | Two-package split (`embpy` + `world_model`). | Prompt's Part C. | New `pyproject.toml`s; ~30 `sbatch`/YAML path rewrites. | Smoke config byte-equivalent vs. snapshot (`outputs/<run>/{comparison,baselines,action_embedding_meta}.json`). |
+| # | Step | Goal | Diff budget | Regression-test bar | Status |
+| --- | --- | --- | --- | --- | --- |
+| 1 | Shrink `embpy/__init__.py` to re-export nothing eagerly. | Stop the cold-import storm. | -40 lines in `__init__.py`; +1 `CHANGELOG` note. | Existing `tests/test_basic.py` still passes. Notebook scripts that do `import embpy; embpy.BioEmbedder(...)` keep working via PEP-562 `__getattr__`. | **Landed** in `f5f99cb`. Used the PEP-562 path: no public API break. |
+| 2 | Move `MODEL_REGISTRY` into `embpy.embedder_registry.flat` and re-export. | Per-modality split prep. | ~50 lines moved; `embpy.embedder` keeps a one-line shim. | `from embpy.embedder import MODEL_REGISTRY` returns the same dict object. | **Landed** in `fde522f`. |
+| 3 | Per-modality registry submodules (`dna.py`, `protein.py`, ...). Flat dict merges them. | Section 3 plan. | ~250 lines moved across 6 new files. | The merged dict is byte-equivalent (every key + every (Wrapper, path) tuple matches the pre-split flat dict). | **Landed** in `79388bb`. Seven new files; `tests/embpy/test_registry_split.py` carries the 106-entry snapshot. |
+| 4 | Extract `EmbedderDispatcher`. | Decoupling. | ~600 lines moved. | `BioEmbedder.embed_gene("TP53", ...)` returns the same array as before. | Deferred. |
+| 5 | Extract `BatchedEmbedder`. | Same. | ~400 lines moved. | `BioEmbedder.embed_genes_batch(...)` byte-equivalent against a frozen reference output. | Deferred. |
+| 6 | Extract `IdentifierResolver`. Consolidate `_resolve_seq_type` and `detect_identifier_type`. | DRY. | ~150 lines moved. | New `IdentifierResolver` unit-test, plus the existing classifier tests. | Deferred. |
+| 7 | Resolver split: `embpy.resources.gene._alias_resolver` (already in this PR) + extracted `_ensembl_get`, alias-chain orchestrator, and a `ResolutionError` taxonomy. | Section 4. | ~150 lines moved, ~80 added. | `tests/test_gene_resolver_aliases.py` (this PR) passes. New negative-cache assertion. | Deferred. |
+| 8 | Extract `PerturbationMorphology` from `BioEmbedder`. | Largest single chunk; ~700 LOC. | ~700 lines moved + 1 new test file. | Synthetic JUMP fixture under `tests/data/`. | Deferred. |
+| 9 | Two-package split (`embpy` + `world_model`). | Prompt's Part C. | New `pyproject.toml`s; ~30 `sbatch`/YAML path rewrites. | Smoke config byte-equivalent vs. snapshot (`outputs/<run>/{comparison,baselines,action_embedding_meta}.json`). | **Landed** in `18896cf` + `882be61`; details in `docs/audit/package_split.md`. |
 
-### What lands in **this** PR
+### What lands in **this audit-driven series**
 
-Steps 0 (Part A correctness fix) and the **audit document** (this
-file). Steps 1-9 are explicitly deferred so each one can be reviewed in
-isolation against a working baseline. Part C scaffolding (the
-workspace `pyproject.toml`s and the deprecation-shim spec) lands here
-as `docs/audit/migration_plan_part_c.md` -- see the companion file.
+Part A correctness fix (`f1b51cb`), the audit document (this file),
+the package split (Part C: `18896cf` + `882be61`), and audit
+migration steps 1-3 (`f5f99cb`, `fde522f`, `79388bb`). Steps 4-8 are
+explicitly deferred so each one can be reviewed in isolation against a
+working baseline; the next natural pickup is step 6
+(IdentifierResolver -- lowest-risk extraction with the smallest diff
+and an existing classifier test as the regression bar).
 
 ---
 
 ## Appendix: line-count summary
 
 ```
-src/embpy/embedder.py                3599   primary target of audit
-src/embpy/resources/gene/resolver.py 1518   secondary target
-src/world_model/                ~6000   already modular
-tests/                                  29   files
+src/embpy/embedder.py                3380   primary target of audit
+                                            (-219 vs. pre-audit; step 2 moved
+                                            MODEL_REGISTRY + species sets)
+src/embpy/embedder_registry/          365   new (audit step 3)
+                                            __init__.py 30 / flat.py 60 /
+                                            dna.py 184 / protein.py 55 /
+                                            molecule.py 33 / morphology.py 23 /
+                                            singlecell.py 25 / text.py 16 /
+                                            api.py 22
+src/embpy/resources/gene/resolver.py 1518   secondary target (deferred)
+src/world_model/                     ~6000  already modular
+tests/                                  31   files (28 embpy + 31 world_model
+                                            after Part C; +3 new in audit
+                                            steps 1+3)
 docs/audit/                              2   files (this audit + Part C plan)
 ```
 
 The `dataloader.py` (`src/world_model/data/dataloader.py`, ~330
-lines) and the new Part A files are all <300 lines each. The 80/20
-restructure work is concentrated in `embedder.py`.
+lines) and the new Part A files are all <300 lines each. After steps
+1-3 the 80/20 restructure work is concentrated in the still-3,380-line
+`embedder.py` (the registry move only trimmed 219 lines off the top);
+the next steps (4-8) target the BioEmbedder method bodies.
