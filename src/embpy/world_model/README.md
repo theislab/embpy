@@ -41,21 +41,22 @@ Pipeline overview:
 
 ![Phase 5 model schematic](assets/phase5_architecture.png)
 
-*Detailed schematic of the current (Phase 5) model. The state encoder is
-now a `StateBackboneProvider` dispatching between the in-repo
-`StateStackEncoder` (`local`, trainable, default) and the frozen Arc
-Institute foundation models (`state` = SE-600M, `stack` = STACK). Cell
-embeddings are pre-computed once and cached on disk; the hot training
-path sees only `(B, T, K, E)` tensors. The action path goes through a
-frozen gene-embedding table; the trainable `ActionAdapter` (Linear /
-MLP / LoRA) is applied **per gene** over the `n_pert` axis, and the
-resulting `(B, T, n_pert, d)` tensor is then aggregated (mean / sum,
-with padded slots masked) into the action token `a_t`. State and
-action tokens are interleaved into a causal GPT that reads next-state
-predictions off the action-token positions. An optional
-`ExpressionDecoder` projects back to gene space. The full objective is
-a weighted sum of latent MSE, decoder MSE, and an optional InfoNCE
-term.*
+*Method overview. Cells from **Nadig** and **Replogle** (K562, RPE1)
+flow through a **frozen** foundation state encoder -- Arc Institute
+`STATE` or `STACK`, with cell embeddings cached on disk keyed by
+`(backbone, ckpt_hash, dataset_hash)`. A local-trainable
+`StateStackEncoder` is available as a fallback for ablation and
+debugging. A **gene-embedding action** -- produced by a frozen
+`BioEmbedder` backbone (Borzoi / Enformer / ESM2 / NTv2 / MiniLM) with
+a small trainable Linear / MLP / LoRA adapter -- conditions an
+**autoregressive GPT-style dynamics**, whose next-state prediction is
+decoded back to gene space by an `ExpressionDecoder`. The model is
+trained under three regimes (`single_nadig`, `single_replogle`,
+`Nadig -> p% Replogle` transfer) and benchmarked against five
+baselines (Mean / Control Mean / Additive / Linear Regression /
+Identity) using STATE's cell-eval suite (DEG@K, R^2 / Pearson / MMD).
+The two dashed brackets in the figure highlight the Phase-2
+(backbone-swap) and Phase-3 (adapter-kind: LoRA / MLP) ablations.*
 
 ### Mapping the reference paper to transcriptomics
 
