@@ -35,6 +35,21 @@ Pipeline overview:
 
 ## Why this design?
 
+![Phase 5 model schematic](assets/phase5_architecture.png)
+
+*Detailed schematic of the current (Phase 5) model. The state encoder is
+now a `StateBackboneProvider` dispatching between the in-repo
+`StateStackEncoder` (`local`, trainable, default) and the frozen Arc
+Institute foundation models (`state` = SE-600M, `stack` = STACK). Cell
+embeddings are pre-computed once and cached on disk; the hot training
+path sees only `(B, T, K, E)` tensors. The action path goes through a
+frozen gene-embedding table and a trainable `ActionAdapter` (Linear /
+MLP / LoRA). State and action tokens are interleaved into a causal GPT
+that reads next-state predictions off the action-token positions. An
+optional `ExpressionDecoder` projects back to gene space. The full
+objective is a weighted sum of latent MSE, decoder MSE, and an optional
+InfoNCE term.*
+
 ### Mapping the reference paper to transcriptomics
 
 | Paper component                | Transcriptomics counterpart                 |
