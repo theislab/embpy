@@ -20,7 +20,12 @@ from typing import Any
 
 import numpy as np
 
-from ..configs import ActionEmbeddingConfig, DataConfig, SplitConfig
+from ..configs import ActionEmbeddingConfig, DataConfig, SplitConfig, StateBackboneConfig
+from ..models.encoders.backbones import (
+    StateBackboneProvider,
+    build_backbone,
+    cache_path_for,
+)
 from .datasets.base import GeneIndexer, PerturbationSequenceDataset
 from .datasets.nadig import NadigSequenceDataset
 from .datasets.replogle import ReplogleSequenceDataset
@@ -56,6 +61,8 @@ class DataArtifacts:
     gene_symbols: list[str]
     split: SplitArtifact
     provider: ActionEmbeddingProvider
+    state_backbone: StateBackboneProvider | None = None
+    state_backbone_embedding_dim: int | None = None
 
 
 def build_dataloaders(
@@ -63,9 +70,11 @@ def build_dataloaders(
     *,
     split_cfg: SplitConfig | None = None,
     action_cfg: ActionEmbeddingConfig | None = None,
+    state_backbone_cfg: StateBackboneConfig | None = None,
     seed: int = 0,
     output_dir: str | Path | None = None,
     finetune_perturbations: list[str] | None = None,
+    state_backbone_override: StateBackboneProvider | None = None,
 ) -> DataArtifacts:
     """Build a :class:`DataArtifacts` bundle from the data + split + action configs.
 
@@ -114,6 +123,17 @@ def build_dataloaders(
         stack_size=cfg.stack_size,
         n_pert=cfg.n_pert,
         rng=rng,
+    )
+
+    state_backbone, state_embedding_dim = _maybe_pre_encode_with_backbone(
+        full_dataset=full_dataset,
+        h5ad_path=cfg.h5ad_path,
+        state_backbone_cfg=state_backbone_cfg,
+        cell_type_key=getattr(cfg, "cell_type_key", None),
+        cell_type_filter=getattr(cfg, "cell_type_filter", None),
+        perturbation_key=cfg.perturbation_key,
+        output_dir=output_dir,
+        override_provider=state_backbone_override,
     )
 
     if output_dir is not None:
@@ -202,7 +222,97 @@ def build_dataloaders(
         gene_symbols=gene_symbols,
         split=spec,
         provider=provider,
+        state_backbone=state_backbone,
+        state_backbone_embedding_dim=state_embedding_dim,
     )
+
+
+def _maybe_pre_encode_with_backbone(
+    *,
+    full_dataset: PerturbationSequenceDataset,
+    h5ad_path: str | Path,
+    state_backbone_cfg: StateBackboneConfig | None,
+    cell_type_key: str | None,
+    cell_type_filter: str | None,
+    perturbation_key: str,
+    output_dir: str | Path | None,
+    override_provider: StateBackboneProvider | None,
+) -> tuple[StateBackboneProvider | None, int | None]:
+    """Pre-encode the dataset's expression matrix through a foundation backbone.
+
+    Only runs for ``kind in {'state', 'stack'}``; the local path is a
+    no-op (the dataset already holds the raw expression matrix and the
+    world model's encoder consumes it directly).
+
+    On a cache hit, the underlying wrapper is never even constructed --
+    only the provider object itself is instantiated, which is cheap
+    enough that rank-0 vs rank-N concerns don't arise.
+    """
+    if state_backbone_cfg is None or state_backbone_cfg.kind == "local":
+        return None, None
+
+    provider = override_provider if override_provider is not None else build_backbone(state_backbone_cfg)
+
+    import anndata as ad  # noqa: PLC0415  (heavy import; only on the foreign path)
+
+    adata = ad.read_h5ad(h5ad_path)
+    if cell_type_filter is not None and cell_type_key is not None:
+        mask = adata.obs[cell_type_key].astype(str).values == cell_type_filter
+        adata = adata[mask].copy()
+
+    if adata.n_obs != full_dataset.expression.shape[0]:
+        raise RuntimeError(
+            f"State-backbone pre-encode row mismatch: dataset has "
+            f"{full_dataset.expression.shape[0]} cells but the (filtered) "
+            f"AnnData has {adata.n_obs}. The dataset's cell ordering must "
+            f"line up with the AnnData ordering for the embeddings to be "
+            f"meaningful. Make sure DataConfig.cell_type_filter matches "
+            f"the dataset's own filter."
+        )
+
+    embeddings = provider.encode(adata)
+    embeddings = np.ascontiguousarray(np.asarray(embeddings, dtype=np.float32))
+    if embeddings.shape[0] != full_dataset.expression.shape[0]:
+        raise RuntimeError(
+            f"State-backbone returned {embeddings.shape[0]} rows but "
+            f"dataset expects {full_dataset.expression.shape[0]}."
+        )
+
+    full_dataset.expression = embeddings
+    full_dataset.n_genes = int(embeddings.shape[1])
+
+    cache_path = ""
+    cache_hit = False
+    if state_backbone_cfg.cache_dir:
+        try:
+            ckpt_hash, ds_hash = provider._cache_key(adata)  # type: ignore[attr-defined]
+            cp = cache_path_for(
+                state_backbone_cfg.cache_dir,
+                backbone=provider.name,
+                ckpt_hash=ckpt_hash,
+                dataset_hash=ds_hash,
+            )
+            cache_path = str(cp)
+            cache_hit = cp.exists()
+        except AttributeError:
+            pass
+
+    meta = provider.metadata(
+        n_cells_encoded=int(embeddings.shape[0]),
+        cache_hit=cache_hit,
+        cache_path=cache_path,
+    )
+    del perturbation_key  # currently unused; reserved for future per-pert caches
+    if output_dir is not None:
+        out_path = Path(output_dir) / "state_backbone_meta.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(asdict(meta), indent=2, default=str))
+        logger.info(
+            "State-backbone meta -> %s (kind=%s, dim=%d, cache_hit=%s, n_cells=%d)",
+            out_path, meta.kind, meta.embedding_dim, meta.cache_hit, meta.n_cells_encoded,
+        )
+
+    return provider, int(embeddings.shape[1])
 
 
 __all__ = ["DataArtifacts", "build_dataloaders"]

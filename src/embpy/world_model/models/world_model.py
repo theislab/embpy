@@ -25,6 +25,12 @@ from ..training.losses import info_nce, latent_mse
 from .action.gene_embedding_action import GeneEmbeddingAction
 from .decoders.expression_decoder import ExpressionDecoder
 from .dynamics.gpt_autoregressive import GPTAutoregressiveDynamics
+from .encoders.backbones import (
+    ForeignBackboneHead,
+    LocalStackBackbone,
+    StateBackboneProvider,
+    build_backbone,
+)
 from .encoders.state_stack_encoder import StateStackEncoder
 
 
@@ -72,10 +78,11 @@ class WorldModel(nn.Module):
 
     def __init__(
         self,
-        encoder: StateStackEncoder,
+        encoder: StateStackEncoder | ForeignBackboneHead,
         action_encoder: GeneEmbeddingAction,
         dynamics: GPTAutoregressiveDynamics,
         decoder: ExpressionDecoder | None = None,
+        backbone: StateBackboneProvider | None = None,
     ) -> None:
         super().__init__()
         if encoder.d_model != dynamics.d_model:
@@ -96,18 +103,41 @@ class WorldModel(nn.Module):
         self.dynamics = dynamics
         self.decoder = decoder
         self.d_model = dynamics.d_model
+        # The backbone reference is held *outside* the autograd graph for
+        # foreign backbones (STATE/STACK pre-encode in the dataloader), so
+        # we attach it via object.__setattr__ rather than as a child module.
+        # The local backbone's encoder IS self.encoder, so backbone here
+        # is purely informational on that path.
+        object.__setattr__(self, "backbone", backbone)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def encode(self, obs: torch.Tensor) -> torch.Tensor:
-        """Encode a batch of observation stacks.
+        """Encode a batch of observation stacks into state tokens.
 
-        Parameters
-        ----------
-        obs
-            ``(B, T, K, G)`` gene-expression stack.
+        Shape contract depends on the configured backbone:
+
+        * ``kind='local'`` (default, pre-Phase-5 path):
+          input  ``obs``  : ``(B, T, K, G)`` raw expression stack
+          output state    : ``(B, T, d_model)``
+          The encoder is :class:`StateStackEncoder` and consumes the
+          raw expression matrix slice produced by the dataset.
+
+        * ``kind='state'`` or ``kind='stack'``:
+          input  ``obs``  : ``(B, T, K, embedding_dim)`` pre-encoded
+                            cell embeddings produced by the foundation
+                            backbone (the dataloader replaced the
+                            in-memory expression matrix with the
+                            cached embeddings; see
+                            :func:`world_model.data.build_dataloaders`).
+          output state    : ``(B, T, d_model)``
+          The encoder is :class:`ForeignBackboneHead`, a tiny mean-pool
+          + projection layer. Foundation backbones operate on AnnData,
+          not torch tensors, so the foundation forward never lives on
+          the per-batch hot path -- it runs once at dataloader build
+          time and is cached on disk.
 
         Returns
         -------
@@ -329,29 +359,86 @@ def build_world_model(
     decoder_hidden_dims: tuple[int, ...] = (512, 1024),
     enable_decoder: bool = True,
     action_adapter_cfg: Any = None,
+    state_backbone_cfg: Any = None,
+    state_backbone_provider: StateBackboneProvider | None = None,
+    state_backbone_embedding_dim: int | None = None,
     **_unused: Any,
 ) -> WorldModel:
     """One-call factory for the default architecture.
 
-    All components share ``d_model``. Use the lower-level constructors
-    directly to mix and match widths or use a custom encoder.
-
-    ``action_adapter_cfg`` (an ``ActionAdapterConfig`` from
-    :mod:`configs`) selects the adapter kind in front of the dynamics
-    token. ``None`` keeps the legacy single-Linear default and is
-    byte-equivalent to the pre-Phase-3 path.
+    Parameters
+    ----------
+    state_backbone_cfg
+        ``StateBackboneConfig`` from :mod:`configs`. ``None`` (the
+        legacy default) behaves exactly like the pre-Phase-5 path: a
+        local :class:`StateStackEncoder` with the same hyperparameters.
+        When set to ``kind='state' | 'stack'``, the dataloader is
+        expected to have pre-encoded the cells through the foundation
+        model (see :func:`world_model.data.build_dataloaders`); in that
+        case ``state_backbone_provider`` and ``state_backbone_embedding_dim``
+        should be passed in by the caller (the dataloader builds the
+        provider once on rank 0).
+    state_backbone_provider
+        Provider instance owned by the caller (typically the
+        dataloader). Only used when ``state_backbone_cfg.kind`` is
+        ``'state'`` or ``'stack'`` to register a reference on the
+        model and to source ``embedding_dim``.
+    state_backbone_embedding_dim
+        Override for the foreign backbone's embedding dim. Useful in
+        tests so we don't have to actually load STATE / STACK weights.
     """
-    from .encoders.state_stack_encoder import build_state_stack_encoder  # avoid circular import
+    from .encoders.state_stack_encoder import build_state_stack_encoder  # noqa: PLC0415
 
-    encoder = build_state_stack_encoder(
-        kind=encoder_kind,
-        n_genes=n_genes,
-        d_model=d_model,
-        stack_size=stack_size,
-        n_layers=encoder_layers,
-        n_heads=encoder_heads,
-        dropout=dropout,
-    )
+    kind = getattr(state_backbone_cfg, "kind", "local") if state_backbone_cfg is not None else "local"
+    backbone: StateBackboneProvider | None = None
+    encoder: StateStackEncoder | ForeignBackboneHead
+
+    if kind == "local":
+        encoder = build_state_stack_encoder(
+            kind=encoder_kind,
+            n_genes=n_genes,
+            d_model=d_model,
+            stack_size=stack_size,
+            n_layers=encoder_layers,
+            n_heads=encoder_heads,
+            dropout=dropout,
+        )
+        if state_backbone_cfg is not None:
+            backbone = LocalStackBackbone(encoder=encoder)
+            if state_backbone_cfg.freeze:
+                # The local backbone's encoder participates in the world
+                # model's parameter list. Freezing it here mirrors the
+                # foreign-backbone semantics (freeze means: out of the
+                # optimizer) while leaving the dataloader code path
+                # untouched.
+                backbone.freeze()
+    else:
+        if state_backbone_provider is None:
+            backbone = build_backbone(
+                state_backbone_cfg,
+                n_genes=n_genes,
+                d_model=d_model,
+                stack_size=stack_size,
+                encoder_kind=encoder_kind,
+                encoder_layers=encoder_layers,
+                encoder_heads=encoder_heads,
+                dropout=dropout,
+            )
+        else:
+            backbone = state_backbone_provider
+        emb_dim = state_backbone_embedding_dim
+        if emb_dim is None:
+            emb_dim = backbone.embedding_dim
+        identity_when_dims_match = bool(
+            state_backbone_cfg is not None and state_backbone_cfg.freeze
+        )
+        encoder = ForeignBackboneHead(
+            embedding_dim=int(emb_dim),
+            d_model=d_model,
+            stack_size=stack_size,
+            identity_when_dims_match=identity_when_dims_match,
+        )
+
     action_encoder = GeneEmbeddingAction(
         gene_embedding_table=gene_embedding_table,
         d_model=d_model,
@@ -377,7 +464,13 @@ def build_world_model(
         if enable_decoder
         else None
     )
-    return WorldModel(encoder=encoder, action_encoder=action_encoder, dynamics=dynamics, decoder=decoder)
+    return WorldModel(
+        encoder=encoder,
+        action_encoder=action_encoder,
+        dynamics=dynamics,
+        decoder=decoder,
+        backbone=backbone,
+    )
 
 
 __all__ = ["WorldModel", "WorldModelOutput", "build_world_model"]

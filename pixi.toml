@@ -355,6 +355,50 @@ arc-stack = ">=0.1.3"
 # module load time).
 scvi-tools = ">=1.2"
 
+# ---------------------------------------------------------------------------
+# Split features for opting into ONLY STATE or ONLY STACK as world-model
+# state backbones (Phase 5). Mirrors the arc-state / arc-stack hard pins
+# without forcing users to install both. The base install of embpy does
+# NOT pull either.
+#
+# Usage:
+#   pixi install -e state   # STATE only
+#   pixi install -e stack   # STACK only
+#   pixi install -e arc     # both (legacy)
+# ---------------------------------------------------------------------------
+[feature.state]
+platforms = ["linux-64"]
+
+[feature.state.dependencies]
+python = ">=3.11,<3.13"
+pytorch = { version = ">=2.7.0,<2.8", channel = "conda-forge" }
+scipy = ">=1.15"
+numpy = ">=2.2.6,<2.3"
+scanpy = ">=1.11"
+scikit-learn = ">=1.6.1"
+pandas = ">=2.2.3"
+pyyaml = ">=6.0"
+
+[feature.state.pypi-dependencies]
+arc-state = ">=0.10"
+
+[feature.stack]
+platforms = ["linux-64"]
+
+[feature.stack.dependencies]
+python = ">=3.11,<3.13"
+pytorch = { version = ">=2.7.0,<2.8", channel = "conda-forge" }
+scipy = ">=1.15"
+numpy = ">=2.2.6,<2.3"
+scanpy = ">=1.11"
+scikit-learn = ">=1.6.1"
+pandas = ">=2.2.3"
+pyyaml = ">=6.0"
+
+[feature.stack.pypi-dependencies]
+arc-stack = ">=0.1.3"
+scvi-tools = ">=1.2"
+
 # GPU add-on for the arc env. Same pattern as helical-gpu: declare
 # the CUDA 12 virtual package and restrict pytorch to the cuda* build.
 [feature.arc-gpu]

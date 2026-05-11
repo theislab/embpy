@@ -34,6 +34,10 @@ action_embedding:
   source: "precomputed"
   path: ""
 
+state_backbone:
+  kind: "local"
+  freeze: true
+
 split:
   split_by: "perturbation"
   train_fraction: 0.8

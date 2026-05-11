@@ -31,6 +31,12 @@ action_embedding:
   source: "precomputed"
   path: ""
 
+# Keep the smoke test dependency-light: the local backbone is the
+# existing StateStackEncoder, no arc-state / arc-stack required.
+state_backbone:
+  kind: "local"
+  freeze: true
+
 split:
   split_by: "perturbation"
   train_fraction: 0.8

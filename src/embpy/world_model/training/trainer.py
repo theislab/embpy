@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 from torch.utils.data import DataLoader
 
-from ..configs import LossConfig, OptimConfig, TrainConfig
+from ..configs import LossConfig, OptimConfig, StateBackboneConfig, TrainConfig
 from ..utils.checkpoint import save_checkpoint
 from .hooks import (
     CSVLossLogger,
@@ -33,9 +33,70 @@ from .hooks import (
 from .schedulers import build_scheduler
 
 if TYPE_CHECKING:
+    from ..models.encoders.backbones import StateBackboneProvider
     from ..models.world_model import WorldModel
 
 logger = logging.getLogger(__name__)
+
+
+def iter_trainable_params(
+    model: torch.nn.Module,
+    provider: "StateBackboneProvider | None",
+    state_backbone_cfg: "StateBackboneConfig | None",
+) -> tuple[list[tuple[str, torch.nn.Parameter]], dict[str, int]]:
+    """Return the de-duplicated list of params the optimizer should see.
+
+    Returns
+    -------
+    params
+        ``[(name, parameter), ...]`` -- all trainable parameters
+        deduplicated by id.
+    counts
+        ``{"backbone_trainable", "head", "dynamics", "decoder", "action"}``
+        -> parameter count by logical group. Printed to the training
+        log so a human can sanity-check freeze/unfreeze.
+    """
+    seen: set[int] = set()
+    params: list[tuple[str, torch.nn.Parameter]] = []
+    counts = {"backbone_trainable": 0, "head": 0, "dynamics": 0, "decoder": 0, "action": 0, "other": 0}
+
+    def _bucket(name: str) -> str:
+        nm = name.lower()
+        if nm.startswith("encoder"):
+            return "head"
+        if nm.startswith("dynamics"):
+            return "dynamics"
+        if nm.startswith("decoder"):
+            return "decoder"
+        if nm.startswith("action_encoder"):
+            return "action"
+        return "other"
+
+    for name, p in model.named_parameters():
+        if not p.requires_grad:
+            continue
+        if id(p) in seen:
+            continue
+        seen.add(id(p))
+        params.append((name, p))
+        counts[_bucket(name)] += int(p.numel())
+
+    include_backbone = (
+        provider is not None
+        and state_backbone_cfg is not None
+        and not state_backbone_cfg.freeze
+    )
+    if include_backbone:
+        for i, p in enumerate(provider.parameters()):
+            if not p.requires_grad:
+                continue
+            if id(p) in seen:
+                continue
+            seen.add(id(p))
+            params.append((f"backbone.p{i}", p))
+            counts["backbone_trainable"] += int(p.numel())
+
+    return params, counts
 
 
 class WorldModelTrainer:
@@ -64,6 +125,8 @@ class WorldModelTrainer:
         output_dir: str | Path = "outputs/world_model",
         run_name: str = "wm_run",
         hooks: list[Hook] | None = None,
+        state_backbone_cfg: StateBackboneConfig | None = None,
+        backbone_provider: "StateBackboneProvider | None" = None,
     ) -> None:
         self.model = model
         self.optim_cfg = optim_cfg
@@ -74,8 +137,12 @@ class WorldModelTrainer:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.device = self._resolve_device(train_cfg.device)
         self.model.to(self.device)
+        self.state_backbone_cfg = state_backbone_cfg
+        self.backbone_provider = backbone_provider
 
-        decay, no_decay = self._split_params_for_weight_decay(self.model)
+        decay, no_decay = self._split_params_for_weight_decay(
+            self.model, self.backbone_provider, self.state_backbone_cfg,
+        )
         self.optimizer: torch.optim.Optimizer = torch.optim.AdamW(
             [
                 {"params": decay, "weight_decay": optim_cfg.weight_decay},
@@ -83,6 +150,16 @@ class WorldModelTrainer:
             ],
             lr=optim_cfg.lr,
             betas=optim_cfg.betas,
+        )
+        params, counts = iter_trainable_params(
+            self.model, self.backbone_provider, self.state_backbone_cfg,
+        )
+        logger.info(
+            "Trainer optimizer param groups: total=%d -- head=%d dynamics=%d "
+            "decoder=%d action=%d backbone_trainable=%d other=%d",
+            sum(p.numel() for _, p in params),
+            counts["head"], counts["dynamics"], counts["decoder"],
+            counts["action"], counts["backbone_trainable"], counts["other"],
         )
         self.scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
         self.use_amp = train_cfg.amp and self.device.type == "cuda"
@@ -118,11 +195,13 @@ class WorldModelTrainer:
                 h.scheduler = self.scheduler
 
         self._fire("on_train_start")
+        self._set_backbone_train_mode(True)
 
         for epoch in range(1, self.train_cfg.n_epochs + 1):
             self.state.epoch = epoch
             self._fire("on_epoch_start")
             t0 = time.time()
+            self._set_backbone_train_mode(True)
             train_loss = self._train_one_epoch(train_loader)
             self.history["train_loss"].append(train_loss)
             self.state.train_loss = train_loss
@@ -144,6 +223,7 @@ class WorldModelTrainer:
     @torch.no_grad()
     def evaluate(self, loader: DataLoader) -> float:
         self.model.eval()
+        self._set_backbone_train_mode(False)
         total = 0.0
         n = 0
         for batch in loader:
@@ -271,15 +351,30 @@ class WorldModelTrainer:
             return torch.device("cpu")
         return torch.device(spec)
 
+    def _set_backbone_train_mode(self, flag: bool) -> None:
+        """Toggle the foreign backbone's torch ``train()`` flag.
+
+        Only matters when ``freeze=False`` -- otherwise dropout / norm
+        running stats inside the backbone might shift between train and
+        eval and cause subtle leakage between the two regimes.
+        """
+        if self.backbone_provider is None or self.state_backbone_cfg is None:
+            return
+        if self.state_backbone_cfg.freeze:
+            self.backbone_provider.train_mode(False)
+            return
+        self.backbone_provider.train_mode(bool(flag))
+
     @staticmethod
     def _split_params_for_weight_decay(
         model: torch.nn.Module,
+        provider: "StateBackboneProvider | None" = None,
+        state_backbone_cfg: "StateBackboneConfig | None" = None,
     ) -> tuple[list[torch.nn.Parameter], list[torch.nn.Parameter]]:
+        params, _ = iter_trainable_params(model, provider, state_backbone_cfg)
         decay: list[torch.nn.Parameter] = []
         no_decay: list[torch.nn.Parameter] = []
-        for name, p in model.named_parameters():
-            if not p.requires_grad:
-                continue
+        for name, p in params:
             if name.endswith(".bias") or "norm" in name.lower() or "embed" in name.lower():
                 no_decay.append(p)
             else:
@@ -287,4 +382,4 @@ class WorldModelTrainer:
         return decay, no_decay
 
 
-__all__ = ["WorldModelTrainer"]
+__all__ = ["WorldModelTrainer", "iter_trainable_params"]

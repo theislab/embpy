@@ -280,6 +280,71 @@ class ActionAdapterConfig:
 
 
 @dataclass
+class StateBackboneConfig:
+    """Foundation backbone used as the state (observation) encoder.
+
+    Three flavours via ``kind``:
+
+    * ``"local"`` -- the existing :class:`StateStackEncoder` wrapped as
+      a :class:`LocalStackBackbone`. Default. Byte-equivalent to the
+      pre-Phase-5 path. No extra dependencies.
+    * ``"state"`` -- STATE / SE-600M (Arc Institute) via
+      :class:`StateEmbeddingWrapper`. Requires the ``arc-state``
+      package. Cell embeddings are pre-computed and cached.
+    * ``"stack"`` -- STACK (Arc Institute) via :class:`StackWrapper`.
+      Requires the ``arc-stack`` package.
+
+    ``freeze=True`` (default) keeps the foundation backbone in eval
+    mode and out of the optimizer. Flip to ``False`` to fine-tune the
+    backbone end-to-end (a learnable head is always included).
+    """
+
+    kind: str = "local"
+    """One of ``{"local", "state", "stack"}``."""
+
+    state_checkpoint: str = ""
+    """Path to a STATE ``.ckpt`` (``kind="state"``). Optional if ``state_model_folder`` is set."""
+
+    state_model_folder: str | None = None
+    """Folder holding STATE checkpoint + ``protein_embeddings.pt`` (``kind="state"``)."""
+
+    state_protein_embeddings: str | None = None
+    """Override path to STATE protein embeddings ``.pt`` (``kind="state"``)."""
+
+    state_config: str | None = None
+    """Optional YAML override for STATE ``Inference`` config (``kind="state"``)."""
+
+    stack_checkpoint: str = ""
+    """Path to a STACK ``.ckpt`` (``kind="stack"``)."""
+
+    stack_genelist: str = ""
+    """Path to STACK pickled gene list (``kind="stack"``)."""
+
+    stack_gene_name_col: str | None = None
+    """Column in ``adata.var`` with gene symbols for STACK (``kind="stack"``)."""
+
+    device: str = "auto"
+    """``"auto"`` resolves to ``"cuda"`` when available else ``"cpu"``."""
+
+    freeze: bool = True
+    """Freeze backbone parameters. Default True."""
+
+    batch_size: int = 64
+    """Encode batch size passed to the underlying wrapper."""
+
+    cache_dir: str = "outputs/_cache/state_backbone"
+    """Disk cache root for cell embeddings."""
+
+    require_cache_hit: bool = False
+    """If True and a cache miss happens, raise instead of running the backbone.
+
+    Useful for cluster jobs that should only re-use a pre-warmed cache
+    (e.g. evaluation-only runs that must not wait on GPU encoding).
+    Meaningful only for ``state`` / ``stack``; warned-against for ``local``.
+    """
+
+
+@dataclass
 class WorldModelConfig:
     data: DataConfig = field(default_factory=DataConfig)
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
@@ -292,6 +357,7 @@ class WorldModelConfig:
     eval: EvalConfig = field(default_factory=EvalConfig)
     action_embedding: ActionEmbeddingConfig = field(default_factory=ActionEmbeddingConfig)
     action_adapter: ActionAdapterConfig = field(default_factory=ActionAdapterConfig)
+    state_backbone: StateBackboneConfig = field(default_factory=StateBackboneConfig)
 
     seed: int = 0
     run_name: str = "wm_run"
@@ -302,6 +368,31 @@ class WorldModelConfig:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+    def validate(self) -> None:
+        """Cross-field sanity checks. Called explicitly by training entrypoints."""
+        sb = self.state_backbone
+        if sb.kind not in {"local", "state", "stack"}:
+            raise ValueError(
+                f"state_backbone.kind must be one of {{'local','state','stack'}}, got {sb.kind!r}"
+            )
+        if sb.kind == "state" and not (sb.state_checkpoint or sb.state_model_folder):
+            raise ValueError(
+                "state_backbone.kind='state' requires either state_checkpoint "
+                "or state_model_folder to be set."
+            )
+        if sb.kind == "stack" and not (sb.stack_checkpoint and sb.stack_genelist):
+            raise ValueError(
+                "state_backbone.kind='stack' requires both stack_checkpoint "
+                "and stack_genelist to be set."
+            )
+        if sb.kind == "local" and sb.require_cache_hit:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "state_backbone.require_cache_hit=True is ignored for kind='local' "
+                "(no foundation cache is consulted on the local path)."
+            )
 
 
 # Fields whose declared default is ``None`` but whose YAML override may
@@ -401,6 +492,7 @@ __all__ = [
     "LossConfig",
     "OptimConfig",
     "SplitConfig",
+    "StateBackboneConfig",
     "TrainConfig",
     "TransferConfig",
     "WorldModelConfig",

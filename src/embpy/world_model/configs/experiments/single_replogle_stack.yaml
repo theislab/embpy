@@ -1,5 +1,17 @@
-run_name: "single_replogle"
-output_dir: "outputs/world_model/single_replogle"
+# Replogle (K562 essential) trained with the STACK backbone as the
+# frozen observation encoder.
+#
+# Before running:
+#   1. pip install 'embpy[stack]'   (or: pixi install -e arc-gpu)
+#   2. Download a STACK checkpoint + gene list from
+#      https://github.com/ArcInstitute/stack and set the paths below.
+#   3. Smoke-test the encode step:
+#        python -m embpy.world_model.scripts.encode_cells \
+#          --kind stack --adata <path>.h5ad \
+#          --stack-checkpoint <ckpt> --stack-genelist <pkl> \
+#          --output /tmp/stack_test.npz
+run_name: "single_replogle_stack"
+output_dir: "outputs/world_model/single_replogle_stack"
 seed: 0
 mode: "single"
 
@@ -25,8 +37,15 @@ action_embedding:
   path: ""
 
 state_backbone:
-  kind: "local"
+  kind: "stack"
+  stack_checkpoint: "data/checkpoints/stack/stack.ckpt"
+  stack_genelist: "data/checkpoints/stack/hvg_genes.pkl"
+  stack_gene_name_col: null  # auto-detect
+  device: "auto"
   freeze: true
+  batch_size: 32
+  cache_dir: "outputs/_cache/state_backbone"
+  require_cache_hit: false
 
 split:
   split_by: "perturbation"

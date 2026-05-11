@@ -120,6 +120,17 @@ optional-dependencies.ppi = [
 optional-dependencies.helical = [
   "helical",
 ]
+# Arc Institute STATE / STACK foundation backbones. Each is gated
+# behind its own extra so a default install does NOT pull either.
+# The world-model code lazy-imports these inside the provider's
+# _load(); a missing dep only fails at the moment the user opts into
+# state_backbone.kind='state' (or 'stack').
+optional-dependencies.state = [
+  "arc-state>=0.10",
+]
+optional-dependencies.stack = [
+  "arc-stack>=0.1.3",
+]
 optional-dependencies.lamindb = [
   "lamindb",
 ]

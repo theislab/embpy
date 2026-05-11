@@ -13,7 +13,7 @@ from .hooks import (
 )
 from .losses import delta_mse, gaussian_nll, info_nce, latent_mse
 from .schedulers import build_scheduler
-from .trainer import WorldModelTrainer
+from .trainer import WorldModelTrainer, iter_trainable_params
 from .transfer import apply_encoder_swap
 
 __all__ = [
@@ -30,5 +30,6 @@ __all__ = [
     "delta_mse",
     "gaussian_nll",
     "info_nce",
+    "iter_trainable_params",
     "latent_mse",
 ]

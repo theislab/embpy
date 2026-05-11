@@ -65,7 +65,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _build_model(cfg: WorldModelConfig, n_genes: int, gene_table: np.ndarray):
+def _build_model(
+    cfg: WorldModelConfig,
+    n_genes: int,
+    gene_table: np.ndarray,
+    *,
+    state_backbone_provider: Any = None,
+    state_backbone_embedding_dim: int | None = None,
+):
     return build_world_model(
         n_genes=n_genes,
         gene_embedding_table=torch.from_numpy(gene_table),
@@ -80,6 +87,9 @@ def _build_model(cfg: WorldModelConfig, n_genes: int, gene_table: np.ndarray):
         max_sequence_length=cfg.dynamics.max_sequence_length,
         use_action_token=cfg.dynamics.use_action_token,
         action_adapter_cfg=cfg.action_adapter,
+        state_backbone_cfg=cfg.state_backbone,
+        state_backbone_provider=state_backbone_provider,
+        state_backbone_embedding_dim=state_backbone_embedding_dim,
     )
 
 
@@ -130,11 +140,16 @@ def _run_single(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object
         cfg.data,
         split_cfg=cfg.split,
         action_cfg=cfg.action_embedding,
+        state_backbone_cfg=cfg.state_backbone,
         seed=cfg.seed,
         output_dir=output_dir,
     )
     n_genes = len(artifacts.gene_symbols)
-    model = _build_model(cfg, n_genes, artifacts.gene_table)
+    model = _build_model(
+        cfg, n_genes, artifacts.gene_table,
+        state_backbone_provider=artifacts.state_backbone,
+        state_backbone_embedding_dim=artifacts.state_backbone_embedding_dim,
+    )
     logger.info(
         "Model: %d trainable params (action_dim=%d, n_genes=%d)",
         model.num_parameters(), artifacts.gene_table.shape[1], n_genes,
@@ -147,6 +162,8 @@ def _run_single(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object
         train_cfg=cfg.train,
         output_dir=output_dir,
         run_name=cfg.run_name,
+        state_backbone_cfg=cfg.state_backbone,
+        backbone_provider=artifacts.state_backbone,
     )
     trainer.fit(train_loader=artifacts.train_loader, val_loader=artifacts.val_loader)
     return model, artifacts
@@ -179,12 +196,17 @@ def _run_transfer(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, obje
         pretrain_data,
         split_cfg=cfg.split,
         action_cfg=pretrain_action_cfg,
+        state_backbone_cfg=cfg.state_backbone,
         seed=cfg.seed,
         output_dir=pretrain_dir,
     )
     n_genes = len(pretrain_artifacts.gene_symbols)
     pretrain_action_dim = pretrain_artifacts.gene_table.shape[1]
-    model = _build_model(cfg, n_genes, pretrain_artifacts.gene_table)
+    model = _build_model(
+        cfg, n_genes, pretrain_artifacts.gene_table,
+        state_backbone_provider=pretrain_artifacts.state_backbone,
+        state_backbone_embedding_dim=pretrain_artifacts.state_backbone_embedding_dim,
+    )
 
     pretrain_train_cfg = dataclasses.replace(cfg.train, n_epochs=cfg.transfer.pretrain_epochs)
     pre_trainer = WorldModelTrainer(
@@ -194,6 +216,8 @@ def _run_transfer(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, obje
         train_cfg=pretrain_train_cfg,
         output_dir=pretrain_dir,
         run_name=f"{cfg.run_name}_pretrain",
+        state_backbone_cfg=cfg.state_backbone,
+        backbone_provider=pretrain_artifacts.state_backbone,
     )
 
     if cfg.transfer.pretrain_checkpoint:
@@ -213,6 +237,7 @@ def _run_transfer(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, obje
         cfg.data,
         split_cfg=cfg.split,
         action_cfg=finetune_action_cfg,
+        state_backbone_cfg=cfg.state_backbone,
         seed=cfg.seed,
         output_dir=finetune_dir,
     )
@@ -228,9 +253,11 @@ def _run_transfer(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, obje
         cfg.data,
         split_cfg=cfg.split,
         action_cfg=finetune_action_cfg,
+        state_backbone_cfg=cfg.state_backbone,
         seed=cfg.seed,
         output_dir=finetune_dir,
         finetune_perturbations=sub_split.train_perturbations,
+        state_backbone_override=pretrain_artifacts.state_backbone,
     )
 
     if len(artifacts.gene_symbols) != n_genes:
@@ -238,7 +265,11 @@ def _run_transfer(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, obje
             "Pretrain n_genes (%d) != fine-tune n_genes (%d). Rebuilding encoder/decoder.",
             n_genes, len(artifacts.gene_symbols),
         )
-        new_model = _build_model(cfg, len(artifacts.gene_symbols), artifacts.gene_table)
+        new_model = _build_model(
+            cfg, len(artifacts.gene_symbols), artifacts.gene_table,
+            state_backbone_provider=artifacts.state_backbone,
+            state_backbone_embedding_dim=artifacts.state_backbone_embedding_dim,
+        )
         new_model.dynamics.load_state_dict(model.dynamics.state_dict())
         if pretrain_action_dim == finetune_action_dim:
             new_model.action_encoder.load_state_dict(model.action_encoder.state_dict())
@@ -280,6 +311,8 @@ def _run_transfer(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, obje
         train_cfg=finetune_train_cfg,
         output_dir=finetune_dir,
         run_name=f"{cfg.run_name}_finetune",
+        state_backbone_cfg=cfg.state_backbone,
+        backbone_provider=artifacts.state_backbone,
     )
     ft_trainer.fit(
         train_loader=artifacts.train_loader,
@@ -391,6 +424,7 @@ def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
     cfg: WorldModelConfig = load_yaml_config(args.config)
     cfg = apply_cli_overrides(cfg, args.overrides)
+    cfg.validate()
 
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

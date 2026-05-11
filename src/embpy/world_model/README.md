@@ -1192,3 +1192,199 @@ print(df[df.grid_key.isin(["linear", "lora_r16"])].pivot_table(
     index="metric", columns="grid_key", values="value", aggfunc="first"
 ))
 ```
+
+---
+
+## Foundation-model backbones (frozen STATE / STACK)
+
+The state encoder of the world model now uses a frozen single-cell
+foundation model instead of a small from-scratch transformer. The
+existing `StateStackEncoder` is still available behind the same
+abstraction (`kind: local`), so every pre-Phase-5 experiment keeps
+running unchanged. The new backbones (`state`, `stack`) wrap
+`embpy.models.singlecell_models.StateEmbeddingWrapper` and
+`StackWrapper` respectively, with disk-backed cell-embedding caches
+so the foundation forward only runs once per dataset.
+
+### Options at a glance
+
+| `state_backbone.kind` | Backbone                            | Extra dep   | Checkpoint files                              | Typical `embedding_dim` |
+|-----------------------|-------------------------------------|-------------|-----------------------------------------------|-------------------------|
+| `local` (default)     | `StateStackEncoder` (in-repo)       | none        | none                                          | `d_model` (e.g. 256)    |
+| `state`               | STATE / SE-600M (Arc Institute)     | `arc-state` | `<folder>/*.ckpt`, `<folder>/protein_embeddings.pt` | `z_dim + z_dim_ds` (e.g. 768) |
+| `stack`               | STACK (Arc Institute)               | `arc-stack` | `<ckpt>.ckpt`, `<genelist>.pkl`               | model-dependent (e.g. 512) |
+
+### Install the opt-in deps
+
+```bash
+pip install 'embpy[state]'   # STATE only
+pip install 'embpy[stack]'   # STACK only
+# or with pixi:
+pixi install -e state
+pixi install -e stack
+```
+
+Both backbones lazy-import their upstream package inside
+`provider._load()`, so `embpy.world_model` is fully importable on a
+machine without `arc-state` / `arc-stack`. A missing dependency only
+errors at the moment the user actually selects that backbone.
+
+### YAML blocks
+
+Local (default; equivalent to the pre-Phase-5 behavior):
+
+```yaml
+state_backbone:
+  kind: "local"
+  freeze: true
+```
+
+STATE:
+
+```yaml
+state_backbone:
+  kind: "state"
+  state_checkpoint: "data/checkpoints/SE-600M/se600m_epoch15.ckpt"
+  state_model_folder: "data/checkpoints/SE-600M"
+  state_protein_embeddings: null  # auto-detect from model_folder
+  state_config: null
+  device: "auto"
+  freeze: true
+  batch_size: 64
+  cache_dir: "outputs/_cache/state_backbone"
+  require_cache_hit: false
+```
+
+STACK:
+
+```yaml
+state_backbone:
+  kind: "stack"
+  stack_checkpoint: "data/checkpoints/stack/stack.ckpt"
+  stack_genelist: "data/checkpoints/stack/hvg_genes.pkl"
+  stack_gene_name_col: null  # auto-detect
+  device: "auto"
+  freeze: true
+  batch_size: 32
+  cache_dir: "outputs/_cache/state_backbone"
+  require_cache_hit: false
+```
+
+Ready-to-run experiment configs are at
+`configs/experiments/single_replogle_state.yaml` and
+`configs/experiments/single_replogle_stack.yaml`.
+
+### Smoke command
+
+Always smoke-test the encode step before launching training. The CLI
+runs the same code path the dataloader uses, so a green smoke run
+means training will at least get past the foundation forward.
+
+```bash
+python -m embpy.world_model.scripts.encode_cells \
+  --kind state \
+  --adata data/datasets/replogle/replogle_2022_k562_essential.h5ad \
+  --state-checkpoint data/checkpoints/SE-600M/se600m_epoch15.ckpt \
+  --state-model-folder data/checkpoints/SE-600M \
+  --output outputs/_cache/state_backbone/state/<hash>/<ds>.npz
+```
+
+The script prints `embedding_dim`, `n_cells`, wall-clock seconds, and
+peak GPU memory in MB. A typical SE-600M forward on a 200k-cell
+Replogle subset is ~1 GB peak GPU and a few minutes wall on an A100.
+
+### How to fine-tune later
+
+Once you want to stop freezing the backbone, flip a single switch and
+point at the same checkpoint:
+
+```yaml
+state_backbone:
+  kind: "state"
+  state_checkpoint: "data/checkpoints/SE-600M/se600m_epoch15.ckpt"
+  state_model_folder: "data/checkpoints/SE-600M"
+  freeze: false        # <- end-to-end fine-tune
+```
+
+Expect a longer run (the backbone is the parameter-count dominant
+component) and a larger GPU footprint. Confirm the change took effect
+by grepping the trainer log for the optimizer-param-groups line:
+
+```text
+Trainer optimizer param groups: total=602M -- head=4K dynamics=12M ... backbone_trainable=600M other=0
+```
+
+If `backbone_trainable` is still `0`, the YAML override didn't land
+(check that `state_backbone.freeze: false` is at the top level, not
+nested under `data:`).
+
+### Failure runbook
+
+| Symptom                                                                                          | Fix                                                                                                                                                                                                          |
+|--------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ImportError: arc-state` (or `arc-stack`)                                                        | `pip install 'embpy[state]'` (or `[stack]`). The provider only fails at first encode, not at import time.                                                                                                    |
+| `FileNotFoundError: protein_embeddings.pt`                                                       | Set `state_protein_embeddings` explicitly, or drop the file into `state_model_folder/protein_embeddings.pt`. STATE's decoder is gene-parametric; without these embeddings only the encode path works.        |
+| `KeyError` on a gene symbol during STACK encode                                                  | The dataset's `adata.var` does not overlap STACK's training gene list. Try `stack_gene_name_col: gene_symbol` (or `feature_name`) explicitly; auto-detect uses the first column with a non-trivial overlap.   |
+| OOM during STATE / STACK encode                                                                  | Lower `state_backbone.batch_size`. The cache is persisted incrementally only at the end of a successful encode -- if you OOM you re-encode from scratch.                                                      |
+| `require_cache_hit=True` but cache miss                                                          | A cluster eval-only job hit a checkpoint or AnnData it has not seen. Run `encode_cells.py` once on the head node, then re-launch the job -- the cluster job will then pick up the warm cache.                 |
+| `Row mismatch` from `_maybe_pre_encode_with_backbone`                                            | The dataset's `cell_type_filter` does not match the AnnData. Either set `data.cell_type_filter` to the same value used at dataset construction, or strip the filter and let both code paths see all cells.    |
+
+### Inspect the cache
+
+```bash
+python -m embpy.world_model.models.encoders.backbones.cache \
+  --inspect outputs/_cache/state_backbone
+```
+
+Prints one row per cached NPZ: `BACKBONE  N_CELLS  DIM  SIZE_MB  PATH`,
+plus a total at the bottom.
+
+### Citations
+
+* STATE (Arc Institute) -- repository: <https://github.com/ArcInstitute/state>
+* STACK (Arc Institute) -- repository: <https://github.com/ArcInstitute/stack>
+
+---
+
+## Debug checklist (Phase 5)
+
+One-liners that cover the most common things to verify:
+
+```bash
+# 1. Confirm local backbone is bit-equivalent to the legacy path.
+pixi run -e gpu pytest src/embpy/world_model/tests/test_local_backbone_parity.py -k local_backbone_parity -v
+
+# 2. Encode a tiny AnnData with the STATE backbone (real weights).
+python -m embpy.world_model.scripts.encode_cells \
+  --kind state \
+  --adata data/datasets/replogle/tiny.h5ad \
+  --state-checkpoint data/checkpoints/SE-600M/se600m_epoch15.ckpt \
+  --state-model-folder data/checkpoints/SE-600M \
+  --output /tmp/se_tiny.npz
+
+# 3. List what's currently cached and how big it is on disk.
+python -m embpy.world_model.models.encoders.backbones.cache \
+  --inspect outputs/_cache/state_backbone
+
+# 4. Verify a frozen STATE backbone leaves no parameter trainable.
+python -c "
+from embpy.world_model.configs import StateBackboneConfig
+from embpy.world_model.models.encoders.backbones import build_backbone
+cfg = StateBackboneConfig(kind='state', state_checkpoint='data/checkpoints/SE-600M/se600m_epoch15.ckpt', state_model_folder='data/checkpoints/SE-600M', freeze=True)
+p = build_backbone(cfg)
+p._load()
+assert all(not q.requires_grad for q in p.parameters()), 'freeze leak!'
+print('OK: all', sum(1 for _ in p.parameters()), 'param tensors are frozen.')
+"
+
+# 5. Switch a run from local -> state -> stack and back without retraining:
+#    only the dataloader re-encodes (or hits the cache) and only the
+#    evaluator re-runs. The trained dynamics + decoder stay the same.
+python -m embpy.world_model.scripts.train \
+  --config src/embpy/world_model/configs/experiments/single_replogle.yaml \
+  state_backbone.kind=local       # -> outputs/.../local
+python -m embpy.world_model.scripts.train \
+  --config src/embpy/world_model/configs/experiments/single_replogle_state.yaml
+python -m embpy.world_model.scripts.train \
+  --config src/embpy/world_model/configs/experiments/single_replogle_stack.yaml
+```
