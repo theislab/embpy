@@ -1,0 +1,67 @@
+# Per-package pyproject.toml template for src/embpy/.
+# NOT applied to the real tree in this PR.
+#
+# Carries every dep from the current root manifest that the world model
+# does NOT need at runtime. Modality extras live here.
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[project]
+name = "embpy"
+version = "0.0.1"
+description = "Biological-modality embeddings for the perturbation experimental space"
+readme = "README.md"
+license = { file = "../../LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+  "anndata",
+  "biopython",
+  "broad-babel>=0.1",
+  "cirpy",
+  "huggingface-hub>=0.35,<1.0.0",
+  "ipywidgets",
+  "matplotlib",
+  "numpy>=1.26,<3",
+  "pysam>=0.22",
+  "pandas>=2.2",
+  "pyarrow>=14.0.2",
+  "pyensembl>=2.3.13",
+  "rdkit",
+  "requests",
+  "scikit-learn>=1.3",
+  "scipy>=1.11",
+  "seaborn",
+  "sentencepiece>=0.1.99",
+  "protobuf>=3.20",
+  "session-info",
+  "torch-geometric>=2.5",
+  "transformers>=4.45.0,<5.0.0",
+]
+
+# Modality extras moved from the root manifest.
+[project.optional-dependencies]
+torch       = ["torch>=2.5.1"]
+torch-cpu   = ["torch>=2.5.1"]
+torch-cu121 = ["torch>=2.5.1"]
+torch-cu124 = ["torch>=2.5.1"]
+torch-cu128 = ["torch>=2.5.1"]
+torch-cu130 = ["torch>=2.5.1"]
+esm3        = ["esm>=3.2.0"]
+seqmodels   = ["borzoi-pytorch>=0.4.3", "enformer-pytorch>=0.8.10"]
+minimol     = ["minimol"]
+evo         = ["evo-model>=0.3"]
+evo2        = ["evo2"]
+caduceus    = ["mamba-ssm>=2.0"]
+ntv3        = ["transformers>=5.0.0"]
+boltz       = ["boltz>=2.0"]
+ppi         = ["h5py"]
+helical     = ["helical"]
+lamindb     = ["lamindb"]
+pertpy      = ["pertpy"]
+scanpy      = ["scanpy>=1.10"]
+morphology  = ["pillow>=10", "jump-portrait>=0.0.7"]
+
+[tool.hatch.metadata]
+allow-direct-references = true

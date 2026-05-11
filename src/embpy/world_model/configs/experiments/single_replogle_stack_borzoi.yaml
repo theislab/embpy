@@ -1,0 +1,130 @@
+# Replogle (K562 essential), 80 / 20 perturbation-held-out split.
+#   - State encoder : frozen Arc STACK (foundation backbone, cached on disk)
+#   - Action encoder: frozen Borzoi via BioEmbedder + trainable action adapter
+#
+# Before submitting:
+#   1. Install the foreign backbone extra:
+#        pip install 'embpy[stack]'    # or: pixi install -e arc-gpu
+#   2. Download a STACK checkpoint + gene list from
+#        https://github.com/ArcInstitute/stack
+#      and drop them at the paths below (or override on the CLI).
+#   3. Pre-warm the two caches on the head node (avoids wasting GPU time):
+#        # state-side cell embeddings (STACK)
+#        pixi run -e gpu python -m embpy.world_model.scripts.encode_cells \
+#          --kind stack \
+#          --adata data/datasets/replogle/replogle_2022_k562_essential.h5ad \
+#          --stack-checkpoint data/checkpoints/stack/stack.ckpt \
+#          --stack-genelist   data/checkpoints/stack/hvg_genes.pkl \
+#          --output outputs/_cache/state_backbone/stack/replogle_k562.npz
+#
+#        # action-side gene embeddings (Borzoi)
+#        pixi run -e gpu python -m embpy.world_model.scripts.embed_perturbations \
+#          --dataset replogle \
+#          --h5ad data/datasets/replogle/replogle_2022_k562_essential.h5ad \
+#          --model borzoi_v0
+#
+#   4. Submit (single-Replogle SLURM launcher, with this config as the arg):
+#        sbatch src/embpy/world_model/scripts/slurm/train_single_replogle.sbatch \
+#               src/embpy/world_model/configs/experiments/single_replogle_stack_borzoi.yaml
+
+run_name: "single_replogle_stack_borzoi"
+output_dir: "outputs/world_model/single_replogle_stack_borzoi"
+seed: 0
+mode: "single"
+
+data:
+  dataset: "replogle"
+  h5ad_path: "data/datasets/replogle/replogle_2022_k562_essential.h5ad"
+  gene_embedding_path: ""           # unused: action_embedding.source = bio_embedder
+  perturbation_key: "perturbation"
+  control_label: "non-targeting"
+  cell_type_key: "cell_type"
+  n_top_genes: 5000
+  log_normalize: true
+  stack_size: 4
+  sequence_length: 8
+  n_pert: 2
+  batch_size: 64
+  val_fraction: 0.1
+  num_workers: 4
+  pin_memory: true
+
+# Action: frozen Borzoi (DNA foundation model) + trainable adapter.
+# Cached by (model_name, organism, id_type, region, pooling) under cache_dir.
+action_embedding:
+  source: "bio_embedder"
+  model_name: "borzoi_v0"
+  organism: "human"
+  id_type: "symbol"
+  region: "full"
+  pooling_strategy: "mean"
+  resolver_backend: "api"
+  device: "auto"
+  cache_dir: "outputs/_cache/action_embeddings"
+
+# State: frozen Arc STACK foundation backbone. Cell embeddings are
+# pre-computed once on the head node and replayed from disk during training.
+state_backbone:
+  kind: "stack"
+  stack_checkpoint: "data/checkpoints/stack/stack.ckpt"
+  stack_genelist: "data/checkpoints/stack/hvg_genes.pkl"
+  stack_gene_name_col: null         # auto-detect from adata.var
+  device: "auto"
+  freeze: true
+  batch_size: 32
+  cache_dir: "outputs/_cache/state_backbone"
+  require_cache_hit: false
+
+# 80 / 20 split, held out by PERTURBATION (test perturbations never seen).
+# Persisted to outputs/<run_id>/splits/replogle.npz on first run and
+# reused by baselines + eval so the comparison is byte-identical.
+split:
+  split_by: "perturbation"
+  train_fraction: 0.8
+  seed: 0
+
+encoder:
+  kind: "transformer"
+  d_model: 256
+  n_layers: 2
+  n_heads: 4
+  dropout: 0.1
+
+dynamics:
+  kind: "gpt"
+  d_model: 256
+  n_layers: 6
+  n_heads: 8
+  dropout: 0.1
+  max_sequence_length: 64
+  use_action_token: true
+
+loss:
+  latent_mse: 1.0
+  decoder_mse: 0.5
+  info_nce: 0.1
+  info_nce_temperature: 0.1
+
+optim:
+  lr: 3.0e-4
+  weight_decay: 1.0e-2
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  scheduler: "cosine"
+  warmup_steps: 1000
+
+train:
+  n_epochs: 50
+  log_every_n_steps: 50
+  eval_every_n_epochs: 1
+  save_every_n_epochs: 5
+  device: "auto"
+  amp: true
+  enable_tensorboard: true
+  enable_csv_log: true
+
+eval:
+  n_control_samples_per_pert: 32
+  use_cell_eval: true
+  deg_top_k: 50
+  save_predictions: true

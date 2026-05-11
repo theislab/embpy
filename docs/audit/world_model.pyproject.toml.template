@@ -1,0 +1,35 @@
+# Per-package pyproject.toml template for src/world_model/.
+# NOT applied to the real tree in this PR.
+#
+# world_model depends on embpy and adds the experiment-specific extras
+# (state, stack, umap, eval). It does NOT carry any modality-wrapper
+# dep; those stay on embpy.
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[project]
+name = "world_model"
+version = "0.0.1"
+description = "Perturbation world model on top of embpy"
+readme = "README.md"
+license = { file = "../../LICENSE" }
+requires-python = ">=3.11"
+dependencies = [
+  "embpy",
+  "numpy>=1.26,<3",
+  "torch>=2.5.1",
+  "anndata",
+  "pandas>=2.2",
+  "pyyaml",
+]
+
+[project.optional-dependencies]
+state    = ["arc-state>=0.10"]
+stack    = ["arc-stack>=0.1.3", "scvi-tools>=1.2"]
+umap     = ["umap-learn>=0.5"]
+eval     = ["matplotlib>=3.7"]
+
+[tool.hatch.metadata]
+allow-direct-references = true

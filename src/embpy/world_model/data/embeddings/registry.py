@@ -10,6 +10,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from embpy.resources.gene.control import ControlPolicy
+
 from .bio_embedder import BioEmbedderProvider
 from .precomputed import PrecomputedProvider
 from .provider import ActionEmbeddingProvider
@@ -18,6 +20,23 @@ if TYPE_CHECKING:
     from ...configs import ActionEmbeddingConfig, DataConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _policy_from_cfg(cfg: "ActionEmbeddingConfig") -> ControlPolicy:
+    """Build a :class:`ControlPolicy` from the YAML knobs.
+
+    All three knobs are optional; defaults are the curated regex set.
+    Patterns and extras live under the ``action_embedding`` block so a
+    dataset can override them per-config without touching code.
+    """
+    extras = tuple(getattr(cfg, "control_extra_labels", ()) or ())
+    patterns_override = getattr(cfg, "control_patterns", None)
+    strict = bool(getattr(cfg, "control_strict", False))
+    if patterns_override is None or len(patterns_override) == 0:
+        return ControlPolicy.from_iterable(extras, strict=strict)
+    return ControlPolicy.from_iterable(
+        extras, patterns=tuple(patterns_override), strict=strict,
+    )
 
 
 def build_provider(
@@ -49,7 +68,13 @@ def build_provider(
                 "Precomputed action embeddings require either "
                 "action_embedding.path or data.gene_embedding_path to be set."
             )
-        return PrecomputedProvider(path=path)
+        return PrecomputedProvider(
+            path=path,
+            control_policy=_policy_from_cfg(cfg),
+            control_sentinel_seed=int(
+                getattr(cfg, "control_sentinel_seed", 0) or 0
+            ),
+        )
 
     if src == "bio_embedder":
         return BioEmbedderProvider(
@@ -64,6 +89,10 @@ def build_provider(
             device=cfg.device,
             cache_dir=cfg.cache_dir or None,
             extra_kwargs=dict(cfg.extra_kwargs or {}),
+            control_policy=_policy_from_cfg(cfg),
+            control_sentinel_seed=int(
+                getattr(cfg, "control_sentinel_seed", 0) or 0
+            ),
         )
 
     raise ValueError(

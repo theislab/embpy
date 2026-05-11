@@ -249,6 +249,31 @@ class ActionEmbeddingConfig:
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
     """Forwarded to :meth:`BioEmbedder.embed_genes_batch` (e.g. ``biotype``)."""
 
+    fail_on_unresolved: bool = False
+    """If True, raise after the run summary when any RESOLVED row is in
+    fact UNRESOLVED. Useful for cluster jobs that must never silently
+    zero-fill. Off by default to keep notebook / exploration loops
+    forgiving."""
+
+    control_extra_labels: list[str] = field(default_factory=list)
+    """Extra dataset-specific labels to treat as control regardless of
+    the default regexes. Useful when a study uses a sentinel like
+    ``"GFP_only"`` for non-targeting guides."""
+
+    control_patterns: list[str] = field(default_factory=list)
+    """If non-empty, overrides the default control regex set. Use to
+    tighten or replace the curated default patterns in
+    :data:`embpy.resources.gene.control.DEFAULT_CONTROL_PATTERNS`."""
+
+    control_strict: bool = False
+    """If True, raise on labels that mix control + gene components."""
+
+    control_sentinel_seed: int = 0
+    """Seed for the deterministic CONTROL sentinel vector. Override only
+    if you need orthogonal control tokens across datasets in the same
+    run; the default is fixed so cache files compare cleanly across
+    machines."""
+
 
 @dataclass
 class ActionAdapterConfig:

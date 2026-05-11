@@ -648,6 +648,51 @@ class GeneResolver:
             logging.error(f"Unexpected error constructing gene description: {e}")
             return None
 
+    def resolve_symbol(
+        self,
+        symbol: str,
+        *,
+        organism: str = "human",
+        use_cache: bool = True,
+    ) -> str | None:
+        """Resolve ``symbol`` to its current approved HGNC name.
+
+        Implements the four-step chain from
+        :mod:`embpy.resources.gene._alias_resolver`:
+
+        1. pyensembl local lookup
+        2. HGNC ``fetch/symbol`` (with ``search/alias_symbol`` fallback)
+        3. Ensembl REST retry with the approved symbol from step 2
+        4. MyGene.info
+
+        Positive and negative results are persisted to
+        ``~/.cache/embpy/symbol_resolution.json`` so subsequent runs
+        skip the network entirely. Pass ``use_cache=False`` to bypass
+        the cache (forces a fresh resolution; still WRITES the cache).
+
+        Returns the approved symbol or ``None`` if every step failed.
+        See :class:`embpy.resources.gene._alias_resolver.Resolution` for
+        the structured result with full per-step chain log.
+        """
+        from ._alias_resolver import (  # noqa: PLC0415
+            AliasCache,
+            default_cache_path,
+            resolve_symbol_chain,
+        )
+
+        if not hasattr(self, "_alias_cache") or self._alias_cache is None:
+            self._alias_cache = AliasCache(path=default_cache_path())
+        cache = self._alias_cache if use_cache else AliasCache(
+            path=default_cache_path(),
+        )
+        res = resolve_symbol_chain(
+            symbol,
+            organism=organism,
+            ensembl=self.ensembl,
+            cache=cache,
+        )
+        return res.approved_symbol
+
     def symbol_to_ensembl(
         self,
         symbol: str,
@@ -656,7 +701,9 @@ class GeneResolver:
         """
         Resolve a gene symbol to an Ensembl *gene* ID (e.g., 'TP53' -> 'ENSG00000141510').
 
-        Tries pyensembl -> MyGene.info -> Ensembl REST API.
+        Tries pyensembl -> MyGene.info -> Ensembl REST API. For alias
+        handling (``AARS`` -> ``AARS1`` etc.), prefer :meth:`resolve_symbol`
+        which adds HGNC as the second step and caches the result on disk.
         """
         sym = symbol.strip()
         # 1) pyensembl (offline once cached)

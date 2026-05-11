@@ -125,6 +125,13 @@ def build_dataloaders(
         rng=rng,
     )
 
+    # Capture per-row statuses for downstream metadata. ``provider`` is
+    # used by ``cls.from_h5ad`` to call :meth:`build_table` which now
+    # delegates to :meth:`embed_with_status`; the resolved bookkeeping
+    # is stored on the provider as ``_last_*`` attributes.
+    n_unresolved_attr = getattr(provider, "_last_unresolved", []) or []
+    n_control_attr = getattr(provider, "_last_controls", []) or []
+
     state_backbone, state_embedding_dim = _maybe_pre_encode_with_backbone(
         full_dataset=full_dataset,
         h5ad_path=cfg.h5ad_path,
@@ -148,8 +155,29 @@ def build_dataloaders(
         meta_path.parent.mkdir(parents=True, exist_ok=True)
         meta_path.write_text(json.dumps(asdict(meta), indent=2, default=str))
         logger.info(
-            "Action embedding meta -> %s (source=%s, dim=%d, unresolved=%d/%d)",
-            meta_path, meta.source, meta.embedding_dim, meta.n_unresolved, meta.n_symbols,
+            "Action embedding meta -> %s (source=%s, dim=%d, "
+            "resolved=%d, control=%d, unresolved=%d/%d)",
+            meta_path, meta.source, meta.embedding_dim,
+            meta.n_resolved, meta.n_control, meta.n_unresolved, meta.n_symbols,
+        )
+
+    if getattr(action_cfg, "fail_on_unresolved", False) and len(n_unresolved_attr) > 0:
+        preview = list(n_unresolved_attr)[:10]
+        raise RuntimeError(
+            f"action_embedding.fail_on_unresolved=True and the provider "
+            f"could not embed {len(n_unresolved_attr)} of the requested "
+            f"symbols (first 10: {preview}). Either fix the alias drift "
+            f"upstream of BioEmbedder (e.g. via "
+            f"GeneResolver.resolve_symbol) or set "
+            f"action_embedding.fail_on_unresolved=False to permit zero "
+            f"rows for the unresolved genes."
+        )
+    if n_control_attr:
+        logger.info(
+            "Action embedding: %d CONTROL rows mapped to deterministic "
+            "sentinel vector (seed=%s).",
+            len(n_control_attr),
+            getattr(action_cfg, "control_sentinel_seed", 0),
         )
 
     cache_path: Path | None = None
