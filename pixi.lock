@@ -441,6 +441,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/40/37/558f5a90c0672fc9b4402dc25d87ac5b7406616e8969430c9ca4e52ee74d/xxhash-3.7.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/66/3e/868e5c3364b6cee19ff3e1a122194fa4ce51def02c61023970442162859e/yarl-1.23.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: ./
+      - pypi: ./src/world_model
   arc-gpu:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -912,6 +913,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/40/37/558f5a90c0672fc9b4402dc25d87ac5b7406616e8969430c9ca4e52ee74d/xxhash-3.7.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/66/3e/868e5c3364b6cee19ff3e1a122194fa4ce51def02c61023970442162859e/yarl-1.23.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: ./
+      - pypi: ./src/world_model
   boltz:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -1345,6 +1347,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/11/4f/426f91b96701ec2f37bb2b8cec664eff4f658a11f3fa9d94f0a887ea6d2b/xxhash-3.6.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/66/3e/868e5c3364b6cee19ff3e1a122194fa4ce51def02c61023970442162859e/yarl-1.23.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: ./
+      - pypi: ./src/world_model
   default:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -1771,6 +1774,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/15/e7/1103633032545cf3409f89ed2755812f5b3a552ba665f7e39a7e8dfc2b08/vector_quantize_pytorch-1.28.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/f1/24/fd16ba9e9be877a2194f05462ae77dcb62c8f90c4ecc186d9ee71e9bdc9f/zstd-1.5.7.3-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl
       - pypi: ./
+      - pypi: ./src/world_model
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/_openmp_mutex-4.5-7_kmp_llvm.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_2.conda
@@ -2179,6 +2183,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/15/e7/1103633032545cf3409f89ed2755812f5b3a552ba665f7e39a7e8dfc2b08/vector_quantize_pytorch-1.28.2-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/14/8d/0a1e49844ed82c7ab0f66dce5e0dd822742fc7e9d04f147032db33740840/zstd-1.5.7.3-cp313-cp313-macosx_11_0_arm64.whl
       - pypi: ./
+      - pypi: ./src/world_model
   dev:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -2663,6 +2668,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/27/8d/edd0bd910ff803c308ee9a6b7778621af0d10252219ad9f19ef4d4982a61/virtualenv-21.2.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/f1/24/fd16ba9e9be877a2194f05462ae77dcb62c8f90c4ecc186d9ee71e9bdc9f/zstd-1.5.7.3-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl
       - pypi: ./
+      - pypi: ./src/world_model
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/_openmp_mutex-4.5-7_kmp_llvm.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_2.conda
@@ -3126,6 +3132,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/27/8d/edd0bd910ff803c308ee9a6b7778621af0d10252219ad9f19ef4d4982a61/virtualenv-21.2.4-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/14/8d/0a1e49844ed82c7ab0f66dce5e0dd822742fc7e9d04f147032db33740840/zstd-1.5.7.3-cp313-cp313-macosx_11_0_arm64.whl
       - pypi: ./
+      - pypi: ./src/world_model
   docs:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -3516,6 +3523,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/1e/d3/4dffd7300500465e0b4a2ae917dcb2ce771de0b9a772670365799a27c024/torch_geometric-2.7.0-py3-none-any.whl
       - pypi: ./
+      - pypi: ./src/world_model
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/_openmp_mutex-4.5-7_kmp_llvm.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_2.conda
@@ -3886,6 +3894,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/99/55/db07de81b5c630da5cbf5c7df646580ca26dfaefa593667fc6f2fe016d2e/tabulate-0.10.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/1e/d3/4dffd7300500465e0b4a2ae917dcb2ce771de0b9a772670365799a27c024/torch_geometric-2.7.0-py3-none-any.whl
       - pypi: ./
+      - pypi: ./src/world_model
   evo2:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -4358,6 +4367,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/dc/83/6d810a8a9ebc9c307989b418840c20e46907c74d707beb67ab566773e6fc/xarray-2026.4.0-py3-none-any.whl
       - pypi: https://files.pythonhosted.org/packages/19/d4/225027a913621a879b429a043674aa35220e6ce67785acad4f7bd0c4ff33/xarray_einstats-0.10.0-py3-none-any.whl
       - pypi: ./
+      - pypi: ./src/world_model
   gpu:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -4918,6 +4928,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/53/60/7be26e610767316c028a2cbedb9a3beabdbe33e2182c373f71a1c0b88f36/zstandard-0.25.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/11/c4/db4807d6a68b4628c74fd379de7e3c67ec34f19a2a80ac246b3837cde6cb/zstd-1.5.7.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl
       - pypi: ./
+      - pypi: ./src/world_model
   helical-cpu:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -5360,6 +5371,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/11/4f/426f91b96701ec2f37bb2b8cec664eff4f658a11f3fa9d94f0a887ea6d2b/xxhash-3.6.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/66/3e/868e5c3364b6cee19ff3e1a122194fa4ce51def02c61023970442162859e/yarl-1.23.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: ./
+      - pypi: ./src/world_model
   helical-gpu:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -5832,6 +5844,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/11/4f/426f91b96701ec2f37bb2b8cec664eff4f658a11f3fa9d94f0a887ea6d2b/xxhash-3.6.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/66/3e/868e5c3364b6cee19ff3e1a122194fa4ce51def02c61023970442162859e/yarl-1.23.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: ./
+      - pypi: ./src/world_model
   minimol:
     channels:
     - url: https://conda.anaconda.org/conda-forge/
@@ -6273,6 +6286,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/5e/1e/3c3d3ef071b051cc3abbe3721ffb8365033a172613c04af2da89d5548a87/xxhash-3.6.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: https://files.pythonhosted.org/packages/66/fe/b1e10b08d287f518994f1e2ff9b6d26f0adeecd8dd7d533b01bab29a3eda/yarl-1.23.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl
       - pypi: ./
+      - pypi: ./src/world_model
       osx-arm64:
       - conda: https://conda.anaconda.org/conda-forge/osx-arm64/_openmp_mutex-4.5-7_kmp_llvm.conda
       - conda: https://conda.anaconda.org/conda-forge/noarch/_python_abi3_support-1.0-hd8ed1ab_2.conda
@@ -6694,6 +6708,7 @@ environments:
       - pypi: https://files.pythonhosted.org/packages/31/a8/3fbce1cd96534a95e35d5120637bf29b0d7f5d8fa2f6374e31b4156dd419/xxhash-3.6.0-cp313-cp313-macosx_11_0_arm64.whl
       - pypi: https://files.pythonhosted.org/packages/ae/50/06d511cc4b8e0360d3c94af051a768e84b755c5eb031b12adaaab6dec6e5/yarl-1.23.0-cp313-cp313-macosx_11_0_arm64.whl
       - pypi: ./
+      - pypi: ./src/world_model
 packages:
 - conda: https://conda.anaconda.org/conda-forge/linux-64/_openmp_mutex-4.5-7_kmp_llvm.conda
   build_number: 7
@@ -10671,7 +10686,7 @@ packages:
 - pypi: ./
   name: embpy
   version: 0.0.1
-  sha256: cb21c930d51aa5fef7a25e47d8415ab02ba227b01239cd9c3db3ad4c7541e6f5
+  sha256: 93ce8404abf304437024aa86cee64db70d3dba1f2ca8eb1bd5c24072a8e6cd83
   requires_dist:
   - anndata
   - biopython
@@ -27282,6 +27297,29 @@ packages:
   - pkg:pypi/widgetsnbextension?source=hash-mapping
   size: 889195
   timestamp: 1762040404362
+- pypi: ./src/world_model
+  name: world-model
+  version: 0.0.1
+  sha256: c4e3103f96b3084b34a484efcf6db0a22058c0cbd4b2c8b2741b8918f2381627
+  requires_dist:
+  - numpy>=1.26,<3
+  - pandas>=2.2
+  - pyyaml>=6.0
+  - scipy>=1.11
+  - scikit-learn>=1.3
+  - anndata
+  - matplotlib
+  - seaborn
+  - tqdm
+  - arc-state>=0.10 ; extra == 'state'
+  - arc-stack>=0.1.3 ; extra == 'stack'
+  - scvi-tools>=1.2 ; extra == 'stack'
+  - borzoi-pytorch>=0.4.3 ; extra == 'seqmodels'
+  - enformer-pytorch>=0.8.10 ; extra == 'seqmodels'
+  - pytest ; extra == 'test'
+  - pytest-mock ; extra == 'test'
+  - coverage ; extra == 'test'
+  requires_python: '>=3.11'
 - conda: https://conda.anaconda.org/conda-forge/linux-64/wrapt-1.17.3-py312h4c3975b_1.conda
   sha256: 8320d5af37eb8933e5d129884ea013b2687e75b08aff5216193df3378eaea92f
   md5: 8af3faf88325836e46c6cb79828e058c

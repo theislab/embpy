@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning][].
 
 - Two top-level Python packages under `src/`: **`embpy`** (infrastructure -- embeddings, resolvers, annotations, plotting, analysis, foundation-model wrappers) and **`world_model`** (perturbation modelling, built on top of `embpy`). The boundary is one-way: `world_model` depends on `embpy`, never the reverse. Enforced by `tests/embpy/test_boundary.py`. See `docs/audit/package_split.md` for the migration record and the fallback build-system trade-off.
 - `world_model[state]`, `world_model[stack]`, `world_model[seqmodels]` optional dependency extras (modality-specific extras stay on `embpy`).
-- Pixi env `gpu+state+stack` wiring the previously-unused `[feature.state]` + `[feature.stack]`; `embpy-shell` and `wm-shell` pixi tasks.
+- Pixi env `gpu-state-stack` wiring the previously-unused `[feature.state]` + `[feature.stack]`; `embpy-shell` and `wm-shell` pixi tasks.
+  (Renamed from the original `gpu+state+stack` because pixi rejects `+` in environment names.)
 - `tests/embpy/test_boundary.py` -- guards `import embpy` against accidentally pulling in `world_model`, and (after the shim was removed) asserts that `embpy.world_model` no longer exists as an attribute or as an importable module.
 - `tests/world_model/test_post_split_smoke.py` (gated by `--run-smoke-regression`) -- byte-equivalent CSV / JSON comparison plus pixel-equal PNG comparison against `tests/_snapshots/pre_split/` from commit `f1b51cb`.
 - `embpy.resources.gene.control.ControlPolicy`, `world_model.data.embeddings.sentinel.EmbeddingStatus`, and the `embed_with_status` API on `ActionEmbeddingProvider` (Part A). See `docs/audit/embpy_audit.md`.

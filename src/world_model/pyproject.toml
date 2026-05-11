@@ -1,13 +1,18 @@
 # ---------------------------------------------------------------------------
 # world_model -- perturbation world model on top of embpy.
 #
-# Layout note: the package directory IS this directory (src/world_model/),
-# so hatchling needs to be told that the on-disk contents map to the
-# `world_model` import name. The `tool.hatch.build.targets.wheel.sources`
-# block does exactly that: every path in this directory is prefixed with
-# `world_model/` in the built wheel, so `__init__.py` is installed as
-# `world_model/__init__.py`. This is the workspace fallback path
-# documented in docs/audit/package_split.md.
+# Layout: standard src-layout. This pyproject.toml lives at
+# `src/world_model/pyproject.toml`; the importable package sits next to
+# it at `src/world_model/world_model/`. Hatchling picks it up via
+# `packages = ["world_model"]` below -- no path rewrites, which means
+# editable installs (`pip install -e src/world_model` or pixi's
+# `editable = true` on this path) work out of the box. The previous
+# layout overloaded `src/world_model/` to serve as both the pyproject
+# root and the package directory, which required a
+# `[tool.hatch.build.targets.wheel.sources] "" = "world_model"` prefix-
+# add rewrite; hatchling's PEP 660 editables backend rejects prefix-add
+# rewrites and refused to install the package in editable mode. The
+# directory restructure is recorded in docs/audit/package_split.md.
 # ---------------------------------------------------------------------------
 [build-system]
 requires = ["hatchling"]
@@ -29,8 +34,22 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
 ]
+# NOTE: `embpy` is intentionally absent from this list even though
+# world_model imports it at runtime. Inside the pixi workspace, pixi
+# installs the workspace-root project (= embpy) and world_model
+# (this package) side-by-side as editable installs into every env, so
+# the runtime import always resolves. Declaring `embpy` here additionally
+# tripped uv's workspace resolver -- the workspace=true source spec
+# clashes with pixi's path-based editable install of the same workspace
+# root, producing either:
+#   * "embpy is included as a workspace member, but is missing an entry
+#     in tool.uv.sources" (when no source is set),
+#   * "Requirements contain conflicting URLs for package `embpy`"
+#     (with both a workspace=true source and pixi's editable install).
+# Out-of-workspace users who want to `pip install world_model` from
+# source must also `pip install -e <embpy_path>` beforehand; this is
+# documented in src/world_model/README.md.
 dependencies = [
-  "embpy",
   "numpy>=1.26,<3",
   "pandas>=2.2",
   "pyyaml>=6.0",
@@ -65,28 +84,13 @@ optional-dependencies.test = [
 urls.Source = "https://github.com/grpinto/embpy"
 
 [tool.hatch.build.targets.wheel]
-# Files relative to this directory that go into the wheel. Anything not
-# listed here is excluded (so .pyc, __pycache__, sbatch logs etc. stay
-# out of the published artefact).
-include = [
-  "__init__.py",
-  "README.md",
-  "configs/**/*.py",
-  "configs/**/*.yaml",
-  "configs/**/*.yml",
-  "data/**/*.py",
-  "evaluation/**/*.py",
-  "models/**/*.py",
-  "training/**/*.py",
-  "utils/**/*.py",
-  "scripts/**/*.py",
-  "scripts/**/*.sbatch",
-  "scripts/**/*.sh",
-  "assets/**/*.png",
-]
-# Remap on-disk paths to wheel paths: everything here becomes world_model/...
-[tool.hatch.build.targets.wheel.sources]
-"" = "world_model"
+# Standard hatchling auto-detection: pick up the `world_model` package
+# directory next to this pyproject and ship everything inside it as the
+# wheel layout (Python and non-Python files alike -- configs/*.yaml,
+# scripts/*.sbatch, assets/*.png, etc. all come along). `__pycache__`,
+# `.pyc` and other VCS-ignored noise are filtered by hatchling's
+# default exclusions.
+packages = ["world_model"]
 
 [tool.pytest.ini_options]
 # Resolved relative to this pyproject.toml when invoked as

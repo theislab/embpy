@@ -41,7 +41,7 @@ Commit 1 -- module move
   > document the trade-off in `docs/audit/package_split.md`.
 * `pixi.toml`: `world_model = { path = "src/world_model", editable = true }`
   alongside `embpy = { path = ".", editable = true }` in
-  `[pypi-dependencies]`; new `gpu+state+stack` env wiring the previously
+  `[pypi-dependencies]`; new `gpu-state-stack` env wiring the previously
   unused `[feature.state]` + `[feature.stack]`; new `embpy-shell` and
   `wm-shell` tasks.
 * Tests split into `tests/embpy/` (28 files + 4 helper subdirs) and

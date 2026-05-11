@@ -37,7 +37,7 @@ Pixi (recommended for GPU / reproducible envs):
 
 ```bash
 pixi install -e gpu                       # GPU env (Linux + CUDA 12.4), both packages editable
-pixi install -e gpu+state+stack           # + Arc STATE + Arc STACK backbones
+pixi install -e gpu-state-stack           # + Arc STATE + Arc STACK backbones
 pixi install -e default                   # CPU env, both packages editable
 pixi run -e gpu embpy-shell               # interactive shell, cwd=src/embpy/
 pixi run -e gpu wm-shell                  # interactive shell, cwd=src/world_model/

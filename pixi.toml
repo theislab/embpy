@@ -82,8 +82,22 @@ tqdm = "*"
 # PyPI-only dependencies (no good conda-forge build available).
 # ---------------------------------------------------------------------------
 [pypi-dependencies]
-# Both packages install in editable mode. embpy is built from the root
-# pyproject.toml; world_model from src/world_model/pyproject.toml.
+# Both packages install editable. Each uses a standard src-layout so
+# hatchling's PEP 660 editables backend can wire them up by removing the
+# `src/<pkg>/` prefix from on-disk paths -- no prefix-add rewrites,
+# which the editables backend rejects.
+#
+#   embpy        -- on-disk: src/embpy/<files>,        import: embpy
+#   world_model  -- on-disk: src/world_model/world_model/<files>,
+#                   import: world_model (with src/world_model/ as the
+#                   pyproject root)
+#
+# world_model's pyproject deliberately does NOT list "embpy" in its
+# `dependencies` (see the comment there) so uv's workspace resolver
+# does not try to resolve `embpy` a second time and clash with the
+# explicit editable install above. Inside this pixi workspace both
+# packages live in every env, so the runtime `import embpy` from
+# world_model code always resolves.
 embpy = { path = ".", editable = true }
 world_model = { path = "src/world_model", editable = true }
 # pure-Python / PyPI-only deps that embpy imports directly:
@@ -455,11 +469,16 @@ ipykernel = "*"
 ipywidgets = "*"
 notebook = "*"
 
-# Docs
+# Docs / Dev: embpy is already installed as the workspace root (see the
+# top-level [pypi-dependencies] block). These per-feature blocks add the
+# corresponding extras on top of that base install. They are scoped to
+# the `docs` / `dev` envs (and any env that explicitly enables those
+# features); the `gpu`, `arc-gpu`, etc. envs do not include either
+# feature so the workspace=true install in src/world_model/pyproject.toml
+# never collides with these path-based entries.
 [feature.docs.pypi-dependencies]
 embpy = { path = ".", editable = true, extras = ["doc"] }
 
-# Dev / tests
 [feature.dev.pypi-dependencies]
 embpy = { path = ".", editable = true, extras = ["dev", "test"] }
 
@@ -502,25 +521,22 @@ arc-gpu = { features = ["arc", "arc-gpu"] }
 arc-cpu = { features = ["arc"] }
 
 # World-model training env with both Arc STATE and STACK backbones
-# wired in. Mirrors world_model[state]+world_model[stack] from
-# src/world_model/pyproject.toml. Use this for Phase-5 (single_replogle_state
-# / single_replogle_stack) experiments where you want both backbones in
-# the same env so encoder-swap ablations don't need re-resolves.
-# Usage: pixi install -e gpu+state+stack && pixi shell -e gpu+state+stack
-"gpu+state+stack" = { features = [
-  "gpu",
-  "state",
-  "stack",
-  "morphology",
-  "jump",
-  "scanpy",
-  "pertpy",
-  "ppi",
-  "lamindb",
-  "esm3",
-  "seqmodels",
-  "jupyter",
-] }
+# in one place. CURRENTLY DISABLED because the [feature.state] /
+# [feature.stack] pins (pytorch >=2.7) conflict with the channels
+# wired into [feature.gpu] (pixi cannot find a pytorch build that
+# satisfies both at once). The workflow used to depend on it for the
+# `single_replogle_stack` experiments lives elsewhere now: pre-warm
+# the STACK cache once in `arc-gpu` (which has no Borzoi/seqmodels
+# but doesn't need it for the encode pass), then train in `gpu`
+# (which has Borzoi/seqmodels but reads STACK cells from the warmed
+# NPZ). Keep this block commented for the historical record; remove
+# entirely once the upstream pytorch pin is reconciled.
+#
+# gpu-state-stack = { features = [
+#   "gpu", "state", "stack",
+#   "morphology", "jump", "scanpy", "pertpy", "ppi", "lamindb",
+#   "esm3", "seqmodels", "jupyter",
+# ] }
 
 # Opt-in env for MiniMol (molecule GNN). Separate because torch-sparse has
 # broken build metadata and the resolve is slow.
