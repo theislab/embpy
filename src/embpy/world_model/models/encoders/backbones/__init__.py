@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from .cache import inspect_cache, load_cached, save_cached
 from .foreign_head import ForeignBackboneHead
-from .local import LocalStackBackbone
+from .local import LocalBackbone, LocalStackBackbone
 from .provider import ProviderMetadata, StateBackboneProvider
 from .registry import build_backbone
 from .stack import StackBackbone
@@ -33,6 +33,7 @@ from .state import StateBackbone
 
 __all__ = [
     "ForeignBackboneHead",
+    "LocalBackbone",
     "LocalStackBackbone",
     "ProviderMetadata",
     "StackBackbone",

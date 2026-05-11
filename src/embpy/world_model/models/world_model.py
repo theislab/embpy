@@ -27,7 +27,7 @@ from .decoders.expression_decoder import ExpressionDecoder
 from .dynamics.gpt_autoregressive import GPTAutoregressiveDynamics
 from .encoders.backbones import (
     ForeignBackboneHead,
-    LocalStackBackbone,
+    LocalBackbone,
     StateBackboneProvider,
     build_backbone,
 )
@@ -404,7 +404,7 @@ def build_world_model(
             dropout=dropout,
         )
         if state_backbone_cfg is not None:
-            backbone = LocalStackBackbone(encoder=encoder)
+            backbone = LocalBackbone(encoder=encoder)
             if state_backbone_cfg.freeze:
                 # The local backbone's encoder participates in the world
                 # model's parameter list. Freezing it here mirrors the

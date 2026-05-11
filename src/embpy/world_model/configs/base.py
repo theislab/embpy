@@ -286,7 +286,7 @@ class StateBackboneConfig:
     Three flavours via ``kind``:
 
     * ``"local"`` -- the existing :class:`StateStackEncoder` wrapped as
-      a :class:`LocalStackBackbone`. Default. Byte-equivalent to the
+      a :class:`LocalBackbone`. Default. Byte-equivalent to the
       pre-Phase-5 path. No extra dependencies.
     * ``"state"`` -- STATE / SE-600M (Arc Institute) via
       :class:`StateEmbeddingWrapper`. Requires the ``arc-state``

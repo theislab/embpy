@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-from .local import LocalStackBackbone
+from .local import LocalBackbone
 from .provider import StateBackboneProvider
 from .stack import StackBackbone
 from .state import StateBackbone
@@ -41,7 +41,7 @@ def build_backbone(
             raise ValueError(
                 "build_backbone(kind='local') requires n_genes, d_model, stack_size."
             )
-        return LocalStackBackbone(
+        return LocalBackbone(
             encoder_kind=encoder_kind,
             n_genes=n_genes,
             d_model=d_model,

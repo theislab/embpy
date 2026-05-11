@@ -31,8 +31,12 @@ from .provider import StateBackboneProvider
 logger = logging.getLogger(__name__)
 
 
-class LocalStackBackbone(StateBackboneProvider):
-    """Provider that *is* the existing state-stack encoder."""
+class LocalBackbone(StateBackboneProvider):
+    """Provider that *is* the existing state-stack encoder.
+
+    Backwards-compatible alias :class:`LocalStackBackbone` is re-exported
+    from this module so old import paths keep working.
+    """
 
     name: str = "local"
     supports_decode: bool = False
@@ -99,7 +103,7 @@ class LocalStackBackbone(StateBackboneProvider):
         for p in self._encoder.parameters():
             p.requires_grad_(False)
             n += p.numel()
-        logger.info("LocalStackBackbone froze %d parameters.", n)
+        logger.info("LocalBackbone froze %d parameters.", n)
 
     def parameters(self) -> Iterable[torch.nn.Parameter]:
         return iter(())
@@ -108,4 +112,7 @@ class LocalStackBackbone(StateBackboneProvider):
         del flag
 
 
-__all__ = ["LocalStackBackbone"]
+LocalStackBackbone = LocalBackbone
+
+
+__all__ = ["LocalBackbone", "LocalStackBackbone"]
