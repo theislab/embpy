@@ -23,7 +23,7 @@ arrays.
 
 from __future__ import annotations
 
-from .cache import inspect_cache, load_cached, save_cached
+from .cache import cache_path_for, inspect_cache, load_cached, save_cached
 from .foreign_head import ForeignBackboneHead
 from .local import LocalBackbone, LocalStackBackbone
 from .provider import ProviderMetadata, StateBackboneProvider
@@ -40,6 +40,7 @@ __all__ = [
     "StateBackbone",
     "StateBackboneProvider",
     "build_backbone",
+    "cache_path_for",
     "inspect_cache",
     "load_cached",
     "save_cached",
