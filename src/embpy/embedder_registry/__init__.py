@@ -1,15 +1,17 @@
-"""Model registry package for embpy (audit step 2).
+"""Model registry package for embpy (audit step 3).
 
-This is the new home for ``MODEL_REGISTRY`` and the DNA species sets
-(``HUMAN_ONLY_MODELS``, ``MOUSE_ONLY_MODELS``, ``MULTI_SPECIES_DNA``).
-Step 2 only relocates the flat dict; step 3 will replace ``flat.py``
-with a per-modality merge (``dna.py``, ``protein.py``, ...). The
-public import path stays at ``embpy.embedder`` so existing user code
-of the form
+After step 3 the registry is split across seven per-modality
+submodules (``dna``, ``protein``, ``molecule``, ``text``,
+``morphology``, ``singlecell``, ``api``). ``flat`` merges them into a
+single public ``MODEL_REGISTRY`` so the existing user-facing import
+path ``from embpy.embedder import MODEL_REGISTRY`` returns a
+byte-equivalent dict object.
 
-    from embpy.embedder import MODEL_REGISTRY
-
-keeps working unchanged.
+The DNA species sets (``HUMAN_ONLY_MODELS``, ``MOUSE_ONLY_MODELS``,
+``MULTI_SPECIES_DNA``) live in ``dna.py`` per the audit
+recommendation (section 1: "Currently consumed only inside
+``embedder.py``; should live next to the DNA registry"). They are
+re-exported here and through ``flat``.
 """
 
 from __future__ import annotations

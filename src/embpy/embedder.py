@@ -40,15 +40,18 @@ from .resources.gene_resolver import GeneResolver
 from .resources.protein_resolver import ProteinResolver
 from .resources.text_resolver import TextResolver
 
-# MODEL_REGISTRY + the three DNA species sets moved to
-# `embpy.embedder_registry.flat` as part of audit step 2. Re-exported
-# here so `from embpy.embedder import MODEL_REGISTRY` (and every
-# BioEmbedder method body that references HUMAN_ONLY_MODELS etc.) keeps
-# working byte-equivalently. The Evo / Evo2 / Boltz2 wrapper aliases
-# and their `_HAVE_*` gating flags stayed inside flat.py because they
-# are an implementation detail of the registry; no consumer outside
-# embpy.embedder_registry references them. Step 3 will replace flat.py
-# with a per-modality merge; the public import path stays here.
+# MODEL_REGISTRY + the three DNA species sets live in
+# `embpy.embedder_registry` (audit steps 2 + 3). The DNA / Protein /
+# Molecule / Text / Morphology / Single-cell / API entries are split
+# across per-modality submodules; `embedder_registry.flat` merges them
+# into a single dict. Re-exported here so `from embpy.embedder import
+# MODEL_REGISTRY` (and every BioEmbedder method body that references
+# HUMAN_ONLY_MODELS etc.) keeps working byte-equivalently against the
+# pre-split snapshot. The Evo / Evo2 / Boltz-2 wrapper aliases and
+# their `_HAVE_*` gating flags stayed inside the per-modality files
+# (dna.py / protein.py) because they are an implementation detail of
+# the registry; no consumer outside embpy.embedder_registry references
+# them.
 from .embedder_registry.flat import (
     HUMAN_ONLY_MODELS,
     MODEL_REGISTRY,
