@@ -14,9 +14,18 @@ recommendation (section 1: "Currently consumed only inside
 re-exported here and through ``flat``.
 """
 
-from __future__ import annotations
-
-from .flat import (
+# The `# pyright: ignore` is a targeted suppression for a false
+# positive specific to the Cursor `cursorpyright` integration: after
+# Part C placed two top-level packages (`embpy`, `world_model`) under
+# `src/`, basedpyright's IDE integration loses its automatic source-
+# root inference and reports `from .flat import ...` here as
+# unresolved even though the runtime resolution is correct, the file
+# (`embpy/embedder_registry/flat.py`) exists, and the equivalent
+# `from .embedder_registry.flat import ...` in `embedder.py` lints
+# clean. The `[tool.pyright]` block in `pyproject.toml` declares
+# `extraPaths = ["src"]` so a future IDE reload should clear this
+# without the ignore; it is left in place as a safety net.
+from .flat import (  # pyright: ignore[reportMissingImports]
     HUMAN_ONLY_MODELS,
     MODEL_REGISTRY,
     MOUSE_ONLY_MODELS,
