@@ -40,32 +40,21 @@ from .resources.gene_resolver import GeneResolver
 from .resources.protein_resolver import ProteinResolver
 from .resources.text_resolver import TextResolver
 
-# Evo (v1/v1.5) is an optional dependency - import conditionally
-try:
-    from .models.dna_models import EvoWrapper
-
-    _HAVE_EVO = True
-except ImportError:
-    _HAVE_EVO = False
-    EvoWrapper = None  # type: ignore
-
-# Evo2 is an optional dependency - import conditionally
-try:
-    from .models.dna_models import Evo2Wrapper
-
-    _HAVE_EVO2 = True
-except ImportError:
-    _HAVE_EVO2 = False
-    Evo2Wrapper = None  # type: ignore
-
-# Boltz-2 structure model (optional: pip install boltz[cuda])
-try:
-    from .models.structure_models import Boltz2Wrapper
-
-    _HAVE_BOLTZ = True
-except ImportError:
-    _HAVE_BOLTZ = False
-    Boltz2Wrapper = None  # type: ignore
+# MODEL_REGISTRY + the three DNA species sets moved to
+# `embpy.embedder_registry.flat` as part of audit step 2. Re-exported
+# here so `from embpy.embedder import MODEL_REGISTRY` (and every
+# BioEmbedder method body that references HUMAN_ONLY_MODELS etc.) keeps
+# working byte-equivalently. The Evo / Evo2 / Boltz2 wrapper aliases
+# and their `_HAVE_*` gating flags stayed inside flat.py because they
+# are an implementation detail of the registry; no consumer outside
+# embpy.embedder_registry references them. Step 3 will replace flat.py
+# with a per-modality merge; the public import path stays here.
+from .embedder_registry.flat import (
+    HUMAN_ONLY_MODELS,
+    MODEL_REGISTRY,
+    MOUSE_ONLY_MODELS,
+    MULTI_SPECIES_DNA,
+)
 
 
 # Helper function (can be moved to utils later)
@@ -83,8 +72,12 @@ def get_device() -> torch.device:  # type: ignore[name-defined]
 
 
 # Define the model registry mapping user-facing names to Wrapper classes and model paths
-# This could potentially be loaded from a config file or use entry points for extensibility
-MODEL_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
+# Moved to `embpy.embedder_registry.flat` in audit step 2; the import
+# block at the top of this file re-exports MODEL_REGISTRY,
+# HUMAN_ONLY_MODELS, MOUSE_ONLY_MODELS, and MULTI_SPECIES_DNA so the
+# rest of this module (and every external `from embpy.embedder import
+# MODEL_REGISTRY` consumer) keeps working unchanged.
+_UNUSED_INLINE_REGISTRY: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # User-facing name: (WrapperClass, HuggingFace_or_Path_Identifier)
     # --- DNA Models ---
     "enformer_human_rough": (EnformerWrapper, "EleutherAI/enformer-official-rough"),
