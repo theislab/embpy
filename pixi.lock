@@ -10671,7 +10671,7 @@ packages:
 - pypi: ./
   name: embpy
   version: 0.0.1
-  sha256: 424dffa654a3f491471f5ce206a56dd9373fd8cceba73bde360cf92f8a2fadc7
+  sha256: cb21c930d51aa5fef7a25e47d8415ab02ba227b01239cd9c3db3ad4c7541e6f5
   requires_dist:
   - anndata
   - biopython
@@ -10712,6 +10712,8 @@ packages:
   - boltz>=2.0 ; extra == 'boltz'
   - h5py ; extra == 'ppi'
   - helical ; extra == 'helical'
+  - arc-state>=0.10 ; extra == 'state'
+  - arc-stack>=0.1.3 ; extra == 'stack'
   - lamindb ; extra == 'lamindb'
   - pertpy ; extra == 'pertpy'
   - scanpy>=1.10 ; extra == 'scanpy'
