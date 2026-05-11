@@ -82,7 +82,10 @@ tqdm = "*"
 # PyPI-only dependencies (no good conda-forge build available).
 # ---------------------------------------------------------------------------
 [pypi-dependencies]
+# Both packages install in editable mode. embpy is built from the root
+# pyproject.toml; world_model from src/world_model/pyproject.toml.
 embpy = { path = ".", editable = true }
+world_model = { path = "src/world_model", editable = true }
 # pure-Python / PyPI-only deps that embpy imports directly:
 broad-babel = ">=0.1"
 cirpy = "*"
@@ -498,6 +501,27 @@ helical-cpu = { features = ["helical", "morphology", "jupyter"] }
 arc-gpu = { features = ["arc", "arc-gpu"] }
 arc-cpu = { features = ["arc"] }
 
+# World-model training env with both Arc STATE and STACK backbones
+# wired in. Mirrors world_model[state]+world_model[stack] from
+# src/world_model/pyproject.toml. Use this for Phase-5 (single_replogle_state
+# / single_replogle_stack) experiments where you want both backbones in
+# the same env so encoder-swap ablations don't need re-resolves.
+# Usage: pixi install -e gpu+state+stack && pixi shell -e gpu+state+stack
+"gpu+state+stack" = { features = [
+  "gpu",
+  "state",
+  "stack",
+  "morphology",
+  "jump",
+  "scanpy",
+  "pertpy",
+  "ppi",
+  "lamindb",
+  "esm3",
+  "seqmodels",
+  "jupyter",
+] }
+
 # Opt-in env for MiniMol (molecule GNN). Separate because torch-sparse has
 # broken build metadata and the resolve is slow.
 minimol = { features = ["cpu", "morphology", "minimol", "jupyter"], solve-group = "minimol" }
@@ -541,6 +565,11 @@ install-kernel = "python -m ipykernel install --user --name embpy --display-name
 # Launch jupyter-lab bound to this env. Override port/host with args:
 #   pixi run jupyter --port 8899 --ip 0.0.0.0
 jupyter = "jupyter lab --no-browser --ip 0.0.0.0"
+# Quick interactive shells for working in either package. They drop you
+# into the activated default env with PYTHONNOUSERSITE=1 already set;
+# `cd src/embpy` / `cd src/world_model` is purely cosmetic.
+embpy-shell = { cmd = "bash -c 'cd src/embpy && exec bash -i'", description = "Interactive bash, cwd=src/embpy/" }
+wm-shell    = { cmd = "bash -c 'cd src/world_model && exec bash -i'", description = "Interactive bash, cwd=src/world_model/" }
 
 [feature.gpu.tasks]
 # GPU smoke test (assumes CUDA is visible: run on a GPU node or with CUDA_VISIBLE_DEVICES set).

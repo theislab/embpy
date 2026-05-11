@@ -2,10 +2,12 @@
 
 Status: review-only.
 Scope: this audit documents what the current package looks like as of
-commit `43088dd` plus the Part A correctness landing in this PR
+commit `43088dd` plus the Part A correctness landing in `f1b51cb`
 (`src/embpy/resources/gene/control.py`,
-`src/embpy/world_model/data/embeddings/sentinel.py`, status-aware
-provider rewrite, `resolve_symbol` alias chain, four test files).
+`src/world_model/data/embeddings/sentinel.py`, status-aware
+provider rewrite, `resolve_symbol` alias chain, four test files) and
+the Part C package split (this PR -- `world_model` promoted to a
+top-level package under `src/`, see `docs/audit/package_split.md`).
 
 Part B steps 1-3 of the migration plan are intentionally **deferred to
 follow-up PRs**. The prompt allows this:
@@ -86,10 +88,10 @@ Both are 100-line thin wrappers re-exporting `embpy.resources.protein.resolver` 
 
 ### `embpy.models.*`
 
-* `singlecell_models.py` -- `StateEmbeddingWrapper`, `StackWrapper`; already extracted, do not touch (used by the world model via `embpy.world_model.models.encoders.backbones`).
+* `singlecell_models.py` -- `StateEmbeddingWrapper`, `StackWrapper`; already extracted, do not touch (used by the world model via `world_model.models.encoders.backbones`).
 * `dna_models.py`, `protein_models.py`, `molecule_models.py`, `text_models.py`, `morphology_models.py` -- one wrapper class per foundation model. Self-contained; lazy-import the heavy deps inside `_load`. Good.
 
-### `embpy.world_model.data.embeddings` (Part A surface)
+### `world_model.data.embeddings` (Part A surface)
 
 * `provider.py` -- `ActionEmbeddingProvider` ABC + `ProviderMetadata` dataclass. Now status-aware (`embed_with_status`).
 * `bio_embedder.py` -- `BioEmbedderProvider` (delegates to `BioEmbedder.embed_genes_batch`).
@@ -269,11 +271,11 @@ Every entry point that accepts a perturbation label after Part A:
 
 | Entry point | Where it lives | Pre-Part-A policy | Post-Part-A policy |
 | --- | --- | --- | --- |
-| `embed_perturbations.py main` | `src/embpy/world_model/scripts/embed_perturbations.py` | Hard-coded `--control-label non-targeting` exact literal. | `ControlPolicy.classify` + `--control-extra-labels` + `--fail-on-unresolved`. |
-| `ActionEmbeddingProvider.embed_with_status` | `src/embpy/world_model/data/embeddings/provider.py` | (did not exist) | Status-aware with `EmbeddingStatus.{RESOLVED, CONTROL, UNRESOLVED}`. |
-| `BioEmbedderProvider.embed_with_status` | `src/embpy/world_model/data/embeddings/bio_embedder.py` | (did not exist) | Classifies first; never sends a control variant to `BioEmbedder.embed_genes_batch`. |
-| `PrecomputedProvider.embed_with_status` | `src/embpy/world_model/data/embeddings/precomputed.py` | (did not exist) | Same policy; controls map to deterministic sentinel. |
-| `GeneIndexer.encode` | `src/embpy/world_model/data/datasets/base.py:67` | Only maps `perturbation == control_label` to index 0. | Unchanged in Part A. *Follow-up*: should consult `ControlPolicy` so dataset-level encoding agrees with the provider. |
+| `embed_perturbations.py main` | `src/world_model/scripts/embed_perturbations.py` | Hard-coded `--control-label non-targeting` exact literal. | `ControlPolicy.classify` + `--control-extra-labels` + `--fail-on-unresolved`. |
+| `ActionEmbeddingProvider.embed_with_status` | `src/world_model/data/embeddings/provider.py` | (did not exist) | Status-aware with `EmbeddingStatus.{RESOLVED, CONTROL, UNRESOLVED}`. |
+| `BioEmbedderProvider.embed_with_status` | `src/world_model/data/embeddings/bio_embedder.py` | (did not exist) | Classifies first; never sends a control variant to `BioEmbedder.embed_genes_batch`. |
+| `PrecomputedProvider.embed_with_status` | `src/world_model/data/embeddings/precomputed.py` | (did not exist) | Same policy; controls map to deterministic sentinel. |
+| `GeneIndexer.encode` | `src/world_model/data/datasets/base.py:67` | Only maps `perturbation == control_label` to index 0. | Unchanged in Part A. *Follow-up*: should consult `ControlPolicy` so dataset-level encoding agrees with the provider. |
 | `cls.from_h5ad` (Replogle / Nadig) | `datasets/replogle.py:49`, `datasets/nadig.py:43` | Same single-literal policy. | Unchanged in Part A; follow-up step in section 9. |
 | `build_dataloaders` | `data/dataloader.py:68` | Reported `n_unresolved` from a count of all-zero rows; conflated unresolved + control. | Honours `action_embedding.fail_on_unresolved`; persists per-bucket counts via `ProviderMetadata`. |
 
@@ -291,10 +293,10 @@ What forces what at import time today:
 | --- | --- |
 | `import embpy` | `anndata`, `scanpy?`, `transformers`, `torch`, `pandas`, `pyarrow`, `pyensembl`, all `models/*.py` wrappers, all of `resources/*`, all of `world_model/*`. |
 | `import embpy.embedder` | same as above (because `embpy/__init__.py` already pulled it). |
-| `import embpy.world_model.data.embeddings.sentinel` | numpy only (verified, Part A). |
+| `import world_model.data.embeddings.sentinel` | numpy only (verified, Part A). |
 | `import embpy.resources.gene.control` | re only (verified, Part A). |
 | `import embpy.resources.gene._alias_resolver` | stdlib + (lazily) `requests`, `pyensembl`. |
-| `import embpy.world_model.data.embeddings.provider` | numpy, embpy.resources.gene.control, embpy.world_model.data.datasets.base. Lightweight. |
+| `import world_model.data.embeddings.provider` | numpy, embpy.resources.gene.control, world_model.data.datasets.base. Lightweight. |
 
 Proposed `_lazy_import` pattern:
 
@@ -420,11 +422,11 @@ as `docs/audit/migration_plan_part_c.md` -- see the companion file.
 ```
 src/embpy/embedder.py                3599   primary target of audit
 src/embpy/resources/gene/resolver.py 1518   secondary target
-src/embpy/world_model/                ~6000   already modular
+src/world_model/                ~6000   already modular
 tests/                                  29   files
 docs/audit/                              2   files (this audit + Part C plan)
 ```
 
-The `dataloader.py` (`src/embpy/world_model/data/dataloader.py`, ~330
+The `dataloader.py` (`src/world_model/data/dataloader.py`, ~330
 lines) and the new Part A files are all <300 lines each. The 80/20
 restructure work is concentrated in `embedder.py`.

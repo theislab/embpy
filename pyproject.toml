@@ -1,3 +1,20 @@
+# ---------------------------------------------------------------------------
+# Root pyproject for the `embpy` package + uv workspace root.
+#
+# This repository hosts two packages under src/:
+#
+#   * embpy        -- infrastructure: embeddings, resolvers, annotations,
+#                     plotting, analysis, foundation-model wrappers.
+#                     Source: src/embpy/ (this pyproject builds it).
+#   * world_model  -- perturbation modelling, built on top of embpy.
+#                     Source: src/world_model/, with its own pyproject.
+#
+# This pyproject is intentionally still the `embpy` package (not a
+# bare workspace meta-project) so that `pip install embpy` from PyPI
+# keeps working unchanged. The `[tool.uv.workspace]` block below
+# wires up the world_model member so `uv sync --all-packages` resolves
+# both packages together.
+# ---------------------------------------------------------------------------
 [build-system]
 build-backend = "hatchling.build"
 requires = [ "hatchling" ]
@@ -216,6 +233,13 @@ allow-direct-references = true
 #
 # without having to remember the correct --extra-index-url for torch wheels.
 # ---------------------------------------------------------------------------
+# Workspace membership: `world_model` is a sibling package under src/.
+# After Part C, uv resolves both packages together with:
+#   uv sync --all-packages [--extra ...]
+# Pixi installs them independently via [pypi-dependencies] in pixi.toml.
+[tool.uv.workspace]
+members = ["src/world_model"]
+
 [tool.uv]
 # Resolve the normal PyPI index AND the matching PyTorch CUDA wheel index.
 # Using "explicit = true" means packages only come from these indexes if they

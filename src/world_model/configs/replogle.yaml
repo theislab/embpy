@@ -1,0 +1,61 @@
+# Replogle 2022 K562 essential perturb-seq.
+# Paths are relative to the repository root and assume the data layout
+# documented in src/world_model/README.md.
+run_name: "replogle_k562_essential"
+output_dir: "outputs/world_model/replogle_k562_essential"
+seed: 0
+
+data:
+  dataset: "replogle"
+  h5ad_path: "data/datasets/replogle/replogle_2022_k562_essential.h5ad"
+  gene_embedding_path: "data/embeddings/gene_embeddings/genept/embeddings_3072.csv"
+  perturbation_key: "perturbation"
+  control_label: "non-targeting"
+  cell_type_key: "cell_type"
+  n_top_genes: 5000
+  log_normalize: true
+  stack_size: 4
+  sequence_length: 8
+  batch_size: 64
+  val_fraction: 0.1
+  num_workers: 4
+  pin_memory: true
+
+encoder:
+  kind: "transformer"
+  d_model: 256
+  n_layers: 2
+  n_heads: 4
+  dropout: 0.1
+  layer_norm: true
+
+dynamics:
+  kind: "gpt"
+  d_model: 256
+  n_layers: 6
+  n_heads: 8
+  dropout: 0.1
+  max_sequence_length: 64
+  use_action_token: true
+
+loss:
+  latent_mse: 1.0
+  decoder_mse: 0.5
+  info_nce: 0.1
+  info_nce_temperature: 0.1
+
+optim:
+  lr: 3.0e-4
+  weight_decay: 1.0e-2
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  scheduler: "cosine"
+  warmup_steps: 1000
+
+train:
+  n_epochs: 50
+  log_every_n_steps: 50
+  eval_every_n_epochs: 1
+  save_every_n_epochs: 5
+  device: "auto"
+  amp: true

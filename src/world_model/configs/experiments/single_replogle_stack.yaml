@@ -1,0 +1,99 @@
+# Replogle (K562 essential) trained with the STACK backbone as the
+# frozen observation encoder.
+#
+# Before running:
+#   1. pip install 'embpy[stack]'   (or: pixi install -e arc-gpu)
+#   2. Download a STACK checkpoint + gene list from
+#      https://github.com/ArcInstitute/stack and set the paths below.
+#   3. Smoke-test the encode step:
+#        python -m world_model.scripts.encode_cells \
+#          --kind stack --adata <path>.h5ad \
+#          --stack-checkpoint <ckpt> --stack-genelist <pkl> \
+#          --output /tmp/stack_test.npz
+run_name: "single_replogle_stack"
+output_dir: "outputs/world_model/single_replogle_stack"
+seed: 0
+mode: "single"
+
+data:
+  dataset: "replogle"
+  h5ad_path: "data/datasets/replogle/replogle_2022_k562_essential.h5ad"
+  gene_embedding_path: "data/embeddings/gene_embeddings/genept/embeddings_3072.csv"
+  perturbation_key: "perturbation"
+  control_label: "non-targeting"
+  cell_type_key: "cell_type"
+  n_top_genes: 5000
+  log_normalize: true
+  stack_size: 4
+  sequence_length: 8
+  n_pert: 2
+  batch_size: 64
+  val_fraction: 0.1
+  num_workers: 4
+  pin_memory: true
+
+action_embedding:
+  source: "precomputed"
+  path: ""
+
+state_backbone:
+  kind: "stack"
+  stack_checkpoint: "data/checkpoints/stack/stack.ckpt"
+  stack_genelist: "data/checkpoints/stack/hvg_genes.pkl"
+  stack_gene_name_col: null  # auto-detect
+  device: "auto"
+  freeze: true
+  batch_size: 32
+  cache_dir: "outputs/_cache/state_backbone"
+  require_cache_hit: false
+
+split:
+  split_by: "perturbation"
+  train_fraction: 0.8
+  seed: 0
+
+encoder:
+  kind: "transformer"
+  d_model: 256
+  n_layers: 2
+  n_heads: 4
+  dropout: 0.1
+
+dynamics:
+  kind: "gpt"
+  d_model: 256
+  n_layers: 6
+  n_heads: 8
+  dropout: 0.1
+  max_sequence_length: 64
+  use_action_token: true
+
+loss:
+  latent_mse: 1.0
+  decoder_mse: 0.5
+  info_nce: 0.1
+  info_nce_temperature: 0.1
+
+optim:
+  lr: 3.0e-4
+  weight_decay: 1.0e-2
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  scheduler: "cosine"
+  warmup_steps: 1000
+
+train:
+  n_epochs: 50
+  log_every_n_steps: 50
+  eval_every_n_epochs: 1
+  save_every_n_epochs: 5
+  device: "auto"
+  amp: true
+  enable_tensorboard: true
+  enable_csv_log: true
+
+eval:
+  n_control_samples_per_pert: 32
+  use_cell_eval: true
+  deg_top_k: 50
+  save_predictions: true
