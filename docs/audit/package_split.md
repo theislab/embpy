@@ -54,12 +54,13 @@ Commit 1 -- module move
 
 Commit 2 -- deprecation shim + boundary test + smoke regression
 
-* `src/embpy/world_model/__init__.py` reinstates the old import path as
-  a thin re-export of `world_model` with a `DeprecationWarning`. Uses
+* `src/embpy/world_model/__init__.py` reinstated the old import path as
+  a thin re-export of `world_model` with a `DeprecationWarning`. Used
   `sys.modules[__name__] = world_model` so submodule lookups
   (`from embpy.world_model.training.trainer import WorldModelTrainer`)
-  resolve via Python's standard machinery without per-submodule shim
-  files.
+  resolved via Python's standard machinery without per-submodule shim
+  files. **This shim was removed in a follow-up commit; see
+  "Post-split cleanup" below.**
 * `tests/embpy/test_boundary.py`: imports `embpy` and asserts
   `'world_model' not in sys.modules` afterwards. Guards the one-way
   arrow.
@@ -67,7 +68,27 @@ Commit 2 -- deprecation shim + boundary test + smoke regression
   `--run-smoke-regression`; compares byte-equivalent CSV / JSON outputs
   and pixel-equal PNGs against snapshots saved under
   `tests/_snapshots/pre_split/`.
-* `CHANGELOG.md` entry pins the shim removal release.
+* `CHANGELOG.md` entry pinned the shim removal release (later
+  superseded by the actual removal).
+
+Post-split cleanup -- shim removed
+
+* The codemod (commit 1) rewrote every internal caller from
+  `embpy.world_model.X` to `world_model.X`. After the rewrite, the
+  shim had zero remaining consumers inside the repo, and embpy is
+  not distributed externally (no pip-installed users to protect with
+  a transition window).
+* Keeping `src/embpy/world_model/` around contradicted the very
+  separation the split established: every audit reader had to ask
+  "wait, why does embpy still have a world_model subpackage?".
+* So the shim was removed. `src/embpy/world_model/` no longer exists;
+  `embpy.world_model` raises `AttributeError`; `import
+  embpy.world_model` raises `ModuleNotFoundError`. Boundary tests in
+  `tests/embpy/test_boundary.py` were updated to assert the new
+  contract.
+* If a future user of an old branch needs the path back temporarily,
+  the shim's contents (a 54-line `__init__.py` with a `sys.modules`
+  swap) is preserved in commit `882be61`.
 
 ## What we did NOT do (explicit trade-off)
 
@@ -109,15 +130,22 @@ snapshot*: the first time you run
 
     pixi run -e gpu pytest tests/world_model/test_post_split_smoke.py --run-smoke-regression
 
-it will fail with `MISSING SNAPSHOT`. To create the snapshot once:
+it will fail with `MISSING SNAPSHOT`. To create the snapshot once (the
+shim is now removed from the working tree, so use a throwaway worktree
+rather than an in-place checkout):
 
-    git checkout f1b51cb -- src/embpy/world_model    # pre-split tree, READ ONLY
+    git worktree add /tmp/embpy-pre-split f1b51cb
+    cd /tmp/embpy-pre-split
     pixi run -e gpu python -m embpy.world_model.scripts.smoke_test \
         --config src/embpy/world_model/configs/experiments/smoke.yaml \
-        --snapshot-out tests/_snapshots/pre_split/smoke/
-    git checkout HEAD -- src/embpy/world_model       # back to the split tree
+        --snapshot-out <repo-root>/tests/_snapshots/pre_split/smoke/
+    cd <repo-root>
+    git worktree remove /tmp/embpy-pre-split
 
 then commit `tests/_snapshots/pre_split/smoke/` and re-run the test.
+The `embpy.world_model.scripts.smoke_test` module path is the correct
+one at commit `f1b51cb` (pre-Part-C), where the world_model tree still
+lived under `src/embpy/`.
 
 ## Follow-up PRs
 
@@ -127,6 +155,13 @@ then commit `tests/_snapshots/pre_split/smoke/` and re-run the test.
    whose contents match the current root build byte-for-byte.
 2. Capture the `pre_split` snapshot (instructions above) and turn
    `test_post_split_smoke.py` into a CI guardrail.
-3. Drop the deprecation shim per the CHANGELOG entry and delete
-   `scripts/_codemod_split.py`.
-4. Walk the audit migration plan (steps 1-3) on top of the split tree.
+3. ~~Drop the deprecation shim per the CHANGELOG entry~~ **Done** --
+   see "Post-split cleanup" above. The codemod script
+   `scripts/_codemod_split.py` is kept under `scripts/` for audit
+   provenance; delete it when no future PR is likely to need a
+   reference example.
+4. ~~Walk the audit migration plan (steps 1-3) on top of the split
+   tree.~~ **Done** in commits `f5f99cb` (step 1: lazy `embpy/__init__.py`),
+   `fde522f` (step 2: `MODEL_REGISTRY` -> `embedder_registry.flat`),
+   and `79388bb` (step 3: per-modality registry submodules). Audit
+   steps 4-8 remain deferred; see `docs/audit/embpy_audit.md`.

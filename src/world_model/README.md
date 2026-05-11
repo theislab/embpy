@@ -1,9 +1,11 @@
 # world_model -- Perturbation World Model for Transcriptomics
 
 > Top-level package since the embpy / world_model split (Part C). Import
-> as `world_model.*`. `embpy.world_model` still re-exports for one
-> release with a `DeprecationWarning`; see [`CHANGELOG.md`](../../CHANGELOG.md)
-> for the removal target.
+> as `world_model.*`. The transitional `embpy.world_model` deprecation
+> shim has been removed; `import embpy.world_model` now raises
+> `ModuleNotFoundError`. See [`CHANGELOG.md`](../../CHANGELOG.md) and
+> [`docs/audit/package_split.md`](../../docs/audit/package_split.md)
+> for the rationale.
 
 A modular implementation of an autoregressive (state, action) world
 model for single-cell transcriptomics. The model takes a sequence of

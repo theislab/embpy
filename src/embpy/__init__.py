@@ -24,8 +24,13 @@ Backward compatibility:
   still work, including in ``from embpy import X`` form (PEP 562 makes
   ``from`` fall back to ``__getattr__`` when ``X`` is not yet in the
   module dict).
-* ``embpy.world_model`` keeps the Part C deprecation shim semantics
-  (warns + re-exports the top-level ``world_model`` package).
+* ``embpy.world_model`` no longer exists; it was promoted to the
+  top-level package ``world_model`` in the Part C split (see
+  ``docs/audit/package_split.md``). The transitional shim that
+  re-routed ``embpy.world_model`` -> ``world_model`` was removed
+  because the in-repo codemod rewrote every internal caller and
+  embpy is not externally distributed. Update any straggling
+  ``from embpy.world_model.X import Y`` to ``from world_model.X import Y``.
 """
 
 from __future__ import annotations
@@ -41,7 +46,7 @@ __version__ = version("embpy")
 # These imports are NOT executed at runtime; `__getattr__` below is the
 # real load path.
 if TYPE_CHECKING:
-    from . import dt, models, pl, pp, resources, tl, world_model
+    from . import dt, models, pl, pp, resources, tl
     from .embedder import BioEmbedder
     from .errors import (
         ConfigError,
@@ -70,7 +75,6 @@ _LAZY: dict[str, str] = {
     "pp": "embpy.pp",
     "resources": "embpy.resources",
     "tl": "embpy.tl",
-    "world_model": "embpy.world_model",
     "BioEmbedder": "embpy.embedder:BioEmbedder",
     "ConfigError": "embpy.errors:ConfigError",
     "DataError": "embpy.errors:DataError",
@@ -133,5 +137,4 @@ __all__ = [
     "pp",
     "resources",
     "tl",
-    "world_model",
 ]

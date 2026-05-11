@@ -8,15 +8,23 @@ pre-split snapshot.
 Workflow
 --------
 
-1. Capture the pre-split snapshot (one-shot, against commit ``f1b51cb``)::
+1. Capture the pre-split snapshot (one-shot, against commit ``f1b51cb``).
+   Use a throwaway worktree so the current tree (which no longer has
+   ``src/embpy/world_model/``) is untouched::
 
-       git checkout f1b51cb -- src/embpy/world_model    # pre-split tree
+       git worktree add /tmp/embpy-pre-split f1b51cb
+       cd /tmp/embpy-pre-split
        pixi run -e gpu python -m embpy.world_model.scripts.smoke_test \\
            --config src/embpy/world_model/configs/experiments/smoke.yaml \\
-           --output-dir tests/_snapshots/pre_split/smoke
-       git checkout HEAD -- src/embpy/world_model       # back to the split tree
+           --output-dir <repo-root>/tests/_snapshots/pre_split/smoke
+       cd <repo-root>
+       git worktree remove /tmp/embpy-pre-split
 
-   then commit ``tests/_snapshots/pre_split/smoke/``.
+   then commit ``tests/_snapshots/pre_split/smoke/``. The
+   ``embpy.world_model.scripts.smoke_test`` module name in the command
+   is intentional: at commit ``f1b51cb`` the world_model tree still
+   lives at ``src/embpy/world_model/``, so that is the correct
+   pre-split import path.
 
 2. After the split, run::
 

@@ -7,17 +7,24 @@ Eager imports across that boundary would resurrect the original
 "infrastructure + modelling are one package" coupling we just spent a
 PR breaking.
 
-This test imports ``embpy`` end-to-end and asserts the world_model
-graph is *not* present in ``sys.modules`` afterwards. It is the
-canonical guardrail: if any future PR re-introduces
-``from world_model.X import Y`` in ``embpy/``, this test fails.
+After the deprecation shim was removed (the codemod rewrote every
+internal caller and embpy is not externally distributed), the
+``embpy.world_model`` import path no longer exists. The tests below
+assert both halves of that contract:
+
+* ``import embpy`` leaves ``world_model.*`` out of ``sys.modules``;
+* attribute access ``embpy.world_model`` raises ``AttributeError``;
+* dotted ``import embpy.world_model`` raises ``ModuleNotFoundError``.
+
+If any future PR re-introduces a shim or a real
+``from world_model.X import Y`` inside ``src/embpy/``, these tests
+fail.
 """
 
 from __future__ import annotations
 
 import importlib
 import sys
-import warnings
 
 import pytest
 
@@ -48,40 +55,25 @@ def test_embpy_import_does_not_pull_world_model(fresh_import_state):
     )
 
     assert "embpy.world_model" not in sys.modules, (
-        "`import embpy` triggered the embpy.world_model deprecation shim. "
-        "The shim must only load when the user explicitly opts in via "
-        "`import embpy.world_model` or attribute access."
+        "`import embpy` produced an `embpy.world_model` entry in "
+        "sys.modules. The deprecation shim was removed; any reappearance "
+        "of `src/embpy/world_model/` re-creates the boundary leak."
     )
 
 
-def test_shim_lazy_attr_access_warns_and_redirects(fresh_import_state):
-    """`embpy.world_model` accessed as an attribute fires the shim's warning."""
+def test_embpy_world_model_attribute_no_longer_exists(fresh_import_state):
+    """`embpy.world_model` must raise AttributeError (the shim is gone)."""
     embpy = importlib.import_module("embpy")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always", DeprecationWarning)
-        wm = embpy.world_model
-    msgs = [str(w.message) for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert any("embpy.world_model" in m and "world_model" in m for m in msgs), (
-        f"Expected a DeprecationWarning mentioning the move, got: {msgs}"
-    )
-
-    real_wm = importlib.import_module("world_model")
-    assert wm is real_wm, (
-        "embpy.world_model should redirect to the top-level world_model package "
-        "(sys.modules swap in the shim's __init__.py)."
-    )
+    with pytest.raises(AttributeError, match="world_model"):
+        _ = embpy.world_model
 
 
-def test_dotted_shim_imports_resolve_to_world_model(fresh_import_state):
-    """`from embpy.world_model.training import WorldModelTrainer` reaches the real package."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        shim_mod = importlib.import_module("embpy.world_model.training")
-        real_mod = importlib.import_module("world_model.training")
-    assert shim_mod is real_mod, (
-        "Dotted imports through `embpy.world_model.X` must resolve to "
-        "`world_model.X` (not load a parallel copy)."
-    )
+def test_dotted_embpy_world_model_import_fails(fresh_import_state):
+    """`import embpy.world_model` and `from embpy.world_model.X import Y` must fail."""
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("embpy.world_model")
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("embpy.world_model.training")
 
 
 # --- Audit step 1: lazy import surface ---------------------------------------
