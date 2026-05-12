@@ -14,8 +14,8 @@ Usage
     python -m world_model.scripts.encode_cells \\
         --kind stack \\
         --adata /path/to/cells.h5ad \\
-        --stack-checkpoint /path/to/stack.ckpt \\
-        --stack-genelist /path/to/hvg_genes.pkl \\
+        --stack-checkpoint /path/to/bc_large.ckpt \\
+        --stack-genelist /path/to/basecount_1000per_15000max.pkl \\
         --output outputs/_cache/state_backbone/stack/<hash>/<ds>.npz
 
 This is the canonical pre-flight check: if it fails, training will
@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -72,6 +73,17 @@ def _peak_gpu_mb() -> float:
 def main(argv: list[str] | None = None) -> int:
     setup_logging()
     args = parse_args(argv)
+
+    # STACK / STATE wrappers persist the in-memory AnnData to a tempfile
+    # before handing it off to their path-based CLI APIs. On a SLURM
+    # compute node /tmp is typically a small local disk (a few GB) and
+    # cannot fit the 10 GB Replogle dump. Redirect TMPDIR to a Lustre
+    # path co-located with the rest of our outputs unless the caller
+    # already set it. Use setdefault so explicit user choices win.
+    tmp_root = Path("outputs/_tmp").resolve()
+    tmp_root.mkdir(parents=True, exist_ok=True)
+    os.environ.setdefault("TMPDIR", str(tmp_root))
+    logger.info("TMPDIR=%s (used for wrapper tempfiles)", os.environ["TMPDIR"])
 
     cfg = StateBackboneConfig(
         kind=args.kind,

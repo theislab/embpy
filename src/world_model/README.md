@@ -1339,8 +1339,8 @@ STACK:
 ```yaml
 state_backbone:
   kind: "stack"
-  stack_checkpoint: "data/checkpoints/stack/stack.ckpt"
-  stack_genelist: "data/checkpoints/stack/hvg_genes.pkl"
+  stack_checkpoint: "data/checkpoints/stack/bc_large.ckpt"
+  stack_genelist: "data/checkpoints/stack/basecount_1000per_15000max.pkl"
   stack_gene_name_col: null  # auto-detect
   device: "auto"
   freeze: true

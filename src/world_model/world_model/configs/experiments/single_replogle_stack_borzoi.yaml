@@ -5,16 +5,25 @@
 # Before submitting:
 #   1. Install the foreign backbone extra:
 #        pip install 'embpy[stack]'    # or: pixi install -e arc-gpu
-#   2. Download a STACK checkpoint + gene list from
-#        https://github.com/ArcInstitute/stack
-#      and drop them at the paths below (or override on the CLI).
+#   2. Download the public STACK-Large weights from HuggingFace:
+#        https://huggingface.co/arcinstitute/Stack-Large
+#      The two files we need are bc_large.ckpt (~2.5 GB) and
+#      basecount_1000per_15000max.pkl. The repo is ungated; you can
+#      fetch them with either of:
+#        a) python -m huggingface_hub.commands.huggingface_cli download \
+#             arcinstitute/Stack-Large \
+#             --local-dir data/checkpoints/stack --local-dir-use-symlinks False
+#        b) curl -fSL -o data/checkpoints/stack/bc_large.ckpt \
+#             https://huggingface.co/arcinstitute/Stack-Large/resolve/main/bc_large.ckpt
+#           curl -fSL -o data/checkpoints/stack/basecount_1000per_15000max.pkl \
+#             https://huggingface.co/arcinstitute/Stack-Large/resolve/main/basecount_1000per_15000max.pkl
 #   3. Pre-warm the two caches on the head node (avoids wasting GPU time):
 #        # state-side cell embeddings (STACK)
-#        pixi run -e gpu python -m world_model.scripts.encode_cells \
+#        pixi run -e arc-gpu python -m world_model.scripts.encode_cells \
 #          --kind stack \
 #          --adata data/datasets/replogle/replogle_2022_k562_essential.h5ad \
-#          --stack-checkpoint data/checkpoints/stack/stack.ckpt \
-#          --stack-genelist   data/checkpoints/stack/hvg_genes.pkl \
+#          --stack-checkpoint data/checkpoints/stack/bc_large.ckpt \
+#          --stack-genelist   data/checkpoints/stack/basecount_1000per_15000max.pkl \
 #          --output outputs/_cache/state_backbone/stack/replogle_k562.npz
 #
 #        # action-side gene embeddings (Borzoi)
@@ -66,8 +75,8 @@ action_embedding:
 # pre-computed once on the head node and replayed from disk during training.
 state_backbone:
   kind: "stack"
-  stack_checkpoint: "data/checkpoints/stack/stack.ckpt"
-  stack_genelist: "data/checkpoints/stack/hvg_genes.pkl"
+  stack_checkpoint: "data/checkpoints/stack/bc_large.ckpt"
+  stack_genelist: "data/checkpoints/stack/basecount_1000per_15000max.pkl"
   stack_gene_name_col: null         # auto-detect from adata.var
   device: "auto"
   freeze: true

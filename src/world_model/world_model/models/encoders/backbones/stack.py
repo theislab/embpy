@@ -90,14 +90,26 @@ class StackBackbone(StateBackboneProvider):
         wrapper.load(self._resolve_device())
         self._wrapper = wrapper
         model = wrapper._model  # noqa: SLF001
-        dim = getattr(model, "embedding_dim", None) or getattr(model, "hidden_size", None)
+        # arc-stack's StateICLModel does not expose a single `embedding_dim`
+        # attribute. Per stack/models/core/inference.py:432 the cell
+        # embedding shape is (n_cells, n_hidden * token_dim), so we derive
+        # the dim from those two architectural hyperparameters. Tolerate
+        # alternative names that future STACK releases may introduce
+        # before falling back to an explicit error.
+        n_hidden = getattr(model, "n_hidden", None)
+        token_dim = getattr(model, "token_dim", None)
+        if n_hidden is not None and token_dim is not None:
+            dim: int | None = int(n_hidden) * int(token_dim)
+        else:
+            dim = (
+                getattr(model, "embedding_dim", None)
+                or getattr(model, "hidden_size", None)
+            )
         if dim is None:
-            # Fall back to a probe encode: encode a 1-cell AnnData. We avoid
-            # that here (expensive) and instead require the wrapper's model
-            # to expose embedding_dim / hidden_size at load time.
             raise RuntimeError(
                 "StackBackbone could not infer embedding_dim from the loaded "
-                "model. Expose `embedding_dim` or `hidden_size` on the model."
+                "model. Expected either `n_hidden` + `token_dim` (current "
+                "arc-stack StateICLModel) or `embedding_dim` / `hidden_size`."
             )
         self._embedding_dim = int(dim)
         if self._freeze_default:

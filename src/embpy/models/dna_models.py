@@ -651,95 +651,157 @@ class BorzoiWrapper(BaseModelWrapper):
 
         return pooled.to(torch.float32).cpu().numpy()
 
+    # Conservative default chosen for a 80 GB H100 / A100.
+    # Borzoi's first conv expands a (B, 4, 524288) input into roughly
+    # (B, 512, 524288) fp32, which is ~1 GiB per sample even before the
+    # rest of the trunk is materialised. With B = 4 the activation grid
+    # stays under ~5 GiB; combined with the loaded weights (~6 GiB) and
+    # autograd-free intermediates we sit safely below 16 GiB peak.
+    # Smaller cards (e.g. V100 32 GB) should set this to 2 via the
+    # micro_batch_size kwarg. Callers that previously relied on the
+    # implicit "one giant forward" path will now see chunked forwards
+    # but identical output ordering and values.
+    DEFAULT_MICRO_BATCH_SIZE = 4
+
     def embed_batch(
         self,
         inputs: Sequence[str],
         pooling_strategy: str = "mean",
+        micro_batch_size: int | None = None,
         **kwargs: Any,
     ) -> list[np.ndarray]:
         """
         Compute Borzoi embeddings for a batch of arbitrary-length DNA sequences.
 
-        1. Preprocess each string → one-hot (1, 4, 524288).
-        2. Concatenate → batch tensor of shape (B, 4, 524288).
-        3. Run `get_embs_after_crop(batch_tensor)` → trunk tensor of shape (B, hidden_dim, num_bins).
-        4. Pool each sample over the bins dimension (mean or max) → (B, hidden_dim).
-        5. Return a Python list of NumPy arrays, one per input, each of length hidden_dim.
+        Borzoi has a fixed 524288 bp receptive field, and the first
+        convolutional block expands that to a roughly 1 GB activation
+        tensor *per sample* (fp32). Concatenating the entire caller-side
+        batch into one forward easily exceeds 80 GB of HBM (we have seen
+        2057 sequences requesting a 1993 GiB allocation). This method
+        therefore chunks the input list into ``micro_batch_size`` slices
+        and runs one forward per slice, returning the per-sample
+        embeddings in the original input order.
+
+        1. For each micro-batch of size ``micro_batch_size``:
+           a. Preprocess each string → one-hot (1, 4, 524288).
+           b. Concatenate → tensor of shape (b, 4, 524288).
+           c. Run ``get_embs_after_crop`` → (b, hidden_dim, num_bins).
+           d. Pool over bins → (b, hidden_dim) and stash on CPU.
+        2. Concatenate the CPU-side chunks into a single (B, hidden_dim).
+        3. Return a list of 1D NumPy arrays, one per input.
 
         Parameters
         ----------
         inputs : Sequence[str]
             List of raw DNA sequence strings of arbitrary length.
         pooling_strategy : str, default="mean"
-            “mean” or “max” pooling over the bins dimension.
+            "mean" or "max" pooling over the bins dimension.
+        micro_batch_size : int or None, optional
+            Number of sequences to push through ``get_embs_after_crop``
+            in one GPU forward. Defaults to
+            ``BorzoiWrapper.DEFAULT_MICRO_BATCH_SIZE`` (4), which is
+            tuned for 80 GB cards. Set to 2 on V100 32 GB, or higher on
+            an H200 if you have head-room. Values <= 0 fall back to the
+            class default.
         **kwargs : Any
-            Currently unused (accepted for interface consistency).
+            Reserved for interface consistency; ignored.
 
         Returns
         -------
         list[np.ndarray]
-            A list of 1D NumPy arrays (length=hidden_dim), one for each input sequence. If `inputs` is empty,
-            returns an empty list.
+            A list of 1D NumPy arrays (length=hidden_dim), one for each
+            input sequence. Empty list iff ``inputs`` is empty.
 
         Raises
         ------
         RuntimeError
-            If the Borzoi model has not been loaded (i.e., `load()` not called) or if `pooling_strategy` is invalid.
+            If the model is not loaded or output sizing is inconsistent.
+        ValueError
+            If ``pooling_strategy`` is not in the supported set.
         TypeError
-            If `get_embs_after_crop(...)` returns something other than a Tensor of shape (B, hidden_dim, num_bins).
-        RuntimeError
-            If pooling fails or if the number of output embeddings does not match the number of inputs.
+            If ``get_embs_after_crop`` returns an unexpected payload.
         """
+        del kwargs
         if self.model is None or self.device is None:
             raise RuntimeError("Borzoi model not loaded. Call load() first.")
         if not inputs:
             return []
         if pooling_strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling '{pooling_strategy}'. Choose from {self.available_pooling_strategies}.")
+        if pooling_strategy == "none":
+            # The per-bin layout requires us to keep the full
+            # (hidden_dim, num_bins) tensor per sample, which is what the
+            # batched path was historically incompatible with anyway. We
+            # explicitly reject it here rather than emit a misleading
+            # mean over the bins axis.
+            raise ValueError(
+                "Borzoi.embed_batch does not support pooling_strategy='none'. "
+                "Call embed(seq, pooling_strategy='none') per sequence instead."
+            )
 
-        # 1. Preprocess each DNA string → one-hot tensor of shape (1, 4, 524288)
-        preproc_list: list[torch.Tensor] = []
-        for seq in inputs:
+        mb = (
+            int(micro_batch_size)
+            if (micro_batch_size is not None and int(micro_batch_size) > 0)
+            else self.DEFAULT_MICRO_BATCH_SIZE
+        )
+
+        batch_model: Any = self.model
+        total = len(inputs)
+        pooled_chunks: list[torch.Tensor] = []
+
+        for start in range(0, total, mb):
+            chunk = inputs[start : start + mb]
+
+            # 1. Preprocess this chunk only. We avoid materialising all
+            #    2000+ (1, 4, 524288) tensors on CPU at once -- that is
+            #    ~16 GB of RAM for the Replogle workload and is wasteful
+            #    when only `mb` of them are live on GPU at a time.
             try:
-                # _preprocess_sequence returns (1, 4, 524288)
-                one_hot = self._preprocess_sequence(seq)
-                preproc_list.append(one_hot)
+                preproc_chunk = [self._preprocess_sequence(seq) for seq in chunk]
             except Exception as e:
-                logging.error(f"Failed to preprocess sequence: {seq[:50]}… Error: {e}")
-                # You can choose to skip or re-raise; here we re-raise so the user is aware
+                # Surface the offending sequence index for fast triage.
+                # _preprocess_sequence already logs the offending head.
+                logging.error(
+                    f"Preprocess failed inside micro-batch starting at index {start}: {e}"
+                )
                 raise
 
-        # 2. Concatenate into a single batch tensor of shape (B, 4, 524288)
-        try:
-            batch_tensor = torch.cat(preproc_list, dim=0).to(self.device)
-        except Exception as e:
-            logging.error(f"Failed to concatenate one-hot tensors into a batch: {e}")
-            raise RuntimeError("Batch creation failed.") from e
+            try:
+                batch_tensor = torch.cat(preproc_chunk, dim=0).to(self.device)
+            except Exception as e:
+                logging.error(f"Failed to concatenate one-hot tensors into a batch: {e}")
+                raise RuntimeError("Batch creation failed.") from e
 
-        # 3. Run Borzoi’s forward up to cropping: get_embs_after_crop → Tensor (B, hidden_dim, num_bins)
-        with torch.no_grad():
-            batch_model: Any = self.model
-            emb_tensor = batch_model.get_embs_after_crop(batch_tensor)
-            if not isinstance(emb_tensor, torch.Tensor) or emb_tensor.dim() != 3:
-                raise TypeError(
-                    f"Unexpected Borzoi output from get_embs_after_crop: type={type(emb_tensor)}, "
-                    f"shape={getattr(emb_tensor, 'shape', None)}"
-                )
+            with torch.no_grad():
+                emb_tensor = batch_model.get_embs_after_crop(batch_tensor)
+                if not isinstance(emb_tensor, torch.Tensor) or emb_tensor.dim() != 3:
+                    raise TypeError(
+                        f"Unexpected Borzoi output from get_embs_after_crop: type={type(emb_tensor)}, "
+                        f"shape={getattr(emb_tensor, 'shape', None)}"
+                    )
 
-        # 4. Pool over the bins dimension (dim=2) according to pooling_strategy
-        try:
-            if pooling_strategy == "mean":
-                # (B, hidden_dim, num_bins) → (B, hidden_dim)
-                pooled = emb_tensor.mean(dim=2)
-            else:  # “max”
-                pooled = emb_tensor.max(dim=2).values
-        except Exception as e:
-            logging.error(f"Error during batch pooling: {e}")
-            raise RuntimeError("Batch pooling failed.") from e
+                if pooling_strategy == "mean":
+                    pooled = emb_tensor.mean(dim=2)
+                elif pooling_strategy == "max":
+                    pooled = emb_tensor.max(dim=2).values
+                else:  # "median"
+                    pooled = emb_tensor.median(dim=2).values
 
-        # 5. Convert each row to a NumPy array and return as a list
-        pooled = pooled.to(torch.float32).cpu()
-        result_list = [pooled[i].numpy() for i in range(pooled.size(0))]
+            # Move pooled chunk to CPU immediately and drop the GPU
+            # activation; this keeps the steady-state HBM footprint
+            # bounded to one micro-batch worth of trunk activations.
+            pooled_chunks.append(pooled.to(torch.float32).cpu())
+            del emb_tensor, batch_tensor, preproc_chunk
+            if self.device.type == "cuda":
+                torch.cuda.empty_cache()
+
+            logging.debug(
+                "Borzoi micro-batch %d..%d / %d done.",
+                start, start + len(chunk), total,
+            )
+
+        pooled_all = torch.cat(pooled_chunks, dim=0)
+        result_list = [pooled_all[i].numpy() for i in range(pooled_all.size(0))]
 
         if len(result_list) != len(inputs):
             logging.error(f"Mismatch in batch size: expected {len(inputs)} outputs, saw {len(result_list)}")

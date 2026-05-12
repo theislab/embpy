@@ -455,9 +455,18 @@ class GeneResolver:
                     return seq
 
         try:
-            # Step 1: Resolve symbol → Ensembl ID if needed
+            # Step 1: Resolve symbol -> Ensembl ID if needed
             if id_type == "symbol":
-                lookup_url = f"https://rest.ensembl.org/lookup/symbol/{organism}/{identifier}?expand=1"
+                # Run the symbol through the Part A 4-step alias chain
+                # (pyensembl -> HGNC -> Ensembl REST -> MyGene) before
+                # asking Ensembl REST for the DNA. This converts stale
+                # HGNC names like 'KARS' -> 'KARS1', 'AARS' -> 'AARS1',
+                # 'MARS' -> 'MARS1' so the lookup below does not 400.
+                # On failure we fall back to the raw identifier so the
+                # error path stays the same as before (Ensembl 400 ->
+                # logged + None returned).
+                canonical = self.resolve_symbol(identifier, organism=organism) or identifier
+                lookup_url = f"https://rest.ensembl.org/lookup/symbol/{organism}/{canonical}?expand=1"
             elif id_type == "ensembl_id":
                 lookup_url = f"https://rest.ensembl.org/lookup/id/{identifier}?expand=1"
             else:
