@@ -188,7 +188,7 @@ def test_trainer_logs_param_groups_and_optimizer_omits_frozen_backbone() -> None
         optim_cfg=OptimConfig(lr=1e-3),
         loss_cfg=LossConfig(),
         train_cfg=TrainConfig(n_epochs=1, device="cpu"),
-        output_dir="outputs/_test_freeze_grad_leak",
+        output_dir="runs/_test_freeze_grad_leak",
         run_name="t",
         hooks=[],
         state_backbone_cfg=cfg_frozen,

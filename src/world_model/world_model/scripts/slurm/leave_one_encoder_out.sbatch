@@ -11,12 +11,12 @@
 #
 # Usage (Stage A, array of pretrains):
 #   STAGE=A BASE_CONFIG=.../transfer.yaml GRID=.../ablation_action_encoder.yaml \
-#       STRATEGY=reset_adapter OUTPUT_ROOT=outputs/lone_replogle \
+#       STRATEGY=reset_adapter OUTPUT_ROOT=runs/lone_replogle \
 #       sbatch --array=0-4 src/.../slurm/leave_one_encoder_out.sbatch
 #
 # Usage (Stage B, array of off-diagonal cells; depends on Stage A):
 #   STAGE=B BASE_CONFIG=... GRID=... STRATEGY=reset_adapter \
-#       OUTPUT_ROOT=outputs/lone_replogle \
+#       OUTPUT_ROOT=runs/lone_replogle \
 #       sbatch --array=0-19 --dependency=afterok:<jobid_A> \
 #           src/.../slurm/leave_one_encoder_out.sbatch
 # -----------------------------------------------------------------------------
@@ -43,7 +43,7 @@ mkdir -p logs
 
 BASE_CONFIG="${BASE_CONFIG:-src/world_model/world_model/configs/experiments/transfer.yaml}"
 GRID="${GRID:-src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/lone_replogle}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-runs/lone_replogle}"
 STRATEGY="${STRATEGY:-reset_adapter}"
 STAGE="${STAGE:-A}"
 SEED_ARG=""

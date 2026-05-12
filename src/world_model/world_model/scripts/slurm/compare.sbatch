@@ -4,7 +4,7 @@
 # Runs after run_baselines.sbatch has produced baselines.csv.
 #
 # Usage:
-#   RUN_DIR=outputs/world_model/single_replogle \
+#   RUN_DIR=runs/world_model/single_replogle \
 #     sbatch src/world_model/world_model/scripts/slurm/compare.sbatch
 # Env overrides:
 #   PARTITION=cpu_p sbatch ... (no GPU needed; comparison is pure pandas)

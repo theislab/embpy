@@ -9,7 +9,7 @@ Usage:
 
     python -m world_model.scripts.eval \\
         --config src/world_model/world_model/configs/experiments/single_replogle.yaml \\
-        --checkpoint outputs/world_model/single_replogle/single_replogle_final.pt
+        --checkpoint runs/world_model/single_replogle/single_replogle_final.pt
 """
 
 from __future__ import annotations

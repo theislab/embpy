@@ -1,16 +1,22 @@
 #!/bin/bash
 # -----------------------------------------------------------------------------
 # Train the world model on Replogle (single-dataset setup).
-# Targets: gpu_p partition, h100_80gb QOS (one full H100 80GB).
+#
+# Hardware target: one H100 80GB on supergpu14-32.
+#   - partition  = gpu_p           (only partition that exposes the H100 nodes)
+#   - qos        = gpu_normal      (user-level QOS; h100_80gb is a node FEATURE
+#                                   on this cluster, not a QOS)
+#   - constraint = h100_80gb       (forces the scheduler to a supergpu14-32 node)
+#   - gres       = gpu:h100:1      (typed gres = "1 x H100", not any GPU)
 #
 # Usage:
 #   sbatch src/world_model/world_model/scripts/slurm/train_single_replogle.sbatch \
 #          [config_path]
 #
-# To override partition/QOS pass them on the sbatch command line (SBATCH
-# directives below are parsed BEFORE the shell, so $VAR substitution does
-# not work there -- that is why we keep literal defaults here):
-#   sbatch --partition=gpu_p --qos=gpu_normal \
+# To swap hardware (e.g. drop to A100 80GB for queue speed), override on the
+# sbatch command line (SBATCH directives below are parsed before the shell,
+# so $VAR substitution does NOT work in them):
+#   sbatch --constraint=a100_80gb --gres=gpu:1 \
 #          src/world_model/world_model/scripts/slurm/train_single_replogle.sbatch ...
 # -----------------------------------------------------------------------------
 #SBATCH --job-name=wm-replogle
@@ -20,10 +26,11 @@
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:h100:1
+#SBATCH --constraint=h100_80gb
 #SBATCH --time=24:00:00
 #SBATCH --partition=gpu_p
-#SBATCH --qos=h100_80gb
+#SBATCH --qos=gpu_normal
 
 set -euo pipefail
 export PATH="$HOME/.pixi/bin:$PATH"
@@ -36,7 +43,7 @@ cd "$PROJECT_DIR"
 # cache ever misses, StackWrapper writes a ~10 GB intermediate h5ad before
 # handing it to arc-stack, which blows out /tmp. Redirect to Lustre so the
 # fallback path stays survivable. Pre-warmed runs never touch this.
-export TMPDIR="${TMPDIR:-$PROJECT_DIR/outputs/_tmp}"
+export TMPDIR="${TMPDIR:-$PROJECT_DIR/runs/_tmp}"
 mkdir -p "$TMPDIR"
 
 CONFIG="${1:-${CONFIG:-src/world_model/world_model/configs/experiments/single_replogle.yaml}}"

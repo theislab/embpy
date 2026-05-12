@@ -66,7 +66,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--resolver-backend", choices=["api", "local"], default="api",
     )
     parser.add_argument(
-        "--cache-dir", type=str, default="outputs/_cache/action_embeddings",
+        "--cache-dir", type=str, default="runs/_cache/action_embeddings",
     )
     parser.add_argument(
         "--output", type=str, default=None,

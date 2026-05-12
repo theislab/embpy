@@ -1,18 +1,18 @@
 """Merge world-model + baseline metrics into a unified comparison.
 
-Reads ``outputs/<run_id>/baselines.csv`` (produced by
+Reads ``runs/<run_id>/baselines.csv`` (produced by
 ``run_baselines.py``) and an optional world-model row from
-``outputs/<run_id>/world_model_metrics.csv`` (produced by
+``runs/<run_id>/world_model_metrics.csv`` (produced by
 ``train.py`` / ``eval.py``), pivots them into a wide table with one
 row per evaluator and one column per metric, and writes:
 
-* ``outputs/<run_id>/comparison.csv``
-* ``outputs/<run_id>/plots/comparison.png`` (+ .svg)
+* ``runs/<run_id>/comparison.csv``
+* ``runs/<run_id>/plots/comparison.png`` (+ .svg)
 
 Usage:
 
     python -m world_model.scripts.compare \\
-        --run-dir outputs/world_model/single_replogle
+        --run-dir runs/world_model/single_replogle
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--run-dir",
         type=str,
         required=True,
-        help="Path to outputs/<run_id> (must contain baselines.csv).",
+        help="Path to runs/<run_id> (must contain baselines.csv).",
     )
     parser.add_argument(
         "--baselines-csv",

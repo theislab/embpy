@@ -9,14 +9,14 @@ Usage
         --adata /path/to/cells.h5ad \\
         --state-checkpoint /path/to/SE-600M/se600m_epoch15.ckpt \\
         --state-model-folder /path/to/SE-600M \\
-        --output outputs/_cache/state_backbone/state/<hash>/<ds>.npz
+        --output runs/_cache/state_backbone/state/<hash>/<ds>.npz
 
     python -m world_model.scripts.encode_cells \\
         --kind stack \\
         --adata /path/to/cells.h5ad \\
         --stack-checkpoint /path/to/bc_large.ckpt \\
         --stack-genelist /path/to/basecount_1000per_15000max.pkl \\
-        --output outputs/_cache/state_backbone/stack/<hash>/<ds>.npz
+        --output runs/_cache/state_backbone/stack/<hash>/<ds>.npz
 
 This is the canonical pre-flight check: if it fails, training will
 fail too -- the same code path is reused inside
@@ -80,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     # cannot fit the 10 GB Replogle dump. Redirect TMPDIR to a Lustre
     # path co-located with the rest of our outputs unless the caller
     # already set it. Use setdefault so explicit user choices win.
-    tmp_root = Path("outputs/_tmp").resolve()
+    tmp_root = Path("runs/_tmp").resolve()
     tmp_root.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("TMPDIR", str(tmp_root))
     logger.info("TMPDIR=%s (used for wrapper tempfiles)", os.environ["TMPDIR"])
@@ -97,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
         device=args.device,
         freeze=True,
         batch_size=int(args.batch_size),
-        cache_dir=args.cache_dir or "outputs/_cache/state_backbone",
+        cache_dir=args.cache_dir or "runs/_cache/state_backbone",
     )
     provider = build_backbone(cfg)
 

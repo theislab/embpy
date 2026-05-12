@@ -5,7 +5,7 @@
 # Usage (single job, walks the grid sequentially):
 #   BASE_CONFIG=src/world_model/world_model/configs/experiments/single_replogle.yaml \
 #   GRID=src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
-#   OUTPUT_ROOT=outputs/ablation_action_replogle \
+#   OUTPUT_ROOT=runs/ablation_action_replogle \
 #   sbatch src/world_model/world_model/scripts/slurm/ablate_action_encoder.sbatch
 #
 # Usage (array job, one spec per array task):
@@ -38,7 +38,7 @@ mkdir -p logs
 
 BASE_CONFIG="${BASE_CONFIG:-src/world_model/world_model/configs/experiments/single_replogle.yaml}"
 GRID="${GRID:-src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/ablation_action_replogle}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-runs/ablation_action_replogle}"
 ONLY="${ONLY:-}"
 SKIP="${SKIP:-}"
 SEED_ARG=""

@@ -2,7 +2,7 @@
 # Paths are relative to the repository root and assume the data layout
 # documented in src/world_model/README.md.
 run_name: "replogle_k562_essential"
-output_dir: "outputs/world_model/replogle_k562_essential"
+output_dir: "runs/world_model/replogle_k562_essential"
 seed: 0
 
 data:
@@ -10,7 +10,7 @@ data:
   h5ad_path: "data/datasets/replogle/replogle_2022_k562_essential.h5ad"
   gene_embedding_path: "data/embeddings/gene_embeddings/genept/embeddings_3072.csv"
   perturbation_key: "perturbation"
-  control_label: "non-targeting"
+  control_label: "control"
   cell_type_key: "cell_type"
   n_top_genes: 5000
   log_normalize: true

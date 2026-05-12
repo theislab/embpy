@@ -202,7 +202,7 @@ class EvalConfig:
 
     deg_top_k: int = 50
     save_predictions: bool = True
-    """Persist real and predicted AnnData under outputs/<run>/eval/."""
+    """Persist real and predicted AnnData under runs/<run>/eval/."""
 
 
 @dataclass
@@ -243,7 +243,7 @@ class ActionEmbeddingConfig:
     chromosome_folder: str | None = None
     device: str = "auto"
 
-    cache_dir: str = "outputs/_cache/action_embeddings"
+    cache_dir: str = "runs/_cache/action_embeddings"
     """Disk cache root. Use ``""`` to disable caching (not recommended)."""
 
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
@@ -357,7 +357,7 @@ class StateBackboneConfig:
     batch_size: int = 64
     """Encode batch size passed to the underlying wrapper."""
 
-    cache_dir: str = "outputs/_cache/state_backbone"
+    cache_dir: str = "runs/_cache/state_backbone"
     """Disk cache root for cell embeddings."""
 
     require_cache_hit: bool = False
@@ -386,7 +386,7 @@ class WorldModelConfig:
 
     seed: int = 0
     run_name: str = "wm_run"
-    output_dir: str = "outputs/world_model"
+    output_dir: str = "runs/world_model"
 
     mode: str = "single"
     """One of ``{"single", "transfer"}``."""

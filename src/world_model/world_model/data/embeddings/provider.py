@@ -40,7 +40,7 @@ from .sentinel import EmbeddingStatus, make_control_vector
 class ProviderMetadata:
     """Small JSON-serialisable description of what the provider did.
 
-    Persisted as ``outputs/<run_id>/action_embedding_meta.json`` by
+    Persisted as ``runs/<run_id>/action_embedding_meta.json`` by
     :func:`world_model.data.build_dataloaders` so a stale or wrong
     embedding table is one ``cat`` away from being noticed.
 

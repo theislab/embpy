@@ -1,4 +1,4 @@
-"""Render ``outputs/<run_id>/report.md`` from existing artefacts.
+"""Render ``runs/<run_id>/report.md`` from existing artefacts.
 
 Reads whatever the training / baseline / compare scripts have written
 into ``run_dir`` and produces a single self-contained markdown file:
@@ -12,7 +12,7 @@ into ``run_dir`` and produces a single self-contained markdown file:
 Usage:
 
     python -m world_model.scripts.make_report \\
-        --run-dir outputs/world_model/single_replogle
+        --run-dir runs/world_model/single_replogle
 """
 
 from __future__ import annotations

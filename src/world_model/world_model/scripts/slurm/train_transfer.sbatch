@@ -32,7 +32,7 @@ cd "$PROJECT_DIR"
 CONFIG="${1:-${CONFIG:-src/world_model/world_model/configs/experiments/transfer.yaml}}"
 FRACTION="${FRACTION:-0.10}"
 RUN_NAME="transfer_nadig_to_replogle_p$(printf '%03d' $(python -c "print(int(float('${FRACTION}')*100))"))"
-OUTPUT_DIR="outputs/world_model/${RUN_NAME}"
+OUTPUT_DIR="runs/world_model/${RUN_NAME}"
 
 echo "Config: $CONFIG"
 echo "Fraction: $FRACTION"

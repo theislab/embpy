@@ -2,7 +2,7 @@
 # trains 2 epochs on CPU, runs all baselines and the eval pipeline.
 # Should finish in well under 5 minutes on a laptop without GPU.
 run_name: "smoke"
-output_dir: "outputs/world_model/smoke"
+output_dir: "runs/world_model/smoke"
 seed: 0
 mode: "single"
 

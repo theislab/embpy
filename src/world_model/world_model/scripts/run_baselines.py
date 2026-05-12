@@ -3,14 +3,14 @@
 Loads the same :class:`SplitConfig` as the trainer, fits all baselines
 on the train side, evaluates them on the test side, and writes:
 
-* ``outputs/<run_id>/baselines.csv``   -- one row per (baseline, metric)
-* ``outputs/<run_id>/comparison.csv``  -- baselines + (optional) world model
+* ``runs/<run_id>/baselines.csv``   -- one row per (baseline, metric)
+* ``runs/<run_id>/comparison.csv``  -- baselines + (optional) world model
 
 Usage:
 
     python -m world_model.scripts.run_baselines \\
         --config src/world_model/world_model/configs/experiments/single_replogle.yaml \\
-        --checkpoint outputs/world_model/single_replogle/single_replogle_final.pt
+        --checkpoint runs/world_model/single_replogle/single_replogle_final.pt
 """
 
 from __future__ import annotations

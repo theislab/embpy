@@ -2,7 +2,7 @@
 # Paths are relative to the repository root and assume the data layout
 # documented in src/world_model/README.md.
 run_name: "nadig_jurkat"
-output_dir: "outputs/world_model/nadig_jurkat"
+output_dir: "runs/world_model/nadig_jurkat"
 seed: 0
 
 data:

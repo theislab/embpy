@@ -13,7 +13,7 @@ import torch
 
 @dataclass
 class ProviderMetadata:
-    """Metadata persisted to ``outputs/<run>/state_backbone_meta.json``."""
+    """Metadata persisted to ``runs/<run>/state_backbone_meta.json``."""
 
     kind: str
     name: str

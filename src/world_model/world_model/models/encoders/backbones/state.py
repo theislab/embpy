@@ -167,9 +167,11 @@ class StateBackbone(StateBackboneProvider):
                 dataset_hash=ds_hash,
             )
             if cached is not None:
+                if self._embedding_dim is None:
+                    self._embedding_dim = int(cached[0].shape[1])
                 logger.info(
-                    "STATE cache hit (%s/%s) -- %d cells.",
-                    ckpt_hash, ds_hash, cached[0].shape[0],
+                    "STATE cache hit (%s/%s) -- %d cells, dim=%d.",
+                    ckpt_hash, ds_hash, cached[0].shape[0], self._embedding_dim,
                 )
                 return cached[0]
             if self._require_cache_hit:

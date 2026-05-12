@@ -1,5 +1,5 @@
 run_name: "single_nadig"
-output_dir: "outputs/world_model/single_nadig"
+output_dir: "runs/world_model/single_nadig"
 seed: 0
 mode: "single"
 

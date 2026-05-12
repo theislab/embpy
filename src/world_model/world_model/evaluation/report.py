@@ -1,4 +1,4 @@
-"""Generate ``outputs/<run_id>/report.md`` from evaluation results.
+"""Generate ``runs/<run_id>/report.md`` from evaluation results.
 
 The report is a single self-contained markdown file embedding:
 

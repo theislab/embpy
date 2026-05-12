@@ -35,7 +35,7 @@ mkdir -p logs
 ablate_action_encoder() {
     local base_config="src/world_model/world_model/configs/experiments/single_replogle.yaml"
     local grid="src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml"
-    local output_root="outputs/ablation_action_replogle"
+    local output_root="runs/ablation_action_replogle"
     local use_array=0
     local only=""
     local skip=""
@@ -154,7 +154,7 @@ for s in load_grid(sys.argv[1]):
 lone() {
     local base_config="src/world_model/world_model/configs/experiments/transfer.yaml"
     local grid="src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml"
-    local output_root="outputs/lone_replogle"
+    local output_root="runs/lone_replogle"
     local strategy="reset_adapter"
 
     while [[ $# -gt 0 ]]; do
@@ -256,13 +256,13 @@ fi
 # Map setup -> output_dir: hard-coded to match the values in
 # configs/experiments/*.yaml so we do not have to parse YAML in bash.
 declare -A SETUP_OUT
-SETUP_OUT[single_nadig]="outputs/world_model/single_nadig"
-SETUP_OUT[single_replogle]="outputs/world_model/single_replogle"
+SETUP_OUT[single_nadig]="runs/world_model/single_nadig"
+SETUP_OUT[single_replogle]="runs/world_model/single_replogle"
 
 FRACTION="${FRACTION:-0.10}"
 P_INT=$(python -c "print(int(float('${FRACTION}')*100))")
 TRANSFER_RUN_NAME="transfer_nadig_to_replogle_p$(printf '%03d' $P_INT)"
-SETUP_OUT[transfer]="outputs/world_model/${TRANSFER_RUN_NAME}"
+SETUP_OUT[transfer]="runs/world_model/${TRANSFER_RUN_NAME}"
 
 declare -A TRAIN_JOB
 

@@ -5,7 +5,7 @@ into long / wide summary CSVs plus comparison plots and a Markdown
 report. Re-runnable on its own:
 
     python -m world_model.evaluation.ablation.aggregate \
-        --output-root outputs/ablation_action_replogle \
+        --output-root runs/ablation_action_replogle \
         --grid configs/experiments/ablation_action_encoder.yaml
 
 The aggregator never touches network / GPU; it only reads CSV / JSON

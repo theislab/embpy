@@ -56,7 +56,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOT_DIR = REPO_ROOT / "tests" / "_snapshots" / "pre_split" / "smoke"
 SMOKE_CONFIG = REPO_ROOT / "src" / "world_model" / "configs" / "experiments" / "smoke.yaml"
 
-# Files the smoke pipeline produces under outputs/world_model/smoke/.
+# Files the smoke pipeline produces under runs/world_model/smoke/.
 EXACT_MATCH_FILES = (
     "comparison.csv",
     "baselines.csv",

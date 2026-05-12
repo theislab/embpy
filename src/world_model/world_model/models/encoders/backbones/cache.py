@@ -29,7 +29,7 @@ CLI inspect
 ::
 
     python -m world_model.models.encoders.backbones.cache \\
-        --inspect outputs/_cache/state_backbone
+        --inspect runs/_cache/state_backbone
 """
 
 from __future__ import annotations

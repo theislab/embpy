@@ -2,7 +2,7 @@
 # transfer.finetune_fraction (e.g. 0.01, 0.05, 0.10, 0.25, 0.50) on the
 # CLI to vary p.
 run_name: "transfer_nadig_to_replogle_p10"
-output_dir: "outputs/world_model/transfer_nadig_to_replogle_p10"
+output_dir: "runs/world_model/transfer_nadig_to_replogle_p10"
 seed: 0
 mode: "transfer"
 

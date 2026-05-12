@@ -426,7 +426,7 @@ the rough delta vs. the current tree.
 | 6 | Extract `IdentifierResolver`. Consolidate `_resolve_seq_type` and `detect_identifier_type`. | DRY. | ~150 lines moved. | New `IdentifierResolver` unit-test, plus the existing classifier tests. | Deferred. |
 | 7 | Resolver split: `embpy.resources.gene._alias_resolver` (already in this PR) + extracted `_ensembl_get`, alias-chain orchestrator, and a `ResolutionError` taxonomy. | Section 4. | ~150 lines moved, ~80 added. | `tests/test_gene_resolver_aliases.py` (this PR) passes. New negative-cache assertion. | Deferred. |
 | 8 | Extract `PerturbationMorphology` from `BioEmbedder`. | Largest single chunk; ~700 LOC. | ~700 lines moved + 1 new test file. | Synthetic JUMP fixture under `tests/data/`. | Deferred. |
-| 9 | Two-package split (`embpy` + `world_model`). | Prompt's Part C. | New `pyproject.toml`s; ~30 `sbatch`/YAML path rewrites. | Smoke config byte-equivalent vs. snapshot (`outputs/<run>/{comparison,baselines,action_embedding_meta}.json`). | **Landed** in `18896cf` + `882be61`; details in `docs/audit/package_split.md`. |
+| 9 | Two-package split (`embpy` + `world_model`). | Prompt's Part C. | New `pyproject.toml`s; ~30 `sbatch`/YAML path rewrites. | Smoke config byte-equivalent vs. snapshot (`runs/<run>/{comparison,baselines,action_embedding_meta}.json`). | **Landed** in `18896cf` + `882be61`; details in `docs/audit/package_split.md`. |
 
 ### What lands in **this audit-driven series**
 

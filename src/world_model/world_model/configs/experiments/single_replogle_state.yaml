@@ -16,7 +16,7 @@
 # second training run on the same dataset is therefore near-instant
 # on the encode side.
 run_name: "single_replogle_state"
-output_dir: "outputs/world_model/single_replogle_state"
+output_dir: "runs/world_model/single_replogle_state"
 seed: 0
 mode: "single"
 
@@ -25,7 +25,7 @@ data:
   h5ad_path: "data/datasets/replogle/replogle_2022_k562_essential.h5ad"
   gene_embedding_path: "data/embeddings/gene_embeddings/genept/embeddings_3072.csv"
   perturbation_key: "perturbation"
-  control_label: "non-targeting"
+  control_label: "control"
   cell_type_key: "cell_type"
   n_top_genes: 5000
   log_normalize: true
@@ -51,7 +51,7 @@ state_backbone:
   device: "auto"
   freeze: true
   batch_size: 64
-  cache_dir: "outputs/_cache/state_backbone"
+  cache_dir: "runs/_cache/state_backbone"
   require_cache_hit: false
 
 split:

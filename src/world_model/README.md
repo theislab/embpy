@@ -433,7 +433,7 @@ bash src/world_model/world_model/scripts/submit_all.sh
 train_<setup>  -->  run_baselines  -->  compare + make_report
 ```
 
-so when the chain finishes, every `outputs/<run_id>/` ends up with a
+so when the chain finishes, every `runs/<run_id>/` ends up with a
 `comparison.csv`, `comparison.png`, and `report.md` automatically.
 Skip a setup with `SKIP_NADIG=1`, `SKIP_REPLOGLE=1`, `SKIP_TRANSFER=1`.
 
@@ -463,7 +463,7 @@ sufficiently expressive model trivially memorises this -- never
 report headline numbers from cell-level splits).
 
 Splits are computed once and persisted to
-`outputs/<run_id>/splits/<dataset>.npz`. Every subsequent run
+`runs/<run_id>/splits/<dataset>.npz`. Every subsequent run
 (world model, baselines, eval-only) reuses the same file, so model and
 baselines are compared on byte-identical train/test indices.
 
@@ -473,11 +473,11 @@ baselines are compared on byte-identical train/test indices.
 # evaluate a checkpoint (model + baselines + plots + report)
 pixi run -e gpu python -m world_model.scripts.eval \
     --config src/world_model/world_model/configs/experiments/single_replogle.yaml \
-    --checkpoint outputs/world_model/single_replogle/single_replogle_final.pt
+    --checkpoint runs/world_model/single_replogle/single_replogle_final.pt
 
 # or via SLURM
 CONFIG=src/world_model/world_model/configs/experiments/single_replogle.yaml \
-CKPT=outputs/world_model/single_replogle/single_replogle_final.pt \
+CKPT=runs/world_model/single_replogle/single_replogle_final.pt \
     sbatch src/world_model/world_model/scripts/slurm/eval_only.sbatch
 ```
 
@@ -487,8 +487,8 @@ The full pipeline runs:
    overlap@K) per perturbation and aggregated.
 2. Plots: loss curves, predicted-vs-real scatter, per-perturbation R^2
    violin, DEG overlap bar, baseline-vs-model comparison. Saved as
-   PNG + SVG under `outputs/<run_id>/plots/`.
-3. `outputs/<run_id>/report.md` -- self-contained markdown summary
+   PNG + SVG under `runs/<run_id>/plots/`.
+3. `runs/<run_id>/report.md` -- self-contained markdown summary
    with config dump, metric tables, and embedded plots.
 
 ## Baselines
@@ -509,19 +509,19 @@ Run them against the same split as a world-model run:
 ```bash
 pixi run -e gpu python -m world_model.scripts.run_baselines \
     --config src/world_model/world_model/configs/experiments/single_replogle.yaml \
-    --checkpoint outputs/world_model/single_replogle/single_replogle_final.pt
+    --checkpoint runs/world_model/single_replogle/single_replogle_final.pt
 
 # or via SLURM
 CONFIG=src/world_model/world_model/configs/experiments/single_replogle.yaml \
-CKPT=outputs/world_model/single_replogle/single_replogle_final.pt \
+CKPT=runs/world_model/single_replogle/single_replogle_final.pt \
     sbatch src/world_model/world_model/scripts/slurm/run_baselines.sbatch
 ```
 
 Outputs:
 
-* `outputs/<run_id>/baselines.csv`  -- one row per (baseline, metric).
-* `outputs/<run_id>/comparison.csv` -- wide format, world model + every baseline.
-* `outputs/<run_id>/plots/comparison.png` -- bar chart per metric.
+* `runs/<run_id>/baselines.csv`  -- one row per (baseline, metric).
+* `runs/<run_id>/comparison.csv` -- wide format, world model + every baseline.
+* `runs/<run_id>/plots/comparison.png` -- bar chart per metric.
 
 ## Comparison and final report (standalone)
 
@@ -531,11 +531,11 @@ final comparison + report can be regenerated independently:
 ```bash
 # build comparison.csv + comparison.png
 pixi run -e gpu python -m world_model.scripts.compare \
-    --run-dir outputs/world_model/single_replogle
+    --run-dir runs/world_model/single_replogle
 
 # render report.md from whatever already exists in run-dir
 pixi run -e gpu python -m world_model.scripts.make_report \
-    --run-dir outputs/world_model/single_replogle
+    --run-dir runs/world_model/single_replogle
 ```
 
 These two scripts read only files on disk (`config.yaml`,
@@ -602,10 +602,10 @@ the full eval pipeline) and asserts that all expected output files
 ## Output layout
 
 Every run / baseline pass / comparison job writes into the same
-`outputs/<run_id>/` directory so chaining and re-runs stay coherent:
+`runs/<run_id>/` directory so chaining and re-runs stay coherent:
 
 ```
-outputs/<run_id>/
+runs/<run_id>/
   config.yaml                        resolved config (used by make_report.py)
   train.log / baselines.log / ...    one log file per script
   splits/<dataset>.npz               deterministic train/test indices
@@ -657,8 +657,8 @@ The trainer routes everything through pluggable hooks
 * per-step train loss, learning rate, gradient norm, every loss
   component -> stdout (every `train.log_every_n_steps`),
 * per-epoch train/val loss + components -> CSV at
-  `outputs/<run_id>/train_log.csv` and TensorBoard at
-  `outputs/<run_id>/tb/`,
+  `runs/<run_id>/train_log.csv` and TensorBoard at
+  `runs/<run_id>/tb/`,
 * loss curves + report rendered automatically at end of training.
 
 Drop hooks by passing `hooks=[]` to `WorldModelTrainer.__init__`; add
@@ -803,7 +803,7 @@ pixi run -e gpu python -m world_model.scripts.smoke_test
 Must finish under five minutes on CPU and leave behind:
 
 ```
-outputs/world_model/smoke/
+runs/world_model/smoke/
   config.yaml
   train_log.csv
   report.md
@@ -819,11 +819,11 @@ outputs/world_model/smoke/
 ```bash
 # regenerate comparison.csv + comparison.png from a finished run
 pixi run -e gpu python -m world_model.scripts.compare \
-    --run-dir outputs/world_model/smoke
+    --run-dir runs/world_model/smoke
 
 # regenerate report.md from whatever exists in run-dir
 pixi run -e gpu python -m world_model.scripts.make_report \
-    --run-dir outputs/world_model/smoke
+    --run-dir runs/world_model/smoke
 ```
 
 ### SLURM submission
@@ -839,7 +839,7 @@ bash -n src/world_model/world_model/scripts/submit_all.sh && echo OK submit_all.
 
 Expected: every line prints `OK <path>`. Submit smallest first
 (`train_single_nadig.sbatch`); `logs/wm-nadig_<jobid>.out` should print
-"Run single_nadig -- output_dir=outputs/world_model/single_nadig"
+"Run single_nadig -- output_dir=runs/world_model/single_nadig"
 within seconds of the job starting.
 
 ## Action embeddings
@@ -894,7 +894,7 @@ float32[N, D]`. Subsequent calls with the same key only embed the
 *new* symbols and merge them into the archive via a temp-file +
 `os.replace` atomic rename (so readers always see the old or the new
 file, never a half-written one). The default `cache_dir` is
-`outputs/_cache/action_embeddings/`.
+`runs/_cache/action_embeddings/`.
 
 ### Switching the action representation
 
@@ -924,7 +924,7 @@ pixi run -e gpu python -m world_model.scripts.embed_perturbations \
     --dataset replogle \
     --h5ad data/datasets/replogle/replogle_2022_k562_essential.h5ad \
     --model esm2_650M \
-    --output outputs/_cache/action_embeddings/esm2_650M/full_mean_human.npz
+    --output runs/_cache/action_embeddings/esm2_650M/full_mean_human.npz
 ```
 
 ### Supported `model_name` values
@@ -945,18 +945,18 @@ for the full, env-aware list.
 
 | symptom                                          | what to inspect                                                                                              |
 | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| Loss does not move; baselines beat the model     | `cat outputs/<run>/action_embedding_meta.json` -- check `embedding_dim` is non-zero and `n_unresolved` is small |
+| Loss does not move; baselines beat the model     | `cat runs/<run>/action_embedding_meta.json` -- check `embedding_dim` is non-zero and `n_unresolved` is small |
 | Half the test perturbations show identical predictions | Same file -- `n_unresolved` near `n_symbols` means rows are zero, the model has no signal for those genes  |
-| Transfer training blows up after pretrain        | Check `embedding_dim` in `outputs/<run>/pretrain/action_embedding_meta.json` vs `finetune/action_embedding_meta.json` -- they must match |
+| Transfer training blows up after pretrain        | Check `embedding_dim` in `runs/<run>/pretrain/action_embedding_meta.json` vs `finetune/action_embedding_meta.json` -- they must match |
 | Slow first epoch                                 | Run `scripts/embed_perturbations.py` first to populate the cache                                             |
 | Want to revert from BioEmbedder to precomputed   | Set `action_embedding.source: precomputed` and `action_embedding.path: <your_npz>` (or leave empty to fall back to `data.gene_embedding_path`); no retraining needed if you just want to re-evaluate |
 
 Inspect the cache directly:
 
 ```bash
-ls outputs/_cache/action_embeddings/
-ls outputs/_cache/action_embeddings/esm2_650M/        # one folder per model
-python -c "import numpy as np; a=np.load('outputs/_cache/action_embeddings/esm2_650M/full_mean_human.npz', allow_pickle=True); print(len(a['symbols']), a['embeddings'].shape)"
+ls runs/_cache/action_embeddings/
+ls runs/_cache/action_embeddings/esm2_650M/        # one folder per model
+python -c "import numpy as np; a=np.load('runs/_cache/action_embeddings/esm2_650M/full_mean_human.npz', allow_pickle=True); print(len(a['symbols']), a['embeddings'].shape)"
 ```
 
 ## Ablating the action encoder
@@ -974,7 +974,7 @@ emits a single CSV that puts every backend on the same row.
 pixi run -e gpu python -m world_model.scripts.ablate_action_encoder \
     --base-config src/world_model/world_model/configs/experiments/smoke.yaml \
     --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
-    --output-root outputs/ablation_smoke \
+    --output-root runs/ablation_smoke \
     --only minilm,esm2_650m
 ```
 
@@ -1033,11 +1033,11 @@ Quick comparisons from the long form:
 
 ```python
 import pandas as pd
-df = pd.read_csv("outputs/ablation_action_replogle/summary_long.csv")
+df = pd.read_csv("runs/ablation_action_replogle/summary_long.csv")
 df.query("metric == 'r2' and status == 'ok'").sort_values("value", ascending=False)
 ```
 
-The companion plots in `outputs/<root>/plots/` give:
+The companion plots in `runs/<root>/plots/` give:
 
 * `metric_bar_<metric>.png` -- one bar per spec, easiest visual sort.
 * `embedding_dim_vs_<metric>.png` -- does adding capacity (larger
@@ -1047,8 +1047,8 @@ The companion plots in `outputs/<root>/plots/` give:
 
 ### What to do when a spec fails
 
-1. Check `logs/<job>.err` (or `outputs/<root>/<key>/_ablation_run.json` for the in-process traceback).
-2. Inspect `outputs/<root>/<key>/action_embedding_meta.json`. The two
+1. Check `logs/<job>.err` (or `runs/<root>/<key>/_ablation_run.json` for the in-process traceback).
+2. Inspect `runs/<root>/<key>/action_embedding_meta.json`. The two
    most common failure modes are:
    * `embedding_dim == 0` -- every symbol failed to resolve. Usually a
      bad `id_type` (DNA models need `symbol` or `ensembl_id`, never
@@ -1060,13 +1060,13 @@ The companion plots in `outputs/<root>/plots/` give:
    pixi run -e gpu python -m world_model.scripts.ablate_action_encoder \
        --base-config src/world_model/world_model/configs/experiments/single_replogle.yaml \
        --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
-       --output-root outputs/ablation_action_replogle \
+       --output-root runs/ablation_action_replogle \
        --only flashzoi
    ```
 4. Re-run the aggregator on its own (no retraining of any spec):
    ```bash
    pixi run -e gpu python -m world_model.evaluation.ablation.aggregate \
-       --output-root outputs/ablation_action_replogle \
+       --output-root runs/ablation_action_replogle \
        --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml
    ```
 
@@ -1125,7 +1125,7 @@ Adapter sweep (smoke run on CPU):
 pixi run -e gpu python -m world_model.scripts.ablate_action_adapter \
     --base-config src/world_model/world_model/configs/experiments/smoke.yaml \
     --grid src/world_model/world_model/configs/experiments/ablation_action_adapter.yaml \
-    --output-root outputs/ablation_adapter_smoke \
+    --output-root runs/ablation_adapter_smoke \
     --only linear,lora_r4
 ```
 
@@ -1137,7 +1137,7 @@ pixi run -e gpu python -m world_model.scripts.ablate_encoder_x_adapter \
     --base-config src/world_model/world_model/configs/experiments/single_replogle.yaml \
     --encoder-grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
     --adapter-grid src/world_model/world_model/configs/experiments/ablation_action_adapter.yaml \
-    --output-root outputs/cross_replogle
+    --output-root runs/cross_replogle
 ```
 
 Leave-one-encoder-out (5 pretrains + 20 off-diagonal fine-tunes):
@@ -1147,7 +1147,7 @@ pixi run -e gpu python -m world_model.scripts.leave_one_encoder_out \
     --base-config src/world_model/world_model/configs/experiments/transfer.yaml \
     --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
     --strategy reset_adapter \
-    --output-root outputs/lone_replogle
+    --output-root runs/lone_replogle
 ```
 
 On the cluster, the `--lone` flag launches the whole DAG:
@@ -1157,12 +1157,12 @@ bash src/world_model/world_model/scripts/submit_all.sh --lone \
     --base-config src/world_model/world_model/configs/experiments/transfer.yaml \
     --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
     --strategy reset_adapter \
-    --output-root outputs/lone_replogle
+    --output-root runs/lone_replogle
 ```
 
 ### Reading the heatmap and `summary_wide.csv`
 
-`outputs/lone_replogle/<strategy>/heatmaps/<metric>.png` is a 5x5 grid
+`runs/lone_replogle/<strategy>/heatmaps/<metric>.png` is a 5x5 grid
 where the rows are pretrain encoders and the columns are fine-tune
 encoders. To argue something like *"encoder Y closes the gap with
 encoder X under `learn_alignment`"*, look up the cell `X -> Y` and
@@ -1172,14 +1172,14 @@ you care about, the alignment bridge is recovering most of the within-
 encoder performance. The same comparison across strategies tells you
 which swap is the cheapest path to recover the diagonal.
 
-`summary_wide.csv` (in `outputs/ablation_adapter_*/`) has one row per
+`summary_wide.csv` (in `runs/ablation_adapter_*/`) has one row per
 adapter spec and one column per metric, plus `kind`, `hidden_dim`,
 `lora_rank`, and a closed-form `param_count`. A quick pandas one-liner
 to find the best metric per parameter-count bucket:
 
 ```python
 import pandas as pd
-df = pd.read_csv("outputs/ablation_adapter_replogle/summary_wide.csv")
+df = pd.read_csv("runs/ablation_adapter_replogle/summary_wide.csv")
 df.sort_values("r2", ascending=False)[["grid_key", "kind", "param_count", "r2"]]
 ```
 
@@ -1238,7 +1238,7 @@ Run a 2-spec adapter sweep on smoke.yaml end-to-end on CPU:
 pixi run -e gpu python -m world_model.scripts.ablate_action_adapter \
     --base-config src/world_model/world_model/configs/experiments/smoke.yaml \
     --grid src/world_model/world_model/configs/experiments/ablation_action_adapter.yaml \
-    --output-root outputs/ablation_adapter_smoke \
+    --output-root runs/ablation_adapter_smoke \
     --only linear,lora_r4
 ```
 
@@ -1249,7 +1249,7 @@ pixi run -e gpu python -m world_model.scripts.leave_one_encoder_out \
     --base-config src/world_model/world_model/configs/experiments/transfer.yaml \
     --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
     --strategy reset_adapter \
-    --output-root outputs/lone_smoke \
+    --output-root runs/lone_smoke \
     --diagonal-only --only enformer:enformer,esm2_650m:esm2_650m,minilm:minilm
 ```
 
@@ -1258,7 +1258,7 @@ Re-render the adapter aggregation without retraining anything:
 ```bash
 pixi run -e gpu python -m world_model.evaluation.ablation.aggregate \
     --mode adapter \
-    --output-root outputs/ablation_adapter_replogle \
+    --output-root runs/ablation_adapter_replogle \
     --grid src/world_model/world_model/configs/experiments/ablation_action_adapter.yaml
 ```
 
@@ -1266,7 +1266,7 @@ Compare any two specs head-to-head from `summary_long.csv`:
 
 ```python
 import pandas as pd
-df = pd.read_csv("outputs/ablation_adapter_replogle/summary_long.csv")
+df = pd.read_csv("runs/ablation_adapter_replogle/summary_long.csv")
 print(df[df.grid_key.isin(["linear", "lora_r16"])].pivot_table(
     index="metric", columns="grid_key", values="value", aggfunc="first"
 ))
@@ -1330,7 +1330,7 @@ state_backbone:
   device: "auto"
   freeze: true
   batch_size: 64
-  cache_dir: "outputs/_cache/state_backbone"
+  cache_dir: "runs/_cache/state_backbone"
   require_cache_hit: false
 ```
 
@@ -1345,7 +1345,7 @@ state_backbone:
   device: "auto"
   freeze: true
   batch_size: 32
-  cache_dir: "outputs/_cache/state_backbone"
+  cache_dir: "runs/_cache/state_backbone"
   require_cache_hit: false
 ```
 
@@ -1365,7 +1365,7 @@ python -m world_model.scripts.encode_cells \
   --adata data/datasets/replogle/replogle_2022_k562_essential.h5ad \
   --state-checkpoint data/checkpoints/SE-600M/se600m_epoch15.ckpt \
   --state-model-folder data/checkpoints/SE-600M \
-  --output outputs/_cache/state_backbone/state/<hash>/<ds>.npz
+  --output runs/_cache/state_backbone/state/<hash>/<ds>.npz
 ```
 
 The script prints `embedding_dim`, `n_cells`, wall-clock seconds, and
@@ -1412,7 +1412,7 @@ nested under `data:`).
 
 ```bash
 python -m world_model.models.encoders.backbones.cache \
-  --inspect outputs/_cache/state_backbone
+  --inspect runs/_cache/state_backbone
 ```
 
 Prints one row per cached NPZ: `BACKBONE  N_CELLS  DIM  SIZE_MB  PATH`,
@@ -1443,7 +1443,7 @@ python -m world_model.scripts.encode_cells \
 
 # 3. List what's currently cached and how big it is on disk.
 python -m world_model.models.encoders.backbones.cache \
-  --inspect outputs/_cache/state_backbone
+  --inspect runs/_cache/state_backbone
 
 # 4. Verify a frozen STATE backbone leaves no parameter trainable.
 python -c "
@@ -1461,7 +1461,7 @@ print('OK: all', sum(1 for _ in p.parameters()), 'param tensors are frozen.')
 #    evaluator re-runs. The trained dynamics + decoder stay the same.
 python -m world_model.scripts.train \
   --config src/world_model/world_model/configs/experiments/single_replogle.yaml \
-  state_backbone.kind=local       # -> outputs/.../local
+  state_backbone.kind=local       # -> runs/.../local
 python -m world_model.scripts.train \
   --config src/world_model/world_model/configs/experiments/single_replogle_state.yaml
 python -m world_model.scripts.train \

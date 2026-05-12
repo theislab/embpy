@@ -122,7 +122,7 @@ class WorldModelTrainer:
         optim_cfg: OptimConfig,
         loss_cfg: LossConfig,
         train_cfg: TrainConfig,
-        output_dir: str | Path = "outputs/world_model",
+        output_dir: str | Path = "runs/world_model",
         run_name: str = "wm_run",
         hooks: list[Hook] | None = None,
         state_backbone_cfg: StateBackboneConfig | None = None,

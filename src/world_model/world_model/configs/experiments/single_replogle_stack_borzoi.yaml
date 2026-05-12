@@ -24,7 +24,7 @@
 #          --adata data/datasets/replogle/replogle_2022_k562_essential.h5ad \
 #          --stack-checkpoint data/checkpoints/stack/bc_large.ckpt \
 #          --stack-genelist   data/checkpoints/stack/basecount_1000per_15000max.pkl \
-#          --output outputs/_cache/state_backbone/stack/replogle_k562.npz
+#          --output runs/_cache/state_backbone/stack/replogle_k562.npz
 #
 #        # action-side gene embeddings (Borzoi)
 #        pixi run -e gpu python -m world_model.scripts.embed_perturbations \
@@ -37,7 +37,7 @@
 #               src/world_model/world_model/configs/experiments/single_replogle_stack_borzoi.yaml
 
 run_name: "single_replogle_stack_borzoi"
-output_dir: "outputs/world_model/single_replogle_stack_borzoi"
+output_dir: "runs/world_model/single_replogle_stack_borzoi"
 seed: 0
 mode: "single"
 
@@ -46,7 +46,7 @@ data:
   h5ad_path: "data/datasets/replogle/replogle_2022_k562_essential.h5ad"
   gene_embedding_path: ""           # unused: action_embedding.source = bio_embedder
   perturbation_key: "perturbation"
-  control_label: "non-targeting"
+  control_label: "control"
   cell_type_key: "cell_type"
   n_top_genes: 5000
   log_normalize: true
@@ -69,7 +69,7 @@ action_embedding:
   pooling_strategy: "mean"
   resolver_backend: "api"
   device: "auto"
-  cache_dir: "outputs/_cache/action_embeddings"
+  cache_dir: "runs/_cache/action_embeddings"
 
 # State: frozen Arc STACK foundation backbone. Cell embeddings are
 # pre-computed once on the head node and replayed from disk during training.
@@ -81,11 +81,11 @@ state_backbone:
   device: "auto"
   freeze: true
   batch_size: 32
-  cache_dir: "outputs/_cache/state_backbone"
+  cache_dir: "runs/_cache/state_backbone"
   require_cache_hit: false
 
 # 80 / 20 split, held out by PERTURBATION (test perturbations never seen).
-# Persisted to outputs/<run_id>/splits/replogle.npz on first run and
+# Persisted to runs/<run_id>/splits/replogle.npz on first run and
 # reused by baselines + eval so the comparison is byte-identical.
 split:
   split_by: "perturbation"

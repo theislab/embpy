@@ -34,8 +34,17 @@ node_modules/
 # Buck build output (if applicable)
 buck-out/
 
+# Full-scale embedding artifacts produced by embpy CLIs/notebooks.
+# CSVs are typically multi-GB (e.g. chemberta2/ESMC over the human proteome)
+# and must never end up in git.
+/embeddings/
+
+# World-model runs: pre-computed caches (state backbone + action
+# embeddings), per-experiment training output dirs, intermediate
+# tempfiles. Multi-GB and regenerated on every run.
+/runs/
+
 # Job outputs & logs
-/output/
 /err/
 /logs/
 submission_scripts/logs/
@@ -51,7 +60,6 @@ cellflow_operational/
 activations_debug.log
 embedding_job.log
 cellflow_operational/
-output/
 err/
 slurm_error_*.txt
 slurm_jupyter_*.txt

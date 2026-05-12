@@ -46,7 +46,7 @@ def main(argv: list[str] | None = None) -> None:
     train_argv = ["--config", args.config, *args.overrides]
     train_main(train_argv)
 
-    output_dir = Path("outputs/world_model/smoke")
+    output_dir = Path("runs/world_model/smoke")
     missing: list[str] = []
     for rel in REQUIRED_FILES:
         path = output_dir / rel
