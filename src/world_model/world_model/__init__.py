@@ -25,7 +25,7 @@ Quick start
     from world_model.models.world_model import build_world_model
     from world_model.training import WorldModelTrainer
 
-    cfg = load_yaml_config("src/world_model/configs/replogle.yaml")
+    cfg = load_yaml_config("src/world_model/world_model/configs/replogle.yaml")
     train_loader, val_loader, gene_table, indexer, gene_symbols = build_dataloaders(
         cfg.data, seed=cfg.seed,
     )

@@ -7,7 +7,7 @@ of Replogle, evaluate on the rest of Replogle).
 Usage:
 
     python -m world_model.scripts.train \\
-        --config src/world_model/configs/experiments/single_replogle.yaml \\
+        --config src/world_model/world_model/configs/experiments/single_replogle.yaml \\
         encoder.d_model=256 dynamics.n_layers=8
 
 Positional arguments after ``--config`` are treated as dotted CLI

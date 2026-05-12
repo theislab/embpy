@@ -5,7 +5,7 @@
 # to chain baselines + report after each training job finishes.
 #
 # Usage (default behaviour):
-#   bash src/world_model/scripts/submit_all.sh
+#   bash src/world_model/world_model/scripts/submit_all.sh
 #
 # Override the SLURM partition / qos via env:
 #   PARTITION=gpu_p QOS=gpu_normal bash .../submit_all.sh
@@ -24,7 +24,7 @@
 # -----------------------------------------------------------------------------
 set -euo pipefail
 
-SLURM_DIR="src/world_model/scripts/slurm"
+SLURM_DIR="src/world_model/world_model/scripts/slurm"
 mkdir -p logs
 
 
@@ -33,8 +33,8 @@ mkdir -p logs
 # ---------------------------------------------------------------------
 
 ablate_action_encoder() {
-    local base_config="src/world_model/configs/experiments/single_replogle.yaml"
-    local grid="src/world_model/configs/experiments/ablation_action_encoder.yaml"
+    local base_config="src/world_model/world_model/configs/experiments/single_replogle.yaml"
+    local grid="src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml"
     local output_root="outputs/ablation_action_replogle"
     local use_array=0
     local only=""
@@ -152,8 +152,8 @@ for s in load_grid(sys.argv[1]):
 # ---------------------------------------------------------------------
 
 lone() {
-    local base_config="src/world_model/configs/experiments/transfer.yaml"
-    local grid="src/world_model/configs/experiments/ablation_action_encoder.yaml"
+    local base_config="src/world_model/world_model/configs/experiments/transfer.yaml"
+    local grid="src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml"
     local output_root="outputs/lone_replogle"
     local strategy="reset_adapter"
 

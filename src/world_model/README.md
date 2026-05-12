@@ -391,15 +391,15 @@ runs (no special branches in the code):
 ```bash
 # single-dataset (Nadig)
 pixi run -e gpu python -m world_model.scripts.train \
-    --config src/world_model/configs/experiments/single_nadig.yaml
+    --config src/world_model/world_model/configs/experiments/single_nadig.yaml
 
 # single-dataset (Replogle)
 pixi run -e gpu python -m world_model.scripts.train \
-    --config src/world_model/configs/experiments/single_replogle.yaml
+    --config src/world_model/world_model/configs/experiments/single_replogle.yaml
 
 # transfer: pretrain on Nadig, fine-tune on 10% of Replogle
 pixi run -e gpu python -m world_model.scripts.train \
-    --config src/world_model/configs/experiments/transfer.yaml \
+    --config src/world_model/world_model/configs/experiments/transfer.yaml \
     transfer.finetune_fraction=0.10
 ```
 
@@ -414,17 +414,17 @@ pixi `gpu` env exactly like `submission_scripts/jupyter_pixi.sbatch`:
 
 ```bash
 # single setups
-sbatch src/world_model/scripts/slurm/train_single_nadig.sbatch
-sbatch src/world_model/scripts/slurm/train_single_replogle.sbatch
+sbatch src/world_model/world_model/scripts/slurm/train_single_nadig.sbatch
+sbatch src/world_model/world_model/scripts/slurm/train_single_replogle.sbatch
 
 # transfer at p in {1, 5, 10, 25, 50}%
 for p in 0.01 0.05 0.10 0.25 0.50; do
-    FRACTION=$p sbatch src/world_model/scripts/slurm/train_transfer.sbatch
+    FRACTION=$p sbatch src/world_model/world_model/scripts/slurm/train_transfer.sbatch
 done
 
 # everything in one shot: train (3 setups) -> baselines -> compare/report
 # chained via `sbatch --dependency=afterok:...`.
-bash src/world_model/scripts/submit_all.sh
+bash src/world_model/world_model/scripts/submit_all.sh
 ```
 
 `submit_all.sh` submits, for each of the three setups:
@@ -472,13 +472,13 @@ baselines are compared on byte-identical train/test indices.
 ```bash
 # evaluate a checkpoint (model + baselines + plots + report)
 pixi run -e gpu python -m world_model.scripts.eval \
-    --config src/world_model/configs/experiments/single_replogle.yaml \
+    --config src/world_model/world_model/configs/experiments/single_replogle.yaml \
     --checkpoint outputs/world_model/single_replogle/single_replogle_final.pt
 
 # or via SLURM
-CONFIG=src/world_model/configs/experiments/single_replogle.yaml \
+CONFIG=src/world_model/world_model/configs/experiments/single_replogle.yaml \
 CKPT=outputs/world_model/single_replogle/single_replogle_final.pt \
-    sbatch src/world_model/scripts/slurm/eval_only.sbatch
+    sbatch src/world_model/world_model/scripts/slurm/eval_only.sbatch
 ```
 
 The full pipeline runs:
@@ -508,13 +508,13 @@ Run them against the same split as a world-model run:
 
 ```bash
 pixi run -e gpu python -m world_model.scripts.run_baselines \
-    --config src/world_model/configs/experiments/single_replogle.yaml \
+    --config src/world_model/world_model/configs/experiments/single_replogle.yaml \
     --checkpoint outputs/world_model/single_replogle/single_replogle_final.pt
 
 # or via SLURM
-CONFIG=src/world_model/configs/experiments/single_replogle.yaml \
+CONFIG=src/world_model/world_model/configs/experiments/single_replogle.yaml \
 CKPT=outputs/world_model/single_replogle/single_replogle_final.pt \
-    sbatch src/world_model/scripts/slurm/run_baselines.sbatch
+    sbatch src/world_model/world_model/scripts/slurm/run_baselines.sbatch
 ```
 
 Outputs:
@@ -831,10 +831,10 @@ pixi run -e gpu python -m world_model.scripts.make_report \
 Syntax-check every launcher without submitting (no actual job is queued):
 
 ```bash
-for f in src/world_model/scripts/slurm/*.sbatch; do
+for f in src/world_model/world_model/scripts/slurm/*.sbatch; do
     bash -n "$f" && echo OK "$f"
 done
-bash -n src/world_model/scripts/submit_all.sh && echo OK submit_all.sh
+bash -n src/world_model/world_model/scripts/submit_all.sh && echo OK submit_all.sh
 ```
 
 Expected: every line prints `OK <path>`. Submit smallest first
@@ -903,15 +903,15 @@ Same Replogle config, swap `model_name`:
 ```bash
 # (a) precomputed (default; legacy NPZ / CSV)
 pixi run -e gpu python -m world_model.scripts.train \
-    --config src/world_model/configs/experiments/single_replogle.yaml
+    --config src/world_model/world_model/configs/experiments/single_replogle.yaml
 
 # (b) BioEmbedder + ESM2 (650M)
 pixi run -e gpu python -m world_model.scripts.train \
-    --config src/world_model/configs/experiments/single_replogle_esm2.yaml
+    --config src/world_model/world_model/configs/experiments/single_replogle_esm2.yaml
 
 # (c) BioEmbedder + Borzoi (DNA, exons only) -- one-line CLI override
 pixi run -e gpu python -m world_model.scripts.train \
-    --config src/world_model/configs/experiments/single_replogle_esm2.yaml \
+    --config src/world_model/world_model/configs/experiments/single_replogle_esm2.yaml \
     action_embedding.model_name=borzoi_v0 \
     action_embedding.region=exons
 ```
@@ -972,8 +972,8 @@ emits a single CSV that puts every backend on the same row.
 ```bash
 # Two-spec smoke ablation: text + protein, on top of smoke.yaml. <10 min on a laptop.
 pixi run -e gpu python -m world_model.scripts.ablate_action_encoder \
-    --base-config src/world_model/configs/experiments/smoke.yaml \
-    --grid src/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --base-config src/world_model/world_model/configs/experiments/smoke.yaml \
+    --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
     --output-root outputs/ablation_smoke \
     --only minilm,esm2_650m
 ```
@@ -982,15 +982,15 @@ pixi run -e gpu python -m world_model.scripts.ablate_action_encoder \
 
 ```bash
 # Single job that walks the grid sequentially:
-sbatch src/world_model/scripts/slurm/ablate_action_encoder.sbatch
+sbatch src/world_model/world_model/scripts/slurm/ablate_action_encoder.sbatch
 
 # Or fan out one spec per array task (5 specs in the default grid):
-sbatch --array=0-4 src/world_model/scripts/slurm/ablate_action_encoder.sbatch
+sbatch --array=0-4 src/world_model/world_model/scripts/slurm/ablate_action_encoder.sbatch
 
 # Or use submit_all.sh, which also pre-warms the BioEmbedder cache and chains the aggregator + report:
-bash src/world_model/scripts/submit_all.sh --ablate-action-encoder \
-    --base-config src/world_model/configs/experiments/single_replogle.yaml \
-    --grid src/world_model/configs/experiments/ablation_action_encoder.yaml \
+bash src/world_model/world_model/scripts/submit_all.sh --ablate-action-encoder \
+    --base-config src/world_model/world_model/configs/experiments/single_replogle.yaml \
+    --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
     --array
 ```
 
@@ -999,7 +999,7 @@ bash src/world_model/scripts/submit_all.sh --ablate-action-encoder \
 Zero lines of Python. Add one row to the grid YAML:
 
 ```yaml
-# src/world_model/configs/experiments/ablation_action_encoder.yaml
+# src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml
 grid:
   - key: flashzoi
     model_name: flashzoi_v0
@@ -1058,8 +1058,8 @@ The companion plots in `outputs/<root>/plots/` give:
 3. Re-run only the failing spec without redoing the others:
    ```bash
    pixi run -e gpu python -m world_model.scripts.ablate_action_encoder \
-       --base-config src/world_model/configs/experiments/single_replogle.yaml \
-       --grid src/world_model/configs/experiments/ablation_action_encoder.yaml \
+       --base-config src/world_model/world_model/configs/experiments/single_replogle.yaml \
+       --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
        --output-root outputs/ablation_action_replogle \
        --only flashzoi
    ```
@@ -1067,7 +1067,7 @@ The companion plots in `outputs/<root>/plots/` give:
    ```bash
    pixi run -e gpu python -m world_model.evaluation.ablation.aggregate \
        --output-root outputs/ablation_action_replogle \
-       --grid src/world_model/configs/experiments/ablation_action_encoder.yaml
+       --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml
    ```
 
 
@@ -1123,8 +1123,8 @@ Adapter sweep (smoke run on CPU):
 
 ```bash
 pixi run -e gpu python -m world_model.scripts.ablate_action_adapter \
-    --base-config src/world_model/configs/experiments/smoke.yaml \
-    --grid src/world_model/configs/experiments/ablation_action_adapter.yaml \
+    --base-config src/world_model/world_model/configs/experiments/smoke.yaml \
+    --grid src/world_model/world_model/configs/experiments/ablation_action_adapter.yaml \
     --output-root outputs/ablation_adapter_smoke \
     --only linear,lora_r4
 ```
@@ -1134,9 +1134,9 @@ for full Replogle, much less for smoke):
 
 ```bash
 pixi run -e gpu python -m world_model.scripts.ablate_encoder_x_adapter \
-    --base-config src/world_model/configs/experiments/single_replogle.yaml \
-    --encoder-grid src/world_model/configs/experiments/ablation_action_encoder.yaml \
-    --adapter-grid src/world_model/configs/experiments/ablation_action_adapter.yaml \
+    --base-config src/world_model/world_model/configs/experiments/single_replogle.yaml \
+    --encoder-grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --adapter-grid src/world_model/world_model/configs/experiments/ablation_action_adapter.yaml \
     --output-root outputs/cross_replogle
 ```
 
@@ -1144,8 +1144,8 @@ Leave-one-encoder-out (5 pretrains + 20 off-diagonal fine-tunes):
 
 ```bash
 pixi run -e gpu python -m world_model.scripts.leave_one_encoder_out \
-    --base-config src/world_model/configs/experiments/transfer.yaml \
-    --grid src/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --base-config src/world_model/world_model/configs/experiments/transfer.yaml \
+    --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
     --strategy reset_adapter \
     --output-root outputs/lone_replogle
 ```
@@ -1153,9 +1153,9 @@ pixi run -e gpu python -m world_model.scripts.leave_one_encoder_out \
 On the cluster, the `--lone` flag launches the whole DAG:
 
 ```bash
-bash src/world_model/scripts/submit_all.sh --lone \
-    --base-config src/world_model/configs/experiments/transfer.yaml \
-    --grid src/world_model/configs/experiments/ablation_action_encoder.yaml \
+bash src/world_model/world_model/scripts/submit_all.sh --lone \
+    --base-config src/world_model/world_model/configs/experiments/transfer.yaml \
+    --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
     --strategy reset_adapter \
     --output-root outputs/lone_replogle
 ```
@@ -1236,8 +1236,8 @@ Run a 2-spec adapter sweep on smoke.yaml end-to-end on CPU:
 
 ```bash
 pixi run -e gpu python -m world_model.scripts.ablate_action_adapter \
-    --base-config src/world_model/configs/experiments/smoke.yaml \
-    --grid src/world_model/configs/experiments/ablation_action_adapter.yaml \
+    --base-config src/world_model/world_model/configs/experiments/smoke.yaml \
+    --grid src/world_model/world_model/configs/experiments/ablation_action_adapter.yaml \
     --output-root outputs/ablation_adapter_smoke \
     --only linear,lora_r4
 ```
@@ -1246,8 +1246,8 @@ Run a 3-encoder leave-one-encoder-out diagonal sweep on CPU:
 
 ```bash
 pixi run -e gpu python -m world_model.scripts.leave_one_encoder_out \
-    --base-config src/world_model/configs/experiments/transfer.yaml \
-    --grid src/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --base-config src/world_model/world_model/configs/experiments/transfer.yaml \
+    --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
     --strategy reset_adapter \
     --output-root outputs/lone_smoke \
     --diagonal-only --only enformer:enformer,esm2_650m:esm2_650m,minilm:minilm
@@ -1259,7 +1259,7 @@ Re-render the adapter aggregation without retraining anything:
 pixi run -e gpu python -m world_model.evaluation.ablation.aggregate \
     --mode adapter \
     --output-root outputs/ablation_adapter_replogle \
-    --grid src/world_model/configs/experiments/ablation_action_adapter.yaml
+    --grid src/world_model/world_model/configs/experiments/ablation_action_adapter.yaml
 ```
 
 Compare any two specs head-to-head from `summary_long.csv`:
@@ -1460,10 +1460,10 @@ print('OK: all', sum(1 for _ in p.parameters()), 'param tensors are frozen.')
 #    only the dataloader re-encodes (or hits the cache) and only the
 #    evaluator re-runs. The trained dynamics + decoder stay the same.
 python -m world_model.scripts.train \
-  --config src/world_model/configs/experiments/single_replogle.yaml \
+  --config src/world_model/world_model/configs/experiments/single_replogle.yaml \
   state_backbone.kind=local       # -> outputs/.../local
 python -m world_model.scripts.train \
-  --config src/world_model/configs/experiments/single_replogle_state.yaml
+  --config src/world_model/world_model/configs/experiments/single_replogle_state.yaml
 python -m world_model.scripts.train \
-  --config src/world_model/configs/experiments/single_replogle_stack.yaml
+  --config src/world_model/world_model/configs/experiments/single_replogle_stack.yaml
 ```

@@ -8,7 +8,7 @@ launcher when you want to re-evaluate without re-training.
 Usage:
 
     python -m world_model.scripts.eval \\
-        --config src/world_model/configs/experiments/single_replogle.yaml \\
+        --config src/world_model/world_model/configs/experiments/single_replogle.yaml \\
         --checkpoint outputs/world_model/single_replogle/single_replogle_final.pt
 """
 

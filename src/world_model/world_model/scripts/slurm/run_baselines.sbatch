@@ -4,7 +4,7 @@
 # given world-model run. Optionally also evaluates a checkpoint.
 #
 # Usage:
-#   CONFIG=... CKPT=... sbatch src/world_model/scripts/slurm/run_baselines.sbatch
+#   CONFIG=... CKPT=... sbatch src/world_model/world_model/scripts/slurm/run_baselines.sbatch
 # When invoked by submit_all.sh, RUN_DIR is set instead and we infer
 # CONFIG / CKPT from it.
 # -----------------------------------------------------------------------------

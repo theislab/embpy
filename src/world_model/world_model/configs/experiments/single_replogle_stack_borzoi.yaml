@@ -24,8 +24,8 @@
 #          --model borzoi_v0
 #
 #   4. Submit (single-Replogle SLURM launcher, with this config as the arg):
-#        sbatch src/world_model/scripts/slurm/train_single_replogle.sbatch \
-#               src/world_model/configs/experiments/single_replogle_stack_borzoi.yaml
+#        sbatch src/world_model/world_model/scripts/slurm/train_single_replogle.sbatch \
+#               src/world_model/world_model/configs/experiments/single_replogle_stack_borzoi.yaml
 
 run_name: "single_replogle_stack_borzoi"
 output_dir: "outputs/world_model/single_replogle_stack_borzoi"

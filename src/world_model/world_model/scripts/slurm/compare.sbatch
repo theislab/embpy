@@ -5,7 +5,7 @@
 #
 # Usage:
 #   RUN_DIR=outputs/world_model/single_replogle \
-#     sbatch src/world_model/scripts/slurm/compare.sbatch
+#     sbatch src/world_model/world_model/scripts/slurm/compare.sbatch
 # Env overrides:
 #   PARTITION=cpu_p sbatch ... (no GPU needed; comparison is pure pandas)
 # -----------------------------------------------------------------------------

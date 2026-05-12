@@ -3,9 +3,9 @@
 # Pretrain on Nadig + fine-tune on p% of Replogle.
 # Usage:
 #   sbatch --export=ALL,FRACTION=0.10 \
-#          src/world_model/scripts/slurm/train_transfer.sbatch
+#          src/world_model/world_model/scripts/slurm/train_transfer.sbatch
 # or:
-#   FRACTION=0.05 sbatch src/world_model/scripts/slurm/train_transfer.sbatch
+#   FRACTION=0.05 sbatch src/world_model/world_model/scripts/slurm/train_transfer.sbatch
 # Env overrides:
 #   PARTITION=gpu_p QOS=gpu_normal sbatch ...
 # Defaults to fraction 0.10 if FRACTION is not set.
@@ -29,7 +29,7 @@ export PYTHONNOUSERSITE=1
 PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
-CONFIG="${1:-${CONFIG:-src/world_model/configs/experiments/transfer.yaml}}"
+CONFIG="${1:-${CONFIG:-src/world_model/world_model/configs/experiments/transfer.yaml}}"
 FRACTION="${FRACTION:-0.10}"
 RUN_NAME="transfer_nadig_to_replogle_p$(printf '%03d' $(python -c "print(int(float('${FRACTION}')*100))"))"
 OUTPUT_DIR="outputs/world_model/${RUN_NAME}"

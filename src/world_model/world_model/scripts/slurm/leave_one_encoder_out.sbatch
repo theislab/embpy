@@ -41,8 +41,8 @@ cd "$PROJECT_DIR"
 
 mkdir -p logs
 
-BASE_CONFIG="${BASE_CONFIG:-src/world_model/configs/experiments/transfer.yaml}"
-GRID="${GRID:-src/world_model/configs/experiments/ablation_action_encoder.yaml}"
+BASE_CONFIG="${BASE_CONFIG:-src/world_model/world_model/configs/experiments/transfer.yaml}"
+GRID="${GRID:-src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-outputs/lone_replogle}"
 STRATEGY="${STRATEGY:-reset_adapter}"
 STAGE="${STAGE:-A}"

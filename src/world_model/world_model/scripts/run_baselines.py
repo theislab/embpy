@@ -9,7 +9,7 @@ on the train side, evaluates them on the test side, and writes:
 Usage:
 
     python -m world_model.scripts.run_baselines \\
-        --config src/world_model/configs/experiments/single_replogle.yaml \\
+        --config src/world_model/world_model/configs/experiments/single_replogle.yaml \\
         --checkpoint outputs/world_model/single_replogle/single_replogle_final.pt
 """
 

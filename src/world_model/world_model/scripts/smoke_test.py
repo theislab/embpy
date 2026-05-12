@@ -35,7 +35,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=str,
-        default="src/world_model/configs/experiments/smoke.yaml",
+        default="src/world_model/world_model/configs/experiments/smoke.yaml",
     )
     parser.add_argument("overrides", nargs="*")
     return parser.parse_args(argv)

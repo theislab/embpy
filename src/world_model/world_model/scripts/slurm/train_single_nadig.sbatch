@@ -2,7 +2,7 @@
 # -----------------------------------------------------------------------------
 # Train the world model on Nadig (single-dataset setup).
 # Usage:
-#   sbatch src/world_model/scripts/slurm/train_single_nadig.sbatch \
+#   sbatch src/world_model/world_model/scripts/slurm/train_single_nadig.sbatch \
 #          [config_path]
 # Env overrides:
 #   PARTITION=gpu_p QOS=gpu_normal sbatch ...
@@ -26,7 +26,7 @@ export PYTHONNOUSERSITE=1
 PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
-CONFIG="${1:-${CONFIG:-src/world_model/configs/experiments/single_nadig.yaml}}"
+CONFIG="${1:-${CONFIG:-src/world_model/world_model/configs/experiments/single_nadig.yaml}}"
 echo "Config: $CONFIG"
 
 mkdir -p logs

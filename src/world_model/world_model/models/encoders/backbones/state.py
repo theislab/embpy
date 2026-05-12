@@ -49,8 +49,15 @@ def _hash_file(path: str | None) -> str:
 
 def _hash_adata(adata: Any) -> str:
     parts: list[str] = []
-    var = list(getattr(adata, "var_names", []) or [])
-    obs = list(getattr(adata, "obs_names", []) or [])
+    # NOTE: `getattr(adata, "var_names", []) or []` looks innocuous but
+    # raises "ValueError: The truth value of a Index is ambiguous" when
+    # var_names is a pandas Index with len > 1 -- Python evaluates `or`
+    # by calling `__bool__`, which Index rejects. Use an explicit None
+    # check instead.
+    var_names = getattr(adata, "var_names", None)
+    obs_names = getattr(adata, "obs_names", None)
+    var = list(var_names) if var_names is not None else []
+    obs = list(obs_names) if obs_names is not None else []
     parts.append(f"vn:{len(var)}")
     parts.append(f"on:{len(obs)}")
     parts.append("v:" + _hash_seq([str(x) for x in var]))

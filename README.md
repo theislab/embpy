@@ -23,7 +23,7 @@ This repository hosts **two independent Python packages** under `src/`:
 
 ### Cross-package import surface
 
-Every `world_model -> embpy` boundary import is enumerated in `src/world_model/__init__.py` under the `# --- depends on embpy: ---` block. The current touch points are:
+Every `world_model -> embpy` boundary import is enumerated in `src/world_model/world_model/__init__.py` under the `# --- depends on embpy: ---` block. The current touch points are:
 
 | Symbol                                                                | Used by (in `world_model`)                                  |
 | --------------------------------------------------------------------- | ----------------------------------------------------------- |

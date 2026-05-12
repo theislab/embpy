@@ -4,7 +4,7 @@
 # existing world-model checkpoint. No training.
 #
 # Usage:
-#   CONFIG=... CKPT=... sbatch src/world_model/scripts/slurm/eval_only.sbatch
+#   CONFIG=... CKPT=... sbatch src/world_model/world_model/scripts/slurm/eval_only.sbatch
 # -----------------------------------------------------------------------------
 #SBATCH --job-name=wm-eval
 #SBATCH -o logs/%x_%j.out

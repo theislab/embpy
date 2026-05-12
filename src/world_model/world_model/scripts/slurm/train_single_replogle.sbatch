@@ -2,7 +2,7 @@
 # -----------------------------------------------------------------------------
 # Train the world model on Replogle (single-dataset setup).
 # Usage:
-#   sbatch src/world_model/scripts/slurm/train_single_replogle.sbatch \
+#   sbatch src/world_model/world_model/scripts/slurm/train_single_replogle.sbatch \
 #          [config_path]
 # Env overrides:
 #   PARTITION=gpu_p QOS=gpu_normal sbatch ...
@@ -26,7 +26,7 @@ export PYTHONNOUSERSITE=1
 PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
-CONFIG="${1:-${CONFIG:-src/world_model/configs/experiments/single_replogle.yaml}}"
+CONFIG="${1:-${CONFIG:-src/world_model/world_model/configs/experiments/single_replogle.yaml}}"
 echo "Config: $CONFIG"
 
 mkdir -p logs
