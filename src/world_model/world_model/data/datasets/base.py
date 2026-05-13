@@ -12,6 +12,18 @@ training tuples: the world model only ever needs ``(s_t, a_t, s_{t+1})``
 triples, regardless of whether the data is temporally ordered or
 re-sampled.
 
+Optional context-bucketing
+--------------------------
+
+Set ``cell_buckets`` to a per-cell integer array (e.g. assay batch,
+gem-group, cell-cycle bin) to constrain every emitted sequence to a
+single bucket. The intuition: by holding the biological / technical
+substrate fixed across the T timesteps and varying only the
+perturbation, the transformer must learn how that substrate responds
+to different actions -- the invariances and equivariances of a cell.
+Without bucketing, ``S_{t+1}`` is independent of ``S_t`` in the data and
+the model collapses to predicting the per-action mean.
+
 Concretely, every ``__getitem__`` call returns a dict with:
 
 * ``obs_stack``       -- ``(T, K, G)`` past gene-expression stack
@@ -19,6 +31,8 @@ Concretely, every ``__getitem__`` call returns a dict with:
 * ``action_indices``  -- ``(T, n_pert)`` long indices into the gene table
 * ``next_expression`` -- ``(T, G)`` per-step decoder target (mean of stack)
 * ``perturbations``   -- list[str] of length T (raw labels, for debugging)
+* ``bucket_id``       -- int, the bucket the whole sequence was drawn
+                         from. ``-1`` if bucketing is disabled.
 """
 
 from __future__ import annotations
@@ -195,6 +209,16 @@ class PerturbationSequenceDataset:
     n_sequences_per_epoch
         Number of sequences materialised per epoch. The default scales
         with the number of perturbed cells.
+    cell_buckets
+        Optional ``(n_cells,)`` integer array assigning each cell to a
+        bucket id (e.g. assay batch, gem-group). When provided, every
+        emitted sequence is drawn from a single bucket so the
+        transformer sees a coherent biological/technical context with
+        only the perturbation varying across timesteps. ``None``
+        disables bucketing (the legacy global-pool sampler is used).
+    bucket_value_map
+        Optional ``{bucket_id: human_readable_label}`` map kept around
+        for diagnostic logging only. Has no effect on sampling.
     """
 
     def __init__(
@@ -209,6 +233,8 @@ class PerturbationSequenceDataset:
         rng: np.random.Generator | None = None,
         n_sequences_per_epoch: int | None = None,
         allowed_cell_indices: np.ndarray | None = None,
+        cell_buckets: np.ndarray | None = None,
+        bucket_value_map: dict[int, str] | None = None,
     ) -> None:
         if expression.ndim != 2:
             raise ValueError(f"expression must be 2D, got shape {expression.shape}")
@@ -259,6 +285,65 @@ class PerturbationSequenceDataset:
         # Sampleable labels include the control: the model also learns the identity action.
         self._sampleable_labels = sorted(self._cells_by_label.keys())
 
+        # --------------------------------------------------------------
+        # Optional context-bucketing: a per-cell bucket id (e.g. assay
+        # batch, gem-group, cell-cycle bin). When provided, every
+        # emitted sequence is drawn from a single bucket so the
+        # transformer sees a coherent context with only the
+        # perturbation varying across timesteps.
+        # --------------------------------------------------------------
+        self._cell_buckets: np.ndarray | None = None
+        self._bucket_value_map: dict[int, str] | None = None
+        # Map: bucket_id -> { label -> ndarray of allowed cell indices }
+        self._cells_by_bucket_label: dict[int, dict[str, np.ndarray]] = {}
+        # Map: bucket_id -> list of labels with >= 1 allowed cell (incl. control).
+        self._labels_by_bucket: dict[int, list[str]] = {}
+        # Buckets that have at least one control cell AND at least one
+        # non-control perturbation. Sampleable as sequence anchors.
+        self._sampleable_buckets: list[int] = []
+
+        if cell_buckets is not None:
+            buckets = np.asarray(cell_buckets)
+            if buckets.shape[0] != self.expression.shape[0]:
+                raise ValueError(
+                    f"cell_buckets has {buckets.shape[0]} rows but expression "
+                    f"has {self.expression.shape[0]}; they must match."
+                )
+            if buckets.dtype.kind not in {"i", "u"}:
+                buckets = buckets.astype(np.int64)
+            self._cell_buckets = buckets
+            self._bucket_value_map = dict(bucket_value_map) if bucket_value_map else None
+
+            allowed_bucket_ids = np.unique(buckets[allowed_mask])
+            for bid in allowed_bucket_ids:
+                bid_int = int(bid)
+                in_bucket = (buckets == bid) & allowed_mask
+                labels_here: dict[str, np.ndarray] = {}
+                for label in np.unique(self.perturbation_labels[in_bucket]):
+                    cells = np.flatnonzero(in_bucket & (self.perturbation_labels == label))
+                    if cells.size > 0:
+                        labels_here[str(label)] = cells
+                if not labels_here:
+                    continue
+                has_control = control_label in labels_here
+                has_pert = any(k != control_label for k in labels_here)
+                if not (has_control and has_pert):
+                    # Skip buckets that cannot anchor a sequence (need a
+                    # control to start from and at least one perturbation
+                    # to draw actions from).
+                    continue
+                self._cells_by_bucket_label[bid_int] = labels_here
+                self._labels_by_bucket[bid_int] = sorted(labels_here.keys())
+                self._sampleable_buckets.append(bid_int)
+            self._sampleable_buckets.sort()
+
+            if not self._sampleable_buckets:
+                raise ValueError(
+                    "cell_buckets was provided but no bucket has both a "
+                    "control cell and at least one non-control perturbation "
+                    "in the allowed subset; cannot anchor any sequence."
+                )
+
         if n_sequences_per_epoch is None:
             n_sequences_per_epoch = int(self.perturbed_idx.size)
         self.n_sequences_per_epoch = int(n_sequences_per_epoch)
@@ -271,6 +356,22 @@ class PerturbationSequenceDataset:
             self.control_idx.size, self.sequence_length, self.stack_size, self.n_pert,
             self.n_sequences_per_epoch,
         )
+        if self._cell_buckets is not None:
+            n_buckets = len(self._sampleable_buckets)
+            sizes = np.array([
+                sum(arr.size for arr in self._cells_by_bucket_label[b].values())
+                for b in self._sampleable_buckets
+            ])
+            label_counts = np.array([
+                len(self._labels_by_bucket[b]) for b in self._sampleable_buckets
+            ])
+            logger.info(
+                "PerturbationSequenceDataset: bucketing ON -- buckets=%d "
+                "(cells/bucket min/med/max=%d/%d/%d, labels/bucket min/med/max=%d/%d/%d)",
+                n_buckets,
+                int(sizes.min()), int(np.median(sizes)), int(sizes.max()),
+                int(label_counts.min()), int(np.median(label_counts)), int(label_counts.max()),
+            )
 
     # ------------------------------------------------------------------
     # PyTorch protocol
@@ -299,16 +400,29 @@ class PerturbationSequenceDataset:
         next_expression = np.empty((T, G), dtype=np.float32)
         labels: list[str] = []
 
+        # Pick the context bucket ONCE per sequence. Every (current,
+        # next) cell drawn below is constrained to this bucket so the
+        # transformer sees a coherent biological/technical substrate
+        # with only the perturbation varying across timesteps.
+        if self._cell_buckets is not None:
+            bucket_id = int(local.choice(self._sampleable_buckets))
+            cells_by_label = self._cells_by_bucket_label[bucket_id]
+            sampleable_labels = self._labels_by_bucket[bucket_id]
+        else:
+            bucket_id = -1
+            cells_by_label = self._cells_by_label
+            sampleable_labels = self._sampleable_labels
+
         # First step starts from a control stack -- the agent always
         # begins in an "unperturbed" state, mirroring perturb-seq design.
         prev_label = self.control_label
         for t in range(T):
-            cur_cells = self._cells_by_label[prev_label]
+            cur_cells = cells_by_label[prev_label]
             prev_idx = local.choice(cur_cells, size=K, replace=cur_cells.size < K)
             obs_stack[t] = self.expression[prev_idx]
 
-            next_label = str(local.choice(self._sampleable_labels))
-            next_cells = self._cells_by_label[next_label]
+            next_label = str(local.choice(sampleable_labels))
+            next_cells = cells_by_label[next_label]
             next_idx = local.choice(next_cells, size=K, replace=next_cells.size < K)
             next_obs_stack[t] = self.expression[next_idx]
             next_expression[t] = next_obs_stack[t].mean(axis=0)
@@ -326,6 +440,7 @@ class PerturbationSequenceDataset:
             "action_indices": torch.from_numpy(action_indices),
             "next_expression": torch.from_numpy(next_expression),
             "perturbations": labels,
+            "bucket_id": bucket_id,
         }
 
     # ------------------------------------------------------------------
@@ -356,11 +471,37 @@ class PerturbationSequenceDataset:
             rng=rng if rng is not None else self.rng,
             n_sequences_per_epoch=n_sequences_per_epoch,
             allowed_cell_indices=np.asarray(cell_indices, dtype=np.int64),
+            cell_buckets=self._cell_buckets,
+            bucket_value_map=self._bucket_value_map,
         )
 
     def available_perturbations(self) -> list[str]:
         """Sorted list of perturbation labels present in the allowed subset."""
         return [lbl for lbl in self._sampleable_labels if lbl != self.control_label]
+
+    def bucket_summary(self, bucket_id: int) -> dict[str, Any]:
+        """Return a small summary for ``bucket_id`` (diagnostic only).
+
+        Empty / missing buckets return ``{}``. Used by the startup
+        context-inspector hook to log what each sequence is anchored
+        to without dumping multi-megabyte arrays.
+        """
+        if self._cell_buckets is None or bucket_id < 0:
+            return {}
+        if bucket_id not in self._cells_by_bucket_label:
+            return {}
+        per_label = self._cells_by_bucket_label[bucket_id]
+        n_cells = int(sum(arr.size for arr in per_label.values()))
+        n_labels = len(per_label)
+        n_control = int(per_label.get(self.control_label, np.array([])).size)
+        value = (self._bucket_value_map or {}).get(bucket_id)
+        return {
+            "bucket_id": int(bucket_id),
+            "bucket_value": value,
+            "n_cells": n_cells,
+            "n_labels": n_labels,
+            "n_control_cells": n_control,
+        }
 
     def expression_view(self, cell_indices: np.ndarray) -> np.ndarray:
         """Return ``(len(cell_indices), n_genes)`` slice of the expression matrix."""

@@ -54,12 +54,16 @@ class NadigSequenceDataset(PerturbationSequenceDataset):
         stack_size: int = 4,
         n_pert: int = 2,
         rng: np.random.Generator | None = None,
+        bucket_key: str | None = None,
     ) -> tuple["NadigSequenceDataset", np.ndarray, GeneIndexer, list[str]]:
         """Build a dataset from a Nadig ``.h5ad`` file.
 
         Exactly one of ``provider`` or ``gene_embedding_path`` must be
         set. The path form is accepted for backward compatibility and
         is wrapped in a :class:`PrecomputedProvider` internally.
+
+        ``bucket_key`` (optional) names an ``adata.obs`` column whose
+        values define the per-cell context bucket (e.g. ``"batch"``).
         """
         adata = _load_adata(h5ad_path)
         if perturbation_key not in adata.obs.columns:
@@ -83,6 +87,12 @@ class NadigSequenceDataset(PerturbationSequenceDataset):
             str(label) for label in np.unique(labels) if str(label) != control_label
         ]
 
+        # Reuse the Replogle helper so the bucketing semantics stay
+        # exactly the same across adapters.
+        from .replogle import _extract_bucket_codes  # noqa: PLC0415
+
+        cell_buckets, bucket_value_map = _extract_bucket_codes(adata, bucket_key)
+
         provider = _resolve_provider(provider, gene_embedding_path)
         gene_table, indexer = provider.build_table(unique_perturbed)
 
@@ -95,6 +105,8 @@ class NadigSequenceDataset(PerturbationSequenceDataset):
             n_pert=n_pert,
             control_label=control_label,
             rng=rng,
+            cell_buckets=cell_buckets,
+            bucket_value_map=bucket_value_map,
         )
         return dataset, gene_table, indexer, gene_symbols
 

@@ -1028,7 +1028,6 @@ class StackWrapper(SingleCellWrapper):
         preds = wrapper.generate_cells(base_adata, test_adata)
     """
 
-    supports_decode: bool = True
     supports_generation: bool = True
 
     def __init__(
@@ -1043,127 +1042,6 @@ class StackWrapper(SingleCellWrapper):
         self._checkpoint = checkpoint
         self._genelist = genelist
         self._gene_name_col = gene_name_col
-        self._training_gene_names: list[str] | None = None
-
-    def training_gene_names(self) -> list[str]:
-        """Return STACK's training gene list (no model load required).
-
-        Loaded once from the genelist pickle (e.g. ``basecount_1000per_15000max.pkl``)
-        and cached. The list is the column order of :meth:`decode_cells`'s
-        raw output before name-based alignment.
-        """
-        if self._training_gene_names is not None:
-            return self._training_gene_names
-        if not self._genelist:
-            raise ValueError(
-                "StackWrapper.training_gene_names requires `genelist` "
-                "to be set (path to the pickled training gene list)."
-            )
-        import pickle  # noqa: PLC0415
-        with open(self._genelist, "rb") as fp:
-            obj = pickle.load(fp)
-        if not isinstance(obj, list):
-            raise TypeError(
-                f"Expected genelist pickle to be a list, got {type(obj).__name__}"
-            )
-        self._training_gene_names = [str(g) for g in obj]
-        return self._training_gene_names
-
-    def decode_cells(  # noqa: D102
-        self,
-        latent: np.ndarray,
-        *,
-        gene_names: Sequence[str] | None = None,
-        adata: Any = None,
-        lib_size: np.ndarray | float | None = None,
-        **kwargs: Any,
-    ) -> np.ndarray:
-        """Decode STACK cell embeddings to gene-expression via the NB head.
-
-        Forwards to the upstream ``Inference.decode`` from
-        ``stack.models.core.inference``: that method runs the
-        embeddings through ``_compute_nb_parameters`` and returns the
-        negative-binomial mean (linear scale, library-size-corrected).
-
-        Parameters
-        ----------
-        latent
-            ``(n_cells, n_hidden * token_dim)`` STACK embeddings.
-        gene_names
-            If given, the output is aligned (by exact-string match) to
-            this gene list; every name MUST be present in STACK's
-            training set (use :meth:`training_gene_names` to filter
-            upstream). When ``None``, returns all 15k+ training genes
-            in their pickle order.
-        lib_size
-            Per-cell library size used by the NB head. Either a scalar
-            (broadcast to all cells), an ``(n_cells,)`` array, or
-            ``None``. ``None`` falls back to ``adata.X.sum(1)`` when
-            ``adata`` is provided, else to ``1e4`` with a warning --
-            biologically arbitrary, but consistent with the typical
-            post-normalisation total used in scanpy pipelines.
-        adata
-            Optional source AnnData to derive ``lib_size`` from when
-            ``lib_size`` is unset.
-        """
-        del kwargs
-        if self._model is None:
-            raise RuntimeError("Model not loaded. Call load() first.")
-        import torch  # noqa: PLC0415
-
-        latent_arr = np.asarray(latent, dtype=np.float32)
-        if latent_arr.ndim != 2:
-            raise ValueError(
-                f"latent must be 2D (n_cells, embedding_dim); got {latent_arr.shape}"
-            )
-        n_cells = int(latent_arr.shape[0])
-
-        if lib_size is None and adata is not None:
-            x = adata.X
-            if hasattr(x, "toarray"):
-                x = x.toarray()
-            lib_size = np.asarray(x).sum(axis=1)
-        if lib_size is None:
-            logger.warning(
-                "StackWrapper.decode_cells: no lib_size provided; "
-                "falling back to scalar 1e4 (typical post-normalisation "
-                "total). Pass lib_size=<np.ndarray|float> for per-cell scaling."
-            )
-            lib_size = 1e4
-        if np.isscalar(lib_size):
-            lib_arr = np.full((n_cells,), float(lib_size), dtype=np.float32)
-        else:
-            lib_arr = np.asarray(lib_size, dtype=np.float32).reshape(-1)
-            if lib_arr.size == 1:
-                lib_arr = np.full((n_cells,), float(lib_arr[0]), dtype=np.float32)
-        if lib_arr.size != n_cells:
-            raise ValueError(
-                f"lib_size has {lib_arr.size} entries but latent has "
-                f"{n_cells} cells."
-            )
-
-        emb_t = torch.as_tensor(latent_arr, dtype=torch.float32, device=self.device)
-        lib_t = torch.as_tensor(lib_arr, dtype=torch.float32, device=self.device)
-        with torch.no_grad():
-            decoded = self._model.decode(emb_t, lib_t)
-        decoded_np = np.asarray(decoded.detach().cpu().numpy(), dtype=np.float32)
-
-        if gene_names is None:
-            return decoded_np
-
-        # Align to caller's gene_names by exact-string match.
-        train_names = self.training_gene_names()
-        name_to_idx = {g: i for i, g in enumerate(train_names)}
-        try:
-            cols = [name_to_idx[str(g)] for g in gene_names]
-        except KeyError as exc:
-            missing = [str(g) for g in gene_names if str(g) not in name_to_idx]
-            raise KeyError(
-                f"{len(missing)} gene(s) requested but not in STACK's "
-                f"training set (first 5: {missing[:5]}). Filter your gene "
-                f"list against StackWrapper.training_gene_names() first."
-            ) from exc
-        return decoded_np[:, cols]
 
     def load(self, device: str = "cpu") -> None:  # noqa: D102
         try:

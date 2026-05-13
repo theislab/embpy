@@ -123,6 +123,7 @@ def build_dataloaders(
         stack_size=cfg.stack_size,
         n_pert=cfg.n_pert,
         rng=rng,
+        bucket_key=getattr(cfg, "sequence_bucket_key", None),
     )
 
     # Capture per-row statuses for downstream metadata. ``provider`` is

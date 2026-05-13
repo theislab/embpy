@@ -32,6 +32,7 @@ from world_model.configs import (
     load_yaml_config,
 )
 from world_model.data import build_dataloaders
+from world_model.data.inspect import dump_sample_contexts
 from world_model.data.splits import subsample_train_perturbations
 from world_model.evaluation import run_evaluation
 from world_model.evaluation.plots import (
@@ -144,6 +145,15 @@ def _run_single(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object
         seed=cfg.seed,
         output_dir=output_dir,
     )
+    try:
+        dump_sample_contexts(
+            artifacts.train_dataset,
+            output_dir / "sample_contexts.txt",
+            n_sequences=5,
+        )
+    except Exception as exc:  # noqa: BLE001
+        # Inspector is diagnostic-only; never fail the run on it.
+        logger.warning("Skipping sample-context inspector: %s", exc)
     # When a foreign backbone replaces the in-memory expression with
     # cell embeddings, the decoder reconstructs back into embedding
     # space; its output dim must equal the backbone's embedding_dim,

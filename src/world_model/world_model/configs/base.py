@@ -70,6 +70,15 @@ class DataConfig:
     n_sequences_per_epoch: int | None = None
     """Override for dataset epoch length. ``None`` uses the dataset default."""
 
+    sequence_bucket_key: str | None = None
+    """Name of an ``adata.obs`` column to anchor sequences to a single
+    context (e.g. ``"batch"`` or ``"gem_group"``). When set, every
+    sequence emitted by ``__getitem__`` draws all of its (current,
+    next) cells from one bucket so the transformer sees a coherent
+    biological / technical substrate with only the perturbation varying
+    across timesteps. ``None`` falls back to the legacy global-pool
+    sampler."""
+
 
 @dataclass
 class EncoderConfig:
@@ -109,7 +118,7 @@ class LossConfig:
     # counterfactual-action prediction is?". Forces the dynamics module
     # to actually use the action token. 0.0 disables; ~0.1 is a sane
     # starting weight.
-    action_counterfactual: float = 0.0
+    action_counterfactual: float = 0.1
     action_counterfactual_temperature: float = 0.1
 
 
@@ -188,10 +197,10 @@ class TransferConfig:
     freeze_encoder_during_finetune: bool = False
     freeze_dynamics_during_finetune: bool = False
 
-    pretrain_action_encoder: "ActionEmbeddingConfig | None" = None
+    pretrain_action_encoder: ActionEmbeddingConfig | None = None
     """If None, fall back to the run's top-level ``action_embedding``."""
 
-    finetune_action_encoder: "ActionEmbeddingConfig | None" = None
+    finetune_action_encoder: ActionEmbeddingConfig | None = None
     """If None, fall back to the run's top-level ``action_embedding``."""
 
     swap_strategy: str = "none"
@@ -411,19 +420,13 @@ class WorldModelConfig:
         """Cross-field sanity checks. Called explicitly by training entrypoints."""
         sb = self.state_backbone
         if sb.kind not in {"local", "state", "stack"}:
-            raise ValueError(
-                f"state_backbone.kind must be one of {{'local','state','stack'}}, got {sb.kind!r}"
-            )
+            raise ValueError(f"state_backbone.kind must be one of {{'local','state','stack'}}, got {sb.kind!r}")
         if sb.kind == "state" and not (sb.state_checkpoint or sb.state_model_folder):
             raise ValueError(
-                "state_backbone.kind='state' requires either state_checkpoint "
-                "or state_model_folder to be set."
+                "state_backbone.kind='state' requires either state_checkpoint or state_model_folder to be set."
             )
         if sb.kind == "stack" and not (sb.stack_checkpoint and sb.stack_genelist):
-            raise ValueError(
-                "state_backbone.kind='stack' requires both stack_checkpoint "
-                "and stack_genelist to be set."
-            )
+            raise ValueError("state_backbone.kind='stack' requires both stack_checkpoint and stack_genelist to be set.")
         if sb.kind == "local" and sb.require_cache_hit:
             import logging
 
@@ -506,9 +509,7 @@ def apply_cli_overrides(cfg: WorldModelConfig, overrides: list[str]) -> WorldMod
                 raise KeyError(f"Cannot descend into non-dataclass at {part!r}")
             field_names = {f.name for f in fields(target)}
             if part not in field_names:
-                raise KeyError(
-                    f"Unknown key {key!r} (no field {part!r} on {type(target).__name__})"
-                )
+                raise KeyError(f"Unknown key {key!r} (no field {part!r} on {type(target).__name__})")
             target = getattr(target, part)
         last = path[-1]
         if not is_dataclass(target):

@@ -62,12 +62,19 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
         stack_size: int = 4,
         n_pert: int = 2,
         rng: np.random.Generator | None = None,
+        bucket_key: str | None = None,
     ) -> tuple[ReplogleSequenceDataset, np.ndarray, GeneIndexer, list[str]]:
         """Build a dataset from a Replogle ``.h5ad`` file.
 
         Exactly one of ``provider`` or ``gene_embedding_path`` must be
         set. The path form is accepted for backward compatibility and
         is wrapped in a :class:`PrecomputedProvider` internally.
+
+        ``bucket_key`` (optional) names an ``adata.obs`` column whose
+        values define the per-cell context bucket (e.g. ``"batch"``).
+        When set, every emitted sequence is anchored to a single bucket
+        so the transformer learns invariances of that biological /
+        technical substrate under different perturbations.
         """
         adata = _load_adata(h5ad_path)
         if perturbation_key not in adata.obs.columns:
@@ -101,6 +108,8 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
             str(label) for label in np.unique(labels) if str(label) != control_label
         ]
 
+        cell_buckets, bucket_value_map = _extract_bucket_codes(adata, bucket_key)
+
         provider = _resolve_provider(provider, gene_embedding_path)
         gene_table, indexer = provider.build_table(unique_perturbed)
 
@@ -113,8 +122,42 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
             n_pert=n_pert,
             control_label=control_label,
             rng=rng,
+            cell_buckets=cell_buckets,
+            bucket_value_map=bucket_value_map,
         )
         return dataset, gene_table, indexer, gene_symbols
+
+
+def _extract_bucket_codes(
+    adata, bucket_key: str | None,
+) -> tuple[np.ndarray | None, dict[int, str] | None]:
+    """Convert ``adata.obs[bucket_key]`` into an int code array.
+
+    Returns ``(codes, id_to_value)`` or ``(None, None)`` when
+    ``bucket_key`` is None. Uses pandas categorical codes so unknown
+    / NaN values map to ``-1`` (which is not in our sampleable set
+    and is therefore skipped at sample time).
+    """
+    if bucket_key is None:
+        return None, None
+    if bucket_key not in adata.obs.columns:
+        raise KeyError(
+            f"bucket_key='{bucket_key}' not in adata.obs "
+            f"(got {list(adata.obs.columns)})"
+        )
+    import pandas as pd  # noqa: PLC0415
+
+    col = adata.obs[bucket_key]
+    cat = col.astype("category")
+    codes = np.asarray(cat.cat.codes, dtype=np.int64)
+    id_to_value = {int(i): str(v) for i, v in enumerate(cat.cat.categories)}
+    n_unique = int((pd.Series(codes) >= 0).sum() and len(id_to_value))
+    logger.info(
+        "ReplogleSequenceDataset: bucket_key='%s' yields %d unique buckets "
+        "(NaN/unknown -> -1, will be skipped).",
+        bucket_key, n_unique,
+    )
+    return codes, id_to_value
 
 
 def _resolve_provider(

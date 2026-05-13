@@ -44,7 +44,7 @@ mode: "single"
 data:
   dataset: "replogle"
   h5ad_path: "data/datasets/replogle/replogle_2022_k562_essential.h5ad"
-  gene_embedding_path: "" # unused: action_embedding.source = bio_embedder
+  gene_embedding_path: ""           # unused: action_embedding.source = bio_embedder
   perturbation_key: "perturbation"
   control_label: "control"
   cell_type_key: "cell_type"
@@ -57,6 +57,15 @@ data:
   val_fraction: 0.1
   num_workers: 4
   pin_memory: true
+  # Anchor every emitted sequence to a single experimental batch
+  # (48 batches in replogle_2022_k562_essential, ~6.5k cells each).
+  # Within a sequence the substrate (gem-group, library prep, baseline
+  # transcriptional state) is held fixed and only the perturbation
+  # varies across timesteps. This forces the transformer to learn how
+  # a coherent cellular substate responds to *different* actions,
+  # rather than collapsing to "predict the per-action mean from
+  # action alone" (which is what the unbucketed Markov-0 data allows).
+  sequence_bucket_key: "batch"
 
 # Action: frozen Borzoi (DNA foundation model) + trainable adapter.
 # Cached by (model_name, organism, id_type, region, pooling) under cache_dir.
@@ -77,7 +86,7 @@ state_backbone:
   kind: "stack"
   stack_checkpoint: "data/checkpoints/stack/bc_large.ckpt"
   stack_genelist: "data/checkpoints/stack/basecount_1000per_15000max.pkl"
-  stack_gene_name_col: null # auto-detect from adata.var
+  stack_gene_name_col: null         # auto-detect from adata.var
   device: "auto"
   freeze: true
   batch_size: 32
@@ -109,29 +118,32 @@ dynamics:
   use_action_token: true
 
 loss:
+  # Anti-collapse settings:
+  #   - InfoNCE weight raised from 0.1 to 1.0 so the contrastive signal
+  #     can actually compete with the MSE term (which collapses to the
+  #     per-action mean almost immediately on Markov-0 data).
+  #   - info_nce_mask_same_pert: false  -- with bucketing on, many of
+  #     the in-batch negatives now share both bucket AND perturbation;
+  #     dropping them would leave almost no negatives. Keep them in.
+  #   - action_counterfactual raised from 0.1 to 1.0 to force the
+  #     dynamics module to actually condition on the action token.
   latent_mse: 1.0
   decoder_mse: 0.5
-  info_nce: 0.0
+  info_nce: 1.0
   info_nce_temperature: 0.1
-  # Option 3 -- mask same-perturbation pairs from the InfoNCE negative
-  # pool so the encoder isn't punished for embedding two cells under the
-  # same action nearby. Default is True; set False to recover the legacy
-  # (everything is a negative) behaviour.
-  info_nce_mask_same_pert: true
-  # Option 1 -- counterfactual-action contrast. Forces the dynamics
-  # module to use the action token: real-action prediction must be more
-  # similar to the target than the prediction under a permuted action.
-  # 0.0 disables; ~0.1 is a starting weight.
-  action_counterfactual: 0.1
+  info_nce_mask_same_pert: false
+  action_counterfactual: 1.0
   action_counterfactual_temperature: 0.1
 
 optim:
-  lr: 3.0e-4
+  # Lower LR + longer warmup help the dynamics module find a non-trivial
+  # action-conditioned subspace before MSE saturates.
+  lr: 1.0e-4
   weight_decay: 1.0e-2
   betas: [0.9, 0.95]
   grad_clip: 1.0
   scheduler: "cosine"
-  warmup_steps: 1000
+  warmup_steps: 2000
 
 train:
   n_epochs: 50
