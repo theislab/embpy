@@ -234,6 +234,9 @@ class WorldModelTrainer:
                 decoder_mse_weight=self.loss_cfg.decoder_mse,
                 info_nce_weight=self.loss_cfg.info_nce,
                 info_nce_temperature=self.loss_cfg.info_nce_temperature,
+                info_nce_mask_same_pert=self.loss_cfg.info_nce_mask_same_pert,
+                action_counterfactual_weight=self.loss_cfg.action_counterfactual,
+                action_counterfactual_temperature=self.loss_cfg.action_counterfactual_temperature,
             )
             bsz = batch["obs_stack"].size(0)
             total += float(loss.item()) * bsz
@@ -271,6 +274,9 @@ class WorldModelTrainer:
                     decoder_mse_weight=self.loss_cfg.decoder_mse,
                     info_nce_weight=self.loss_cfg.info_nce,
                     info_nce_temperature=self.loss_cfg.info_nce_temperature,
+                    info_nce_mask_same_pert=self.loss_cfg.info_nce_mask_same_pert,
+                    action_counterfactual_weight=self.loss_cfg.action_counterfactual,
+                    action_counterfactual_temperature=self.loss_cfg.action_counterfactual_temperature,
                 )
 
             if self.use_amp:

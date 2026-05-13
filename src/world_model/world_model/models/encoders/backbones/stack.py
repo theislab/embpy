@@ -33,7 +33,7 @@ class StackBackbone(StateBackboneProvider):
     """STACK (Arc Institute) cell-embedding backbone."""
 
     name: str = "stack"
-    supports_decode: bool = False
+    supports_decode: bool = True
 
     def __init__(
         self,
@@ -167,17 +167,57 @@ class StackBackbone(StateBackboneProvider):
             )
         return embeddings
 
+    def training_gene_names(self) -> list[str]:
+        """Return STACK's training gene list (no model load required).
+
+        Loaded lazily from the genelist pickle and cached on the
+        underlying :class:`~embpy.models.singlecell_models.StackWrapper`.
+        Useful for callers that want to filter their gene list to
+        STACK's set before invoking :meth:`decode`.
+        """
+        if self._wrapper is None:
+            # We can read the gene list without loading the model. Build
+            # a transient wrapper that only holds the genelist path.
+            try:
+                from embpy.models.singlecell_models import StackWrapper  # noqa: PLC0415
+            except ImportError as exc:
+                raise ImportError(
+                    "StackBackbone.training_gene_names requires the "
+                    "`arc-stack` package on the import path (StackWrapper "
+                    "is defined in embpy)."
+                ) from exc
+            tmp = StackWrapper(
+                checkpoint=self._checkpoint,
+                genelist=self._genelist,
+                gene_name_col=self._gene_name_col,
+            )
+            return tmp.training_gene_names()
+        return self._wrapper.training_gene_names()
+
     def decode(
         self,
         latent: np.ndarray,
         *,
         gene_names: Sequence[str],
+        lib_size: np.ndarray | float | None = None,
         **kwargs: Any,
     ) -> np.ndarray:
-        del latent, gene_names, kwargs
-        raise NotImplementedError(
-            "STACK does not implement a latent-to-expression decoder. For "
-            "in-context generation use StackBackbone.generate_cells(base_adata, test_adata)."
+        """Decode STACK embeddings to gene expression aligned to ``gene_names``.
+
+        Forwards to :meth:`StackWrapper.decode_cells`. Every entry of
+        ``gene_names`` must appear in :meth:`training_gene_names`;
+        callers are expected to filter to ``HVG ∩ STACK`` upstream
+        (the eval pipeline does this). ``lib_size`` is the per-cell
+        library size used by the NB head (median of training cell
+        sums is a reasonable default at eval time).
+        """
+        del kwargs
+        self._load()
+        assert self._wrapper is not None
+        return self._wrapper.decode_cells(
+            latent,
+            gene_names=list(gene_names),
+            lib_size=lib_size,
         )
 
     def generate_cells(self, base_adata: Any, test_adata: Any, **kwargs: Any) -> np.ndarray:

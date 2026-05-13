@@ -144,15 +144,24 @@ def _run_single(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object
         seed=cfg.seed,
         output_dir=output_dir,
     )
-    n_genes = len(artifacts.gene_symbols)
+    # When a foreign backbone replaces the in-memory expression with
+    # cell embeddings, the decoder reconstructs back into embedding
+    # space; its output dim must equal the backbone's embedding_dim,
+    # not the original HVG count.
+    n_genes = (
+        artifacts.state_backbone_embedding_dim
+        if artifacts.state_backbone_embedding_dim is not None
+        else len(artifacts.gene_symbols)
+    )
     model = _build_model(
         cfg, n_genes, artifacts.gene_table,
         state_backbone_provider=artifacts.state_backbone,
         state_backbone_embedding_dim=artifacts.state_backbone_embedding_dim,
     )
     logger.info(
-        "Model: %d trainable params (action_dim=%d, n_genes=%d)",
-        model.num_parameters(), artifacts.gene_table.shape[1], n_genes,
+        "Model: %d trainable params (action_dim=%d, decoder_dim=%d, hvgs=%d)",
+        model.num_parameters(), artifacts.gene_table.shape[1],
+        n_genes, len(artifacts.gene_symbols),
     )
 
     trainer = WorldModelTrainer(
@@ -200,7 +209,12 @@ def _run_transfer(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, obje
         seed=cfg.seed,
         output_dir=pretrain_dir,
     )
-    n_genes = len(pretrain_artifacts.gene_symbols)
+    # Decoder output dim == observation dim. See _run_single for context.
+    n_genes = (
+        pretrain_artifacts.state_backbone_embedding_dim
+        if pretrain_artifacts.state_backbone_embedding_dim is not None
+        else len(pretrain_artifacts.gene_symbols)
+    )
     pretrain_action_dim = pretrain_artifacts.gene_table.shape[1]
     model = _build_model(
         cfg, n_genes, pretrain_artifacts.gene_table,
@@ -260,13 +274,18 @@ def _run_transfer(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, obje
         state_backbone_override=pretrain_artifacts.state_backbone,
     )
 
-    if len(artifacts.gene_symbols) != n_genes:
+    finetune_n_genes = (
+        artifacts.state_backbone_embedding_dim
+        if artifacts.state_backbone_embedding_dim is not None
+        else len(artifacts.gene_symbols)
+    )
+    if finetune_n_genes != n_genes:
         logger.warning(
-            "Pretrain n_genes (%d) != fine-tune n_genes (%d). Rebuilding encoder/decoder.",
-            n_genes, len(artifacts.gene_symbols),
+            "Pretrain decoder_dim (%d) != fine-tune decoder_dim (%d). Rebuilding encoder/decoder.",
+            n_genes, finetune_n_genes,
         )
         new_model = _build_model(
-            cfg, len(artifacts.gene_symbols), artifacts.gene_table,
+            cfg, finetune_n_genes, artifacts.gene_table,
             state_backbone_provider=artifacts.state_backbone,
             state_backbone_embedding_dim=artifacts.state_backbone_embedding_dim,
         )

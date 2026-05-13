@@ -211,6 +211,9 @@ class WorldModel(nn.Module):
         decoder_mse_weight: float = 0.5,
         info_nce_weight: float = 0.0,
         info_nce_temperature: float = 0.1,
+        info_nce_mask_same_pert: bool = True,
+        action_counterfactual_weight: float = 0.0,
+        action_counterfactual_temperature: float = 0.1,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
         """Combine the latent / decoder / contrastive objectives.
 
@@ -243,13 +246,110 @@ class WorldModel(nn.Module):
         if info_nce_weight > 0.0:
             # Flatten time so each (B*T) position is its own query/key.
             b, t, d = out.s_hat.shape
+            pred_flat = out.s_hat.reshape(b * t, d)
+            target_flat = s_target.reshape(b * t, d)
+
+            # Option 3 -- hard-negative mining via same-perturbation mask.
+            # Two items share a perturbation when their action_indices
+            # vectors are element-wise equal up to ordering. We compare
+            # sorted indices so e.g. (TP53, MYC) and (MYC, TP53) collapse.
+            # The mask is True where the negative is *kept*; same-pert
+            # off-diagonals are False (excluded from the softmax). The
+            # diagonal stays True so positives are preserved.
+            valid_neg_mask: torch.Tensor | None = None
+            if info_nce_mask_same_pert and "action_indices" in batch:
+                actions_flat = batch["action_indices"].reshape(b * t, -1).contiguous()
+                sorted_actions, _ = actions_flat.sort(dim=-1)
+                same_pert = (
+                    sorted_actions.unsqueeze(0) == sorted_actions.unsqueeze(1)
+                ).all(dim=-1)
+                n = same_pert.shape[0]
+                eye = torch.eye(n, dtype=torch.bool, device=same_pert.device)
+                valid_neg_mask = (~same_pert) | eye
+                # Fraction of off-diagonal entries kept as negatives.
+                # 1.0 means no masking applied; < 1.0 means same-pert
+                # negatives were filtered out.
+                n_off = n * (n - 1)
+                kept_off = valid_neg_mask.sum() - n
+                components["info_nce_neg_kept_frac"] = (
+                    kept_off.float() / max(float(n_off), 1.0)
+                )
+
             loss_nce = info_nce(
-                out.s_hat.reshape(b * t, d),
-                s_target.reshape(b * t, d),
+                pred_flat,
+                target_flat,
                 temperature=info_nce_temperature,
+                valid_negative_mask=valid_neg_mask,
             )
             components["info_nce"] = loss_nce
             total = total + info_nce_weight * loss_nce
+
+            # Diagnostics for collapse / no-signal failure modes. Computed
+            # under no_grad so they don't perturb training. Logged via the
+            # standard components dict so existing log/csv hooks pick them
+            # up. Reading guide:
+            #   pos_sim ~ 1.0 AND neg_sim ~ 1.0  -> embedding collapse
+            #   pos_sim ~ neg_sim                -> no signal (stuck at ln(N))
+            #   pos_sim - neg_sim large          -> InfoNCE actually working
+            #   s_hat_dim_var ~ 0                -> latents are constant -> collapse
+            #   s_hat_norm wildly varying        -> scale instability
+            with torch.no_grad():
+                pred_n = nn.functional.normalize(pred_flat, dim=-1)
+                target_n = nn.functional.normalize(target_flat, dim=-1)
+                sim = pred_n @ target_n.T
+                n = sim.shape[0]
+                diag_mask = torch.eye(n, dtype=torch.bool, device=sim.device)
+                pos_sim = sim[diag_mask].mean()
+                neg_sim = sim[~diag_mask].mean()
+                self_sim = pred_n @ pred_n.T
+                self_off = self_sim[~diag_mask].mean()
+                components["pos_sim"] = pos_sim
+                components["neg_sim"] = neg_sim
+                components["pos_minus_neg"] = pos_sim - neg_sim
+                components["s_hat_self_offdiag"] = self_off
+                components["s_hat_norm"] = pred_flat.norm(dim=-1).mean()
+                # Per-dim variance averaged across dims; ~0 means latents
+                # are nearly constant across the batch (collapse).
+                components["s_hat_dim_var"] = pred_flat.var(dim=0).mean()
+
+        if action_counterfactual_weight > 0.0 and "action_indices" in batch:
+            # Option 1 -- counterfactual-action contrast. Re-run dynamics
+            # with action indices permuted across the batch dim. The
+            # real-action prediction should be more similar to s_target
+            # than the counterfactual-action prediction is; if it isn't,
+            # the dynamics module is ignoring the action token.
+            actions = batch["action_indices"]
+            b_orig = actions.shape[0]
+            perm = torch.randperm(b_orig, device=actions.device)
+            cf_actions = actions[perm]
+            cf_action_tokens = self.encode_action(cf_actions)
+            s_hat_cf = self.predict_next(out.state_tokens, cf_action_tokens)
+
+            b_, t_, d_ = s_hat_cf.shape
+            pred_flat = out.s_hat.reshape(b_ * t_, d_)
+            cf_flat = s_hat_cf.reshape(b_ * t_, d_)
+            tgt_flat = s_target.reshape(b_ * t_, d_)
+            pred_n = nn.functional.normalize(pred_flat, dim=-1)
+            cf_n = nn.functional.normalize(cf_flat, dim=-1)
+            tgt_n = nn.functional.normalize(tgt_flat, dim=-1)
+            tau = max(action_counterfactual_temperature, 1e-8)
+            sim_real = (pred_n * tgt_n).sum(dim=-1) / tau
+            sim_cf = (cf_n * tgt_n).sum(dim=-1) / tau
+            # Binary contrast over (real, counterfactual); class 0 = real.
+            cf_logits = torch.stack([sim_real, sim_cf], dim=-1)
+            cf_labels = torch.zeros(
+                cf_logits.size(0), dtype=torch.long, device=cf_logits.device
+            )
+            loss_cf = nn.functional.cross_entropy(cf_logits, cf_labels)
+            components["action_counterfactual"] = loss_cf
+            with torch.no_grad():
+                # Pre-temperature similarities for human-readable logs.
+                components["cf_sim_real"] = sim_real.mean() * tau
+                components["cf_sim_counter"] = sim_cf.mean() * tau
+                components["cf_real_minus_counter"] = (
+                    (sim_real - sim_cf).mean() * tau
+                )
+            total = total + action_counterfactual_weight * loss_cf
 
         components["total"] = total.detach()
         return total, components

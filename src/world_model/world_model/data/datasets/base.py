@@ -218,6 +218,13 @@ class PerturbationSequenceDataset:
             )
 
         self.expression = np.ascontiguousarray(expression, dtype=np.float32)
+        # Always-gene-space view of the observation matrix. Survives the
+        # foreign-backbone swap in build_dataloaders' pre-encode step
+        # (which overwrites .expression with cell embeddings) so that
+        # evaluation can compare predictions to gene-space ground truth
+        # via backbone.decode(). For local-backbone runs this aliases
+        # .expression -- no extra memory cost.
+        self.raw_expression = self.expression
         self.perturbation_labels = np.asarray(perturbation_labels)
         self.indexer = indexer
         self.sequence_length = int(sequence_length)

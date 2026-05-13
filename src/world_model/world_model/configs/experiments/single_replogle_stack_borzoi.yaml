@@ -44,7 +44,7 @@ mode: "single"
 data:
   dataset: "replogle"
   h5ad_path: "data/datasets/replogle/replogle_2022_k562_essential.h5ad"
-  gene_embedding_path: ""           # unused: action_embedding.source = bio_embedder
+  gene_embedding_path: "" # unused: action_embedding.source = bio_embedder
   perturbation_key: "perturbation"
   control_label: "control"
   cell_type_key: "cell_type"
@@ -77,7 +77,7 @@ state_backbone:
   kind: "stack"
   stack_checkpoint: "data/checkpoints/stack/bc_large.ckpt"
   stack_genelist: "data/checkpoints/stack/basecount_1000per_15000max.pkl"
-  stack_gene_name_col: null         # auto-detect from adata.var
+  stack_gene_name_col: null # auto-detect from adata.var
   device: "auto"
   freeze: true
   batch_size: 32
@@ -111,8 +111,19 @@ dynamics:
 loss:
   latent_mse: 1.0
   decoder_mse: 0.5
-  info_nce: 0.1
+  info_nce: 0.0
   info_nce_temperature: 0.1
+  # Option 3 -- mask same-perturbation pairs from the InfoNCE negative
+  # pool so the encoder isn't punished for embedding two cells under the
+  # same action nearby. Default is True; set False to recover the legacy
+  # (everything is a negative) behaviour.
+  info_nce_mask_same_pert: true
+  # Option 1 -- counterfactual-action contrast. Forces the dynamics
+  # module to use the action token: real-action prediction must be more
+  # similar to the target than the prediction under a permuted action.
+  # 0.0 disables; ~0.1 is a starting weight.
+  action_counterfactual: 0.1
+  action_counterfactual_temperature: 0.1
 
 optim:
   lr: 3.0e-4

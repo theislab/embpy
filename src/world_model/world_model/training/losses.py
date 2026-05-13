@@ -66,12 +66,31 @@ def info_nce(
     pred: torch.Tensor,
     target: torch.Tensor,
     temperature: float = 0.1,
+    *,
+    valid_negative_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Symmetric InfoNCE between two batches of tokens.
 
     The diagonal of the cosine-similarity matrix is treated as the
     positive set; off-diagonal entries are negatives. Symmetrised over
     the two directions.
+
+    Parameters
+    ----------
+    pred, target
+        ``(N, d)`` matched tensors. Row ``i`` of ``pred`` is contrasted
+        against row ``i`` of ``target`` (positive) versus every other
+        row of ``target`` (negative).
+    temperature
+        Softmax temperature applied to the cosine-similarity logits.
+    valid_negative_mask
+        Optional ``(N, N)`` bool tensor. ``True`` entries are kept in
+        the softmax denominator; ``False`` entries are masked out
+        (set to ``-inf`` before cross-entropy). The diagonal MUST be
+        ``True`` -- it carries the positives. Used by the world-model
+        caller to mask out same-perturbation pairs from the negative
+        pool (hard-negative mining), which otherwise punish the
+        encoder for embedding biologically-similar items nearby.
     """
     if pred.shape != target.shape:
         raise ValueError(
@@ -80,6 +99,13 @@ def info_nce(
     pred_n = F.normalize(pred, dim=-1)
     target_n = F.normalize(target, dim=-1)
     logits = pred_n @ target_n.T / max(temperature, 1e-8)
+    if valid_negative_mask is not None:
+        if valid_negative_mask.shape != logits.shape:
+            raise ValueError(
+                f"valid_negative_mask shape {tuple(valid_negative_mask.shape)} "
+                f"does not match logits {tuple(logits.shape)}"
+            )
+        logits = logits.masked_fill(~valid_negative_mask, float("-inf"))
     labels = torch.arange(pred.size(0), device=pred.device)
     return 0.5 * (F.cross_entropy(logits, labels) + F.cross_entropy(logits.T, labels))
 

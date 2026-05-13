@@ -134,7 +134,12 @@ def _predict_with_world_model(
 
     labels = np.asarray(real_adata.obs[perturbation_key].values, dtype=str)
     unique = np.unique(labels)
-    n_genes = real_adata.n_vars
+    # Predictions live in the model's observation space (= embedding dim
+    # under a foreign backbone, raw HVG dim otherwise). real_adata may
+    # be in a different space when run_evaluation has already chosen to
+    # build the truth side from raw_expression -- decoding happens at
+    # the call site, not here.
+    n_genes = int(full.expression.shape[1])
 
     per_pert_pred: dict[str, np.ndarray] = {}
     for pert in unique:
@@ -240,14 +245,103 @@ def run_evaluation(
     if not test_perts:
         raise RuntimeError("No test perturbations -- nothing to evaluate.")
 
-    real_adata = build_real_anndata(
-        expression=full.expression,
-        perturbation_labels=full.perturbation_labels,
-        test_indices=artifacts.split.test_indices,
-        test_perturbations=test_perts,
-        gene_symbols=artifacts.gene_symbols,
-        perturbation_key=perturbation_key,
+    # Decide which space cell-eval will run in.
+    #   - Local backbone: .expression is already gene-space; no decode needed.
+    #   - State backbone (supports_decode=True): predictions get decoded
+    #     via backbone.decode() before comparison; truth side comes from
+    #     full.raw_expression (the original HVG matrix preserved by the
+    #     dataloader's pre-encode step).
+    #   - Stack backbone (no decode()): fall back to embedding-space
+    #     metrics with synthetic dim_* var-names. DEG-based cell-eval
+    #     metrics are not biologically interpretable in this regime.
+    raw_exp = getattr(full, "raw_expression", full.expression)
+    backbone = artifacts.state_backbone
+    embedding_eq_genes = (raw_exp is full.expression) or (
+        raw_exp.shape[1] == full.expression.shape[1]
     )
+    backbone_supports_decode = bool(
+        backbone is not None and getattr(backbone, "supports_decode", False)
+    )
+    gene_space_eval = embedding_eq_genes or backbone_supports_decode
+
+    if gene_space_eval:
+        # If the backbone exposes a fixed training gene set (STACK), align
+        # to HVG ∩ STACK. STATE decodes to whatever gene_names we ask
+        # for, so no filtering is needed there.
+        final_gene_names = list(artifacts.gene_symbols)
+        if not embedding_eq_genes and hasattr(backbone, "training_gene_names"):
+            train_set = set(backbone.training_gene_names())
+            kept = [g for g in artifacts.gene_symbols if g in train_set]
+            if len(kept) < len(artifacts.gene_symbols):
+                logger.warning(
+                    "Backbone %r covers %d / %d HVGs; restricting eval to "
+                    "the intersection. The dropped HVGs are absent from the "
+                    "backbone's training gene list.",
+                    getattr(backbone, "name", "?"),
+                    len(kept), len(artifacts.gene_symbols),
+                )
+            final_gene_names = kept
+
+        if final_gene_names != list(artifacts.gene_symbols):
+            name_to_idx = {g: i for i, g in enumerate(artifacts.gene_symbols)}
+            cols = np.array([name_to_idx[g] for g in final_gene_names], dtype=np.int64)
+            raw_exp_eval = raw_exp[:, cols]
+        else:
+            raw_exp_eval = raw_exp
+
+        # Median library size of training control cells -- a stable scalar
+        # to feed STACK's NB decoder. Falls back to all cells if no controls.
+        if not embedding_eq_genes and getattr(backbone, "name", "") == "stack":
+            ctrl_mask = full.perturbation_labels == full.control_label
+            pool = raw_exp[ctrl_mask] if ctrl_mask.any() else raw_exp
+            decode_lib_size: float | None = float(np.median(pool.sum(axis=1)))
+        else:
+            decode_lib_size = None
+
+        real_adata = build_real_anndata(
+            expression=raw_exp_eval,
+            perturbation_labels=full.perturbation_labels,
+            test_indices=artifacts.split.test_indices,
+            test_perturbations=test_perts,
+            gene_symbols=final_gene_names,
+            perturbation_key=perturbation_key,
+        )
+    else:
+        final_gene_names = None
+        decode_lib_size = None
+        logger.warning(
+            "Gene-space eval skipped: state backbone %r has no decode(). "
+            "Falling back to embedding-space metrics with synthetic dim_* "
+            "var_names; DEG-based metrics will not be biologically "
+            "interpretable. Consider adding an in-context-generation "
+            "adapter for STACK if gene-space eval is required.",
+            getattr(backbone, "name", "?"),
+        )
+        var_names = [f"dim_{i}" for i in range(int(full.expression.shape[1]))]
+        real_adata = build_real_anndata(
+            expression=full.expression,
+            perturbation_labels=full.perturbation_labels,
+            test_indices=artifacts.split.test_indices,
+            test_perturbations=test_perts,
+            gene_symbols=var_names,
+            perturbation_key=perturbation_key,
+        )
+
+    def _maybe_decode_preds(preds: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+        """Decode embedding-space predictions to gene space when applicable."""
+        if not gene_space_eval or embedding_eq_genes or not preds:
+            return preds
+        keys = list(preds.keys())
+        stacked = np.stack([preds[k] for k in keys], axis=0).astype(np.float32)
+        decoded = np.asarray(
+            backbone.decode(
+                stacked,
+                gene_names=list(final_gene_names),
+                lib_size=decode_lib_size,
+            ),
+            dtype=np.float32,
+        )
+        return {k: decoded[i] for i, k in enumerate(keys)}
     if eval_cfg.save_predictions:
         try:
             real_adata.write(eval_dir / "real.h5ad")
@@ -279,6 +373,7 @@ def run_evaluation(
             device=device,
         )
         wm_preds = _predictions_to_dict(wm_per_cell, test_actions, full.control_label)
+        wm_preds = _maybe_decode_preds(wm_preds)
         wm_pred_adata = build_pred_anndata(wm_preds, real_adata, perturbation_key=perturbation_key)
         per_pert, agg = run_cell_eval(
             real_adata, wm_pred_adata,
@@ -316,6 +411,7 @@ def run_evaluation(
             baseline.set_action_embeddings(perturbation_to_action_test)
         per_cell = baseline.predict(test_state, test_actions)
         preds_dict = _predictions_to_dict(per_cell, test_actions, full.control_label)
+        preds_dict = _maybe_decode_preds(preds_dict)
         pred_adata = build_pred_anndata(preds_dict, real_adata, perturbation_key=perturbation_key)
         per_pert, agg = run_cell_eval(
             real_adata, pred_adata,

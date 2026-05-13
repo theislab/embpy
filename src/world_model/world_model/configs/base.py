@@ -98,6 +98,19 @@ class LossConfig:
     decoder_mse: float = 0.5
     info_nce: float = 0.0
     info_nce_temperature: float = 0.1
+    # Option 3: hard-negative mining. When True, the InfoNCE denominator
+    # excludes (s_hat[i], s_target[j]) pairs where i and j share the same
+    # perturbation -- the model is no longer punished for embedding two
+    # cells under the same action close to each other.
+    info_nce_mask_same_pert: bool = True
+    # Option 1: counterfactual-action contrast. Runs a second dynamics
+    # forward with action indices permuted across the batch dim and asks
+    # "is my real-action prediction more similar to the target than the
+    # counterfactual-action prediction is?". Forces the dynamics module
+    # to actually use the action token. 0.0 disables; ~0.1 is a sane
+    # starting weight.
+    action_counterfactual: float = 0.0
+    action_counterfactual_temperature: float = 0.1
 
 
 @dataclass

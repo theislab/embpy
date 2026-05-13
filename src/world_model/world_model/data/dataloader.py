@@ -306,6 +306,10 @@ def _maybe_pre_encode_with_backbone(
             f"dataset expects {full_dataset.expression.shape[0]}."
         )
 
+    # full_dataset.raw_expression keeps the original (N, n_hvg) HVG
+    # matrix because PerturbationSequenceDataset.__init__ aliased it to
+    # the pre-overwrite .expression. Eval reads .raw_expression for the
+    # gene-space truth side; training reads .expression (now embeddings).
     full_dataset.expression = embeddings
     full_dataset.n_genes = int(embeddings.shape[1])
 
