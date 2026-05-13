@@ -20,6 +20,7 @@ import argparse
 import dataclasses
 import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -364,9 +365,273 @@ def _dump_config_yaml(cfg: WorldModelConfig, path: Path) -> None:
             json.dump(cfg.to_dict(), fp, indent=2, default=str)
 
 
+def _git_provenance(repo_dir: Path | str = ".") -> dict[str, Any]:
+    """Capture the git SHA, branch, and dirty flag of ``repo_dir``.
+
+    All keys default to ``None`` when git is unavailable, the directory
+    is not a repo, or any individual call fails. Best-effort -- never
+    raises.
+    """
+    import subprocess  # noqa: PLC0415
+
+    out: dict[str, Any] = {"sha": None, "short_sha": None, "branch": None, "dirty": None}
+    try:
+        out["sha"] = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=str(repo_dir), stderr=subprocess.DEVNULL, text=True,
+        ).strip() or None
+        out["short_sha"] = (out["sha"] or "")[:12] or None
+    except Exception:  # noqa: BLE001
+        return out
+    try:
+        out["branch"] = subprocess.check_output(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=str(repo_dir), stderr=subprocess.DEVNULL, text=True,
+        ).strip() or None
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        status = subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            cwd=str(repo_dir), stderr=subprocess.DEVNULL, text=True,
+        )
+        out["dirty"] = bool(status.strip())
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def _slurm_provenance() -> dict[str, str | None]:
+    """Snapshot SLURM env vars. Returns all-None outside of a SLURM job."""
+    import os  # noqa: PLC0415
+
+    keys = {
+        "job_id": "SLURM_JOB_ID",
+        "job_name": "SLURM_JOB_NAME",
+        "partition": "SLURM_JOB_PARTITION",
+        "node": "SLURMD_NODENAME",
+        "nodelist": "SLURM_JOB_NODELIST",
+        "ntasks": "SLURM_NTASKS",
+        "cpus_per_task": "SLURM_CPUS_PER_TASK",
+        "submit_time": "SLURM_JOB_START_TIME",
+        "array_job_id": "SLURM_ARRAY_JOB_ID",
+        "array_task_id": "SLURM_ARRAY_TASK_ID",
+    }
+    return {k: os.environ.get(v) for k, v in keys.items()}
+
+
+def _apply_auto_suffix(cfg: WorldModelConfig) -> str:
+    """Append a unique ``__job{id}__{timestamp}`` suffix to ``cfg.output_dir``.
+
+    Two submissions of the same logical ``run_name`` would otherwise
+    write into the same directory and clobber each other (train.log
+    race condition, overwritten checkpoints, etc.). With the suffix,
+    every run has its own directory keyed by SLURM job id (or by
+    timestamp alone outside SLURM).
+
+    Opt out by setting ``EMBPY_NO_AUTO_SUFFIX=1`` in the environment,
+    or by passing a ``run_name`` / ``output_dir`` that already
+    contains ``__job`` (idempotent).
+
+    Returns the resulting suffix (or an empty string when no-op).
+    """
+    import datetime as _dt  # noqa: PLC0415
+    import os  # noqa: PLC0415
+
+    if os.environ.get("EMBPY_NO_AUTO_SUFFIX", "").strip() == "1":
+        return ""
+    if "__job" in str(cfg.output_dir) or "__local" in str(cfg.output_dir):
+        return ""
+
+    jobid = os.environ.get("SLURM_JOB_ID")
+    ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix = f"__job{jobid}__{ts}" if jobid else f"__local__{ts}"
+    cfg.output_dir = f"{cfg.output_dir}{suffix}"
+    return suffix
+
+
+def _key_hyperparams(cfg: WorldModelConfig) -> dict[str, Any]:
+    """Pick out a small, comparable subset of hyperparameters.
+
+    Used by ``run_info.json`` and the ``list_runs`` CLI so a single
+    table can show "what changed between runs" without dumping the
+    whole 200-key resolved config.
+    """
+    return {
+        "data.dataset": cfg.data.dataset,
+        "data.sequence_length": cfg.data.sequence_length,
+        "data.stack_size": cfg.data.stack_size,
+        "data.batch_size": cfg.data.batch_size,
+        "data.n_top_genes": cfg.data.n_top_genes,
+        "data.sequence_bucket_key": getattr(cfg.data, "sequence_bucket_key", None),
+        "encoder.kind": cfg.encoder.kind,
+        "encoder.d_model": cfg.encoder.d_model,
+        "dynamics.kind": cfg.dynamics.kind,
+        "dynamics.d_model": cfg.dynamics.d_model,
+        "dynamics.n_layers": cfg.dynamics.n_layers,
+        "dynamics.max_sequence_length": cfg.dynamics.max_sequence_length,
+        "optim.lr": cfg.optim.lr,
+        "optim.warmup_steps": cfg.optim.warmup_steps,
+        "loss.latent_mse": cfg.loss.latent_mse,
+        "loss.decoder_mse": cfg.loss.decoder_mse,
+        "loss.info_nce": cfg.loss.info_nce,
+        "loss.info_nce_mask_same_pert": cfg.loss.info_nce_mask_same_pert,
+        "loss.action_counterfactual": cfg.loss.action_counterfactual,
+        "state_backbone.kind": cfg.state_backbone.kind,
+        "action_embedding.source": cfg.action_embedding.source,
+        "action_embedding.model_name": cfg.action_embedding.model_name,
+        "train.n_epochs": cfg.train.n_epochs,
+    }
+
+
+def _extract_final_metrics(output_dir: Path) -> dict[str, float | None]:
+    """Best-effort pull of headline metrics from disk artifacts.
+
+    Reads ``train_log.csv`` (last row) and ``world_model_metrics.csv``
+    (the single eval-time row). Missing files / parse errors return
+    a dict with ``None`` values.
+    """
+    out: dict[str, float | None] = {
+        "final_epoch": None,
+        "final_train_loss": None,
+        "final_val_loss": None,
+    }
+    train_csv = output_dir / "train_log.csv"
+    if train_csv.exists():
+        try:
+            import pandas as pd  # noqa: PLC0415
+
+            df = pd.read_csv(train_csv)
+            if not df.empty:
+                last = df.iloc[-1]
+                if "epoch" in df.columns:
+                    out["final_epoch"] = int(last["epoch"])
+                if "train_loss" in df.columns:
+                    out["final_train_loss"] = float(last["train_loss"])
+                if "val_loss" in df.columns and pd.notna(last.get("val_loss")):
+                    out["final_val_loss"] = float(last["val_loss"])
+        except Exception:  # noqa: BLE001
+            pass
+    wm_csv = output_dir / "world_model_metrics.csv"
+    if wm_csv.exists():
+        try:
+            import pandas as pd  # noqa: PLC0415
+
+            df = pd.read_csv(wm_csv)
+            if not df.empty:
+                row = df.iloc[0].to_dict()
+                for k, v in row.items():
+                    if k == "name":
+                        continue
+                    try:
+                        out[f"eval.{k}"] = float(v)
+                    except (TypeError, ValueError):
+                        pass
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
+def _write_run_info(
+    cfg: WorldModelConfig,
+    output_dir: Path,
+    source_yaml: str | Path | None,
+    overrides: list[str] | None,
+    *,
+    status: str,
+    started_at: str,
+    finished_at: str | None = None,
+    extras: dict[str, Any] | None = None,
+) -> None:
+    """Write / overwrite ``run_info.json`` for this run.
+
+    Called at start (``status="running"``) and at end
+    (``status="completed"`` or ``"failed"``). The end-of-run call
+    also includes ``_extract_final_metrics`` so downstream tools can
+    rank / filter runs by performance without re-loading checkpoints.
+    """
+    import datetime as _dt  # noqa: PLC0415
+    import json  # noqa: PLC0415
+    import socket  # noqa: PLC0415
+
+    info: dict[str, Any] = {
+        "status": status,
+        "run_name": cfg.run_name,
+        "output_dir": str(output_dir),
+        "config_source": str(source_yaml) if source_yaml else None,
+        "cli_overrides": list(overrides or []),
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "now": _dt.datetime.now().isoformat(timespec="seconds"),
+        "hostname": socket.gethostname(),
+        "slurm": _slurm_provenance(),
+        "git": _git_provenance(),
+        "key_hyperparams": _key_hyperparams(cfg),
+        "final_metrics": _extract_final_metrics(output_dir) if status != "running" else None,
+    }
+    if extras:
+        info.update(extras)
+    try:
+        (output_dir / "run_info.json").write_text(
+            json.dumps(info, indent=2, default=str)
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to write run_info.json: %s", exc)
+
+
+def _snapshot_run_provenance(
+    cfg: WorldModelConfig,
+    output_dir: Path,
+    source_yaml: str | Path,
+    overrides: list[str] | None,
+) -> None:
+    """Write the launch-time provenance into ``output_dir``.
+
+    Persists three artifacts so a finished, mid-flight, or crashed run
+    can always be reproduced from disk:
+
+    * ``config.yaml``         -- resolved config (defaults filled in)
+    * ``config_source.yaml``  -- verbatim copy of the YAML the user
+                                  passed to ``--config``
+    * ``cli_overrides.txt``   -- the dotted CLI overrides applied on
+                                  top, one per line (empty file if none)
+
+    Failures here never abort training; provenance is best-effort.
+    """
+    import shutil  # noqa: PLC0415
+
+    try:
+        _dump_config_yaml(cfg, output_dir / "config.yaml")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to dump resolved config.yaml: %s", exc)
+
+    source_path = Path(source_yaml)
+    target = output_dir / "config_source.yaml"
+    try:
+        if source_path.exists():
+            shutil.copyfile(source_path, target)
+        else:
+            logger.warning(
+                "Source config %s does not exist; skipping verbatim copy.",
+                source_path,
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to copy source YAML to %s: %s", target, exc)
+
+    try:
+        (output_dir / "cli_overrides.txt").write_text(
+            "\n".join(overrides or []) + ("\n" if overrides else "")
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to write cli_overrides.txt: %s", exc)
+
+
 def _run_eval_and_report(cfg: WorldModelConfig, output_dir: Path, model, artifacts) -> None:
     import pandas as pd  # noqa: PLC0415
 
+    # Refresh the resolved config -- captures any state mutated during
+    # training (e.g. derived dims). The verbatim source YAML and the
+    # CLI overrides are already on disk from _snapshot_run_provenance.
     _dump_config_yaml(cfg, output_dir / "config.yaml")
 
     device = "cuda" if (cfg.train.device == "auto" and torch.cuda.is_available()) else (
@@ -450,29 +715,71 @@ def _run_eval_and_report(cfg: WorldModelConfig, output_dir: Path, model, artifac
 
 
 def main(argv: list[str] | None = None) -> None:
+    import datetime as _dt  # noqa: PLC0415
+
     args = parse_args(argv)
     cfg: WorldModelConfig = load_yaml_config(args.config)
     cfg = apply_cli_overrides(cfg, args.overrides)
     cfg.validate()
+
+    # Append a unique __job{jobid}__{timestamp} suffix to output_dir
+    # so concurrent submissions of the same run_name never collide.
+    # Opt out with EMBPY_NO_AUTO_SUFFIX=1.
+    suffix = _apply_auto_suffix(cfg)
 
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     setup_logging(level=getattr(logging, args.log_level), log_file=output_dir / "train.log")
     seed_everything(cfg.seed)
 
+    started_at = _dt.datetime.now().isoformat(timespec="seconds")
     logger.info("Run %s -- output_dir=%s -- mode=%s", cfg.run_name, output_dir, cfg.mode)
+    if suffix:
+        logger.info("Auto-suffix applied to output_dir: '%s'", suffix)
     logger.info("Config: %s", cfg.to_dict())
 
-    if cfg.mode == "transfer":
-        if not cfg.transfer.enabled:
-            raise ValueError("mode='transfer' but transfer.enabled=False")
-        model, artifacts = _run_transfer(cfg, output_dir)
-    elif cfg.mode == "single":
-        model, artifacts = _run_single(cfg, output_dir)
-    else:
-        raise ValueError(f"Unknown mode {cfg.mode!r}; use 'single' or 'transfer'.")
+    # Snapshot launch provenance BEFORE any training so crashed,
+    # cancelled, or mid-flight runs still have the exact config on
+    # disk. Writes config.yaml (resolved), config_source.yaml
+    # (verbatim source), and cli_overrides.txt.
+    _snapshot_run_provenance(
+        cfg=cfg,
+        output_dir=output_dir,
+        source_yaml=args.config,
+        overrides=args.overrides,
+    )
+    _write_run_info(
+        cfg, output_dir, args.config, args.overrides,
+        status="running", started_at=started_at,
+    )
 
-    _run_eval_and_report(cfg, output_dir, model, artifacts)
+    try:
+        if cfg.mode == "transfer":
+            if not cfg.transfer.enabled:
+                raise ValueError("mode='transfer' but transfer.enabled=False")
+            model, artifacts = _run_transfer(cfg, output_dir)
+        elif cfg.mode == "single":
+            model, artifacts = _run_single(cfg, output_dir)
+        else:
+            raise ValueError(f"Unknown mode {cfg.mode!r}; use 'single' or 'transfer'.")
+
+        _run_eval_and_report(cfg, output_dir, model, artifacts)
+    except BaseException as exc:  # noqa: BLE001
+        # Catch BaseException so SLURM-side SIGTERMs (KeyboardInterrupt,
+        # SystemExit) also leave a "failed" marker on disk.
+        _write_run_info(
+            cfg, output_dir, args.config, args.overrides,
+            status="failed", started_at=started_at,
+            finished_at=_dt.datetime.now().isoformat(timespec="seconds"),
+            extras={"error_type": type(exc).__name__, "error_message": str(exc)[:512]},
+        )
+        raise
+
+    _write_run_info(
+        cfg, output_dir, args.config, args.overrides,
+        status="completed", started_at=started_at,
+        finished_at=_dt.datetime.now().isoformat(timespec="seconds"),
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover

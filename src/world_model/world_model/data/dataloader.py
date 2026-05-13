@@ -222,6 +222,16 @@ def build_dataloaders(
         rng=np.random.default_rng(seed + 1),
     )
 
+    # persistent_workers=True: keep worker processes alive across epochs.
+    # Without it PyTorch tears down + re-forks the worker pool every
+    # epoch, which on a multi-GB pre-encoded dataset is the difference
+    # between sub-second epoch starts and 20+ second stalls.
+    # prefetch_factor=4: queue 4 batches per worker (default is 2).
+    # With num_workers=8 that's 32 ready batches -- enough headroom to
+    # keep the H100 fed even when an individual sample is slow.
+    # Both are no-ops when num_workers=0 (PyTorch ignores them).
+    _persistent = cfg.num_workers > 0
+    _prefetch = 4 if cfg.num_workers > 0 else None
     train_loader = DataLoader(
         train_dataset,
         batch_size=cfg.batch_size,
@@ -230,6 +240,8 @@ def build_dataloaders(
         pin_memory=cfg.pin_memory,
         collate_fn=sequence_collate_fn,
         drop_last=True,
+        persistent_workers=_persistent,
+        prefetch_factor=_prefetch,
     )
     val_loader = DataLoader(
         val_dataset,
@@ -239,6 +251,8 @@ def build_dataloaders(
         pin_memory=cfg.pin_memory,
         collate_fn=sequence_collate_fn,
         drop_last=False,
+        persistent_workers=_persistent,
+        prefetch_factor=_prefetch,
     )
     return DataArtifacts(
         train_loader=train_loader,
