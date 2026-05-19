@@ -48,7 +48,7 @@ data:
   perturbation_key: "perturbation"
   control_label: "control"
   cell_type_key: "cell_type"
-  n_top_genes: 2000
+  n_top_genes: 8000
   log_normalize: true
   stack_size: 4
   sequence_length: 32

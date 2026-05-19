@@ -1,0 +1,121 @@
+ WARN Encountered 2 warnings while parsing the manifest:
+  ⚠ The feature 'state' is defined but not used in any environment.
+  │ Dependencies of unused features are not resolved or checked, and use
+  │ wildcard (*) version specifiers by default, disregarding any set `pinning-
+  │ strategy`
+     ╭─[/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/pixi.toml:386:10]
+ 385 │ # ---------------------------------------------------------------------------
+ 386 │ [feature.state]
+     ·          ─────
+ 387 │ platforms = ["linux-64"]
+     ╰────
+  help: Remove the feature from the manifest or add it to an environment
+
+  ⚠ The feature 'stack' is defined but not used in any environment.
+  │ Dependencies of unused features are not resolved or checked, and use
+  │ wildcard (*) version specifiers by default, disregarding any set `pinning-
+  │ strategy`
+     ╭─[/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/pixi.toml:402:10]
+ 401 │ 
+ 402 │ [feature.stack]
+     ·          ─────
+ 403 │ platforms = ["linux-64"]
+     ╰────
+  help: Remove the feature from the manifest or add it to an environment
+
+[2026-05-18 17:23:48,706] INFO __main__: Found 2393 unique non-control perturbation labels in data/datasets/nadig/NadigOConner2024_jurkat.h5ad (filtered out 12013 control cells).
+[2026-05-18 17:23:48,956] INFO world_model.data.embeddings.bio_embedder: BioEmbedderProvider cache hit 0/2393 unique gene symbols (model=gena_lm_bert_large)
+[2026-05-18 17:25:41,188] INFO root: CUDA device found, using GPU.
+[2026-05-18 17:25:41,191] INFO root: GeneResolver initialized for human (Release 109).
+[2026-05-18 17:25:41,517] INFO root: Checking if Ensembl data needs downloading/indexing...
+[2026-05-18 17:25:42,203] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.cdna.all.fa.gz.pickle
+[2026-05-18 17:25:42,504] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.ncrna.fa.gz.pickle
+[2026-05-18 17:25:42,750] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.pep.all.fa.gz.pickle
+[2026-05-18 17:25:42,752] INFO root: pyensembl data is ready.
+[2026-05-18 17:25:42,752] INFO root: BioEmbedder initialized: device=cuda, organism=human, backend=api
+[2026-05-18 17:25:42,756] INFO root: Loading registered model 'gena_lm_bert_large' onto device 'cuda'...
+[2026-05-18 17:25:42,756] INFO root: Loading GENA-LM 'AIRI-Institute/gena-lm-bert-large-t2t' …
+[2026-05-18 17:25:52,633] INFO root: GENA-LM 'AIRI-Institute/gena-lm-bert-large-t2t' loaded on cuda.
+[2026-05-18 17:25:52,634] INFO root: Model 'gena_lm_bert_large' loaded successfully.
+[2026-05-18 17:25:52,634] INFO root: Batch: 2393 items for 'gena_lm_bert_large' (dna)...
+[2026-05-18 17:26:07,236] ERROR root: Error fetching DNA sequence from Ensembl for 'AC118549.1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/AC118549.1?expand=1
+[2026-05-18 17:26:07,238] WARNING root: No data for AC118549.1; skipping.
+[2026-05-18 17:28:13,814] ERROR root: Error fetching DNA sequence from Ensembl for 'C14orf178': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C14orf178?expand=1
+[2026-05-18 17:28:13,816] WARNING root: No data for C14orf178; skipping.
+[2026-05-18 17:28:19,614] ERROR root: Error fetching DNA sequence from Ensembl for 'C1orf109': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C1orf109?expand=1
+[2026-05-18 17:28:19,615] WARNING root: No data for C1orf109; skipping.
+[2026-05-18 17:28:19,744] ERROR root: Error fetching DNA sequence from Ensembl for 'C1orf131': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C1orf131?expand=1
+[2026-05-18 17:28:19,745] WARNING root: No data for C1orf131; skipping.
+[2026-05-18 17:28:21,227] ERROR root: Error fetching DNA sequence from Ensembl for 'C7orf50': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C7orf50?expand=1
+[2026-05-18 17:28:21,228] WARNING root: No data for C7orf50; skipping.
+[2026-05-18 17:28:39,487] ERROR root: Error fetching DNA sequence from Ensembl for 'CCDC115': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/CCDC115?expand=1
+[2026-05-18 17:28:39,489] WARNING root: No data for CCDC115; skipping.
+[2026-05-18 17:29:21,352] ERROR root: Error fetching DNA sequence from Ensembl for 'CENPJ': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/CENPJ?expand=1
+[2026-05-18 17:29:21,353] WARNING root: No data for CENPJ; skipping.
+[2026-05-18 17:34:06,524] ERROR root: Error fetching DNA sequence from Ensembl for 'FAM102B': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/FAM102B?expand=1
+[2026-05-18 17:34:06,526] WARNING root: No data for FAM102B; skipping.
+[2026-05-18 17:34:07,954] ERROR root: Error fetching DNA sequence from Ensembl for 'FAM207A': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/LOC108281151?expand=1
+[2026-05-18 17:34:07,955] WARNING root: No data for FAM207A; skipping.
+[2026-05-18 17:39:19,125] ERROR root: Error fetching DNA sequence from Ensembl for 'MARS': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/LOC106560211?expand=1
+[2026-05-18 17:39:19,127] WARNING root: No data for MARS; skipping.
+[2026-05-18 17:41:12,200] ERROR root: Error fetching DNA sequence from Ensembl for 'MTRNR2L1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/MTRNR2L1?expand=1
+[2026-05-18 17:41:12,202] WARNING root: No data for MTRNR2L1; skipping.
+[2026-05-18 17:41:19,355] ERROR root: Error fetching DNA sequence from Ensembl for 'N6AMT1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/N6AMT1?expand=1
+[2026-05-18 17:41:19,356] WARNING root: No data for N6AMT1; skipping.
+[2026-05-18 17:44:29,133] ERROR root: Error fetching DNA sequence from Ensembl for 'PHB': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/LOC116276472?expand=1
+[2026-05-18 17:44:29,201] WARNING root: No data for PHB; skipping.
+[2026-05-18 17:46:01,000] ERROR root: Error fetching DNA sequence from Ensembl for 'PRPF4B': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/PRPF4B?expand=1
+[2026-05-18 17:46:01,001] WARNING root: No data for PRPF4B; skipping.
+[2026-05-18 17:51:04,230] ERROR root: Error fetching DNA sequence from Ensembl for 'SPATA5': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/SPATA5?expand=1
+[2026-05-18 17:51:04,233] WARNING root: No data for SPATA5; skipping.
+[2026-05-18 17:51:04,360] ERROR root: Error fetching DNA sequence from Ensembl for 'SPATA5L1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/SPATA5L1?expand=1
+[2026-05-18 17:51:04,361] WARNING root: No data for SPATA5L1; skipping.
+[2026-05-18 17:52:25,848] ERROR root: Error fetching DNA sequence from Ensembl for 'TDGF1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/TDGF1?expand=1
+[2026-05-18 17:52:25,851] WARNING root: No data for TDGF1; skipping.
+[2026-05-18 17:52:59,056] ERROR root: Error fetching DNA sequence from Ensembl for 'TMEM199': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/TMEM199?expand=1
+[2026-05-18 17:52:59,058] WARNING root: No data for TMEM199; skipping.
+[2026-05-18 17:56:08,341] ERROR root: Error fetching DNA sequence from Ensembl for 'ZNF720': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/KRABD5?expand=1
+[2026-05-18 17:56:08,343] WARNING root: No data for ZNF720; skipping.
+Asking to truncate to max_length but no maximum length is provided and the model has no predefined maximum length. Default to no truncation.
+[2026-05-18 17:56:15,585] ERROR root: Batch embed failed: The expanded size of the tensor (16596) must match the existing size (512) at non-singleton dimension 1.  Target sizes: [16, 16596].  Tensor sizes: [1, 512]
+Traceback (most recent call last):
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/src/embpy/embedder.py", line 888, in embed_genes_batch
+    batch_results = inst.embed_batch(inputs=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/src/embpy/models/dna_models.py", line 1555, in embed_batch
+    return _hf_batched_embed(
+           ^^^^^^^^^^^^^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/src/embpy/models/dna_models.py", line 106, in _hf_batched_embed
+    out = model(
+          ^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/.pixi/envs/gpu/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/.pixi/envs/gpu/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/icb/goncalo.pinto/.cache/huggingface/modules/transformers_modules/AIRI-Institute/gena-lm-bert-large-t2t/f997a8a7c1ba5feb6d11de46354a41c51ffe9660/modeling_bert.py", line 1620, in forward
+    outputs = self.bert(
+              ^^^^^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/.pixi/envs/gpu/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/.pixi/envs/gpu/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/icb/goncalo.pinto/.cache/huggingface/modules/transformers_modules/AIRI-Institute/gena-lm-bert-large-t2t/f997a8a7c1ba5feb6d11de46354a41c51ffe9660/modeling_bert.py", line 1235, in forward
+    buffered_token_type_ids_expanded = buffered_token_type_ids.expand(batch_size, seq_length)
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: The expanded size of the tensor (16596) must match the existing size (512) at non-singleton dimension 1.  Target sizes: [16, 16596].  Tensor sizes: [1, 512]
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/src/world_model/world_model/scripts/embed_perturbations.py", line 267, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/src/world_model/world_model/scripts/embed_perturbations.py", line 187, in main
+    embeddings, statuses = provider.embed_with_status(perturbation_labels)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/src/world_model/world_model/data/embeddings/bio_embedder.py", line 191, in embed_with_status
+    raise ValueError(
+ValueError: BioEmbedder returned no embeddings for any of 2393 symbols. Check model_name='gena_lm_bert_large', organism='human', resolver_backend='api'. If your dataset is mostly controls, set action_embedding.fail_on_unresolved=False and verify the output of embed_perturbations.py.

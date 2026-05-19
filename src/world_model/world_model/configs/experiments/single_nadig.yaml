@@ -8,7 +8,7 @@ data:
   h5ad_path: "data/datasets/nadig/NadigOConner2024_jurkat.h5ad"
   gene_embedding_path: "data/embeddings/gene_embeddings/genept/embeddings_3072.csv"
   perturbation_key: "perturbation"
-  control_label: "non-targeting"
+  control_label: "control"  # Nadig jurkat labels controls "control", not "non-targeting"
   cell_type_key: null
   n_top_genes: 5000
   log_normalize: true

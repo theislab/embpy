@@ -1,0 +1,78 @@
+ WARN Encountered 2 warnings while parsing the manifest:
+  ⚠ The feature 'state' is defined but not used in any environment.
+  │ Dependencies of unused features are not resolved or checked, and use
+  │ wildcard (*) version specifiers by default, disregarding any set `pinning-
+  │ strategy`
+     ╭─[/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/pixi.toml:386:10]
+ 385 │ # ---------------------------------------------------------------------------
+ 386 │ [feature.state]
+     ·          ─────
+ 387 │ platforms = ["linux-64"]
+     ╰────
+  help: Remove the feature from the manifest or add it to an environment
+
+  ⚠ The feature 'stack' is defined but not used in any environment.
+  │ Dependencies of unused features are not resolved or checked, and use
+  │ wildcard (*) version specifiers by default, disregarding any set `pinning-
+  │ strategy`
+     ╭─[/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/pixi.toml:402:10]
+ 401 │ 
+ 402 │ [feature.stack]
+     ·          ─────
+ 403 │ platforms = ["linux-64"]
+     ╰────
+  help: Remove the feature from the manifest or add it to an environment
+
+[2026-05-18 18:29:05,741] INFO __main__: Found 2057 unique non-control perturbation labels in data/datasets/replogle/replogle_2022_k562_essential.h5ad (filtered out 10691 control cells).
+[2026-05-18 18:29:05,761] INFO world_model.data.embeddings.bio_embedder: BioEmbedderProvider cache hit 0/2057 unique gene symbols (model=nt_v2_500m)
+[2026-05-18 18:32:00,441] INFO root: CUDA device found, using GPU.
+[2026-05-18 18:32:00,442] INFO root: GeneResolver initialized for human (Release 109).
+[2026-05-18 18:32:02,439] INFO root: Checking if Ensembl data needs downloading/indexing...
+[2026-05-18 18:32:03,433] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.cdna.all.fa.gz.pickle
+[2026-05-18 18:32:03,779] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.ncrna.fa.gz.pickle
+[2026-05-18 18:32:04,065] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.pep.all.fa.gz.pickle
+[2026-05-18 18:32:04,068] INFO root: pyensembl data is ready.
+[2026-05-18 18:32:04,069] INFO root: BioEmbedder initialized: device=cuda, organism=human, backend=api
+[2026-05-18 18:32:04,069] INFO root: Loading registered model 'nt_v2_500m' onto device 'cuda'...
+[2026-05-18 18:32:04,069] INFO root: Loading Nucleotide Transformer 'InstaDeepAI/nucleotide-transformer-v2-500m-multi-species' …
+[2026-05-18 18:32:21,123] INFO root: NT 'InstaDeepAI/nucleotide-transformer-v2-500m-multi-species' loaded via AutoModelForMaskedLM on cuda.
+[2026-05-18 18:32:21,123] INFO root: Model 'nt_v2_500m' loaded successfully.
+[2026-05-18 18:32:21,123] INFO root: Batch: 2057 items for 'nt_v2_500m' (dna)...
+[2026-05-18 18:34:12,545] ERROR root: Error fetching DNA sequence from Ensembl for 'C14orf178': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C14orf178?expand=1
+[2026-05-18 18:34:12,547] WARNING root: No data for C14orf178; skipping.
+[2026-05-18 18:34:16,721] ERROR root: Error fetching DNA sequence from Ensembl for 'C1orf109': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C1orf109?expand=1
+[2026-05-18 18:34:16,722] WARNING root: No data for C1orf109; skipping.
+[2026-05-18 18:34:18,910] ERROR root: Error fetching DNA sequence from Ensembl for 'C7orf50': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C7orf50?expand=1
+[2026-05-18 18:34:18,911] WARNING root: No data for C7orf50; skipping.
+[2026-05-18 18:34:32,045] ERROR root: Error fetching DNA sequence from Ensembl for 'CCDC115': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/CCDC115?expand=1
+[2026-05-18 18:34:32,046] WARNING root: No data for CCDC115; skipping.
+[2026-05-18 18:35:18,953] ERROR root: Error fetching DNA sequence from Ensembl for 'CENPJ': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/CENPJ?expand=1
+[2026-05-18 18:35:18,954] WARNING root: No data for CENPJ; skipping.
+[2026-05-18 18:39:50,122] ERROR root: Error fetching DNA sequence from Ensembl for 'FAM207A': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/LOC108281151?expand=1
+[2026-05-18 18:39:50,124] WARNING root: No data for FAM207A; skipping.
+[2026-05-18 18:43:29,430] ERROR root: Error fetching DNA sequence from Ensembl for 'MARS': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/LOC106560211?expand=1
+[2026-05-18 18:43:29,431] WARNING root: No data for MARS; skipping.
+[2026-05-18 18:45:00,108] ERROR root: Error fetching DNA sequence from Ensembl for 'MTRNR2L1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/MTRNR2L1?expand=1
+[2026-05-18 18:45:00,109] WARNING root: No data for MTRNR2L1; skipping.
+[2026-05-18 18:45:07,016] ERROR root: Error fetching DNA sequence from Ensembl for 'N6AMT1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/N6AMT1?expand=1
+[2026-05-18 18:45:07,017] WARNING root: No data for N6AMT1; skipping.
+[2026-05-18 18:48:01,043] ERROR root: Error fetching DNA sequence from Ensembl for 'PHB': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/LOC116276472?expand=1
+[2026-05-18 18:48:01,043] WARNING root: No data for PHB; skipping.
+[2026-05-18 18:49:28,218] ERROR root: Error fetching DNA sequence from Ensembl for 'PRPF4B': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/PRPF4B?expand=1
+[2026-05-18 18:49:28,220] WARNING root: No data for PRPF4B; skipping.
+[2026-05-18 18:54:18,822] ERROR root: Error fetching DNA sequence from Ensembl for 'SPATA5': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/SPATA5?expand=1
+[2026-05-18 18:54:18,823] WARNING root: No data for SPATA5; skipping.
+[2026-05-18 18:54:18,947] ERROR root: Error fetching DNA sequence from Ensembl for 'SPATA5L1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/SPATA5L1?expand=1
+[2026-05-18 18:54:18,948] WARNING root: No data for SPATA5L1; skipping.
+[2026-05-18 18:55:30,709] ERROR root: Error fetching DNA sequence from Ensembl for 'TDGF1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/TDGF1?expand=1
+[2026-05-18 18:55:30,710] WARNING root: No data for TDGF1; skipping.
+[2026-05-18 18:55:56,129] ERROR root: Error fetching DNA sequence from Ensembl for 'TMEM199': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/TMEM199?expand=1
+[2026-05-18 18:55:56,130] WARNING root: No data for TMEM199; skipping.
+[2026-05-18 18:59:05,307] ERROR root: Error fetching DNA sequence from Ensembl for 'ZNF720': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/KRABD5?expand=1
+[2026-05-18 18:59:05,320] WARNING root: No data for ZNF720; skipping.
+[2026-05-18 19:08:05,536] WARNING world_model.data.embeddings.bio_embedder: BioEmbedderProvider: 16 / 2057 input rows are UNRESOLVED for model=nt_v2_500m (first 10: ['N6AMT1', 'CENPJ', 'SPATA5', 'PHB', 'SPATA5L1', 'PRPF4B', 'C14orf178', 'TMEM199', 'FAM207A', 'CCDC115']). UNRESOLVED rows are zero vectors -- treat this as a data-quality bug, not a default. Re-run embed_perturbations.py after fixing alias drift / Ensembl 4xx errors.
+[2026-05-18 19:08:05,559] INFO __main__: Embedded 2041 / 2057 rows at dim=1024 (RESOLVED=2041, CONTROL=0, UNRESOLVED=16).
+[2026-05-18 19:08:05,619] INFO __main__: Wrote embeddings to runs/_cache/action_embeddings/nt_v2_500m/full_mean_human.npz
+[2026-05-18 19:08:05,623] INFO __main__: Status sidecar -> runs/_cache/action_embeddings/nt_v2_500m/full_mean_human.npz.status.json
+[2026-05-18 19:08:05,636] INFO world_model.data.datasets.base: Built gene embedding table: 6 rows, dim=1024, missing=0
+[2026-05-18 19:08:05,654] INFO __main__: PrecomputedProvider round-trip OK: table shape=(6, 1024), indexer rows=6

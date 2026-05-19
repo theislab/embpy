@@ -25,7 +25,7 @@
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --gres=gpu:h100:1
 #SBATCH --constraint=h100_80gb
 #SBATCH --time=24:00:00

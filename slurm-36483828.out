@@ -1,0 +1,108 @@
+ WARN Encountered 2 warnings while parsing the manifest:
+  ⚠ The feature 'state' is defined but not used in any environment.
+  │ Dependencies of unused features are not resolved or checked, and use
+  │ wildcard (*) version specifiers by default, disregarding any set `pinning-
+  │ strategy`
+     ╭─[/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/pixi.toml:386:10]
+ 385 │ # ---------------------------------------------------------------------------
+ 386 │ [feature.state]
+     ·          ─────
+ 387 │ platforms = ["linux-64"]
+     ╰────
+  help: Remove the feature from the manifest or add it to an environment
+
+  ⚠ The feature 'stack' is defined but not used in any environment.
+  │ Dependencies of unused features are not resolved or checked, and use
+  │ wildcard (*) version specifiers by default, disregarding any set `pinning-
+  │ strategy`
+     ╭─[/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/pixi.toml:402:10]
+ 401 │ 
+ 402 │ [feature.stack]
+     ·          ─────
+ 403 │ platforms = ["linux-64"]
+     ╰────
+  help: Remove the feature from the manifest or add it to an environment
+
+[2026-05-18 17:55:18,933] INFO __main__: Found 2393 unique non-control perturbation labels in data/datasets/nadig/NadigOConner2024_jurkat.h5ad (filtered out 12013 control cells).
+[2026-05-18 17:55:19,005] INFO world_model.data.embeddings.bio_embedder: BioEmbedderProvider cache hit 0/2393 unique gene symbols (model=hyenadna_large_1m)
+[2026-05-18 17:56:46,288] INFO root: CUDA device found, using GPU.
+[2026-05-18 17:56:46,289] INFO root: GeneResolver initialized for human (Release 109).
+[2026-05-18 17:56:47,851] INFO root: Checking if Ensembl data needs downloading/indexing...
+[2026-05-18 17:56:48,630] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.cdna.all.fa.gz.pickle
+[2026-05-18 17:56:48,923] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.ncrna.fa.gz.pickle
+[2026-05-18 17:56:49,219] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.pep.all.fa.gz.pickle
+[2026-05-18 17:56:49,221] INFO root: pyensembl data is ready.
+[2026-05-18 17:56:49,221] INFO root: BioEmbedder initialized: device=cuda, organism=human, backend=api
+[2026-05-18 17:56:49,222] INFO root: Loading registered model 'hyenadna_large_1m' onto device 'cuda'...
+[2026-05-18 17:56:49,222] INFO root: Loading HyenaDNA 'LongSafari/hyenadna-large-1m-seqlen-hf' …
+[2026-05-18 17:56:59,209] INFO root: HyenaDNA 'LongSafari/hyenadna-large-1m-seqlen-hf' loaded on cuda.
+[2026-05-18 17:56:59,209] INFO root: Model 'hyenadna_large_1m' loaded successfully.
+[2026-05-18 17:56:59,209] INFO root: Batch: 2393 items for 'hyenadna_large_1m' (dna)...
+[2026-05-18 17:57:10,045] ERROR root: Error fetching DNA sequence from Ensembl for 'AC118549.1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/AC118549.1?expand=1
+[2026-05-18 17:57:10,046] WARNING root: No data for AC118549.1; skipping.
+[2026-05-18 17:59:02,313] ERROR root: Error fetching DNA sequence from Ensembl for 'C14orf178': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C14orf178?expand=1
+[2026-05-18 17:59:02,314] WARNING root: No data for C14orf178; skipping.
+[2026-05-18 17:59:06,927] ERROR root: Error fetching DNA sequence from Ensembl for 'C1orf109': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C1orf109?expand=1
+[2026-05-18 17:59:06,928] WARNING root: No data for C1orf109; skipping.
+[2026-05-18 17:59:07,053] ERROR root: Error fetching DNA sequence from Ensembl for 'C1orf131': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C1orf131?expand=1
+[2026-05-18 17:59:07,054] WARNING root: No data for C1orf131; skipping.
+[2026-05-18 17:59:08,862] ERROR root: Error fetching DNA sequence from Ensembl for 'C7orf50': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C7orf50?expand=1
+[2026-05-18 17:59:08,863] WARNING root: No data for C7orf50; skipping.
+[2026-05-18 17:59:27,736] ERROR root: Error fetching DNA sequence from Ensembl for 'CCDC115': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/CCDC115?expand=1
+[2026-05-18 17:59:27,737] WARNING root: No data for CCDC115; skipping.
+[2026-05-18 18:00:12,113] ERROR root: Error fetching DNA sequence from Ensembl for 'CENPJ': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/CENPJ?expand=1
+[2026-05-18 18:00:12,114] WARNING root: No data for CENPJ; skipping.
+[2026-05-18 18:05:36,480] ERROR root: Error fetching DNA sequence from Ensembl for 'FAM102B': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/FAM102B?expand=1
+[2026-05-18 18:05:36,481] WARNING root: No data for FAM102B; skipping.
+[2026-05-18 18:05:37,426] ERROR root: Error fetching DNA sequence from Ensembl for 'FAM207A': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/LOC108281151?expand=1
+[2026-05-18 18:05:37,427] WARNING root: No data for FAM207A; skipping.
+[2026-05-18 18:10:42,284] ERROR root: Error fetching DNA sequence from Ensembl for 'MARS': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/LOC106560211?expand=1
+[2026-05-18 18:10:42,287] WARNING root: No data for MARS; skipping.
+[2026-05-18 18:12:54,194] ERROR root: Error fetching DNA sequence from Ensembl for 'MTRNR2L1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/MTRNR2L1?expand=1
+[2026-05-18 18:12:54,195] WARNING root: No data for MTRNR2L1; skipping.
+[2026-05-18 18:13:03,328] ERROR root: Error fetching DNA sequence from Ensembl for 'N6AMT1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/N6AMT1?expand=1
+[2026-05-18 18:13:03,330] WARNING root: No data for N6AMT1; skipping.
+[2026-05-18 18:16:23,451] ERROR root: Error fetching DNA sequence from Ensembl for 'PHB': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/LOC116276472?expand=1
+[2026-05-18 18:16:23,452] WARNING root: No data for PHB; skipping.
+[2026-05-18 18:18:10,370] ERROR root: Error fetching DNA sequence from Ensembl for 'PRPF4B': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/PRPF4B?expand=1
+[2026-05-18 18:18:10,372] WARNING root: No data for PRPF4B; skipping.
+[2026-05-18 18:24:30,831] ERROR root: Error fetching DNA sequence from Ensembl for 'SPATA5': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/SPATA5?expand=1
+[2026-05-18 18:24:30,850] WARNING root: No data for SPATA5; skipping.
+[2026-05-18 18:24:30,973] ERROR root: Error fetching DNA sequence from Ensembl for 'SPATA5L1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/SPATA5L1?expand=1
+[2026-05-18 18:24:30,974] WARNING root: No data for SPATA5L1; skipping.
+[2026-05-18 18:26:28,640] ERROR root: Error fetching DNA sequence from Ensembl for 'TDGF1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/TDGF1?expand=1
+[2026-05-18 18:26:28,642] WARNING root: No data for TDGF1; skipping.
+[2026-05-18 18:27:08,106] ERROR root: Error fetching DNA sequence from Ensembl for 'TMEM199': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/TMEM199?expand=1
+[2026-05-18 18:27:08,106] WARNING root: No data for TMEM199; skipping.
+[2026-05-18 18:30:53,664] ERROR root: Error fetching DNA sequence from Ensembl for 'ZNF720': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/KRABD5?expand=1
+[2026-05-18 18:30:53,665] WARNING root: No data for ZNF720; skipping.
+[2026-05-18 18:31:00,700] ERROR root: Batch embed failed: HyenaDNAForCausalLM.forward() got an unexpected keyword argument 'attention_mask'
+Traceback (most recent call last):
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/src/embpy/embedder.py", line 888, in embed_genes_batch
+    batch_results = inst.embed_batch(inputs=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/src/embpy/models/dna_models.py", line 1951, in embed_batch
+    return _hf_batched_embed(
+           ^^^^^^^^^^^^^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/src/embpy/models/dna_models.py", line 106, in _hf_batched_embed
+    out = model(
+          ^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/.pixi/envs/gpu/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1736, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/.pixi/envs/gpu/lib/python3.12/site-packages/torch/nn/modules/module.py", line 1747, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: HyenaDNAForCausalLM.forward() got an unexpected keyword argument 'attention_mask'
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/src/world_model/world_model/scripts/embed_perturbations.py", line 267, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/src/world_model/world_model/scripts/embed_perturbations.py", line 187, in main
+    embeddings, statuses = provider.embed_with_status(perturbation_labels)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/src/world_model/world_model/data/embeddings/bio_embedder.py", line 191, in embed_with_status
+    raise ValueError(
+ValueError: BioEmbedder returned no embeddings for any of 2393 symbols. Check model_name='hyenadna_large_1m', organism='human', resolver_backend='api'. If your dataset is mostly controls, set action_embedding.fail_on_unresolved=False and verify the output of embed_perturbations.py.

@@ -1,0 +1,50 @@
+ WARN Encountered 2 warnings while parsing the manifest:
+  ⚠ The feature 'state' is defined but not used in any environment.
+  │ Dependencies of unused features are not resolved or checked, and use
+  │ wildcard (*) version specifiers by default, disregarding any set `pinning-
+  │ strategy`
+     ╭─[/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/pixi.toml:386:10]
+ 385 │ # ---------------------------------------------------------------------------
+ 386 │ [feature.state]
+     ·          ─────
+ 387 │ platforms = ["linux-64"]
+     ╰────
+  help: Remove the feature from the manifest or add it to an environment
+
+  ⚠ The feature 'stack' is defined but not used in any environment.
+  │ Dependencies of unused features are not resolved or checked, and use
+  │ wildcard (*) version specifiers by default, disregarding any set `pinning-
+  │ strategy`
+     ╭─[/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/pixi.toml:402:10]
+ 401 │ 
+ 402 │ [feature.stack]
+     ·          ─────
+ 403 │ platforms = ["linux-64"]
+     ╰────
+  help: Remove the feature from the manifest or add it to an environment
+
+[2026-05-19 16:02:20,025] INFO __main__: Found 2393 unique non-control perturbation labels in data/datasets/nadig/NadigOConner2024_jurkat.h5ad (filtered out 12013 control cells).
+[2026-05-19 16:02:20,099] INFO world_model.data.embeddings.bio_embedder: BioEmbedderProvider cache hit 0/2393 unique gene symbols (model=gena_lm_bigbird_base)
+[2026-05-19 16:02:26,515] INFO root: CUDA device found, using GPU.
+[2026-05-19 16:02:26,515] INFO root: GeneResolver initialized for human (Release 109).
+[2026-05-19 16:02:26,542] INFO root: Checking if Ensembl data needs downloading/indexing...
+[2026-05-19 16:02:26,849] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.cdna.all.fa.gz.pickle
+[2026-05-19 16:02:26,924] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.ncrna.fa.gz.pickle
+[2026-05-19 16:02:26,994] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.pep.all.fa.gz.pickle
+[2026-05-19 16:02:26,995] INFO root: pyensembl data is ready.
+[2026-05-19 16:02:26,995] INFO root: BioEmbedder initialized: device=cuda, organism=human, backend=api
+[2026-05-19 16:02:26,995] INFO root: Loading registered model 'gena_lm_bigbird_base' onto device 'cuda'...
+[2026-05-19 16:02:26,995] INFO root: Loading GENA-LM 'AIRI-Institute/gena-lm-bigbird-base-t2t' …
+[2026-05-19 16:02:30,835] INFO root: GENA-LM 'AIRI-Institute/gena-lm-bigbird-base-t2t' loaded on cuda.
+[2026-05-19 16:02:30,836] INFO root: Model 'gena_lm_bigbird_base' loaded successfully.
+[2026-05-19 16:02:30,836] INFO root: Batch: 2393 items for 'gena_lm_bigbird_base' (dna)...
+[2026-05-19 16:02:58,949] ERROR root: Error fetching DNA sequence from Ensembl for 'AC118549.1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/AC118549.1?expand=1
+[2026-05-19 16:02:58,949] WARNING root: No data for AC118549.1; skipping.
+[2026-05-19 16:06:35,604] ERROR root: Error fetching DNA sequence from Ensembl for 'C14orf178': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C14orf178?expand=1
+[2026-05-19 16:06:35,604] WARNING root: No data for C14orf178; skipping.
+[2026-05-19 16:06:40,506] ERROR root: Error fetching DNA sequence from Ensembl for 'C1orf109': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C1orf109?expand=1
+[2026-05-19 16:06:40,506] WARNING root: No data for C1orf109; skipping.
+[2026-05-19 16:06:40,638] ERROR root: Error fetching DNA sequence from Ensembl for 'C1orf131': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C1orf131?expand=1
+[2026-05-19 16:06:40,638] WARNING root: No data for C1orf131; skipping.
+[2026-05-19 16:06:47,589] ERROR root: Error fetching DNA sequence from Ensembl for 'C7orf50': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/C7orf50?expand=1
+[2026-05-19 16:06:47,590] WARNING root: No data for C7orf50; skipping.

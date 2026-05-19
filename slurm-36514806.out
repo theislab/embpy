@@ -1,0 +1,42 @@
+ WARN Encountered 2 warnings while parsing the manifest:
+  ⚠ The feature 'state' is defined but not used in any environment.
+  │ Dependencies of unused features are not resolved or checked, and use
+  │ wildcard (*) version specifiers by default, disregarding any set `pinning-
+  │ strategy`
+     ╭─[/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/pixi.toml:386:10]
+ 385 │ # ---------------------------------------------------------------------------
+ 386 │ [feature.state]
+     ·          ─────
+ 387 │ platforms = ["linux-64"]
+     ╰────
+  help: Remove the feature from the manifest or add it to an environment
+
+  ⚠ The feature 'stack' is defined but not used in any environment.
+  │ Dependencies of unused features are not resolved or checked, and use
+  │ wildcard (*) version specifiers by default, disregarding any set `pinning-
+  │ strategy`
+     ╭─[/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/pixi.toml:402:10]
+ 401 │ 
+ 402 │ [feature.stack]
+     ·          ─────
+ 403 │ platforms = ["linux-64"]
+     ╰────
+  help: Remove the feature from the manifest or add it to an environment
+
+[2026-05-19 16:02:42,931] INFO __main__: Found 2393 unique non-control perturbation labels in data/datasets/nadig/NadigOConner2024_jurkat.h5ad (filtered out 12013 control cells).
+[2026-05-19 16:02:43,370] INFO world_model.data.embeddings.bio_embedder: BioEmbedderProvider cache hit 0/2393 unique gene symbols (model=hyenadna_large_1m)
+[2026-05-19 16:03:47,403] INFO root: CUDA device found, using GPU.
+[2026-05-19 16:03:47,404] INFO root: GeneResolver initialized for human (Release 109).
+[2026-05-19 16:03:47,503] INFO root: Checking if Ensembl data needs downloading/indexing...
+[2026-05-19 16:03:48,204] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.cdna.all.fa.gz.pickle
+[2026-05-19 16:03:48,410] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.ncrna.fa.gz.pickle
+[2026-05-19 16:03:48,605] INFO pyensembl.sequence_data: Loaded sequence dictionary from /home/icb/goncalo.pinto/.cache/pyensembl/GRCh38/ensembl109/Homo_sapiens.GRCh38.pep.all.fa.gz.pickle
+[2026-05-19 16:03:48,606] INFO root: pyensembl data is ready.
+[2026-05-19 16:03:48,607] INFO root: BioEmbedder initialized: device=cuda, organism=human, backend=api
+[2026-05-19 16:03:48,608] INFO root: Loading registered model 'hyenadna_large_1m' onto device 'cuda'...
+[2026-05-19 16:03:48,608] INFO root: Loading HyenaDNA 'LongSafari/hyenadna-large-1m-seqlen-hf' …
+[2026-05-19 16:03:54,943] INFO root: HyenaDNA 'LongSafari/hyenadna-large-1m-seqlen-hf' loaded on cuda.
+[2026-05-19 16:03:54,943] INFO root: Model 'hyenadna_large_1m' loaded successfully.
+[2026-05-19 16:03:54,943] INFO root: Batch: 2393 items for 'hyenadna_large_1m' (dna)...
+[2026-05-19 16:04:44,722] ERROR root: Error fetching DNA sequence from Ensembl for 'AC118549.1': 400 Client Error: Bad Request for url: https://rest.ensembl.org/lookup/symbol/human/AC118549.1?expand=1
+[2026-05-19 16:04:44,724] WARNING root: No data for AC118549.1; skipping.

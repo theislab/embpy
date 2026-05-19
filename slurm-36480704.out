@@ -1,0 +1,32 @@
+ WARN Encountered 2 warnings while parsing the manifest:
+  ⚠ The feature 'state' is defined but not used in any environment.
+  │ Dependencies of unused features are not resolved or checked, and use
+  │ wildcard (*) version specifiers by default, disregarding any set `pinning-
+  │ strategy`
+     ╭─[/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/pixi.toml:386:10]
+ 385 │ # ---------------------------------------------------------------------------
+ 386 │ [feature.state]
+     ·          ─────
+ 387 │ platforms = ["linux-64"]
+     ╰────
+  help: Remove the feature from the manifest or add it to an environment
+
+  ⚠ The feature 'stack' is defined but not used in any environment.
+  │ Dependencies of unused features are not resolved or checked, and use
+  │ wildcard (*) version specifiers by default, disregarding any set `pinning-
+  │ strategy`
+     ╭─[/ictstr01/groups/ml01/workspace/goncalo.pinto/embpy/pixi.toml:402:10]
+ 401 │ 
+ 402 │ [feature.stack]
+     ·          ─────
+ 403 │ platforms = ["linux-64"]
+     ╰────
+  help: Remove the feature from the manifest or add it to an environment
+
+[2026-05-18 16:13:32,067] INFO __main__: Found 2057 unique non-control perturbation labels in data/datasets/replogle/replogle_2022_k562_essential.h5ad (filtered out 10691 control cells).
+[2026-05-18 16:13:32,319] INFO world_model.data.embeddings.bio_embedder: BioEmbedderProvider cache hit 2057/2057 unique gene symbols (model=borzoi_v0)
+[2026-05-18 16:13:32,392] INFO __main__: Embedded 2057 / 2057 rows at dim=1536 (RESOLVED=2057, CONTROL=0, UNRESOLVED=0).
+[2026-05-18 16:13:33,167] INFO __main__: Wrote embeddings to runs/_cache/action_embeddings/borzoi_v0/full_mean_human.npz
+[2026-05-18 16:13:33,208] INFO __main__: Status sidecar -> runs/_cache/action_embeddings/borzoi_v0/full_mean_human.npz.status.json
+[2026-05-18 16:13:33,218] INFO world_model.data.datasets.base: Built gene embedding table: 6 rows, dim=1536, missing=0
+[2026-05-18 16:13:33,219] INFO __main__: PrecomputedProvider round-trip OK: table shape=(6, 1536), indexer rows=6

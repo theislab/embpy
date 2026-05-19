@@ -222,15 +222,20 @@ def build_dataloaders(
         rng=np.random.default_rng(seed + 1),
     )
 
-    # persistent_workers=True: keep worker processes alive across epochs.
-    # Without it PyTorch tears down + re-forks the worker pool every
-    # epoch, which on a multi-GB pre-encoded dataset is the difference
-    # between sub-second epoch starts and 20+ second stalls.
     # prefetch_factor=4: queue 4 batches per worker (default is 2).
     # With num_workers=8 that's 32 ready batches -- enough headroom to
     # keep the H100 fed even when an individual sample is slow.
+    #
+    # persistent_workers stays False here on purpose. With True, the
+    # worker pool is reused across epochs (faster epoch starts), but
+    # the well-known DataLoader heap-growth pattern (re-pickling numpy
+    # samples through the queue) accumulates without bound and OOMs
+    # the host process around ~64 GB after a few hundred steps on this
+    # dataset. With persistent_workers=False, workers are torn down at
+    # epoch end and the heap is freed; epoch starts cost ~20 s but the
+    # run stays alive.
     # Both are no-ops when num_workers=0 (PyTorch ignores them).
-    _persistent = cfg.num_workers > 0
+    _persistent = False
     _prefetch = 4 if cfg.num_workers > 0 else None
     train_loader = DataLoader(
         train_dataset,
