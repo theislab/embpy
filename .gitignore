@@ -77,3 +77,10 @@ test_counts.npz
 hg38_chroms/
 *.fa
 *.fasta
+
+# SLURM job stdout/stderr -- regenerated every run, never commit.
+# Root-level files come from `sbatch --wrap` (default slurm-%j.out);
+# the named .sbatch launchers write into logs/%x_%j.{out,err}.
+slurm-*.out
+slurm-*.err
+logs/
