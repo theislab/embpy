@@ -453,6 +453,8 @@ def build_world_model(
     encoder_heads: int = 4,
     dynamics_layers: int = 6,
     dynamics_heads: int = 8,
+    dynamics_kind: str = "gpt",
+    incontext_support_size: int = 16,
     dropout: float = 0.1,
     max_sequence_length: int = 64,
     use_action_token: bool = True,
@@ -546,14 +548,6 @@ def build_world_model(
         freeze_embeddings=True,
         adapter_cfg=action_adapter_cfg,
     )
-    dynamics = GPTAutoregressiveDynamics(
-        d_model=d_model,
-        n_layers=dynamics_layers,
-        n_heads=dynamics_heads,
-        dropout=dropout,
-        max_sequence_length=max_sequence_length,
-        use_action_token=use_action_token,
-    )
     decoder = (
         ExpressionDecoder(
             d_model=d_model,
@@ -563,6 +557,38 @@ def build_world_model(
         )
         if enable_decoder
         else None
+    )
+
+    if dynamics_kind == "incontext_set":
+        # Bidirectional set model: predict a held-out query
+        # perturbation from a SET of (control, action, perturbed)
+        # support triplets. Non-causal, permutation-invariant.
+        from .dynamics.incontext_set import InContextSetDynamics  # noqa: PLC0415
+        from .incontext_world_model import InContextWorldModel  # noqa: PLC0415
+
+        dynamics = InContextSetDynamics(
+            d_model=d_model,
+            n_layers=dynamics_layers,
+            n_heads=dynamics_heads,
+            dropout=dropout,
+            max_set_size=max(int(incontext_support_size) + 1, max_sequence_length),
+        )
+        return InContextWorldModel(
+            encoder=encoder,
+            action_encoder=action_encoder,
+            dynamics=dynamics,
+            decoder=decoder,
+            d_model=d_model,
+            backbone=backbone,
+        )
+
+    dynamics = GPTAutoregressiveDynamics(
+        d_model=d_model,
+        n_layers=dynamics_layers,
+        n_heads=dynamics_heads,
+        dropout=dropout,
+        max_sequence_length=max_sequence_length,
+        use_action_token=use_action_token,
     )
     return WorldModel(
         encoder=encoder,

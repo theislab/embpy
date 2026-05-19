@@ -235,6 +235,8 @@ class PerturbationSequenceDataset:
         allowed_cell_indices: np.ndarray | None = None,
         cell_buckets: np.ndarray | None = None,
         bucket_value_map: dict[int, str] | None = None,
+        context_mode: str = "trajectory",
+        incontext_support_size: int = 16,
     ) -> None:
         if expression.ndim != 2:
             raise ValueError(f"expression must be 2D, got shape {expression.shape}")
@@ -259,6 +261,8 @@ class PerturbationSequenceDataset:
         self.control_label = control_label
         self.rng = rng if rng is not None else np.random.default_rng()
         self.n_genes = int(expression.shape[1])
+        self.context_mode = str(context_mode)
+        self.incontext_support_size = int(incontext_support_size)
 
         if allowed_cell_indices is None:
             allowed_mask = np.ones(self.expression.shape[0], dtype=bool)
@@ -383,6 +387,9 @@ class PerturbationSequenceDataset:
     def __getitem__(self, idx: int) -> dict[str, Any]:
         import torch  # noqa: PLC0415
 
+        if self.context_mode == "incontext_set":
+            return self._getitem_incontext(idx)
+
         rng = self.rng
         T = self.sequence_length
         K = self.stack_size
@@ -443,6 +450,118 @@ class PerturbationSequenceDataset:
             "bucket_id": bucket_id,
         }
 
+    def _getitem_incontext(self, idx: int) -> dict[str, Any]:
+        """One in-context task: a SET of support triplets + a query.
+
+        A triplet is ``(s_control, action, s_perturbed)`` where the
+        "before" state is ALWAYS a fresh control stack (control-anchored;
+        no fabricated chaining) and the "after" state is a stack of
+        cells carrying that perturbation. ``M = incontext_support_size``
+        support triplets show the model how perturbations behave in this
+        substrate; the model must then predict the perturbed state of
+        ONE held-out query triplet. The set has no order -- the
+        bidirectional dynamics treats it permutation-invariantly.
+
+        Emitted keys (all torch tensors unless noted):
+
+        * ``support_obs``      ``(M, K, G)``   control stacks
+        * ``support_act``      ``(M, n_pert)`` support action indices
+        * ``support_next``     ``(M, K, G)``   perturbed stacks
+        * ``query_obs``        ``(K, G)``      control stack
+        * ``query_act``        ``(n_pert,)``   query action indices
+        * ``query_next``       ``(K, G)``      target perturbed stack
+        * ``query_next_expression`` ``(G,)``   decoder target (mean)
+        * ``obs_stack``        ``(K, G)``      alias of ``query_obs`` so
+          the trainer's batch-size bookkeeping is unchanged.
+        * ``perturbations``    list[str]       [*support, query]
+        * ``bucket_id``        int
+        """
+        import torch  # noqa: PLC0415
+
+        K = self.stack_size
+        G = self.n_genes
+        n_pert = self.n_pert
+        M = self.incontext_support_size
+
+        seed = int(self.rng.integers(2**31)) ^ idx
+        local = np.random.default_rng(seed)
+
+        # One substrate per task (same intent as trajectory bucketing).
+        if self._cell_buckets is not None:
+            bucket_id = int(local.choice(self._sampleable_buckets))
+            cells_by_label = self._cells_by_bucket_label[bucket_id]
+            label_pool = [
+                lbl for lbl in self._labels_by_bucket[bucket_id]
+                if lbl != self.control_label
+            ]
+        else:
+            bucket_id = -1
+            cells_by_label = self._cells_by_label
+            label_pool = [
+                lbl for lbl in self._sampleable_labels
+                if lbl != self.control_label
+            ]
+
+        # M support + 1 query distinct perturbations where possible.
+        n_draw = M + 1
+        replace = len(label_pool) < n_draw
+        chosen = list(
+            local.choice(np.asarray(label_pool, dtype=object),
+                         size=n_draw, replace=replace)
+        )
+        support_labels = [str(x) for x in chosen[:M]]
+        query_label = str(chosen[M])
+
+        control_cells = cells_by_label[self.control_label]
+
+        def _control_stack() -> np.ndarray:
+            idx_ = local.choice(
+                control_cells, size=K, replace=control_cells.size < K,
+            )
+            return self.expression[idx_]
+
+        def _pert_stack(lbl: str) -> np.ndarray:
+            cells = cells_by_label[lbl]
+            idx_ = local.choice(cells, size=K, replace=cells.size < K)
+            return self.expression[idx_]
+
+        def _action(lbl: str) -> np.ndarray:
+            a = np.zeros((n_pert,), dtype=np.int64)
+            for j, gid in enumerate(
+                self.indexer.encode(lbl, self.control_label)[:n_pert]
+            ):
+                a[j] = gid
+            return a
+
+        support_obs = np.empty((M, K, G), dtype=np.float32)
+        support_next = np.empty((M, K, G), dtype=np.float32)
+        support_act = np.zeros((M, n_pert), dtype=np.int64)
+        for m, lbl in enumerate(support_labels):
+            support_obs[m] = _control_stack()
+            support_next[m] = _pert_stack(lbl)
+            support_act[m] = _action(lbl)
+
+        query_obs = _control_stack()
+        query_next = _pert_stack(query_label)
+        query_act = _action(query_label)
+
+        return {
+            "support_obs": torch.from_numpy(support_obs),
+            "support_act": torch.from_numpy(support_act),
+            "support_next": torch.from_numpy(support_next),
+            "query_obs": torch.from_numpy(query_obs),
+            "query_act": torch.from_numpy(query_act),
+            "query_next": torch.from_numpy(query_next),
+            "query_next_expression": torch.from_numpy(
+                query_next.mean(axis=0).astype(np.float32)
+            ),
+            # Alias so WorldModelTrainer's `batch["obs_stack"].size(0)`
+            # batch-size accounting keeps working untouched.
+            "obs_stack": torch.from_numpy(query_obs),
+            "perturbations": [*support_labels, query_label],
+            "bucket_id": bucket_id,
+        }
+
     # ------------------------------------------------------------------
     # Subset / view helpers
     # ------------------------------------------------------------------
@@ -473,6 +592,8 @@ class PerturbationSequenceDataset:
             allowed_cell_indices=np.asarray(cell_indices, dtype=np.int64),
             cell_buckets=self._cell_buckets,
             bucket_value_map=self._bucket_value_map,
+            context_mode=self.context_mode,
+            incontext_support_size=self.incontext_support_size,
         )
 
     def available_perturbations(self) -> list[str]:

@@ -85,6 +85,8 @@ def _build_model(
         encoder_heads=cfg.encoder.n_heads,
         dynamics_layers=cfg.dynamics.n_layers,
         dynamics_heads=cfg.dynamics.n_heads,
+        dynamics_kind=cfg.dynamics.kind,
+        incontext_support_size=getattr(cfg.data, "incontext_support_size", 16),
         dropout=cfg.dynamics.dropout,
         max_sequence_length=cfg.dynamics.max_sequence_length,
         use_action_token=cfg.dynamics.use_action_token,
@@ -633,6 +635,23 @@ def _run_eval_and_report(cfg: WorldModelConfig, output_dir: Path, model, artifac
     # training (e.g. derived dims). The verbatim source YAML and the
     # CLI overrides are already on disk from _snapshot_run_provenance.
     _dump_config_yaml(cfg, output_dir / "config.yaml")
+
+    # The perturbation-eval harness drives the model via
+    # ``model.rollout(...)``, which only the causal WorldModel exposes.
+    # The in-context set model has a different inference contract
+    # (support set + query), so its dedicated eval adapter is a
+    # separate piece of work. Skip here rather than crash or emit
+    # rollout-shaped numbers that would be meaningless for it. Training,
+    # checkpointing and the trainer's teacher-forced val loss have
+    # already completed at this point.
+    if cfg.dynamics.kind == "incontext_set":
+        logger.warning(
+            "Skipping rollout-based perturbation eval: dynamics.kind="
+            "'incontext_set' has no .rollout (in-context eval adapter is "
+            "a follow-up). Checkpoint + train/val losses are saved in %s.",
+            output_dir,
+        )
+        return
 
     device = "cuda" if (cfg.train.device == "auto" and torch.cuda.is_available()) else (
         cfg.train.device if cfg.train.device != "auto" else "cpu"

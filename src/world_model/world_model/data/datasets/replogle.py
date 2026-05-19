@@ -63,6 +63,8 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
         n_pert: int = 2,
         rng: np.random.Generator | None = None,
         bucket_key: str | None = None,
+        context_mode: str = "trajectory",
+        incontext_support_size: int = 16,
     ) -> tuple[ReplogleSequenceDataset, np.ndarray, GeneIndexer, list[str]]:
         """Build a dataset from a Replogle ``.h5ad`` file.
 
@@ -124,6 +126,8 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
             rng=rng,
             cell_buckets=cell_buckets,
             bucket_value_map=bucket_value_map,
+            context_mode=context_mode,
+            incontext_support_size=incontext_support_size,
         )
         return dataset, gene_table, indexer, gene_symbols
 

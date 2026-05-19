@@ -62,6 +62,23 @@ class DataConfig:
     sequence_length: int = 8
     n_pert: int = 2
 
+    context_mode: str = "trajectory"
+    """How ``__getitem__`` assembles a sample.
+
+    * ``"trajectory"`` (default, unchanged) -- a fabricated length-T
+      chain ``control -> pertA -> pertB -> ...`` for the causal GPT
+      dynamics. Keeps every existing run byte-identical.
+    * ``"incontext_set"`` -- one *task* per sample: a permutation-free
+      SET of ``incontext_support_size`` support triplets
+      ``(s_control, a_i, s_pert_i)`` plus ONE query triplet
+      ``(s_control, a_q, ?)`` whose perturbed state is the target. Used
+      by the bidirectional in-context dynamics
+      (``dynamics.kind = "incontext_set"``)."""
+
+    incontext_support_size: int = 16
+    """``context_mode="incontext_set"`` only -- number of support
+    triplets per task. The query is one additional triplet."""
+
     batch_size: int = 64
     val_fraction: float = 0.1
     num_workers: int = 4
