@@ -1,0 +1,102 @@
+# ---------------------------------------------------------------------------
+# world_model -- perturbation world model on top of embpy.
+#
+# Layout: standard src-layout. This pyproject.toml lives at
+# `src/world_model/pyproject.toml`; the importable package sits next to
+# it at `src/world_model/world_model/`. Hatchling picks it up via
+# `packages = ["world_model"]` below -- no path rewrites, which means
+# editable installs (`pip install -e src/world_model` or pixi's
+# `editable = true` on this path) work out of the box. The previous
+# layout overloaded `src/world_model/` to serve as both the pyproject
+# root and the package directory, which required a
+# `[tool.hatch.build.targets.wheel.sources] "" = "world_model"` prefix-
+# add rewrite; hatchling's PEP 660 editables backend rejects prefix-add
+# rewrites and refused to install the package in editable mode. The
+# directory restructure is recorded in docs/audit/package_split.md.
+# ---------------------------------------------------------------------------
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "world_model"
+version = "0.0.1"
+description = "Perturbation world model for single-cell transcriptomics, built on embpy."
+readme = "README.md"
+license = { file = "../../LICENSE" }
+requires-python = ">=3.11"
+authors = [
+  { name = "Goncalo Rei Pinto", email = "goncalo.pinto@helmholtz-munich.de" },
+]
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+# NOTE: `embpy` is intentionally absent from this list even though
+# world_model imports it at runtime. Inside the pixi workspace, pixi
+# installs the workspace-root project (= embpy) and world_model
+# (this package) side-by-side as editable installs into every env, so
+# the runtime import always resolves. Declaring `embpy` here additionally
+# tripped uv's workspace resolver -- the workspace=true source spec
+# clashes with pixi's path-based editable install of the same workspace
+# root, producing either:
+#   * "embpy is included as a workspace member, but is missing an entry
+#     in tool.uv.sources" (when no source is set),
+#   * "Requirements contain conflicting URLs for package `embpy`"
+#     (with both a workspace=true source and pixi's editable install).
+# Out-of-workspace users who want to `pip install world_model` from
+# source must also `pip install -e <embpy_path>` beforehand; this is
+# documented in src/world_model/README.md.
+dependencies = [
+  "numpy>=1.26,<3",
+  "pandas>=2.2",
+  "pyyaml>=6.0",
+  "scipy>=1.11",
+  "scikit-learn>=1.3",
+  "anndata",
+  "matplotlib",
+  "seaborn",
+  "tqdm",
+]
+
+# Experiment-only extras live here (state / stack / seqmodels backbones)
+# instead of on embpy, because they are only meaningful when actually
+# training or evaluating a world model.
+optional-dependencies.state = [
+  "arc-state>=0.10",
+]
+optional-dependencies.stack = [
+  "arc-stack>=0.1.3",
+  "scvi-tools>=1.2",
+]
+optional-dependencies.seqmodels = [
+  "borzoi-pytorch>=0.4.3",
+  "enformer-pytorch>=0.8.10",
+]
+optional-dependencies.test = [
+  "pytest",
+  "pytest-mock",
+  "coverage",
+]
+
+urls.Source = "https://github.com/grpinto/embpy"
+
+[tool.hatch.build.targets.wheel]
+# Standard hatchling auto-detection: pick up the `world_model` package
+# directory next to this pyproject and ship everything inside it as the
+# wheel layout (Python and non-Python files alike -- configs/*.yaml,
+# scripts/*.sbatch, assets/*.png, etc. all come along). `__pycache__`,
+# `.pyc` and other VCS-ignored noise are filtered by hatchling's
+# default exclusions.
+packages = ["world_model"]
+
+[tool.pytest.ini_options]
+# Resolved relative to this pyproject.toml when invoked as
+#   pytest --rootdir=src/world_model
+# CI typically uses `pytest tests/world_model` from the repo root, in
+# which case pytest falls back to the root pyproject's ini_options.
+testpaths = ["../../tests/world_model"]
+xfail_strict = true
+addopts = ["--import-mode=importlib"]

@@ -1,0 +1,89 @@
+# Tiny end-to-end smoke test config. Loads a small subset of Nadig,
+# trains 2 epochs on CPU, runs all baselines and the eval pipeline.
+# Should finish in well under 5 minutes on a laptop without GPU.
+run_name: "smoke"
+output_dir: "runs/world_model/smoke"
+seed: 0
+mode: "single"
+
+data:
+  dataset: "nadig"
+  h5ad_path: "data/datasets/nadig/NadigOConner2024_jurkat.h5ad"
+  gene_embedding_path: "data/embeddings/gene_embeddings/genept/embeddings_3072.csv"
+  perturbation_key: "perturbation"
+  control_label: "non-targeting"
+  cell_type_key: null
+  n_top_genes: 256
+  log_normalize: true
+  stack_size: 2
+  sequence_length: 4
+  n_pert: 2
+  batch_size: 8
+  val_fraction: 0.1
+  num_workers: 0
+  pin_memory: false
+  n_sequences_per_epoch: 64
+
+# The smoke test runs the precomputed path. scripts/smoke_test.py
+# generates a tiny synthetic NPZ at runtime if the configured CSV is
+# missing, so the smoke target stays self-contained.
+action_embedding:
+  source: "precomputed"
+  path: ""
+
+# Keep the smoke test dependency-light: the local backbone is the
+# existing StateStackEncoder, no arc-state / arc-stack required.
+state_backbone:
+  kind: "local"
+  freeze: true
+
+split:
+  split_by: "perturbation"
+  train_fraction: 0.8
+  seed: 0
+
+encoder:
+  kind: "transformer"
+  d_model: 32
+  n_layers: 1
+  n_heads: 2
+  dropout: 0.0
+
+dynamics:
+  kind: "gpt"
+  d_model: 32
+  n_layers: 2
+  n_heads: 2
+  dropout: 0.0
+  max_sequence_length: 16
+  use_action_token: true
+
+loss:
+  latent_mse: 1.0
+  decoder_mse: 0.5
+  info_nce: 0.0
+  info_nce_temperature: 0.1
+
+optim:
+  lr: 1.0e-3
+  weight_decay: 0.0
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  scheduler: "constant"
+  warmup_steps: 0
+
+train:
+  n_epochs: 2
+  log_every_n_steps: 10
+  eval_every_n_epochs: 1
+  save_every_n_epochs: 2
+  device: "cpu"
+  amp: false
+  enable_tensorboard: false
+  enable_csv_log: true
+
+eval:
+  n_control_samples_per_pert: 4
+  use_cell_eval: false
+  deg_top_k: 16
+  save_predictions: false

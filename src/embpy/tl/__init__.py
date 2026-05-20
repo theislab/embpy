@@ -4,10 +4,12 @@
 
 __all__ = [
     # clustering
+    "cluster_annotation_enrichment",
     "cluster_embeddings",
     "find_nearest_neighbors",
     "leiden",
     # dimred
+    "compute_pca",
     "compute_tsne",
     "compute_umap",
     # similarity
@@ -74,8 +76,13 @@ __all__ = [
     "embed_vcf",
 ]
 
-from .clustering import cluster_embeddings, find_nearest_neighbors, leiden
-from .dimred import compute_tsne, compute_umap
+from .clustering import (
+    cluster_annotation_enrichment,
+    cluster_embeddings,
+    find_nearest_neighbors,
+    leiden,
+)
+from .dimred import compute_pca, compute_tsne, compute_umap
 from .similarity import (
     compute_distance_matrix,
     compute_knn_overlap,

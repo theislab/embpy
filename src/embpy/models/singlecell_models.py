@@ -1020,8 +1020,8 @@ class StackWrapper(SingleCellWrapper):
     Example::
 
         wrapper = StackWrapper(
-            checkpoint="/path/to/stack.ckpt",
-            genelist="/path/to/hvg_genes.pkl",
+            checkpoint="/path/to/bc_large.ckpt",
+            genelist="/path/to/basecount_1000per_15000max.pkl",
         )
         wrapper.load("cuda")
         embs = wrapper.embed_cells(adata)
@@ -1063,6 +1063,30 @@ class StackWrapper(SingleCellWrapper):
         self._model = _load_model(self._checkpoint, device=resolved)
         logger.info("Loaded Stack model from %s on %s", self._checkpoint, device)
 
+    # STACK's TestSamplerDataset filters obs["organism"] against the
+    # *exact* string "Homo sapiens" (see
+    # stack/data/training/datasets.py:817 in arc-stack 0.1.x). Datasets
+    # that encode the species with a common shorthand -- e.g. Replogle
+    # K562 stores "human", many in-house pipelines write "Mouse" --
+    # would otherwise produce zero matches and STACK aborts with
+    # ValueError("No Homo sapiens cells found in the file"). We
+    # canonicalise these aliases on a captured copy of the obs column
+    # before writing the temp h5ad and restore the caller's value on the
+    # way out so their in-memory AnnData is not mutated.
+    _STACK_ORGANISM_ALIASES: dict[str, str] = {
+        "human": "Homo sapiens",
+        "homo sapiens": "Homo sapiens",
+        "homo_sapiens": "Homo sapiens",
+        "h sapiens": "Homo sapiens",
+        "h. sapiens": "Homo sapiens",
+        "h_sapiens": "Homo sapiens",
+        "mouse": "Mus musculus",
+        "mus musculus": "Mus musculus",
+        "mus_musculus": "Mus musculus",
+        "m musculus": "Mus musculus",
+        "m. musculus": "Mus musculus",
+    }
+
     def embed_cells(self, adata: Any) -> np.ndarray:  # noqa: D102
         if self._model is None:
             raise RuntimeError("Model not loaded. Call load() first.")
@@ -1077,17 +1101,70 @@ class StackWrapper(SingleCellWrapper):
         import tempfile
         import os
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tmp_path = os.path.join(tmpdir, "input.h5ad")
-            adata.write_h5ad(tmp_path)
-            embeddings, _ = extract_embeddings(
-                checkpoint_path=self._checkpoint,
-                adata_path=tmp_path,
-                genelist_path=self._genelist,
-                gene_name_col=self._gene_name_col,
-                batch_size=self.batch_size,
-                device=self.device,
-            )
+        # Capture-and-restore so we never silently mutate the caller's
+        # AnnData. We only touch the obs frame, not X / var / layers, so
+        # the operation is O(n_obs) in time and memory regardless of the
+        # underlying matrix size.
+        original_organism = None
+        had_organism_col = (
+            hasattr(adata, "obs")
+            and hasattr(adata.obs, "columns")
+            and "organism" in adata.obs.columns
+        )
+        if had_organism_col:
+            original_organism = adata.obs["organism"].copy()
+            raw = adata.obs["organism"].astype(str)
+            lowered = raw.str.strip().str.lower()
+            mapped = lowered.map(self._STACK_ORGANISM_ALIASES).fillna(raw)
+            if not mapped.equals(raw):
+                logger.info(
+                    "StackWrapper: canonicalising obs['organism'] aliases "
+                    "(e.g. 'human' -> 'Homo sapiens') for STACK's "
+                    "filter_organism check."
+                )
+                adata.obs["organism"] = mapped.astype("category")
+
+        # STACK's get_gene_names_from_h5 (arc-stack 0.1.x) only looks
+        # for the literal keys "_index" / "index" inside the h5ad's var
+        # group. AnnData, by contrast, stores the index data under a key
+        # named after var.index.name (e.g. "gene_name" for Replogle) and
+        # records the actual name in var.attrs["_index"]. STACK does not
+        # read that attribute, so when var.index.name is anything other
+        # than "_index" / "index" / None, STACK raises
+        # ValueError("Could not find gene names in the file"). We detect
+        # this and pass the index's real name through as gene_name_col
+        # so STACK's first lookup branch (gene_name_col in var_group)
+        # succeeds. Users who explicitly set gene_name_col override this
+        # auto-detect.
+        effective_gene_name_col = self._gene_name_col
+        if effective_gene_name_col is None and hasattr(adata, "var"):
+            idx = getattr(adata.var, "index", None)
+            idx_name = getattr(idx, "name", None)
+            if idx_name and idx_name not in {"_index", "index"}:
+                effective_gene_name_col = idx_name
+                logger.info(
+                    "StackWrapper: forwarding adata.var.index.name=%r as "
+                    "gene_name_col to STACK to bypass its naive index "
+                    "lookup (AnnData stores the index under that key).",
+                    idx_name,
+                )
+
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp_path = os.path.join(tmpdir, "input.h5ad")
+                adata.write_h5ad(tmp_path)
+                embeddings, _ = extract_embeddings(
+                    checkpoint_path=self._checkpoint,
+                    adata_path=tmp_path,
+                    genelist_path=self._genelist,
+                    gene_name_col=effective_gene_name_col,
+                    batch_size=self.batch_size,
+                    device=self.device,
+                )
+        finally:
+            if had_organism_col and original_organism is not None:
+                adata.obs["organism"] = original_organism
+
         return np.asarray(embeddings, dtype=np.float32)
 
     def generate_cells(  # noqa: D102

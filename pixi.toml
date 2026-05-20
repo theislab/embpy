@@ -82,7 +82,24 @@ tqdm = "*"
 # PyPI-only dependencies (no good conda-forge build available).
 # ---------------------------------------------------------------------------
 [pypi-dependencies]
+# Both packages install editable. Each uses a standard src-layout so
+# hatchling's PEP 660 editables backend can wire them up by removing the
+# `src/<pkg>/` prefix from on-disk paths -- no prefix-add rewrites,
+# which the editables backend rejects.
+#
+#   embpy        -- on-disk: src/embpy/<files>,        import: embpy
+#   world_model  -- on-disk: src/world_model/world_model/<files>,
+#                   import: world_model (with src/world_model/ as the
+#                   pyproject root)
+#
+# world_model's pyproject deliberately does NOT list "embpy" in its
+# `dependencies` (see the comment there) so uv's workspace resolver
+# does not try to resolve `embpy` a second time and clash with the
+# explicit editable install above. Inside this pixi workspace both
+# packages live in every env, so the runtime `import embpy` from
+# world_model code always resolves.
 embpy = { path = ".", editable = true }
+world_model = { path = "src/world_model", editable = true }
 # pure-Python / PyPI-only deps that embpy imports directly:
 broad-babel = ">=0.1"
 cirpy = "*"
@@ -146,6 +163,100 @@ transformers = ">=4.45,<4.51"
 [feature.seqmodels.pypi-dependencies]
 borzoi-pytorch = ">=0.4.3"
 enformer-pytorch = ">=0.8.10"
+
+# ---------------------------------------------------------------------------
+# Evo 2 (Arc Institute long-context DNA LM, StripedHyena 2 architecture via
+# Vortex). Linux-64 + CUDA 12 only.
+#
+# Hardware: needs an Ampere (SM 8.0) GPU or newer. On A100 / H100 the model
+# runs in BF16; FP8 inference requires Ada (SM 8.9) or Hopper (SM 9.0).
+#
+# Heavy native-CUDA transitive deps (flash-attn, mamba-ssm, transformer_engine,
+# vortex-ai) are pulled from PyPI; pre-built wheels exist for common
+# torch+CUDA combos but pip will fall back to building from source if no wheel
+# matches. We provide ninja / cmake / packaging on the conda side to make
+# that fallback succeed.
+#
+# Kept in its own feature because mamba-ssm / transformer_engine versions
+# usually conflict with the helical and esm3 stacks. The `evo2` environment
+# below combines this feature with the standard `gpu` + tutorial deps so
+# notebooks/02_gene_embeddings.ipynb can run section 2.7 (Evo2) end-to-end.
+#
+# Usage:
+#   pixi install -e evo2
+#   sbatch submission_scripts/jupyter_pixi_evo2.sbatch
+# ---------------------------------------------------------------------------
+[feature.evo2]
+platforms = ["linux-64"]
+
+[feature.evo2.system-requirements]
+cuda = "12"
+
+[feature.evo2.dependencies]
+python = ">=3.11,<3.13"
+# Build helpers in case PyPI falls back to compiling flash-attn / mamba-ssm
+# from source (no matching wheel for the resolved torch + CUDA combo).
+ninja = "*"
+cmake = ">=3.20"
+packaging = "*"
+
+[feature.evo2.pypi-dependencies]
+# Pulls vortex-ai, transformer_engine, flash-attn, mamba-ssm transitively.
+evo2 = ">=0.3"
+
+[feature.evo2.pypi-options]
+# These ship pre-built CUDA wheels but their build metadata declares torch
+# only as a runtime dep. If pip falls back to a sdist build, disabling build
+# isolation lets them find the env's pre-installed torch.
+no-build-isolation = ["flash-attn", "mamba-ssm", "transformer_engine"]
+
+# ---------------------------------------------------------------------------
+# Caduceus (Mamba-based long-context DNA LM). Linux-64 + CUDA only.
+#
+# Caduceus models on HF (`kuleshov-group/caduceus-{ph,ps}_seqlen-131k_*`)
+# use `trust_remote_code=True` modeling files that require the Mamba
+# selective-SSM kernels via the `mamba-ssm` PyPI package, which in turn
+# needs the matching `causal-conv1d` CUDA kernels. Both ship pre-built
+# wheels for common torch+CUDA combos; pip falls back to building from
+# source (with ninja/cmake/packaging) if no wheel matches.
+#
+# Kept in its OWN feature/environment because mamba-ssm + causal-conv1d
+# are heavy CUDA-built deps whose torch ABI requirements (and build time)
+# we do not want to inflict on every gpu user. Smaller blast radius than
+# `evo2` (no flash-attn, no transformer_engine, no vortex-ai) -- so we
+# keep them in separate envs even though both ship mamba-ssm.
+#
+# Usage:
+#   pixi install -e caduceus
+#   pixi run -e caduceus -- python -m world_model.scripts.embed_perturbations \
+#       --model caduceus_ph_131k --dataset replogle ...
+# ---------------------------------------------------------------------------
+[feature.caduceus]
+platforms = ["linux-64"]
+
+[feature.caduceus.system-requirements]
+cuda = "12"
+
+[feature.caduceus.dependencies]
+# Match the build helpers Evo2 ships so pip can compile mamba-ssm /
+# causal-conv1d from source if a matching wheel is not available.
+ninja = "*"
+cmake = ">=3.20"
+packaging = "*"
+
+[feature.caduceus.pypi-dependencies]
+# Mamba selective-SSM kernels + the causal 1D convolution helper. Pin to
+# loose 2.x / 1.x ranges; both projects follow strict semver and we want
+# pip to be able to upgrade within the major series when new torch ABIs
+# land. Wheels are published for torch >= 2.1 + CUDA 11.8 / 12.x.
+mamba-ssm = ">=2.2,<3"
+causal-conv1d = ">=1.4,<2"
+
+[feature.caduceus.pypi-options]
+# Both projects declare torch only as a runtime dep in their wheel
+# metadata. If pip cannot find a wheel and falls back to a sdist build,
+# disabling build isolation lets the build pick up the env's torch.
+no-build-isolation = ["mamba-ssm", "causal-conv1d"]
 
 # Boltz-2 (structure-informed protein embeddings). Kept as its own feature +
 # environment because `boltz>=2` hard-pins `numpy<2.0`, which is incompatible
@@ -309,6 +420,50 @@ arc-stack = ">=0.1.3"
 # module load time).
 scvi-tools = ">=1.2"
 
+# ---------------------------------------------------------------------------
+# Split features for opting into ONLY STATE or ONLY STACK as world-model
+# state backbones (Phase 5). Mirrors the arc-state / arc-stack hard pins
+# without forcing users to install both. The base install of embpy does
+# NOT pull either.
+#
+# Usage:
+#   pixi install -e state   # STATE only
+#   pixi install -e stack   # STACK only
+#   pixi install -e arc     # both (legacy)
+# ---------------------------------------------------------------------------
+[feature.state]
+platforms = ["linux-64"]
+
+[feature.state.dependencies]
+python = ">=3.11,<3.13"
+pytorch = { version = ">=2.7.0,<2.8", channel = "conda-forge" }
+scipy = ">=1.15"
+numpy = ">=2.2.6,<2.3"
+scanpy = ">=1.11"
+scikit-learn = ">=1.6.1"
+pandas = ">=2.2.3"
+pyyaml = ">=6.0"
+
+[feature.state.pypi-dependencies]
+arc-state = ">=0.10"
+
+[feature.stack]
+platforms = ["linux-64"]
+
+[feature.stack.dependencies]
+python = ">=3.11,<3.13"
+pytorch = { version = ">=2.7.0,<2.8", channel = "conda-forge" }
+scipy = ">=1.15"
+numpy = ">=2.2.6,<2.3"
+scanpy = ">=1.11"
+scikit-learn = ">=1.6.1"
+pandas = ">=2.2.3"
+pyyaml = ">=6.0"
+
+[feature.stack.pypi-dependencies]
+arc-stack = ">=0.1.3"
+scvi-tools = ">=1.2"
+
 # GPU add-on for the arc env. Same pattern as helical-gpu: declare
 # the CUDA 12 virtual package and restrict pytorch to the cuda* build.
 [feature.arc-gpu]
@@ -362,11 +517,16 @@ ipykernel = "*"
 ipywidgets = "*"
 notebook = "*"
 
-# Docs
+# Docs / Dev: embpy is already installed as the workspace root (see the
+# top-level [pypi-dependencies] block). These per-feature blocks add the
+# corresponding extras on top of that base install. They are scoped to
+# the `docs` / `dev` envs (and any env that explicitly enables those
+# features); the `gpu`, `arc-gpu`, etc. envs do not include either
+# feature so the workspace=true install in src/world_model/pyproject.toml
+# never collides with these path-based entries.
 [feature.docs.pypi-dependencies]
 embpy = { path = ".", editable = true, extras = ["doc"] }
 
-# Dev / tests
 [feature.dev.pypi-dependencies]
 embpy = { path = ".", editable = true, extras = ["dev", "test"] }
 
@@ -408,6 +568,24 @@ helical-cpu = { features = ["helical", "morphology", "jupyter"] }
 arc-gpu = { features = ["arc", "arc-gpu"] }
 arc-cpu = { features = ["arc"] }
 
+# World-model training env with both Arc STATE and STACK backbones
+# in one place. CURRENTLY DISABLED because the [feature.state] /
+# [feature.stack] pins (pytorch >=2.7) conflict with the channels
+# wired into [feature.gpu] (pixi cannot find a pytorch build that
+# satisfies both at once). The workflow used to depend on it for the
+# `single_replogle_stack` experiments lives elsewhere now: pre-warm
+# the STACK cache once in `arc-gpu` (which has no Borzoi/seqmodels
+# but doesn't need it for the encode pass), then train in `gpu`
+# (which has Borzoi/seqmodels but reads STACK cells from the warmed
+# NPZ). Keep this block commented for the historical record; remove
+# entirely once the upstream pytorch pin is reconciled.
+#
+# gpu-state-stack = { features = [
+#   "gpu", "state", "stack",
+#   "morphology", "jump", "scanpy", "pertpy", "ppi", "lamindb",
+#   "esm3", "seqmodels", "jupyter",
+# ] }
+
 # Opt-in env for MiniMol (molecule GNN). Separate because torch-sparse has
 # broken build metadata and the resolve is slow.
 minimol = { features = ["cpu", "morphology", "minimol", "jupyter"], solve-group = "minimol" }
@@ -417,6 +595,44 @@ minimol = { features = ["cpu", "morphology", "minimol", "jupyter"], solve-group 
 # environment. Linux-64 + CUDA only. Usage:
 #   pixi install -e boltz && pixi shell -e boltz
 boltz = { features = ["boltz", "morphology", "jupyter"] }
+
+# Standalone env for Evo 2 (long-context DNA LM, A100/H100 required).
+# Combines the evo2 feature with the standard tutorial stack so
+# notebooks/02_gene_embeddings.ipynb runs end-to-end including Evo2.
+# Usage:
+#   pixi install -e evo2
+#   sbatch submission_scripts/jupyter_pixi_evo2.sbatch
+evo2 = { features = [
+  "gpu",
+  "evo2",
+  "seqmodels",
+  "morphology",
+  "scanpy",
+  "pertpy",
+  "jupyter",
+] }
+
+# Standalone env for Caduceus (Mamba-based DNA LMs). The world-model
+# sweep uses this env for caduceus_ph_131k / caduceus_ps_131k. Mirrors
+# the `gpu` env so embpy/world_model can still import their usual
+# scanpy / pertpy / morphology helpers, plus the `caduceus` feature for
+# the mamba-ssm + causal-conv1d CUDA kernels Caduceus needs at load
+# time. No solve-group shared with `gpu` because mamba-ssm pins a
+# slightly tighter torch ABI than the seqmodels / esm3 / helical stack
+# would tolerate.
+# Usage:
+#   pixi install -e caduceus
+#   pixi run -e caduceus -- python -m world_model.scripts.embed_perturbations \
+#       --model caduceus_ph_131k ...
+caduceus = { features = [
+  "gpu",
+  "caduceus",
+  "seqmodels",
+  "morphology",
+  "scanpy",
+  "pertpy",
+  "jupyter",
+] }
 
 # CPU env that also pulls the docs + dev extras. Useful for tutorial work.
 dev = { features = ["cpu", "morphology", "jump", "scanpy", "esm3", "seqmodels", "jupyter", "dev", "docs"], solve-group = "cpu" }
@@ -435,6 +651,11 @@ install-kernel = "python -m ipykernel install --user --name embpy --display-name
 # Launch jupyter-lab bound to this env. Override port/host with args:
 #   pixi run jupyter --port 8899 --ip 0.0.0.0
 jupyter = "jupyter lab --no-browser --ip 0.0.0.0"
+# Quick interactive shells for working in either package. They drop you
+# into the activated default env with PYTHONNOUSERSITE=1 already set;
+# `cd src/embpy` / `cd src/world_model` is purely cosmetic.
+embpy-shell = { cmd = "bash -c 'cd src/embpy && exec bash -i'", description = "Interactive bash, cwd=src/embpy/" }
+wm-shell    = { cmd = "bash -c 'cd src/world_model && exec bash -i'", description = "Interactive bash, cwd=src/world_model/" }
 
 [feature.gpu.tasks]
 # GPU smoke test (assumes CUDA is visible: run on a GPU node or with CUDA_VISIBLE_DEVICES set).

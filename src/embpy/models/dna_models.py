@@ -64,6 +64,76 @@ except ImportError:
 from .base import BaseModelWrapper
 
 
+def _safe_model_forward(model: Any, **kwargs: Any) -> Any:
+    """Forward pass that drops kwargs the model can't accept.
+
+    HuggingFace models declare an explicit signature for ``forward(self, ...)``
+    but the catalog mixes them with custom causal LMs (notably HyenaDNA's
+    ``HyenaDNAForCausalLM``) that reject ``attention_mask`` outright. Rather
+    than maintain a hand-curated allowlist, we attempt the call, catch the
+    ``TypeError("got an unexpected keyword argument")`` once, cache the
+    rejected kwarg name on the model instance, and retry. Subsequent calls
+    pay zero retry overhead because we filter the kwargs up-front using the
+    cached rejection set.
+    """
+    rejected: set[str] = getattr(model, "_embpy_rejected_kwargs", set())
+    call_kwargs = {k: v for k, v in kwargs.items() if v is None or k not in rejected}
+    # Always drop None values for kwargs that are in the rejected set --
+    # passing ``attention_mask=None`` to HyenaDNA still triggers TypeError.
+    call_kwargs = {k: v for k, v in call_kwargs.items() if k not in rejected}
+    try:
+        return model(**call_kwargs)
+    except TypeError as e:
+        msg = str(e)
+        if "unexpected keyword argument" not in msg:
+            raise
+        changed = False
+        for k in list(call_kwargs.keys()):
+            if k in msg:
+                rejected.add(k)
+                call_kwargs.pop(k, None)
+                changed = True
+        if not changed:
+            raise
+        # Cache the rejection set on the model so future calls skip them.
+        try:
+            model._embpy_rejected_kwargs = rejected
+        except AttributeError:
+            pass
+        return model(**call_kwargs)
+
+
+def _resolve_context_window(model: Any, tokenizer: Any) -> int:
+    """Return the smallest context window the model+tokenizer can handle.
+
+    DNA LMs differ wildly in their context capacity (GENA-LM-BERT: 512
+    BPE tokens / ~4.5 kb; GENA-BigBird: 4096 / ~36 kb; NT-v2: 12k;
+    HyenaDNA: 1M; Caduceus: 131k). Both pieces of information can be
+    independently capped:
+
+    * ``model.config.max_position_embeddings`` is the HARD limit -- the
+      positional-embedding buffer has that many rows and a longer input
+      crashes with a tensor-expansion RuntimeError.
+    * ``tokenizer.model_max_length`` is the SOFT limit -- many HF
+      tokenizers set this to ``1e30`` (an "unlimited" sentinel), which
+      means ``truncation=True`` silently does nothing.
+
+    We take the min of the two whenever they expose a real (< 1e6)
+    value, and fall back to 512 (BERT-standard) only if neither does.
+    """
+    candidates: list[int] = []
+    cfg = getattr(model, "config", None)
+    if cfg is not None:
+        m = getattr(cfg, "max_position_embeddings", None)
+        if isinstance(m, int) and 0 < m < 1_000_000:
+            candidates.append(int(m))
+    if tokenizer is not None:
+        t = getattr(tokenizer, "model_max_length", None)
+        if isinstance(t, int) and 0 < t < 1_000_000:
+            candidates.append(int(t))
+    return min(candidates) if candidates else 512
+
+
 def _hf_batched_embed(
     model: Any,
     tokenizer: Any,
@@ -75,37 +145,134 @@ def _hf_batched_embed(
     tokenizer_kwargs: dict | None = None,
     cast_float: bool = False,
 ) -> list[np.ndarray]:
-    """Shared batched inference for HuggingFace-tokenizer DNA models.
+    """Chunked batched inference for HuggingFace-tokenizer DNA models.
 
-    Tokenizes inputs in chunks, runs one forward pass per chunk, and
-    pools per-sequence.
+    Each input is tokenized without truncation, then split into chunks
+    no larger than the model's context window (``max_position_embeddings``).
+    Every chunk is embedded once; per-input results are mean-pooled across
+    chunks so each input always produces a single output vector regardless
+    of sequence length. Special tokens (CLS / SEP / BOS / EOS) are re-added
+    to each chunk so the model sees a self-contained span every time.
+
+    Why chunking instead of plain truncation:
+        Several DNA LMs in our catalog (GENA-LM BERT 4.5 kb context,
+        GENA-LM BigBird 36 kb, Nucleotide Transformer ~12 kb) have
+        context windows much smaller than a full gene locus
+        (150 kb+). Plain truncation would silently throw away
+        99% of the sequence and produce a near-degenerate embedding.
+        Chunk-and-mean keeps full coverage at the cost of more
+        forward passes for long inputs.
+
+    Pooling semantics:
+        ``mean / max / cls / last`` are applied PER CHUNK first; the
+        resulting one-vector-per-chunk embeddings are then mean-pooled
+        across chunks per input.
+
+        ``none`` is not compatible with chunked inference (no canonical
+        way to stitch per-token embeddings across overlapping spans).
+        For short inputs that fit in one chunk we still honour it; for
+        long inputs we raise NotImplementedError so the caller picks
+        another strategy.
     """
     if not inputs:
         return []
 
-    tok_kw: dict[str, Any] = {
-        "return_tensors": "pt",
-        "truncation": True,
-        "padding": True,
-    }
-    if tokenizer_kwargs:
-        tok_kw.update(tokenizer_kwargs)
+    ctx = _resolve_context_window(model, tokenizer)
 
-    all_embeddings: list[np.ndarray] = []
+    # The encoding of an input includes special tokens (CLS, SEP, ...)
+    # added by the tokenizer. We have to account for those when deciding
+    # how many "content" tokens fit in one chunk -- otherwise we still
+    # overflow ctx by 1-2 tokens.
+    cls_id = getattr(tokenizer, "cls_token_id", None)
+    sep_id = getattr(tokenizer, "sep_token_id", None)
+    bos_id = getattr(tokenizer, "bos_token_id", None)
+    eos_id = getattr(tokenizer, "eos_token_id", None)
+    pad_id = getattr(tokenizer, "pad_token_id", None)
+    if pad_id is None:
+        pad_id = eos_id if eos_id is not None else 0
+    head_id = cls_id if cls_id is not None else bos_id
+    tail_id = sep_id if sep_id is not None else eos_id
+    head_cost = 1 if head_id is not None else 0
+    tail_cost = 1 if tail_id is not None else 0
+    inner_max = ctx - head_cost - tail_cost
+    if inner_max <= 0:
+        raise RuntimeError(
+            f"Context window {ctx} too small after reserving room for "
+            f"special tokens ({head_cost} head + {tail_cost} tail)."
+        )
 
-    for start in range(0, len(inputs), batch_size):
-        chunk = list(inputs[start : start + batch_size])
+    # --- Step 1: tokenize each input WITHOUT truncation, then chunk. -------
+    # We carry chunk_to_input_idx so we can group chunks back per input
+    # after the forward pass.
+    chunk_ids: list[list[int]] = []
+    chunk_attn: list[list[int]] = []
+    chunk_to_input_idx: list[int] = []
+    overflow_warned = False
+    for i, text in enumerate(inputs):
+        enc = tokenizer(
+            text,
+            add_special_tokens=False,
+            truncation=False,
+            padding=False,
+            return_tensors=None,
+            **(tokenizer_kwargs or {}),
+        )
+        ids = enc["input_ids"]
+        # Some tokenizers return list[list[int]] for batch encoding;
+        # here we passed a single string so we expect list[int]. Coerce.
+        if ids and isinstance(ids[0], list):
+            ids = ids[0]
+        n_chunks = max(1, (len(ids) + inner_max - 1) // inner_max)
+        if n_chunks > 1 and not overflow_warned:
+            logging.info(
+                "Sequence longer than context window (%d > %d) -- "
+                "chunking into %d pieces and mean-pooling per input.",
+                len(ids), ctx, n_chunks,
+            )
+            overflow_warned = True
+        for j in range(0, max(len(ids), 1), inner_max):
+            piece = ids[j : j + inner_max]
+            full = (
+                ([head_id] if head_id is not None else [])
+                + piece
+                + ([tail_id] if tail_id is not None else [])
+            )
+            chunk_ids.append(full)
+            chunk_attn.append([1] * len(full))
+            chunk_to_input_idx.append(i)
 
-        enc = tokenizer(chunk, **tok_kw)
-        input_ids = enc["input_ids"].to(device)
-        attention_mask = enc.get("attention_mask")
-        if attention_mask is not None:
-            attention_mask = attention_mask.to(device)
+    # --- Step 2: embed chunks in `batch_size`-sized minibatches. -----------
+    chunk_pooled: list[np.ndarray | None] = [None] * len(chunk_ids)
+    needs_sequence_out = pooling_strategy == "none"
+    if needs_sequence_out and any(
+        sum(1 for src in chunk_to_input_idx if src == i) > 1
+        for i in range(len(inputs))
+    ):
+        raise NotImplementedError(
+            "pooling_strategy='none' is not supported when inputs exceed "
+            "the model context window (would produce variable-length "
+            "outputs across inputs)."
+        )
+
+    for start in range(0, len(chunk_ids), batch_size):
+        end = min(start + batch_size, len(chunk_ids))
+        batch_ids = chunk_ids[start:end]
+        batch_attn = chunk_attn[start:end]
+        max_len = max(len(x) for x in batch_ids)
+        input_ids = torch.tensor(
+            [x + [pad_id] * (max_len - len(x)) for x in batch_ids],
+            dtype=torch.long, device=device,
+        )
+        attention_mask = torch.tensor(
+            [x + [0] * (max_len - len(x)) for x in batch_attn],
+            dtype=torch.long, device=device,
+        )
 
         with torch.no_grad():
-            out = model(
+            out = _safe_model_forward(
+                model,
                 input_ids=input_ids,
-                attention_mask=attention_mask if hasattr(model, "config") else None,
+                attention_mask=attention_mask,
                 output_hidden_states=True,
             )
             if target_layer is not None:
@@ -115,38 +282,47 @@ def _hf_batched_embed(
             else:
                 emb = out.hidden_states[-1]
 
-        for i in range(emb.shape[0]):
-            seq_emb = emb[i]
-            if attention_mask is not None:
-                mask = attention_mask[i].unsqueeze(-1).float()
-            else:
-                mask = None
-
+        for k in range(emb.shape[0]):
+            seq_emb = emb[k]
+            mask = attention_mask[k].unsqueeze(-1).float()
             if pooling_strategy == "none":
                 if cast_float:
                     seq_emb = seq_emb.float()
-                all_embeddings.append(seq_emb.cpu().numpy())
+                chunk_pooled[start + k] = seq_emb.cpu().numpy()
                 continue
             elif pooling_strategy == "cls":
                 pooled = seq_emb[0]
             elif pooling_strategy == "last":
                 pooled = seq_emb[-1]
             elif pooling_strategy == "max":
-                if mask is not None:
-                    seq_emb = seq_emb.masked_fill(mask == 0, float("-inf"))
-                pooled = seq_emb.max(dim=0).values
+                pooled = seq_emb.masked_fill(mask == 0, float("-inf")).max(dim=0).values
             else:
-                if mask is not None:
-                    pooled = (seq_emb * mask).sum(0).div(mask.sum(0).clamp(min=1))
-                else:
-                    pooled = seq_emb.mean(dim=0)
-
+                pooled = (seq_emb * mask).sum(0).div(mask.sum(0).clamp(min=1))
             if cast_float:
                 pooled = pooled.float()
-            all_embeddings.append(pooled.cpu().numpy())
+            chunk_pooled[start + k] = pooled.cpu().numpy()
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    # --- Step 3: group chunks per input, mean-pool across chunks. ----------
+    # Build an index from input -> list of its chunk indices first to
+    # avoid an O(n_inputs * n_chunks) scan.
+    chunks_per_input: list[list[int]] = [[] for _ in range(len(inputs))]
+    for c, src in enumerate(chunk_to_input_idx):
+        chunks_per_input[src].append(c)
+
+    all_embeddings: list[np.ndarray] = []
+    for i in range(len(inputs)):
+        idxs = chunks_per_input[i]
+        if not idxs:
+            raise RuntimeError(f"No chunks produced for input {i}.")
+        if len(idxs) == 1 or pooling_strategy == "none":
+            # Single chunk: return its pooled (or per-token) embedding as-is.
+            all_embeddings.append(chunk_pooled[idxs[0]])  # type: ignore[arg-type]
+            continue
+        stacked = np.stack([chunk_pooled[c] for c in idxs], axis=0)  # type: ignore[misc]
+        all_embeddings.append(stacked.mean(axis=0).astype(stacked.dtype))
 
     return all_embeddings
 
@@ -367,23 +543,33 @@ class EnformerWrapper(BaseModelWrapper):
         self,
         inputs: Sequence[str],
         pooling_strategy: str = "mean",
+        batch_size: int = 4,
         **kwargs: Any,
     ) -> list[np.ndarray]:
         """
         Compute Enformer embeddings for a batch of DNA sequences.
 
-        1. Preprocess each string → one-hot (1, 5, 196608).
-        2. Concatenate → batch tensor (B, 5, 196608).
-        3. Run model(batch_tensor, return_embeddings=True) → (B, num_bins, 3072).
-        4. Pool each sample over num_bins (mean or max) → (B, 3072).
-        5. Return a list of NumPy arrays of length 3072, one per input.
+        Processes inputs in mini-batches of ``batch_size`` (default 4). The
+        previous implementation concatenated ALL inputs into a single giant
+        tensor of shape ``(B, 5, 196608)`` and pushed it through the model
+        in one forward pass; that crashes for any realistic perturbation
+        catalog because Enformer's dilated conv trunk maintains an
+        L=196608, ~1500-channel activation throughout most layers --
+        roughly ``B * 196608 * 1500 * 4 bytes`` of activations per layer,
+        which blows past 80 GB GPU memory once ``B`` exceeds a handful of
+        sequences. The observed failure was a 1335 GiB allocation attempt
+        for B=2393.
 
         Parameters
         ----------
         inputs : Sequence[str]
             List of DNA sequence strings.
         pooling_strategy : str, default "mean"
-            “mean” or “max” pooling over genomic bins.
+            "mean" / "max" / "median" pooling over genomic bins.
+        batch_size : int, default 4
+            Number of sequences to run through the model per forward pass.
+            Default 4 is the largest we've verified to fit comfortably on
+            an 80 GB GPU; tune up/down if you have more/less memory.
         **kwargs : Any
             Currently unused.
 
@@ -395,11 +581,9 @@ class EnformerWrapper(BaseModelWrapper):
         Raises
         ------
         RuntimeError
-            If the model isn’t loaded or pooling strategy is invalid.
+            If the model is not loaded or pooling strategy is invalid.
         TypeError
             If the model output format is unexpected.
-        RuntimeError
-            If batch pooling fails or output count mismatches input count.
         """
         if self.model is None or self.device is None:
             raise RuntimeError("Enformer model not loaded. Call load() first.")
@@ -407,29 +591,41 @@ class EnformerWrapper(BaseModelWrapper):
             return []
         if pooling_strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling strategy:'{pooling_strategy}'")
+        if batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {batch_size}")
 
-        preproc_list = []
-        for seq in inputs:
-            preproc_list.append(self._preprocess_sequence(seq))  # each → (1, 5, 196608)
+        results: list[np.ndarray] = []
+        for start in range(0, len(inputs), batch_size):
+            chunk = inputs[start : start + batch_size]
+            preproc_list = [self._preprocess_sequence(seq) for seq in chunk]
+            batch_tensor = torch.cat(preproc_list, dim=0).to(self.device)  # (b, 5, 196608)
 
-        batch_tensor = torch.cat(preproc_list, dim=0).to(self.device)  # (B, 5, 196608)
-        with torch.no_grad():
-            out = self.model(batch_tensor, return_embeddings=True)
-            if isinstance(out, tuple) and len(out) >= 2 and isinstance(out[1], torch.Tensor):
-                emb = out[1]  # (B, num_bins, 3072)
-            elif isinstance(out, torch.Tensor):
-                emb = out  # (B, num_bins, 3072)
+            with torch.no_grad():
+                out = self.model(batch_tensor, return_embeddings=True)
+                if isinstance(out, tuple) and len(out) >= 2 and isinstance(out[1], torch.Tensor):
+                    emb = out[1]  # (b, num_bins, 3072)
+                elif isinstance(out, torch.Tensor):
+                    emb = out
+                else:
+                    raise TypeError(f"Unexpected Enformer output type: {type(out)}")
+
+            if pooling_strategy == "mean":
+                pooled = emb.mean(dim=1)
+            elif pooling_strategy == "median":
+                pooled = emb.median(dim=1).values
             else:
-                raise TypeError(f"Unexpected Enformer output type: {type(out)}")
+                pooled = emb.max(dim=1).values
 
-        if pooling_strategy == "mean":
-            pooled = emb.mean(dim=1)  # (B, 3072)
-        elif pooling_strategy == "median":
-            pooled = emb.median(dim=1).values
-        else:
-            pooled = emb.max(dim=1).values  # (B, 3072)
+            results.extend(arr.cpu().numpy() for arr in pooled)
 
-        return [arr.cpu().numpy() for arr in pooled]
+            # Release the activation graph before the next mini-batch; this
+            # is the difference between steady-state ~10 GB and runaway
+            # allocation on multi-batch runs.
+            del batch_tensor, emb, pooled, preproc_list, out
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        return results
 
 
 # ——————————————————————————————————————————————————————————————————————————
@@ -651,95 +847,157 @@ class BorzoiWrapper(BaseModelWrapper):
 
         return pooled.to(torch.float32).cpu().numpy()
 
+    # Conservative default chosen for a 80 GB H100 / A100.
+    # Borzoi's first conv expands a (B, 4, 524288) input into roughly
+    # (B, 512, 524288) fp32, which is ~1 GiB per sample even before the
+    # rest of the trunk is materialised. With B = 4 the activation grid
+    # stays under ~5 GiB; combined with the loaded weights (~6 GiB) and
+    # autograd-free intermediates we sit safely below 16 GiB peak.
+    # Smaller cards (e.g. V100 32 GB) should set this to 2 via the
+    # micro_batch_size kwarg. Callers that previously relied on the
+    # implicit "one giant forward" path will now see chunked forwards
+    # but identical output ordering and values.
+    DEFAULT_MICRO_BATCH_SIZE = 4
+
     def embed_batch(
         self,
         inputs: Sequence[str],
         pooling_strategy: str = "mean",
+        micro_batch_size: int | None = None,
         **kwargs: Any,
     ) -> list[np.ndarray]:
         """
         Compute Borzoi embeddings for a batch of arbitrary-length DNA sequences.
 
-        1. Preprocess each string → one-hot (1, 4, 524288).
-        2. Concatenate → batch tensor of shape (B, 4, 524288).
-        3. Run `get_embs_after_crop(batch_tensor)` → trunk tensor of shape (B, hidden_dim, num_bins).
-        4. Pool each sample over the bins dimension (mean or max) → (B, hidden_dim).
-        5. Return a Python list of NumPy arrays, one per input, each of length hidden_dim.
+        Borzoi has a fixed 524288 bp receptive field, and the first
+        convolutional block expands that to a roughly 1 GB activation
+        tensor *per sample* (fp32). Concatenating the entire caller-side
+        batch into one forward easily exceeds 80 GB of HBM (we have seen
+        2057 sequences requesting a 1993 GiB allocation). This method
+        therefore chunks the input list into ``micro_batch_size`` slices
+        and runs one forward per slice, returning the per-sample
+        embeddings in the original input order.
+
+        1. For each micro-batch of size ``micro_batch_size``:
+           a. Preprocess each string → one-hot (1, 4, 524288).
+           b. Concatenate → tensor of shape (b, 4, 524288).
+           c. Run ``get_embs_after_crop`` → (b, hidden_dim, num_bins).
+           d. Pool over bins → (b, hidden_dim) and stash on CPU.
+        2. Concatenate the CPU-side chunks into a single (B, hidden_dim).
+        3. Return a list of 1D NumPy arrays, one per input.
 
         Parameters
         ----------
         inputs : Sequence[str]
             List of raw DNA sequence strings of arbitrary length.
         pooling_strategy : str, default="mean"
-            “mean” or “max” pooling over the bins dimension.
+            "mean" or "max" pooling over the bins dimension.
+        micro_batch_size : int or None, optional
+            Number of sequences to push through ``get_embs_after_crop``
+            in one GPU forward. Defaults to
+            ``BorzoiWrapper.DEFAULT_MICRO_BATCH_SIZE`` (4), which is
+            tuned for 80 GB cards. Set to 2 on V100 32 GB, or higher on
+            an H200 if you have head-room. Values <= 0 fall back to the
+            class default.
         **kwargs : Any
-            Currently unused (accepted for interface consistency).
+            Reserved for interface consistency; ignored.
 
         Returns
         -------
         list[np.ndarray]
-            A list of 1D NumPy arrays (length=hidden_dim), one for each input sequence. If `inputs` is empty,
-            returns an empty list.
+            A list of 1D NumPy arrays (length=hidden_dim), one for each
+            input sequence. Empty list iff ``inputs`` is empty.
 
         Raises
         ------
         RuntimeError
-            If the Borzoi model has not been loaded (i.e., `load()` not called) or if `pooling_strategy` is invalid.
+            If the model is not loaded or output sizing is inconsistent.
+        ValueError
+            If ``pooling_strategy`` is not in the supported set.
         TypeError
-            If `get_embs_after_crop(...)` returns something other than a Tensor of shape (B, hidden_dim, num_bins).
-        RuntimeError
-            If pooling fails or if the number of output embeddings does not match the number of inputs.
+            If ``get_embs_after_crop`` returns an unexpected payload.
         """
+        del kwargs
         if self.model is None or self.device is None:
             raise RuntimeError("Borzoi model not loaded. Call load() first.")
         if not inputs:
             return []
         if pooling_strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling '{pooling_strategy}'. Choose from {self.available_pooling_strategies}.")
+        if pooling_strategy == "none":
+            # The per-bin layout requires us to keep the full
+            # (hidden_dim, num_bins) tensor per sample, which is what the
+            # batched path was historically incompatible with anyway. We
+            # explicitly reject it here rather than emit a misleading
+            # mean over the bins axis.
+            raise ValueError(
+                "Borzoi.embed_batch does not support pooling_strategy='none'. "
+                "Call embed(seq, pooling_strategy='none') per sequence instead."
+            )
 
-        # 1. Preprocess each DNA string → one-hot tensor of shape (1, 4, 524288)
-        preproc_list: list[torch.Tensor] = []
-        for seq in inputs:
+        mb = (
+            int(micro_batch_size)
+            if (micro_batch_size is not None and int(micro_batch_size) > 0)
+            else self.DEFAULT_MICRO_BATCH_SIZE
+        )
+
+        batch_model: Any = self.model
+        total = len(inputs)
+        pooled_chunks: list[torch.Tensor] = []
+
+        for start in range(0, total, mb):
+            chunk = inputs[start : start + mb]
+
+            # 1. Preprocess this chunk only. We avoid materialising all
+            #    2000+ (1, 4, 524288) tensors on CPU at once -- that is
+            #    ~16 GB of RAM for the Replogle workload and is wasteful
+            #    when only `mb` of them are live on GPU at a time.
             try:
-                # _preprocess_sequence returns (1, 4, 524288)
-                one_hot = self._preprocess_sequence(seq)
-                preproc_list.append(one_hot)
+                preproc_chunk = [self._preprocess_sequence(seq) for seq in chunk]
             except Exception as e:
-                logging.error(f"Failed to preprocess sequence: {seq[:50]}… Error: {e}")
-                # You can choose to skip or re-raise; here we re-raise so the user is aware
+                # Surface the offending sequence index for fast triage.
+                # _preprocess_sequence already logs the offending head.
+                logging.error(
+                    f"Preprocess failed inside micro-batch starting at index {start}: {e}"
+                )
                 raise
 
-        # 2. Concatenate into a single batch tensor of shape (B, 4, 524288)
-        try:
-            batch_tensor = torch.cat(preproc_list, dim=0).to(self.device)
-        except Exception as e:
-            logging.error(f"Failed to concatenate one-hot tensors into a batch: {e}")
-            raise RuntimeError("Batch creation failed.") from e
+            try:
+                batch_tensor = torch.cat(preproc_chunk, dim=0).to(self.device)
+            except Exception as e:
+                logging.error(f"Failed to concatenate one-hot tensors into a batch: {e}")
+                raise RuntimeError("Batch creation failed.") from e
 
-        # 3. Run Borzoi’s forward up to cropping: get_embs_after_crop → Tensor (B, hidden_dim, num_bins)
-        with torch.no_grad():
-            batch_model: Any = self.model
-            emb_tensor = batch_model.get_embs_after_crop(batch_tensor)
-            if not isinstance(emb_tensor, torch.Tensor) or emb_tensor.dim() != 3:
-                raise TypeError(
-                    f"Unexpected Borzoi output from get_embs_after_crop: type={type(emb_tensor)}, "
-                    f"shape={getattr(emb_tensor, 'shape', None)}"
-                )
+            with torch.no_grad():
+                emb_tensor = batch_model.get_embs_after_crop(batch_tensor)
+                if not isinstance(emb_tensor, torch.Tensor) or emb_tensor.dim() != 3:
+                    raise TypeError(
+                        f"Unexpected Borzoi output from get_embs_after_crop: type={type(emb_tensor)}, "
+                        f"shape={getattr(emb_tensor, 'shape', None)}"
+                    )
 
-        # 4. Pool over the bins dimension (dim=2) according to pooling_strategy
-        try:
-            if pooling_strategy == "mean":
-                # (B, hidden_dim, num_bins) → (B, hidden_dim)
-                pooled = emb_tensor.mean(dim=2)
-            else:  # “max”
-                pooled = emb_tensor.max(dim=2).values
-        except Exception as e:
-            logging.error(f"Error during batch pooling: {e}")
-            raise RuntimeError("Batch pooling failed.") from e
+                if pooling_strategy == "mean":
+                    pooled = emb_tensor.mean(dim=2)
+                elif pooling_strategy == "max":
+                    pooled = emb_tensor.max(dim=2).values
+                else:  # "median"
+                    pooled = emb_tensor.median(dim=2).values
 
-        # 5. Convert each row to a NumPy array and return as a list
-        pooled = pooled.to(torch.float32).cpu()
-        result_list = [pooled[i].numpy() for i in range(pooled.size(0))]
+            # Move pooled chunk to CPU immediately and drop the GPU
+            # activation; this keeps the steady-state HBM footprint
+            # bounded to one micro-batch worth of trunk activations.
+            pooled_chunks.append(pooled.to(torch.float32).cpu())
+            del emb_tensor, batch_tensor, preproc_chunk
+            if self.device.type == "cuda":
+                torch.cuda.empty_cache()
+
+            logging.debug(
+                "Borzoi micro-batch %d..%d / %d done.",
+                start, start + len(chunk), total,
+            )
+
+        pooled_all = torch.cat(pooled_chunks, dim=0)
+        result_list = [pooled_all[i].numpy() for i in range(pooled_all.size(0))]
 
         if len(result_list) != len(inputs):
             logging.error(f"Mismatch in batch size: expected {len(inputs)} outputs, saw {len(result_list)}")
@@ -1447,39 +1705,16 @@ class GENALMWrapper(BaseModelWrapper):
         if pooling_strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling '{pooling_strategy}'")
 
-        enc = self._tokenize(input)
-        input_ids = enc["input_ids"].to(self.device)
-        attention_mask = enc.get("attention_mask")
-        if attention_mask is not None:
-            attention_mask = attention_mask.to(self.device)
-
-        with torch.no_grad():
-            out = self.model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                output_hidden_states=True,
-            )
-            if target_layer is not None:
-                emb = out.hidden_states[target_layer]
-            elif hasattr(out, "last_hidden_state") and out.last_hidden_state is not None:
-                emb = out.last_hidden_state
-            else:
-                emb = out.hidden_states[-1]  # (1, L, H)
-
-        if emb.dim() == 3 and emb.shape[0] == 1:
-            emb = emb.squeeze(0)  # (L, H)
-
-        if pooling_strategy == "none":
-            return emb.cpu().numpy()
-        elif pooling_strategy == "cls":
-            return emb[0].cpu().numpy()
-        elif pooling_strategy == "max":
-            return emb.max(dim=0).values.cpu().numpy()
-        else:
-            if attention_mask is not None:
-                mask = attention_mask.squeeze(0).unsqueeze(-1).float()
-                return (emb * mask).sum(0).div(mask.sum(0).clamp(min=1)).cpu().numpy()
-            return emb.mean(dim=0).cpu().numpy()
+        # Delegate to the shared chunk-and-pool helper so long DNA loci
+        # are handled identically here and in embed_batch. GENA-LM-BERT's
+        # 512-token positional buffer would otherwise crash on multi-kb
+        # gene regions; see _hf_batched_embed for the chunking strategy.
+        embeddings = _hf_batched_embed(
+            self.model, self.tokenizer, self.device, [input],
+            pooling_strategy, batch_size=1,
+            target_layer=target_layer,
+        )
+        return embeddings[0]
 
     def embed_batch(
         self,

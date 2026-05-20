@@ -1,6 +1,7 @@
-"""Dimensionality reduction tools (UMAP, t-SNE).
+"""Dimensionality reduction tools (PCA, UMAP, t-SNE).
 
-Supports both CPU (scanpy) and GPU (rapids_singlecell) backends.
+UMAP supports both CPU (scanpy) and GPU (rapids_singlecell) backends.
+PCA and t-SNE are CPU-only (scikit-learn / scanpy).
 """
 
 from __future__ import annotations
@@ -32,6 +33,64 @@ def _require_rapids():
             "rapids_singlecell is required for GPU backend. "
             "Install with: pip install rapids-singlecell"
         ) from e
+
+
+def compute_pca(
+    adata: AnnData,
+    obsm_key: str,
+    n_components: int = 2,
+    output_key: str | None = None,
+    random_state: int = 0,
+) -> AnnData:
+    """Compute PCA coordinates from an embedding matrix.
+
+    Mirrors :func:`compute_umap` / :func:`compute_tsne` but uses
+    :class:`sklearn.decomposition.PCA`. Stores the projected coordinates in
+    ``obsm[output_key]`` and the explained-variance ratio in
+    ``uns[f"{output_key}_variance_ratio"]`` so plotting helpers can label
+    axes with the percentage of variance explained.
+
+    Parameters
+    ----------
+    adata
+        AnnData with embedding vectors in ``obsm[obsm_key]``.
+    obsm_key
+        Key in ``.obsm`` holding the embedding matrix.
+    n_components
+        Number of principal components to keep. Clamped to
+        ``min(n_obs, n_features, n_components)``.
+    output_key
+        Key for the PCA coordinates in ``.obsm``.
+        Defaults to ``"X_pca_{obsm_key}"``.
+    random_state
+        Random seed for the SVD solver.
+
+    Returns
+    -------
+    AnnData with PCA coordinates in ``obsm[output_key]`` and the
+    variance-ratio array in ``uns[output_key + "_variance_ratio"]``.
+    """
+    from sklearn.decomposition import PCA
+
+    if obsm_key not in adata.obsm:
+        raise KeyError(
+            f"'{obsm_key}' not in adata.obsm. Available: {list(adata.obsm.keys())}"
+        )
+
+    out = output_key or f"X_pca_{obsm_key}"
+    X = np.asarray(adata.obsm[obsm_key], dtype=np.float64)
+    n_comp = max(1, min(n_components, X.shape[0], X.shape[1]))
+
+    pca = PCA(n_components=n_comp, random_state=random_state)
+    coords = pca.fit_transform(X)
+    adata.obsm[out] = coords
+    adata.uns[f"{out}_variance_ratio"] = np.asarray(pca.explained_variance_ratio_)
+    logging.info(
+        "PCA (%d-D) on '%s' stored in obsm['%s'] (variance ratio: %s).",
+        n_comp, obsm_key, out,
+        np.round(pca.explained_variance_ratio_, 3).tolist(),
+    )
+    return adata
 
 
 def compute_umap(

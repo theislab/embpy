@@ -202,3 +202,93 @@ def cluster_embeddings(
     raise ValueError(
         f"Unknown clustering method '{method}'. Choose from: leiden, kmeans, spectral."
     )
+
+
+def cluster_annotation_enrichment(
+    adata: AnnData,
+    cluster_key: str,
+    annotation_key: str,
+    top_k: int = 5,
+):
+    """Top fold-enriched annotation terms per cluster.
+
+    For each cluster (values of ``adata.obs[cluster_key]``) and each term
+    appearing in ``adata.obs[annotation_key]`` (a string label *or* a list /
+    tuple / set of multi-label terms), report the in-cluster frequency and
+    the global frequency, ranked by fold-enrichment.
+
+    A fast, dependency-free first pass for *"what does each cluster
+    represent biologically?"*. For rigorous statistics on a 20 000-gene
+    panel, plug the per-cluster gene lists into ``gseapy.enrichr`` or a
+    Fisher exact test.
+
+    Parameters
+    ----------
+    adata
+        AnnData with cluster labels and annotation column in ``.obs``.
+    cluster_key
+        Column in ``adata.obs`` with cluster labels.
+    annotation_key
+        Column in ``adata.obs`` whose values are either:
+          * a single string per row (single-label), or
+          * a list / tuple / set of strings per row (multi-label,
+            e.g. all GO terms a gene belongs to).
+    top_k
+        Number of top-enriched terms returned per cluster.
+
+    Returns
+    -------
+    Long-format ``pandas.DataFrame`` with columns
+    ``cluster, term, in_cluster, overall, in_freq, overall_freq, enrichment``.
+    """
+    import pandas as pd
+    from collections import Counter
+
+    if cluster_key not in adata.obs.columns:
+        raise KeyError(f"'{cluster_key}' not in adata.obs.")
+    if annotation_key not in adata.obs.columns:
+        raise KeyError(f"'{annotation_key}' not in adata.obs.")
+
+    def _terms_of(value) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return [str(t) for t in value if t is not None]
+        if isinstance(value, float) and np.isnan(value):
+            return []
+        return [str(value)]
+
+    rows = adata.obs[[cluster_key, annotation_key]].copy()
+    overall_counts: Counter = Counter()
+    for v in rows[annotation_key]:
+        overall_counts.update(set(_terms_of(v)))
+    n_total = len(rows)
+
+    out_rows = []
+    for c, sub in rows.groupby(cluster_key, observed=True):
+        cluster_counts: Counter = Counter()
+        for v in sub[annotation_key]:
+            cluster_counts.update(set(_terms_of(v)))
+        n_cluster = max(1, len(sub))
+        for term, k_in in cluster_counts.items():
+            in_freq = k_in / n_cluster
+            ov_freq = overall_counts[term] / max(1, n_total)
+            enrichment = in_freq / ov_freq if ov_freq > 0 else float("inf")
+            out_rows.append({
+                "cluster": c, "term": term,
+                "in_cluster": int(k_in),
+                "overall": int(overall_counts[term]),
+                "in_freq": round(in_freq, 3),
+                "overall_freq": round(ov_freq, 3),
+                "enrichment": round(enrichment, 2),
+            })
+    df = pd.DataFrame(out_rows)
+    if df.empty:
+        return df
+    return (
+        df.sort_values(["cluster", "enrichment", "in_cluster"],
+                       ascending=[True, False, False])
+          .groupby("cluster", as_index=False)
+          .head(top_k)
+          .reset_index(drop=True)
+    )

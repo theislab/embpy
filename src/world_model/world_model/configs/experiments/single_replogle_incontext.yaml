@@ -1,0 +1,103 @@
+# Replogle (K562 essential) -- IN-CONTEXT SET model.
+#
+# Instead of the fabricated causal trajectory (control -> A -> B), each
+# training sample is ONE task:
+#   support = { (control, action_i, perturbed_i) }_{i=1..incontext_support_size}
+#   query   =   (control, action_q,      ?      )      -> predict s'_q
+# A bidirectional (non-causal), permutation-invariant transformer
+# attends over the set; the query's s' is masked (BERT-style), so there
+# is no label leakage and order does not matter.
+#
+# Submit (precomputed GenePT action embedding, no pre-warm needed):
+#   sbatch src/world_model/world_model/scripts/slurm/train_embedding.sbatch \
+#     src/world_model/world_model/configs/experiments/single_replogle_incontext.yaml
+
+run_name: "single_replogle_incontext"
+output_dir: "runs/world_model/single_replogle_incontext"
+seed: 0
+mode: "single"
+
+data:
+  dataset: "replogle"
+  h5ad_path: "data/datasets/replogle/replogle_2022_k562_essential.h5ad"
+  gene_embedding_path: "data/embeddings/gene_embeddings/genept/embeddings_3072.csv"
+  perturbation_key: "perturbation"
+  control_label: "control"
+  cell_type_key: "cell_type"
+  n_top_genes: 5000
+  log_normalize: true
+  stack_size: 4
+  sequence_length: 8          # unused in incontext_set mode
+  n_pert: 2
+  # --- in-context set knobs ---
+  context_mode: "incontext_set"
+  incontext_support_size: 64  # support triplets per task; +1 query
+  # One substrate per task: support + query drawn from the same batch
+  # so the only thing varying across the set is the perturbation.
+  sequence_bucket_key: "batch"
+  batch_size: 32
+  val_fraction: 0.1
+  num_workers: 8
+  pin_memory: true
+
+action_embedding:
+  source: "precomputed"
+  path: ""                    # falls back to data.gene_embedding_path
+
+state_backbone:
+  kind: "local"
+  freeze: false
+
+split:
+  split_by: "perturbation"    # query generalization = held-out perturbations
+  train_fraction: 0.8
+  seed: 0
+
+encoder:
+  kind: "transformer"
+  d_model: 256
+  n_layers: 2
+  n_heads: 4
+  dropout: 0.1
+
+# Bidirectional set transformer over fused (s, a, s') triplet tokens.
+dynamics:
+  kind: "incontext_set"
+  d_model: 256
+  n_layers: 6
+  n_heads: 8
+  dropout: 0.1
+  max_sequence_length: 64     # safety cap on (support + query) tokens
+  use_action_token: true      # always true for in-context (ignored knob)
+
+loss:
+  latent_mse: 1.0
+  decoder_mse: 0.5
+  info_nce: 0.1
+  info_nce_temperature: 0.1
+  action_counterfactual: 0.5
+  action_counterfactual_temperature: 0.1
+
+optim:
+  lr: 3.0e-4
+  weight_decay: 1.0e-2
+  betas: [0.9, 0.95]
+  grad_clip: 1.0
+  scheduler: "cosine"
+  warmup_steps: 1000
+
+train:
+  n_epochs: 50
+  log_every_n_steps: 50
+  eval_every_n_epochs: 1
+  save_every_n_epochs: 5
+  device: "auto"
+  amp: true
+  enable_tensorboard: true
+  enable_csv_log: true
+
+eval:
+  n_control_samples_per_pert: 32
+  use_cell_eval: true
+  deg_top_k: 50
+  save_predictions: true

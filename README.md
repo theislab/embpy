@@ -10,6 +10,54 @@
 
 Given a perturbation (genetic, chemical, or morphological) and/or single-cell expression data, embpy resolves the underlying biological sequences and images, routes them to the appropriate foundation models, and returns dense vector representations ready for downstream machine learning.
 
+## Repository structure -- two top-level packages
+
+This repository hosts **two independent Python packages** under `src/`:
+
+| Package       | Purpose                                                                                                                                                | Source path        | Install                                |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ | -------------------------------------- |
+| `embpy`       | Infrastructure: embeddings, resolvers, annotations, plotting, analysis, and foundation-model wrappers (130+ DNA / protein / RNA / cell / drug models). | `src/embpy/`       | `pip install embpy` (or `uv pip install -e .`) |
+| `world_model` | Perturbation world model: state-stack encoder, gene-embedding action, GPT-style autoregressive dynamics, training / evaluation pipelines.              | `src/world_model/` | `pip install -e ./src/world_model`     |
+
+`world_model` depends on `embpy`; the reverse is forbidden and enforced by `tests/embpy/test_boundary.py`. The name `world_model` may be renamed in a follow-up (candidates: `pertwm`, `pertworld`, `worldcell`).
+
+### Cross-package import surface
+
+Every `world_model -> embpy` boundary import is enumerated in `src/world_model/world_model/__init__.py` under the `# --- depends on embpy: ---` block. The current touch points are:
+
+| Symbol                                                                | Used by (in `world_model`)                                  |
+| --------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `embpy.resources.gene.control.ControlPolicy`                          | `data/embeddings/{registry,bio_embedder,precomputed}.py`, `scripts/embed_perturbations.py` |
+| `embpy.embedder.BioEmbedder` *(lazy)*                                 | `data/embeddings/bio_embedder.py` (`_get_embedder`)         |
+| `embpy.models.singlecell_models.{StackWrapper, StateEmbeddingWrapper}` *(lazy)* | `models/encoders/backbones/{stack, state}.py`           |
+
+### Install matrix
+
+Pixi (recommended for GPU / reproducible envs):
+
+```bash
+pixi install -e gpu                       # GPU env (Linux + CUDA 12.4), both packages editable
+pixi install -e gpu-state-stack           # + Arc STATE + Arc STACK backbones
+pixi install -e default                   # CPU env, both packages editable
+pixi run -e gpu embpy-shell               # interactive shell, cwd=src/embpy/
+pixi run -e gpu wm-shell                  # interactive shell, cwd=src/world_model/
+```
+
+uv (workspace-aware, lighter-weight):
+
+```bash
+uv sync --all-packages                    # resolve embpy + world_model together
+uv sync --all-packages --extra all-cu124  # GPU build with CUDA 12.4 wheels
+uv pip install -e ".[dev,doc]"            # editable dev install of embpy only
+```
+
+Plain pip (PyPI-only):
+
+```bash
+pip install embpy[all-cu124]              # embpy stack
+pip install -e ./src/world_model[state,stack]   # world_model with both backbones
+```
+
 ## Workflow
 
 <p align="center">
