@@ -50,6 +50,7 @@ if TYPE_CHECKING:
     from .embedder import BioEmbedder
     from .errors import (
         ConfigError,
+        ContextOverflowError,
         DataError,
         DependencyError,
         EmbeddingError,
@@ -59,10 +60,16 @@ if TYPE_CHECKING:
         IdentifierError,
         InvalidPoolingError,
         InvalidSMILESError,
+        ModelLoadError,
         ModelNotFoundError,
         ModelNotLoadedError,
+        ModelOOMError,
+        ResolverError,
     )
+    from .observability import log_event, time_block
+    from .reporting import ResolutionRecord, ResolutionReport
     from .resources import DrugResolver, GeneResolver
+    from .retry import embed_batch_with_oom_recovery, retry_with_backoff
 
 # Map of public_name -> import target. Targets are either a module path
 # ("embpy.tl") or a "module:attr" pair ("embpy.embedder:BioEmbedder").
@@ -77,6 +84,7 @@ _LAZY: dict[str, str] = {
     "tl": "embpy.tl",
     "BioEmbedder": "embpy.embedder:BioEmbedder",
     "ConfigError": "embpy.errors:ConfigError",
+    "ContextOverflowError": "embpy.errors:ContextOverflowError",
     "DataError": "embpy.errors:DataError",
     "DependencyError": "embpy.errors:DependencyError",
     "EmbeddingError": "embpy.errors:EmbeddingError",
@@ -86,10 +94,22 @@ _LAZY: dict[str, str] = {
     "IdentifierError": "embpy.errors:IdentifierError",
     "InvalidPoolingError": "embpy.errors:InvalidPoolingError",
     "InvalidSMILESError": "embpy.errors:InvalidSMILESError",
+    "ModelLoadError": "embpy.errors:ModelLoadError",
     "ModelNotFoundError": "embpy.errors:ModelNotFoundError",
     "ModelNotLoadedError": "embpy.errors:ModelNotLoadedError",
+    "ModelOOMError": "embpy.errors:ModelOOMError",
+    "ResolverError": "embpy.errors:ResolverError",
     "DrugResolver": "embpy.resources:DrugResolver",
     "GeneResolver": "embpy.resources:GeneResolver",
+    # Layer 2: per-input resolution reports.
+    "ResolutionRecord": "embpy.reporting:ResolutionRecord",
+    "ResolutionReport": "embpy.reporting:ResolutionReport",
+    # Layer 3: retry + OOM bisection primitives.
+    "retry_with_backoff": "embpy.retry:retry_with_backoff",
+    "embed_batch_with_oom_recovery": "embpy.retry:embed_batch_with_oom_recovery",
+    # Layer 4: structured logging helpers.
+    "log_event": "embpy.observability:log_event",
+    "time_block": "embpy.observability:time_block",
 }
 
 
@@ -118,6 +138,7 @@ def __dir__() -> list[str]:
 __all__ = [
     "BioEmbedder",
     "ConfigError",
+    "ContextOverflowError",
     "DataError",
     "DependencyError",
     "DrugResolver",
@@ -129,12 +150,21 @@ __all__ = [
     "IdentifierError",
     "InvalidPoolingError",
     "InvalidSMILESError",
+    "ModelLoadError",
     "ModelNotFoundError",
     "ModelNotLoadedError",
+    "ModelOOMError",
+    "ResolutionRecord",
+    "ResolutionReport",
+    "ResolverError",
     "dt",
+    "embed_batch_with_oom_recovery",
+    "log_event",
     "models",
     "pl",
     "pp",
     "resources",
+    "retry_with_backoff",
+    "time_block",
     "tl",
 ]

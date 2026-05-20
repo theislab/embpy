@@ -57,6 +57,9 @@ prewarm() {  # $1=dataset label  $2=h5ad
         -o logs/%x_%j.out -e logs/%x_%j.err \
         --wrap="set -euo pipefail; cd ${PROJECT_DIR}; \
             export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
+            export TMPDIR=\"${PROJECT_DIR}/.tmp/job-\$SLURM_JOB_ID\"; \
+            mkdir -p \"\$TMPDIR\"; \
+            trap 'rm -rf \"\$TMPDIR\"' EXIT; \
             pixi run -e gpu -- python -m world_model.scripts.embed_perturbations \
                 --dataset $1 --h5ad $2 --model borzoi_v0 \
                 --region full --pooling-strategy mean \

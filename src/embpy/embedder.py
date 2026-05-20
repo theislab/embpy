@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import traceback
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
@@ -10,7 +11,19 @@ import numpy as np
 import torch
 from rdkit import Chem
 
-from .errors import ConfigError, IdentifierError, ModelNotFoundError
+from .errors import (
+    ConfigError,
+    ContextOverflowError,
+    DependencyError,
+    EmbpyError,
+    IdentifierError,
+    ModelLoadError,
+    ModelNotFoundError,
+    ModelOOMError,
+)
+from .observability import log_event, time_block
+from .reporting import ResolutionReport
+from .retry import embed_batch_with_oom_recovery
 from .models.base import BaseModelWrapper
 from .models.dna_models import (
     BorzoiWrapper,
@@ -72,6 +85,136 @@ def get_device() -> torch.device:  # type: ignore[name-defined]
     else:
         logging.info("No GPU found, using CPU.")
         return torch.device("cpu")  # type: ignore[attr-defined]
+
+
+# ---------------------------------------------------------------------------
+# Exception classification helpers
+# ---------------------------------------------------------------------------
+#
+# These bridge between "whatever the underlying library raised" and our
+# typed embpy.errors taxonomy. They are deliberately defensive: when a
+# raw exception's category cannot be determined we fall back to the
+# generic EmbpyError so the upstream entry point still gets a typed
+# exception (and structured exit code) instead of a bare RuntimeError.
+
+_OOM_PATTERNS = (
+    "out of memory",
+    "outofmemoryerror",
+    "cuda error: out of memory",
+    "cudnn_status_alloc_failed",
+)
+
+_CONTEXT_OVERFLOW_PATTERNS = (
+    # GENA-LM / BERT positional buffer mismatch
+    "the expanded size of the tensor",
+    "must match the existing size",
+    # NT / some HF position checks
+    "sequence length is longer than",
+    # Generic "input too long" guards
+    "exceeds maximum length",
+)
+
+
+def _guess_missing_package(msg: str) -> str | None:
+    """Best-effort extraction of a missing module name from an ImportError.
+
+    Handles the two common spellings:
+        "No module named 'mamba_ssm'"
+        "cannot import name 'X' from 'Y' (path)"
+    Returns ``None`` if no module name can be confidently extracted; the
+    caller falls back to a generic "unknown" placeholder.
+    """
+    m = re.search(r"No module named ['\"]([^'\"]+)['\"]", msg)
+    if m:
+        return m.group(1).split(".")[0]
+    m = re.search(r"from ['\"]([^'\"]+)['\"]", msg)
+    if m:
+        return m.group(1).split(".")[0]
+    return None
+
+
+def _parse_oom_attempted_bytes(msg: str) -> int | None:
+    """Extract ``B`` from CUDA OOM messages like "Tried to allocate 33.87 GiB".
+
+    Returns the number in bytes (int) or None if unparseable. Used as a
+    diagnostic field on ``ModelOOMError`` -- not for control flow.
+    """
+    m = re.search(r"Tried to allocate ([\d.]+)\s*(GiB|MiB|KiB|GB|MB|KB|B)", msg)
+    if not m:
+        return None
+    val, unit = float(m.group(1)), m.group(2).lower()
+    scale = {
+        "gib": 1024 ** 3, "mib": 1024 ** 2, "kib": 1024,
+        "gb": 1000 ** 3, "mb": 1000 ** 2, "kb": 1000, "b": 1,
+    }.get(unit, 1)
+    return int(val * scale)
+
+
+def _classify_embedder_exception(
+    exc: BaseException,
+    *,
+    model_name: str,
+    n_inputs: int,
+    device: str | None = None,
+) -> EmbpyError:
+    """Map an arbitrary exception from ``inst.embed_batch`` to a typed embpy error.
+
+    Detection order matters: OOM is the most specific (it inherits from
+    RuntimeError in PyTorch); context-overflow is the next most specific
+    (recognised by its tensor-expansion message); missing-deps are
+    ImportErrors; everything else collapses to a generic EmbpyError
+    that still carries the underlying class name in its message.
+    """
+    msg = str(exc)
+    msg_lower = msg.lower()
+
+    # 1) CUDA OOM. PyTorch exposes torch.OutOfMemoryError on >= 2.4; for
+    #    older versions the same allocation failure surfaces as a plain
+    #    RuntimeError whose message contains "out of memory". We check
+    #    both.
+    is_oom = isinstance(exc, getattr(torch, "OutOfMemoryError", ()))  # type: ignore[arg-type]
+    if not is_oom:
+        is_oom = any(p in msg_lower for p in _OOM_PATTERNS)
+    if is_oom:
+        return ModelOOMError(
+            model_name=model_name,
+            device=device,
+            attempted_bytes=_parse_oom_attempted_bytes(msg),
+        )
+
+    # 2) Context overflow: the model's positional buffer or attention
+    #    mask got expanded to a sequence length it cannot represent.
+    if isinstance(exc, RuntimeError) and any(
+        p in msg_lower for p in _CONTEXT_OVERFLOW_PATTERNS
+    ):
+        # Best-effort length parsing from messages like
+        # "Target sizes: [16, 16596]. Tensor sizes: [1, 512]"
+        m = re.search(r"\[\d+,\s*(\d+)\][\s\S]*\[\d+,\s*(\d+)\]", msg)
+        input_len = int(m.group(1)) if m else -1
+        ctx = int(m.group(2)) if m else -1
+        return ContextOverflowError(
+            model_name=model_name,
+            input_length=input_len,
+            context_window=ctx,
+        )
+
+    # 3) Missing python package surfaced through the embed call (e.g.
+    #    deferred import inside the forward pass).
+    if isinstance(exc, ImportError):
+        return DependencyError(
+            package=_guess_missing_package(msg) or "unknown",
+            feature=f"model '{model_name}'",
+        )
+
+    # 4) Default: typed but generic. Preserves model_name + cause class.
+    return ModelLoadError(
+        model_name=model_name,
+        cause=f"{type(exc).__name__}: {exc}",
+        message=(
+            f"embed_batch failed for model='{model_name}' on {n_inputs} inputs. "
+            f"Root cause: {type(exc).__name__}: {exc}"
+        ),
+    )
 
 
 class BioEmbedder:
@@ -156,6 +299,14 @@ class BioEmbedder:
         self._singlecell_cache: dict[tuple[str, str], Any] = {}
         self._available_models = self._discover_models()
 
+        # Layer 2: per-call resolution report. Populated by
+        # ``embed_genes_batch`` and exposed for callers (e.g.
+        # ``BioEmbedderProvider`` and ``embed_perturbations.py``)
+        # that want a per-identifier audit trail without parsing logs.
+        # Each call to ``embed_genes_batch`` REPLACES this attribute,
+        # so callers should grab it immediately after the call returns.
+        self.last_report: ResolutionReport | None = None
+
         logging.info(
             "BioEmbedder initialized: device=%s, organism=%s, backend=%s",
             self.device,
@@ -235,11 +386,24 @@ class BioEmbedder:
                 self.model_cache[model_name] = model_instance
                 logging.info(f"Model '{model_name}' loaded successfully.")
                 return model_instance
+            except ImportError as e:
+                # Missing optional dependency -- forward as typed DependencyError
+                # so the operator (and SLURM exit code) can distinguish
+                # "needs `pixi install` of a different env" from "the model
+                # is genuinely broken on HF".
+                pkg = _guess_missing_package(str(e)) or "unknown"
+                logging.error(
+                    f"Failed to load model '{model_name}': missing dependency '{pkg}'."
+                )
+                raise DependencyError(package=pkg, feature=f"model '{model_name}'") from e
             except Exception as e:
                 logging.error(
                     f"Failed to load model '{model_name}' using wrapper {WrapperClass.__name__} and path '{model_path_or_name}': {e}"
                 )
-                raise RuntimeError(f"Could not load model '{model_name}'.") from e
+                raise ModelLoadError(
+                    model_name=model_name,
+                    cause=f"{type(e).__name__}: {e}",
+                ) from e
 
         # If not in registry, try to load as a text model from Hugging Face
         else:
@@ -823,9 +987,23 @@ class BioEmbedder:
                 logging.warning("fetch_all_dna is ignored in local mode.")
 
         if not identifiers:
+            self.last_report = ResolutionReport(model_name=model, organism=organism)
             return []
 
+        # Layer 2: fresh ResolutionReport for this batch. Every input
+        # gets exactly one ``ResolutionRecord`` regardless of whether
+        # it resolves, fails the resolver, fails the embedder, or hits
+        # the OOM bisector. Replaces ``self.last_report`` so callers
+        # can grab it after the call returns.
+        report = ResolutionReport(model_name=model, organism=organism)
+        self.last_report = report
+
         input_data_list: list[str | None] = []
+        # Track per-input resolver state so we can attach reason codes
+        # AFTER the embed_batch result is known (a resolver hit that
+        # later fails to embed should be reported separately from a
+        # resolver miss).
+        per_input_state: list[dict[str, Any]] = []
         logging.info(f"Batch: {len(identifiers)} items for '{model}' ({mtype})...")
 
         # Narrow id_type for DNA resolver methods (only accept symbol/ensembl_id)
@@ -835,65 +1013,215 @@ class BioEmbedder:
 
         for ident in identifiers:
             data = None
+            # Per-input audit state for Layer 2 reporting.
+            state: dict[str, Any] = {
+                "source": None,
+                "reason": None,
+                "attempted": [],
+                "latency_ms": 0.0,
+            }
             try:
-                if id_type == "sequence":
-                    data = ident
-                elif mtype == "dna":
-                    if region in ("exons", "introns") and dna_id is not None:
-                        data = self.gene_resolver.get_gene_region_sequence(
-                            ident,
-                            id_type=dna_id,
-                            organism=organism,
-                            region=region,
+                with time_block(
+                    "resolver_input",
+                    model=model,
+                    identifier=ident,
+                    id_type=id_type,
+                    mtype=mtype,
+                ) as ev:
+                    if id_type == "sequence":
+                        data = ident
+                        state["source"] = "passthrough"
+                    elif mtype == "dna":
+                        state["attempted"].append("gene_resolver_dna")
+                        if region in ("exons", "introns") and dna_id is not None:
+                            data = self.gene_resolver.get_gene_region_sequence(
+                                ident,
+                                id_type=dna_id,
+                                organism=organism,
+                                region=region,
+                            )
+                            state["source"] = f"gene_resolver_region:{region}"
+                        else:
+                            if prefetched_data:
+                                if id_type == "ensembl_id":
+                                    data = prefetched_data.get(ident)
+                                    if data is not None:
+                                        state["source"] = "prefetched"
+
+                            if data is None:
+                                if dna_id is None:
+                                    logging.warning(
+                                        "DNA models require id_type 'symbol', 'ensembl_id', or 'sequence', "
+                                        "got '%s'; skipping %s.",
+                                        id_type,
+                                        ident,
+                                    )
+                                    state["reason"] = (
+                                        f"resolver:unsupported_id_type:{id_type}"
+                                    )
+                                elif self.resolver_backend == "local":
+                                    data = self.gene_resolver.get_local_dna_sequence(ident, dna_id)
+                                    state["source"] = "gene_resolver_local"
+                                else:
+                                    data = self.gene_resolver.get_dna_sequence(ident, dna_id, organism)
+                                    state["source"] = "gene_resolver_api"
+
+                    elif mtype == "protein":
+                        state["attempted"].append("protein_resolver")
+                        data = self.protein_resolver.get_canonical_sequence(ident, id_type, organism)
+                        state["source"] = "protein_resolver"
+
+                    elif mtype == "text":
+                        # Default template combines the input identifier
+                        # with MyGene.info fields. ``_SafeFormatDict`` in
+                        # the resolver tolerates missing fields, so genes
+                        # with no ``summary`` on MyGene still produce a
+                        # thin but non-None description (e.g. just "Gene
+                        # TP53 (human). TP53: tumor protein p53.").
+                        state["attempted"].append("mygene")
+                        fmt = gene_description_format or (
+                            "Gene {identifier} ({organism}). "
+                            "{symbol}: {name}. {summary}"
                         )
-                    else:
-                        if prefetched_data:
-                            if id_type == "ensembl_id":
-                                data = prefetched_data.get(ident)
+                        data = self.gene_resolver.get_gene_description(
+                            ident, id_type, organism, format_string=fmt,
+                        )
+                        state["source"] = "mygene_description"
 
-                        if data is None:
-                            if dna_id is None:
-                                logging.warning(
-                                    "DNA models require id_type 'symbol', 'ensembl_id', or 'sequence', "
-                                    "got '%s'; skipping %s.",
-                                    id_type,
-                                    ident,
-                                )
-                            elif self.resolver_backend == "local":
-                                data = self.gene_resolver.get_local_dna_sequence(ident, dna_id)
-                            else:
-                                data = self.gene_resolver.get_dna_sequence(ident, dna_id, organism)
-
-                elif mtype == "protein":
-                    data = self.protein_resolver.get_canonical_sequence(ident, id_type, organism)
-
-                elif mtype == "text":
-                    fmt = gene_description_format or "Gene: {identifier}..."
-                    data = self.gene_resolver.get_gene_description(ident, id_type, organism, format_string=fmt)
-
-                if data is None:
-                    logging.warning(f"No data for {ident}; skipping.")
+                    if data is None:
+                        logging.warning(f"No data for {ident}; skipping.")
+                        ev["status"] = "no_hit"
+                        if state["reason"] is None:
+                            state["reason"] = f"{mtype}_resolver:no_hit"
             except Exception as e:  # noqa: BLE001
+                # We deliberately swallow resolver-side exceptions per
+                # input (the resolver wraps its own errors in None
+                # returns; anything still escaping here is unexpected
+                # but should not nuke a 2000-gene batch). Layer 2
+                # records the failure so callers can audit.
                 logging.warning(f"Error fetching {ident}: {e}")
+                state["reason"] = f"resolver_exception:{type(e).__name__}"
+                log_event(
+                    "resolver_input_exception",
+                    level="warn",
+                    model=model,
+                    identifier=ident,
+                    error=type(e).__name__,
+                    error_msg=str(e)[:200],
+                )
             input_data_list.append(data)
+            per_input_state.append(state)
 
-        # ... (Rest of filtering and embedding logic remains the same) ...
         valid_inputs = [d for d in input_data_list if d is not None]
         valid_indices = [i for i, d in enumerate(input_data_list) if d is not None]
 
         if not valid_inputs:
+            # Every input failed the resolver -- record each one as
+            # UNRESOLVED with the per-input reason captured above and
+            # return early. This is the failure mode that used to be
+            # silently swallowed under "BioEmbedder returned no
+            # embeddings"; now the sidecar carries the actionable
+            # detail.
+            for ident, state in zip(identifiers, per_input_state, strict=False):
+                report.record(
+                    ident,
+                    "unresolved",
+                    source=state["source"],
+                    reason=state["reason"] or "resolver:no_data",
+                    latency_ms=float(state["latency_ms"]),
+                    attempted_sources=list(state["attempted"]),
+                )
             return [None] * len(identifiers)
 
+        # Layer 3: wrap the model forward pass in an OOM-bisection
+        # helper. If the wrapper already does its own batching (most
+        # of them do, after the protein / DNA fixes), the outer call
+        # succeeds and the wrapper is responsible for chunking. If
+        # the wrapper raises an OOM-shaped exception, the bisector
+        # halves the input list and retries, isolating the specific
+        # input that genuinely cannot fit. The single-item case that
+        # still OOMs propagates so it can be classified as
+        # ContextOverflowError / ModelOOMError below.
+        def _do_embed(batch: Sequence[str]) -> list[Any]:
+            return list(inst.embed_batch(
+                inputs=list(batch),
+                pooling_strategy=pooling_strategy,
+                **kwargs,
+            ))
+
         try:
-            batch_results = inst.embed_batch(inputs=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
-        except Exception as e:  # noqa: BLE001
-            logging.error(f"Batch embed failed: {e}")
+            with time_block(
+                "model_forward",
+                model=model,
+                mtype=mtype,
+                n_inputs=len(valid_inputs),
+                device=str(self.device),
+            ):
+                batch_results = embed_batch_with_oom_recovery(
+                    _do_embed,
+                    valid_inputs,
+                    on_split=lambda left, right: log_event(
+                        "oom_bisect",
+                        level="warn",
+                        model=model,
+                        left=left,
+                        right=right,
+                    ),
+                )
+        except EmbpyError:
+            # Already a typed embpy exception (e.g. ModelOOMError raised by
+            # a wrapper that classifies OOMs itself). Let it propagate
+            # unchanged -- wrapping would only obscure the original fields.
             traceback.print_exc()
-            return [None] * len(identifiers)
+            raise
+        except Exception as e:
+            # Classify the failure so the upstream entry point can give a
+            # category-specific exit code without parsing stderr. The
+            # historical behaviour ("swallow + return [None]*N") masked
+            # CUDA OOMs, context overflows, missing CUDA kernels, and
+            # missing pip packages behind a single misleading "no
+            # embeddings" error several layers up. We refuse to do that.
+            logging.error(
+                "Batch embed failed for model='%s' (n_inputs=%d): %s",
+                model, len(valid_inputs), e,
+            )
+            traceback.print_exc()
+            typed = _classify_embedder_exception(
+                e, model_name=model, n_inputs=len(valid_inputs), device=str(self.device),
+            )
+            raise typed from e
 
         results: list[np.ndarray | None] = [None] * len(identifiers)
         for idx, emb in zip(valid_indices, batch_results, strict=False):
             results[idx] = emb
+
+        # Layer 2: now that we know which inputs ended up with an
+        # embedding (and which were resolver-misses), record one
+        # ResolutionRecord per input. Embedder-side failures (OOM,
+        # context overflow) raise typed errors above and never reach
+        # this point, so anything in ``results[i] is None`` here is a
+        # resolver miss with state already captured.
+        valid_index_set = set(valid_indices)
+        for i, (ident, state) in enumerate(
+            zip(identifiers, per_input_state, strict=False)
+        ):
+            if i in valid_index_set and results[i] is not None:
+                report.record(
+                    ident,
+                    "resolved",
+                    source=state["source"],
+                    latency_ms=float(state["latency_ms"]),
+                    attempted_sources=list(state["attempted"]),
+                )
+            else:
+                report.record(
+                    ident,
+                    "unresolved",
+                    source=state["source"],
+                    reason=state["reason"] or f"{mtype}_resolver:no_data",
+                    latency_ms=float(state["latency_ms"]),
+                    attempted_sources=list(state["attempted"]),
+                )
 
         return results
 

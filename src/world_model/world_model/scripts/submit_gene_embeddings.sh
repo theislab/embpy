@@ -189,6 +189,16 @@ else
     EMB_MODEL="$TARGET"
 fi
 
+# Pick the pixi env that has the right CUDA kernels for this embedder.
+# Default = `gpu` (the everything-else env). A few foundation models
+# need exotic SSM / FlashAttn deps that conflict with the rest of the
+# gpu stack and therefore live in their own pixi envs (see pixi.toml).
+declare -A PIXI_ENV_BY_MODEL
+PIXI_ENV_BY_MODEL[caduceus_ph_131k]=caduceus
+PIXI_ENV_BY_MODEL[caduceus_ps_131k]=caduceus
+PIXI_ENV_BY_MODEL[evo2_7b]=evo2
+PIXI_ENV="${PIXI_ENV_BY_MODEL[$EMB_MODEL]:-gpu}"
+
 case "$DATASET" in
     replogle|nadig) DATASETS=("$DATASET") ;;
     both)           DATASETS=(nadig replogle) ;;
@@ -208,10 +218,11 @@ for ds in "${DATASETS[@]}"; do
     out_dir="runs/world_model/${run_name}"
 
     if [[ "$KIND" == "precomputed" ]]; then
-        echo "[$ds] submitting train (precomputed: $EMB) ..."
+        echo "[$ds] submitting train (precomputed: $EMB, pixi env: $PIXI_ENV) ..."
         jid=$(sbatch --parsable \
             --job-name="wm-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
+            --export=ALL,EMBPY_PIXI_ENV="${PIXI_ENV}" \
             "$LAUNCHER" "$cfg" \
             "action_embedding.source=precomputed" \
             "action_embedding.path=${EMB_PATH}" \
@@ -220,18 +231,25 @@ for ds in "${DATASETS[@]}"; do
             "output_dir=${out_dir}")
         echo "[$ds]   train job: $jid  -> $out_dir"
     else
-        echo "[$ds] submitting pre-warm (bio_embedder: $EMB_MODEL) ..."
+        echo "[$ds] submitting pre-warm (bio_embedder: $EMB_MODEL, pixi env: $PIXI_ENV) ..."
         # Constrain to 80GB GPUs: protein/DNA foundation models (ESM-2 650M/3B,
         # Enformer, Evo2, Caduceus, etc.) blow up on 32GB V100s with OOM. The
         # 80GB A100/H100 nodes have enough headroom for the full token stream.
+        # Without explicit -o/-e, sbatch --wrap defaults to slurm-<jid>.out
+        # in the cwd (project root). Force into logs/ to match the rest of
+        # the pipeline and keep the workspace tidy.
         prewarm_jid=$(sbatch --parsable \
             --job-name="wm-prewarm-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
             --gres=gpu:1 --constraint="a100_80gb|h100_80gb" \
             --time=08:00:00 --mem=64G --cpus-per-task=8 \
+            -o logs/%x_%j.out -e logs/%x_%j.err \
             --wrap="set -euo pipefail; cd ${PROJECT_DIR}; \
                 export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
-                pixi run -e gpu -- python -m world_model.scripts.embed_perturbations \
+                export TMPDIR=\"${PROJECT_DIR}/.tmp/job-\$SLURM_JOB_ID\"; \
+                mkdir -p \"\$TMPDIR\"; \
+                trap 'rm -rf \"\$TMPDIR\"' EXIT; \
+                pixi run -e ${PIXI_ENV} -- python -m world_model.scripts.embed_perturbations \
                     --dataset ${ds} --h5ad ${h5ad} --model ${EMB_MODEL} \
                     --region full --pooling-strategy mean \
                     --organism human --id-type symbol")
@@ -241,6 +259,7 @@ for ds in "${DATASETS[@]}"; do
             --job-name="wm-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
             --dependency=afterok:"${prewarm_jid}" \
+            --export=ALL,EMBPY_PIXI_ENV="${PIXI_ENV}" \
             "$LAUNCHER" "$cfg" \
             "action_embedding.source=bio_embedder" \
             "action_embedding.model_name=${EMB_MODEL}" \
@@ -258,7 +277,7 @@ for ds in "${DATASETS[@]}"; do
             --job-name="wm-base-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
             --dependency=afterok:"${jid}" \
-            --export=ALL,RUN_DIR="${out_dir}" \
+            --export=ALL,RUN_DIR="${out_dir}",EMBPY_PIXI_ENV="${PIXI_ENV}" \
             "${SLURM_DIR}/run_baselines.sbatch")
         cmp_jid=$(sbatch --parsable \
             --job-name="wm-cmp-${ds}-${EMB}" \

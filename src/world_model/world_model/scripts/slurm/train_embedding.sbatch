@@ -46,8 +46,13 @@ if [[ $# -lt 1 ]]; then
 fi
 
 CONFIG="$1"; shift
+# Pixi env to run in. Defaults to `gpu`; bio_embedders that need exotic
+# CUDA kernels (Caduceus, Evo2) set EMBPY_PIXI_ENV at submit time so the
+# whole DAG (prewarm -> train -> baselines -> compare) shares one env.
+PIXI_ENV="${EMBPY_PIXI_ENV:-gpu}"
 echo "Config:    $CONFIG"
 echo "Overrides: $*"
+echo "Pixi env:  $PIXI_ENV"
 
-exec pixi run -e gpu -- python -m world_model.scripts.train \
+exec pixi run -e "$PIXI_ENV" -- python -m world_model.scripts.train \
     --config "$CONFIG" "$@"

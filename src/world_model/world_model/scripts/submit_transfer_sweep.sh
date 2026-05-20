@@ -86,10 +86,23 @@ fi
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+# Pixi env to use for a given embedding. Most run in the default `gpu`
+# env; Caduceus / Evo2 ship CUDA SSM kernels that only resolve cleanly
+# in their own envs (see pixi.toml).
+pixi_env_for() {  # $1=embedding -> echoes env name
+    case "$1" in
+        caduceus_ph_131k|caduceus_ps_131k) echo "caduceus" ;;
+        evo2_7b)                           echo "evo2" ;;
+        *)                                 echo "gpu" ;;
+    esac
+}
+
 prewarm_for() {  # $1=dataset_label, $2=h5ad, $3=model -> echoes jid
     # Constrain to 80GB GPUs: protein/DNA foundation models (ESM-2 650M/3B,
     # Enformer, Evo2, Caduceus, ...) OOM on 32GB V100s. 80GB A100/H100 nodes
     # have the headroom needed.
+    local penv
+    penv=$(pixi_env_for "$3")
     sbatch --parsable \
         --job-name="wm-prewarm-$1-$3" \
         --partition="$PARTITION" --qos="$QOS" \
@@ -98,28 +111,32 @@ prewarm_for() {  # $1=dataset_label, $2=h5ad, $3=model -> echoes jid
         -o logs/%x_%j.out -e logs/%x_%j.err \
         --wrap="set -euo pipefail; cd ${PROJECT_DIR}; \
             export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
-            pixi run -e gpu -- python -m world_model.scripts.embed_perturbations \
+            export TMPDIR=\"${PROJECT_DIR}/.tmp/job-\$SLURM_JOB_ID\"; \
+            mkdir -p \"\$TMPDIR\"; \
+            trap 'rm -rf \"\$TMPDIR\"' EXIT; \
+            pixi run -e ${penv} -- python -m world_model.scripts.embed_perturbations \
                 --dataset $1 --h5ad $2 --model $3 \
                 --region full --pooling-strategy mean \
                 --organism human --id-type symbol"
 }
 
 train_for() {  # $1=emb, $2=fraction, $3=pw_nadig_jid, $4=pw_repl_jid -> echoes jid
-    local p_int run_name out_dir
+    local p_int run_name out_dir penv
     p_int=$(python -c "print(int(float('$2')*100))")
     run_name="transfer_${1}_p$(printf '%03d' "$p_int")"
     out_dir="runs/world_model/${run_name}"
+    penv=$(pixi_env_for "$1")
     sbatch --parsable \
         --job-name="wm-transfer-${1}-p$(printf '%03d' "$p_int")" \
         --partition="$PARTITION" --qos="$QOS" \
         --gres=gpu:1 --time=24:00:00 --mem=64G --cpus-per-task=8 \
         --dependency=afterok:"$3":"$4" \
         -o logs/%x_%j.out -e logs/%x_%j.err \
-        --export=ALL,EMBPY_NO_AUTO_SUFFIX=1 \
+        --export=ALL,EMBPY_NO_AUTO_SUFFIX=1,EMBPY_PIXI_ENV="${penv}" \
         --wrap="set -euo pipefail; cd ${PROJECT_DIR}; \
             export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
             export TMPDIR=${PROJECT_DIR}/runs/_tmp; mkdir -p \$TMPDIR; \
-            pixi run -e gpu -- python -m world_model.scripts.train \
+            pixi run -e ${penv} -- python -m world_model.scripts.train \
                 --config '${CFG_BASE}' \
                 'action_embedding.model_name=${1}' \
                 'transfer.finetune_fraction=$2' \
@@ -127,11 +144,13 @@ train_for() {  # $1=emb, $2=fraction, $3=pw_nadig_jid, $4=pw_repl_jid -> echoes 
                 'output_dir=${out_dir}'"
 }
 
-baselines_after() {  # $1=run_dir, $2=train_jid -> echoes jid
+baselines_after() {  # $1=run_dir, $2=train_jid, $3=embedding -> echoes jid
+    local penv
+    penv=$(pixi_env_for "$3")
     sbatch --parsable \
         --partition="$PARTITION" --qos="$QOS" \
         --dependency=afterok:"$2" \
-        --export=ALL,RUN_DIR="$1",EMBPY_NO_AUTO_SUFFIX=1 \
+        --export=ALL,RUN_DIR="$1",EMBPY_NO_AUTO_SUFFIX=1,EMBPY_PIXI_ENV="${penv}" \
         "${SLURM_DIR}/run_baselines.sbatch"
 }
 
@@ -170,7 +189,7 @@ for emb in "${EMB_LIST[@]}"; do
         TRAIN_JID=$(train_for "$emb" "$frac" "${PW_NADIG[$emb]}" "${PW_REPL[$emb]}")
 
         if [[ "$SKIP_COMPARE" != "1" ]]; then
-            BASE_JID=$(baselines_after "$out_dir" "$TRAIN_JID")
+            BASE_JID=$(baselines_after "$out_dir" "$TRAIN_JID" "$emb")
             CMP_JID=$(compare_after "$out_dir" "$BASE_JID")
             CMP_JIDS+=("$CMP_JID")
             ROWS+=("$emb p=${frac} train=$TRAIN_JID base=$BASE_JID cmp=$CMP_JID")

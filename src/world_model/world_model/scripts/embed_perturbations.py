@@ -33,6 +33,7 @@ from pathlib import Path
 
 import numpy as np
 
+from embpy.errors import EmbpyError
 from embpy.resources.gene.control import ControlPolicy
 from world_model.data.embeddings import (
     BioEmbedderProvider,
@@ -44,6 +45,47 @@ from world_model.data.embeddings import (
 from world_model.utils import setup_logging
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Exit-code policy
+# ---------------------------------------------------------------------------
+#
+# Each typed embpy.errors subclass carries a ``.exit_code`` attribute
+# that maps the failure to a stable numeric code. We propagate that
+# verbatim so SLURM's sacct can answer questions like "show all OOM
+# jobs across the sweep" with `sacct --format=ExitCode | grep '10:'`
+# without grepping any log files.
+#
+# Codes in use today (see embpy/errors.py for the source of truth):
+#   0  -- success
+#   1  -- catch-all (uncaught exception, propagated by Python's default)
+#   2  -- --fail-on-unresolved triggered (pre-existing semantics)
+#   10 -- ModelOOMError (CUDA OOM during forward pass)
+#   11 -- ContextOverflowError (sequence > model context, chunking off)
+#   12 -- DependencyError (missing pip package, e.g. mamba_ssm)
+#   13 -- ResolverError (gene/text resolver returned empty for everything)
+#   14 -- ModelLoadError / ModelNotFound (load-time failure)
+#   15 -- EmbeddingError (per-input runtime failure)
+#   20 -- ConfigError / InvalidPoolingError
+#   21 -- IdentifierError / InvalidSMILES / GeneNotInGraph
+#   22 -- DataError / GraphNotBuiltError
+
+
+def _handle_typed_error(exc: EmbpyError) -> int:
+    """Log a one-line actionable summary and return the exit code.
+
+    The full traceback is already in the SLURM err file (we don't
+    re-emit it here). The single-line message is what shows up in
+    automation logs and is intended to be readable without scrolling.
+    """
+    category = getattr(exc, "category", "embpy")
+    code = int(getattr(exc, "exit_code", 1))
+    logger.error(
+        "embed_perturbations failed [category=%s exit_code=%d]: %s: %s",
+        category, code, type(exc).__name__, exc,
+    )
+    return code
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -87,8 +129,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--fail-on-unresolved", action="store_true",
-        help="Exit non-zero if any row is UNRESOLVED. Recommended for "
-             "cluster pre-warm jobs.",
+        help="Exit non-zero (code 2) if any row is UNRESOLVED. "
+             "Recommended for cluster pre-warm jobs.",
+    )
+    parser.add_argument(
+        "--strict-resolver", action="store_true",
+        help="Layer 2: raise ResolverError (exit code 13) if any input "
+             "ends up UNRESOLVED in the per-identifier resolution "
+             "report. Stricter than --fail-on-unresolved: it propagates "
+             "as a typed embpy error rather than a plain non-zero exit, "
+             "so sacct shows category='resolver'. Use when you cannot "
+             "tolerate any missing rows (e.g. building production "
+             "embedding tables).",
     )
     parser.add_argument(
         "--control-strict", action="store_true",
@@ -237,6 +289,29 @@ def main(argv: list[str] | None = None) -> int:
     sidecar.write_text(json.dumps(status_meta, indent=2, default=str))
     logger.info("Status sidecar -> %s", sidecar)
 
+    # Layer 2: per-identifier resolution report sidecar. Separate from
+    # ``.status.json`` (which is the rolled-up summary) so the cheap
+    # ``cat status.json`` workflow stays fast even when the resolution
+    # JSON is hundreds of KB. Use ``jq`` against this to find specific
+    # failed symbols by reason / source.
+    resolution_report = getattr(provider, "last_report", None)
+    resolution_sidecar: Path | None = None
+    if resolution_report is not None:
+        resolution_sidecar = output_path.with_suffix(
+            output_path.suffix + ".resolution.json"
+        )
+        resolution_sidecar.write_text(json.dumps(
+            resolution_report.to_dict(include_records=True),
+            indent=2, default=str,
+        ))
+        logger.info(
+            "Resolution sidecar -> %s (n=%d resolved=%s by_source=%s)",
+            resolution_sidecar,
+            len(resolution_report.records),
+            resolution_report.count_by_status(),
+            resolution_report.count_by_source(),
+        )
+
     # Round-trip sanity probe (precomputed loader).
     try:
         prov = PrecomputedProvider(
@@ -260,8 +335,41 @@ def main(argv: list[str] | None = None) -> int:
             counts[EmbeddingStatus.UNRESOLVED.value],
         )
         return 2
+
+    # Layer 2: --strict-resolver promotes any UNRESOLVED record in the
+    # per-identifier report to a typed ResolverError so sacct shows
+    # category='resolver' and the operator can tell at a glance that
+    # the failure was a resolver gap, not a model crash.
+    if args.strict_resolver and resolution_report is not None:
+        n_unresolved = len(resolution_report.unresolved())
+        if n_unresolved:
+            # Import here so a default invocation without --strict-resolver
+            # doesn't pay the import cost.
+            from embpy.errors import ResolverError  # noqa: PLC0415
+
+            sample = [r.identifier for r in resolution_report.unresolved()[:10]]
+            raise ResolverError(
+                backend=str(args.resolver_backend),
+                organism=str(args.organism),
+                n_requested=len(perturbation_labels),
+                n_resolved=len(perturbation_labels) - n_unresolved,
+                model_name=args.model,
+                message=(
+                    f"--strict-resolver: {n_unresolved} input(s) UNRESOLVED "
+                    f"for model={args.model!r} (sample: {sample}). See "
+                    f"{resolution_sidecar} for per-identifier reasons."
+                ),
+            )
     return 0
 
 
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except EmbpyError as exc:
+        # Convert typed embpy failures into category-specific exit codes
+        # so SLURM sacct can aggregate failures across the sweep. The
+        # underlying traceback was already printed at the catch-and-
+        # reraise sites inside embpy.embedder; we only emit a one-line
+        # summary here for the end of the log.
+        sys.exit(_handle_typed_error(exc))

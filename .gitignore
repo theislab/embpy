@@ -84,3 +84,4 @@ hg38_chroms/
 slurm-*.out
 slurm-*.err
 logs/
+.tmp/

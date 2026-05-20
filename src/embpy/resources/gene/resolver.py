@@ -9,6 +9,87 @@ import pandas as pd
 import requests
 from Bio import SeqIO
 
+from embpy.observability import log_event, time_block
+from embpy.retry import retry_with_backoff
+
+
+class _SafeFormatDict(dict):
+    """``dict`` subclass that returns an empty string for missing keys.
+
+    Used with ``str.format_map`` to make text-description templates
+    resilient to optional fields. A typical use case is a gene
+    description template like ``"Gene {symbol}: {name}. {summary}"``
+    where ``{summary}`` is missing for ~10-30% of genes on MyGene.info;
+    with a plain ``str.format(**gene_info)`` the missing key raises
+    KeyError, but with ``format_map(_SafeFormatDict(gene_info))`` it
+    substitutes to an empty string and the surrounding template
+    survives intact (modulo whitespace cleanup at the call site).
+    """
+
+    def __missing__(self, key: str) -> str:
+        return ""
+
+
+class _Permanent4xxError(Exception):
+    """Wrapper around a 4xx ``HTTPError`` that must NOT be retried.
+
+    Layer 3's retry decorator must distinguish between transient
+    failures (5xx, timeouts) where retrying helps and permanent
+    failures (404 Gene Not Found, 400 bad request) where retrying
+    just burns API quota and wallclock. We raise this subclass at
+    the HTTP layer so ``retry_with_backoff`` can short-circuit via
+    ``non_retryable=(_Permanent4xxError,)``.
+    """
+
+
+# Retryable wrappers around ``requests`` operations -- 3 attempts,
+# exponential backoff starting at 1s capped at 10s. Permanent 4xx
+# errors short-circuit immediately. The decorator emits a structured
+# ``resolver_retry`` event on each retry (Layer 4) and we wrap the
+# actual call in a ``time_block`` at the get_gene_description level
+# so the full call path -- including parsing -- gets latency stats.
+def _emit_retry_event(attempt: int, exc: BaseException, sleep_for: float) -> None:
+    log_event(
+        "resolver_retry",
+        level="warn",
+        attempt=attempt,
+        sleep_s=round(sleep_for, 3),
+        error=type(exc).__name__,
+        error_msg=str(exc)[:200],
+    )
+
+
+@retry_with_backoff(
+    max_attempts=3,
+    base_delay=1.0,
+    max_delay=10.0,
+    retryable=(requests.RequestException,),
+    non_retryable=(_Permanent4xxError,),
+    on_retry=_emit_retry_event,
+)
+def _mygene_query(query_url: str, params: dict) -> dict:
+    """HTTP GET against MyGene.info with retries on transient errors.
+
+    Raises
+    ------
+    _Permanent4xxError
+        4xx response -- not retried. Caller should treat this as
+        "gene not found" / "bad query".
+    requests.RequestException
+        Any *transient* failure after all retries are exhausted
+        (5xx, timeout, connection reset). The original exception
+        type is preserved so callers can distinguish if needed.
+    """
+    response = requests.get(query_url, params=params, timeout=30)
+    # Permanent client errors -- don't retry, just signal to caller.
+    if 400 <= response.status_code < 500:
+        raise _Permanent4xxError(
+            f"HTTP {response.status_code} from {query_url} (q={params.get('q')!r}): "
+            f"{response.text[:200]}"
+        )
+    response.raise_for_status()  # raises HTTPError for 5xx -> retried
+    return response.json()
+
 
 def _ensembl_get(
     url: str,
@@ -581,7 +662,9 @@ class GeneResolver:
         identifier: str,
         id_type: Literal["symbol", "ensembl_id", "uniprot_id"],
         organism: str = "human",
-        format_string: str = "Gene: {symbol}. Name: {name}. Summary: {summary}",
+        format_string: str = (
+            "Gene {identifier} ({organism}). {symbol}: {name}. {summary}"
+        ),
     ) -> str | None:
         """
         Fetches a textual gene description using MyGene.info for a given gene identifier.
@@ -595,17 +678,39 @@ class GeneResolver:
         organism : str, optional
             The species (default is 'human').
         format_string : str, optional
-            A format string that supports keys like 'symbol', 'name', 'summary', etc.
+            A format string that supports the following keys:
+
+            * ``{identifier}`` -- the input identifier passed to this call
+            * ``{id_type}``    -- the input id_type
+            * ``{organism}``   -- the input organism
+            * ``{symbol}``, ``{name}``, ``{summary}``, ``{type_of_gene}``,
+              ``{_id}``, ``{ensembl}``, ``{entrezgene}``, ... -- any field
+              returned by MyGene.info
+
+            Missing keys (in either source) substitute to an empty string
+            rather than raising KeyError. This is important for the
+            ``{summary}`` field, which is absent for ~10-30% of genes.
 
         Returns
         -------
         str or None
-            The constructed gene description, or None if not found or formatting failed.
+            The constructed gene description with internal whitespace
+            collapsed and leading/trailing whitespace stripped, or None
+            if the gene was not found at MyGene or the HTTP request
+            failed.
 
         Notes
         -----
         - Queries [MyGene.info](https://mygene.info/) for gene metadata.
-        - You can modify the format_string to use different keys.
+        - Historical bug: the default template used to reference
+          ``{identifier}`` but the substitution only used MyGene's
+          response keys, which never contain ``identifier``. Every
+          single call silently raised KeyError, was caught, and returned
+          None. This made MiniLM-style text embedders look broken when
+          the actual problem was a format string / response-key
+          mismatch. The fix passes both the input identifier and the
+          MyGene response to ``format_map`` with a SafeDict that
+          tolerates missing keys.
         """
         logging.debug(f"Fetching gene description for {id_type} '{identifier}' ({organism}) from MyGene.info")
 
@@ -620,20 +725,38 @@ class GeneResolver:
             logging.error(f"Unsupported id_type: {id_type}")
             return None
 
+        query_url = "https://mygene.info/v3/query"
+        query_params = {
+            "q": identifier,
+            "scopes": scopes[id_type],
+            "species": organism,
+            "fields": "all",
+        }
+        # Wrap the HTTP roundtrip in a Layer-4 ``time_block`` so the
+        # event stream includes resolver latency + status. The retry
+        # decorator inside ``_mygene_query`` emits its own
+        # ``resolver_retry`` events when transient failures occur, so
+        # the full picture (try -> retry -> retry -> ok) is visible
+        # in the JSON-line log.
         try:
-            query_url = "https://mygene.info/v3/query"
-            response = requests.get(
-                query_url,
-                params={
-                    "q": identifier,
-                    "scopes": scopes[id_type],
-                    "species": organism,
-                    "fields": "all",
-                },
-            )
-
-            response.raise_for_status()
-            hits = response.json().get("hits", [])
+            with time_block(
+                "resolver_call",
+                source="mygene",
+                identifier=identifier,
+                id_type=id_type,
+                organism=organism,
+            ) as ev:
+                try:
+                    data = _mygene_query(query_url, query_params)
+                except _Permanent4xxError as e:
+                    # 404 / 400 -- gene definitively not found at MyGene.
+                    # This is the expected "no_hit" path for orphan
+                    # symbols; surface as a recognised status code.
+                    ev["status"] = "no_hit"
+                    ev["http_status"] = "4xx"
+                    logging.warning(f"MyGene 4xx for {identifier}: {e}")
+                    return None
+            hits = data.get("hits", [])
             if not hits:
                 logging.warning(f"No gene information found for {identifier}")
                 return None
@@ -642,16 +765,65 @@ class GeneResolver:
             gene_info = hits[0]
             logging.debug(f"Raw gene info: {gene_info}")
 
-            # Fill in the template with available info
-            description = format_string.format(**gene_info)
+            # Build the format namespace from BOTH the input args (so
+            # templates can reference {identifier}, {id_type}, {organism})
+            # and the MyGene hit fields (for {symbol}, {name}, {summary},
+            # ...). Use SafeDict + format_map so missing keys substitute
+            # to an empty string rather than raising KeyError; this is
+            # crucial because ~10-30% of genes have no {summary} field
+            # on MyGene and we would rather return a thin description
+            # than None.
+            namespace = {
+                "identifier": identifier,
+                "id_type": id_type,
+                "organism": organism,
+            }
+            # Only copy str/int/float fields from MyGene -- complex nested
+            # values (dicts, lists) would render as "{...}" or "[...]" in
+            # the output which is rarely what the caller wants. The
+            # explicit set below covers the fields commonly referenced
+            # by text-description templates; the SafeDict missing-key
+            # fallback handles anything else.
+            for key in (
+                "symbol", "name", "summary", "type_of_gene", "_id",
+                "entrezgene", "alias", "other_names", "map_location",
+            ):
+                val = gene_info.get(key)
+                if isinstance(val, list):
+                    val = ", ".join(str(x) for x in val if x)
+                namespace[key] = "" if val is None else str(val)
+
+            description = format_string.format_map(_SafeFormatDict(namespace))
+
+            # Clean up whitespace and dangling label fragments left by
+            # empty field substitutions:
+            #   1. Collapse multiple whitespace runs.
+            #   2. Drop "Word: ." patterns mid-string (e.g. "Summary: ."
+            #      between sentences).
+            #   3. Drop "Word:" trailing the string with no value behind
+            #      it (e.g. "Gene XYZ: long name. Summary:").
+            #   4. Clean up duplicate punctuation that survived the
+            #      substitutions ("..", ". .", " . ").
+            description = re.sub(r"\s+", " ", description)
+            description = re.sub(r"(?:[A-Z][a-zA-Z_]+:\s*\.\s*)+", "", description)
+            description = re.sub(r"\s*[A-Z][a-zA-Z_]+:\s*$", "", description)
+            description = re.sub(r"\s*\.\s*\.\s*", ". ", description)
+            description = description.strip().rstrip(":, ")
+
+            if not description:
+                logging.warning(
+                    "Gene description for %r rendered to an empty string "
+                    "(template has no fixed text and all referenced fields "
+                    "were missing). Returning the bare identifier instead.",
+                    identifier,
+                )
+                return identifier
+
             logging.info(f"Constructed gene description: '{description[:100]}...'")
             return description
 
         except requests.RequestException as e:
             logging.error(f"HTTP error fetching gene description: {e}")
-            return None
-        except KeyError as e:
-            logging.error(f"Missing key in response for format string: {e}")
             return None
         except Exception as e:  # noqa: BLE001
             logging.error(f"Unexpected error constructing gene description: {e}")

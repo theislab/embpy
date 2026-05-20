@@ -29,6 +29,8 @@ from typing import Any, Literal
 
 import numpy as np
 
+from embpy.errors import ResolverError
+from embpy.reporting import ResolutionReport
 from embpy.resources.gene.control import ControlPolicy
 
 from .cache import EmbeddingCacheKey, load_cached, save_cached
@@ -82,6 +84,13 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
         self._last_unresolved: list[str] = []
         self._last_controls: list[str] = []
         self._last_mixed: list[str] = []
+        # Layer 2: composite resolution report aggregated across every
+        # call to BioEmbedder.embed_genes_batch made during a single
+        # ``embed_with_status`` pass. The provider can resolve in
+        # multiple sub-passes (cache miss compute + TP53 dimensionality
+        # probe), so we merge each sub-report into this one before
+        # surfacing to the caller.
+        self.last_report: ResolutionReport | None = None
 
     # ------------------------------------------------------------------
     # ActionEmbeddingProvider API
@@ -122,6 +131,10 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
         embedding matrix.
         """
         symbols = list(symbols)
+        # Layer 2: fresh aggregate report for this pass.
+        self.last_report = ResolutionReport(
+            model_name=self.model_name, organism=self.organism,
+        )
         if not symbols:
             empty = np.zeros((0, 0), dtype=np.float32)
             return empty, np.asarray([], dtype=object)
@@ -188,14 +201,25 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
         # to a zero-dim array because downstream collation would crash
         # at training time with a far less actionable error.
         if first_resolved is None and not control_mask.any():
-            raise ValueError(
-                f"BioEmbedder returned no embeddings for any of {len(symbols)} "
-                f"symbols. Check model_name={self.model_name!r}, "
-                f"organism={self.organism!r}, "
-                f"resolver_backend={self.resolver_backend!r}. "
-                f"If your dataset is mostly controls, set "
-                f"action_embedding.fail_on_unresolved=False and verify the "
-                f"output of embed_perturbations.py."
+            # All symbols went through the resolver, were found, and were
+            # sent to the embedder, but no usable vector came back. This
+            # is genuinely a *resolver-output* problem (the embedder itself
+            # would have raised a typed ModelOOMError / ContextOverflowError
+            # / DependencyError before reaching this branch, because the
+            # error-classifying patch in embpy.embedder.embed_genes_batch
+            # re-raises typed exceptions and we do not catch them here).
+            #
+            # For text models (MiniLM and friends) this typically means
+            # the gene-description API returned empty payloads for every
+            # symbol; for sequence models it's the equivalent failure in
+            # GeneResolver. The typed ResolverError carries enough fields
+            # for the top-level handler to map this to exit code 13.
+            raise ResolverError(
+                backend=str(self.resolver_backend),
+                organism=str(self.organism),
+                n_requested=len(symbols),
+                n_resolved=0,
+                model_name=self.model_name,
             )
         if first_resolved is None:
             # Probe the embedder with one *known-good* gene to learn the
@@ -377,6 +401,13 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
             region=self.region,
             **self.extra_kwargs,
         )
+        # Layer 2: merge the per-call sub-report into the provider's
+        # composite. ``embed_genes_batch`` always assigns to
+        # ``embedder.last_report``, so we just need to fetch it before
+        # the next call clobbers it.
+        sub = getattr(embedder, "last_report", None)
+        if sub is not None and self.last_report is not None:
+            self.last_report.merge(sub)
         out: dict[str, np.ndarray] = {}
         for sym, vec in zip(symbols, results, strict=False):
             if vec is None:

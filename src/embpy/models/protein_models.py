@@ -170,6 +170,36 @@ class ESM2Wrapper(BaseModelWrapper):
 
         return pooled_embedding
 
+    def _default_batch_size(self) -> int:
+        """Pick a memory-safe default batch size based on the loaded model.
+
+        ESM-2 attention activations scale as ``B * H * L^2``, which on an
+        80 GB GPU caps the maximum safe batch size at roughly:
+
+        * 35M  (T6,  hidden 320,  20 layers, 20 heads)   -> 64
+        * 150M (T30, hidden 640,  30 layers, 20 heads)   -> 32
+        * 650M (T33, hidden 1280, 33 layers, 20 heads)   -> 16
+        * 3B   (T36, hidden 2560, 36 layers, 40 heads)   -> 4
+        * 15B  (T48, hidden 5120, 48 layers, 40 heads)   -> 1 (rarely fits)
+
+        Defaulting to a generic 32 OOMs the 3B model on long sequences
+        (the observed failure: 33.87 GiB allocation for attention scores).
+        We read ``model.config.hidden_size`` to scale automatically.
+        """
+        hidden = 1280
+        cfg = getattr(self.model, "config", None)
+        if cfg is not None:
+            hidden = int(getattr(cfg, "hidden_size", 1280))
+        if hidden >= 5000:
+            return 1
+        if hidden >= 2400:
+            return 4
+        if hidden >= 1200:
+            return 16
+        if hidden >= 600:
+            return 32
+        return 64
+
     def embed_batch(
         self,
         inputs: list[str],
@@ -178,38 +208,45 @@ class ESM2Wrapper(BaseModelWrapper):
         **kwargs: Any,
     ) -> list[np.ndarray]:
         """
-        Compute embeddings for multiple protein sequences.
+        Compute embeddings for multiple protein sequences with chunking
+        and a model-aware default batch size.
 
-        This feeds each sequence through the full ESM2 pipeline:
-          1. Tokenize via the loaded HuggingFace tokenizer
-          2. Move tokens to `self.device`
-          3. Run the model to produce hidden states or last hidden layer
-          4. Pool across sequence positions using `pooling_strategy`
+        Sequences longer than the model's context window are split into
+        non-overlapping chunks, embedded separately, and mean-pooled
+        across chunks. This matches the DNA path in
+        ``embpy.models.dna_models._hf_batched_embed`` and was added
+        because a) some proteins exceed ESM-2's 1024-token context (e.g.
+        titin) and b) plain truncation would silently discard the entire
+        C-terminus.
 
         Parameters
         ----------
         inputs
-            A list of protein sequence strings (e.g. ["MTEYKLVVVG", "ACDEFGHIK..."]).
+            A list of protein sequence strings.
         pooling_strategy
-            One of {"mean", "max", "cls"}.  “cls” returns the embedding of the first token,
-            “mean” averages across positions, and “max” takes the maximum across positions.
+            One of {"mean", "max", "cls", "none"}. ``none`` is only
+            supported when no input exceeds the context window (chunked
+            inputs do not have a canonical per-token stitching).
         target_layer
-            If specified, extract embeddings from a particular hidden state layer
-            instead of the default `last_hidden_state`.  Must be in range
-            `[-num_layers, num_layers)`.
+            If specified, extract embeddings from a particular hidden
+            state layer instead of the default ``last_hidden_state``.
+        batch_size
+            Optional override; otherwise picked from ``_default_batch_size()``.
 
         Returns
         -------
         list[np.ndarray]
-            A list of 1D NumPy arrays, one per input sequence, each of length
-            `self.TRUNK_OUTPUT_DIM`.
+            One 1D vector per input.
 
         Raises
         ------
         RuntimeError
-            If `load()` has not been called (i.e., model or device is None).
+            If the model has not been loaded.
         ValueError
-            If `pooling_strategy` is not one of the supported strategies.
+            If ``pooling_strategy`` is unsupported.
+        NotImplementedError
+            If ``pooling_strategy='none'`` is requested with sequences
+            that overflow the context window.
         """
         if self.model is None or self.device is None or self.tokenizer is None:
             raise RuntimeError("ESM2 model not loaded. Please call load() first.")
@@ -220,18 +257,92 @@ class ESM2Wrapper(BaseModelWrapper):
                 f"Invalid pooling strategy '{pooling_strategy}'. Choose from {self.available_pooling_strategies}"
             )
 
-        batch_size = kwargs.pop("batch_size", 32)
-        all_embeddings: list[np.ndarray] = []
+        batch_size = int(kwargs.pop("batch_size", self._default_batch_size()))
 
-        for start in range(0, len(inputs), batch_size):
-            chunk = inputs[start : start + batch_size]
-            tokenized = self.tokenizer(
-                chunk, return_tensors="pt", truncation=True, padding=True,
+        cfg = getattr(self.model, "config", None)
+        ctx_model = getattr(cfg, "max_position_embeddings", None) if cfg is not None else None
+        ctx_tok = getattr(self.tokenizer, "model_max_length", None)
+        candidates = [
+            int(x) for x in (ctx_model, ctx_tok)
+            if isinstance(x, int) and 0 < x < 1_000_000
+        ]
+        ctx = min(candidates) if candidates else 1024
+
+        cls_id = getattr(self.tokenizer, "cls_token_id", None)
+        sep_id = getattr(self.tokenizer, "sep_token_id", None)
+        bos_id = getattr(self.tokenizer, "bos_token_id", None)
+        eos_id = getattr(self.tokenizer, "eos_token_id", None)
+        pad_id = getattr(self.tokenizer, "pad_token_id", None)
+        if pad_id is None:
+            pad_id = eos_id if eos_id is not None else 0
+        head_id = cls_id if cls_id is not None else bos_id
+        tail_id = sep_id if sep_id is not None else eos_id
+        head_cost = 1 if head_id is not None else 0
+        tail_cost = 1 if tail_id is not None else 0
+        inner_max = ctx - head_cost - tail_cost
+        if inner_max <= 0:
+            raise RuntimeError(
+                f"Context window {ctx} too small after reserving room for special tokens."
             )
-            input_ids = tokenized["input_ids"].to(self.device)
-            attention_mask = tokenized.get("attention_mask")
-            if attention_mask is not None:
-                attention_mask = attention_mask.to(self.device)
+
+        chunk_ids: list[list[int]] = []
+        chunk_attn: list[list[int]] = []
+        chunk_to_input_idx: list[int] = []
+        overflow_warned = False
+        for i, text in enumerate(inputs):
+            enc = self.tokenizer(
+                text,
+                add_special_tokens=False,
+                truncation=False,
+                padding=False,
+                return_tensors=None,
+            )
+            ids = enc["input_ids"]
+            if ids and isinstance(ids[0], list):
+                ids = ids[0]
+            n_chunks = max(1, (len(ids) + inner_max - 1) // inner_max)
+            if n_chunks > 1 and not overflow_warned:
+                logging.info(
+                    "ESM-2 input longer than context window (%d > %d) -- "
+                    "chunking into %d pieces and mean-pooling per protein.",
+                    len(ids), ctx, n_chunks,
+                )
+                overflow_warned = True
+            for j in range(0, max(len(ids), 1), inner_max):
+                piece = ids[j : j + inner_max]
+                full = (
+                    ([head_id] if head_id is not None else [])
+                    + piece
+                    + ([tail_id] if tail_id is not None else [])
+                )
+                chunk_ids.append(full)
+                chunk_attn.append([1] * len(full))
+                chunk_to_input_idx.append(i)
+
+        chunk_pooled: list[np.ndarray | None] = [None] * len(chunk_ids)
+        needs_sequence_out = pooling_strategy == "none"
+        if needs_sequence_out and any(
+            sum(1 for src in chunk_to_input_idx if src == k) > 1
+            for k in range(len(inputs))
+        ):
+            raise NotImplementedError(
+                "pooling_strategy='none' not supported when proteins exceed "
+                "the model context window (would produce ragged outputs)."
+            )
+
+        for start in range(0, len(chunk_ids), batch_size):
+            end = min(start + batch_size, len(chunk_ids))
+            batch_ids = chunk_ids[start:end]
+            batch_attn = chunk_attn[start:end]
+            max_len = max(len(x) for x in batch_ids)
+            input_ids = torch.tensor(
+                [x + [pad_id] * (max_len - len(x)) for x in batch_ids],
+                dtype=torch.long, device=self.device,
+            )
+            attention_mask = torch.tensor(
+                [x + [0] * (max_len - len(x)) for x in batch_attn],
+                dtype=torch.long, device=self.device,
+            )
 
             with torch.no_grad():
                 outputs = self.model(
@@ -244,29 +355,38 @@ class ESM2Wrapper(BaseModelWrapper):
                 else:
                     emb_tensor = outputs.last_hidden_state
 
-            for i in range(emb_tensor.shape[0]):
-                seq_emb = emb_tensor[i]
-                if attention_mask is not None:
-                    mask = attention_mask[i].unsqueeze(-1).bool()
-                else:
-                    mask = None
-
+            for k in range(emb_tensor.shape[0]):
+                seq_emb = emb_tensor[k]
+                mask = attention_mask[k].unsqueeze(-1).bool()
                 if pooling_strategy == "none":
-                    all_embeddings.append(seq_emb.cpu().numpy())
+                    chunk_pooled[start + k] = seq_emb.cpu().numpy()
                     continue
                 elif pooling_strategy == "cls":
                     pooled = seq_emb[0]
                 elif pooling_strategy == "max":
-                    if mask is not None:
-                        seq_emb = seq_emb.masked_fill(~mask, float("-inf"))
-                    pooled = torch.max(seq_emb, dim=0)[0]
+                    pooled = seq_emb.masked_fill(~mask, float("-inf")).max(dim=0).values
                 else:
-                    if mask is not None:
-                        pooled = (seq_emb * mask).sum(dim=0) / mask.sum(dim=0).clamp(min=1)
-                    else:
-                        pooled = seq_emb.mean(dim=0)
+                    pooled = (seq_emb * mask).sum(dim=0) / mask.sum(dim=0).clamp(min=1)
+                chunk_pooled[start + k] = pooled.cpu().numpy()
 
-                all_embeddings.append(pooled.cpu().numpy())
+            del input_ids, attention_mask, outputs, emb_tensor
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        chunks_per_input: list[list[int]] = [[] for _ in range(len(inputs))]
+        for c, src in enumerate(chunk_to_input_idx):
+            chunks_per_input[src].append(c)
+
+        all_embeddings: list[np.ndarray] = []
+        for i in range(len(inputs)):
+            idxs = chunks_per_input[i]
+            if not idxs:
+                raise RuntimeError(f"No chunks produced for input {i}.")
+            if len(idxs) == 1 or pooling_strategy == "none":
+                all_embeddings.append(chunk_pooled[idxs[0]])  # type: ignore[arg-type]
+                continue
+            stacked = np.stack([chunk_pooled[c] for c in idxs], axis=0)  # type: ignore[misc]
+            all_embeddings.append(stacked.mean(axis=0).astype(stacked.dtype))
 
         return all_embeddings
 

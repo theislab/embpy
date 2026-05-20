@@ -90,8 +90,12 @@ for s in load_grid(sys.argv[1]):
             --job-name="wm-prewarm-${key}" \
             --dependency=singleton \
             --export=ALL,MODEL="${model_name}",H5AD="${H5AD}",GRID_KEY="${key}" \
+            -o logs/%x_%j.out -e logs/%x_%j.err \
             --wrap="set -euo pipefail; \
                 cd ${PWD}; \
+                export TMPDIR=\"${PWD}/.tmp/job-\$SLURM_JOB_ID\"; \
+                mkdir -p \"\$TMPDIR\"; \
+                trap 'rm -rf \"\$TMPDIR\"' EXIT; \
                 pixi run -e gpu -- python -m world_model.scripts.embed_perturbations \
                     --dataset replogle --h5ad ${H5AD} --model ${model_name}")
         prewarm_jids+=("$prewarm_jid")
@@ -122,6 +126,7 @@ for s in load_grid(sys.argv[1]):
         --job-name=wm-ablate-aggregate \
         --dependency=afterok:"${runner_jid}" \
         --export=ALL,OUTPUT_ROOT="${output_root}",GRID="${grid}" \
+        -o logs/%x_%j.out -e logs/%x_%j.err \
         --wrap="set -euo pipefail; \
             cd ${PWD}; \
             pixi run -e gpu -- python -m world_model.evaluation.ablation.aggregate \
@@ -208,6 +213,7 @@ for s in load_grid(sys.argv[1]):
         --job-name=wm-lone-aggregate \
         --dependency=afterok:"${dep}" \
         --export=ALL,OUTPUT_ROOT="${output_root}",GRID="${grid}",STRATEGY="${strategy}" \
+        -o logs/%x_%j.out -e logs/%x_%j.err \
         --wrap="set -euo pipefail; \
             cd ${PWD}; \
             pixi run -e gpu -- python -m world_model.scripts.leave_one_encoder_out \

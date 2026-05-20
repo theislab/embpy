@@ -57,11 +57,37 @@ class LinearRegressionBaseline(Baseline):
         control_mean = train[is_control].mean(axis=0).astype(np.float32)
         self.control_mean_train_: np.ndarray = control_mean
         self._control_label = data.control_label
-        self._actions = {
+        # Some embedding catalogs carry NaN by design (e.g. DepMap
+        # crispr_gene_effect: cell lines never profiled for a given gene).
+        # Ridge / lstsq both reject NaN. Compute a per-feature imputation
+        # vector (column mean over all rows that have finite values for
+        # that column; 0 when the entire column is NaN) and substitute it
+        # everywhere a NaN appears, both at fit and predict time.
+        raw_actions = {
             str(k): np.asarray(v, dtype=np.float32).reshape(-1)
             for k, v in data.perturbation_to_action.items()
         }
-        self._action_dim = next(iter(self._actions.values())).size
+        self._action_dim = next(iter(raw_actions.values())).size
+        stacked = np.stack(list(raw_actions.values()), axis=0)
+        if not np.isfinite(stacked).all():
+            n_nan = int((~np.isfinite(stacked)).sum())
+            col_mean = np.nanmean(stacked, axis=0)
+            col_mean = np.where(np.isfinite(col_mean), col_mean, 0.0).astype(np.float32)
+            self._action_impute: np.ndarray = col_mean
+            for k, v in raw_actions.items():
+                mask = ~np.isfinite(v)
+                if mask.any():
+                    raw_actions[k] = np.where(mask, col_mean, v).astype(np.float32)
+            logger.warning(
+                "LinearRegressionBaseline: imputed %d NaN values across %d "
+                "perturbations (column-mean) before fitting Ridge. This is "
+                "expected for embeddings derived from sparse cell-line panels "
+                "(e.g. crispr_gene_effect).",
+                n_nan, len(raw_actions),
+            )
+        else:
+            self._action_impute = np.zeros(self._action_dim, dtype=np.float32)
+        self._actions = raw_actions
 
         rows_x: list[np.ndarray] = []
         rows_y: list[np.ndarray] = []
@@ -148,8 +174,13 @@ class LinearRegressionBaseline(Baseline):
         :class:`BaselineTrainData.perturbation_to_action` -- pass the
         full mapping here so every test cell has an embedding to look up.
         """
+        impute = getattr(self, "_action_impute", None)
         for k, v in mapping.items():
-            self._actions[str(k)] = np.asarray(v, dtype=np.float32).reshape(-1)
+            emb = np.asarray(v, dtype=np.float32).reshape(-1)
+            if impute is not None and not np.isfinite(emb).all():
+                mask = ~np.isfinite(emb)
+                emb = np.where(mask, impute, emb).astype(np.float32)
+            self._actions[str(k)] = emb
 
 
 __all__ = ["LinearRegressionBaseline"]

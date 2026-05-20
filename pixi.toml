@@ -210,6 +210,54 @@ evo2 = ">=0.3"
 # isolation lets them find the env's pre-installed torch.
 no-build-isolation = ["flash-attn", "mamba-ssm", "transformer_engine"]
 
+# ---------------------------------------------------------------------------
+# Caduceus (Mamba-based long-context DNA LM). Linux-64 + CUDA only.
+#
+# Caduceus models on HF (`kuleshov-group/caduceus-{ph,ps}_seqlen-131k_*`)
+# use `trust_remote_code=True` modeling files that require the Mamba
+# selective-SSM kernels via the `mamba-ssm` PyPI package, which in turn
+# needs the matching `causal-conv1d` CUDA kernels. Both ship pre-built
+# wheels for common torch+CUDA combos; pip falls back to building from
+# source (with ninja/cmake/packaging) if no wheel matches.
+#
+# Kept in its OWN feature/environment because mamba-ssm + causal-conv1d
+# are heavy CUDA-built deps whose torch ABI requirements (and build time)
+# we do not want to inflict on every gpu user. Smaller blast radius than
+# `evo2` (no flash-attn, no transformer_engine, no vortex-ai) -- so we
+# keep them in separate envs even though both ship mamba-ssm.
+#
+# Usage:
+#   pixi install -e caduceus
+#   pixi run -e caduceus -- python -m world_model.scripts.embed_perturbations \
+#       --model caduceus_ph_131k --dataset replogle ...
+# ---------------------------------------------------------------------------
+[feature.caduceus]
+platforms = ["linux-64"]
+
+[feature.caduceus.system-requirements]
+cuda = "12"
+
+[feature.caduceus.dependencies]
+# Match the build helpers Evo2 ships so pip can compile mamba-ssm /
+# causal-conv1d from source if a matching wheel is not available.
+ninja = "*"
+cmake = ">=3.20"
+packaging = "*"
+
+[feature.caduceus.pypi-dependencies]
+# Mamba selective-SSM kernels + the causal 1D convolution helper. Pin to
+# loose 2.x / 1.x ranges; both projects follow strict semver and we want
+# pip to be able to upgrade within the major series when new torch ABIs
+# land. Wheels are published for torch >= 2.1 + CUDA 11.8 / 12.x.
+mamba-ssm = ">=2.2,<3"
+causal-conv1d = ">=1.4,<2"
+
+[feature.caduceus.pypi-options]
+# Both projects declare torch only as a runtime dep in their wheel
+# metadata. If pip cannot find a wheel and falls back to a sdist build,
+# disabling build isolation lets the build pick up the env's torch.
+no-build-isolation = ["mamba-ssm", "causal-conv1d"]
+
 # Boltz-2 (structure-informed protein embeddings). Kept as its own feature +
 # environment because `boltz>=2` hard-pins `numpy<2.0`, which is incompatible
 # with the rest of the stack (modern pytorch / scanpy / anndata are on numpy
@@ -557,6 +605,28 @@ boltz = { features = ["boltz", "morphology", "jupyter"] }
 evo2 = { features = [
   "gpu",
   "evo2",
+  "seqmodels",
+  "morphology",
+  "scanpy",
+  "pertpy",
+  "jupyter",
+] }
+
+# Standalone env for Caduceus (Mamba-based DNA LMs). The world-model
+# sweep uses this env for caduceus_ph_131k / caduceus_ps_131k. Mirrors
+# the `gpu` env so embpy/world_model can still import their usual
+# scanpy / pertpy / morphology helpers, plus the `caduceus` feature for
+# the mamba-ssm + causal-conv1d CUDA kernels Caduceus needs at load
+# time. No solve-group shared with `gpu` because mamba-ssm pins a
+# slightly tighter torch ABI than the seqmodels / esm3 / helical stack
+# would tolerate.
+# Usage:
+#   pixi install -e caduceus
+#   pixi run -e caduceus -- python -m world_model.scripts.embed_perturbations \
+#       --model caduceus_ph_131k ...
+caduceus = { features = [
+  "gpu",
+  "caduceus",
   "seqmodels",
   "morphology",
   "scanpy",

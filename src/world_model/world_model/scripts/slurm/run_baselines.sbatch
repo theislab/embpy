@@ -37,15 +37,19 @@ fi
 
 CONFIG="${1:-${CONFIG:?CONFIG env var (or first positional arg) required}}"
 CKPT="${2:-${CKPT:-}}"
+# Pixi env propagated from the submit driver. Caduceus / Evo2 sweep runs
+# set EMBPY_PIXI_ENV=caduceus|evo2; everything else stays on `gpu`.
+PIXI_ENV="${EMBPY_PIXI_ENV:-gpu}"
 echo "Config: $CONFIG"
 echo "Checkpoint: ${CKPT:-<none>}"
+echo "Pixi env: $PIXI_ENV"
 
 mkdir -p logs
 
 if [[ -n "${CKPT:-}" ]]; then
-    exec pixi run -e gpu -- python -m world_model.scripts.run_baselines \
+    exec pixi run -e "$PIXI_ENV" -- python -m world_model.scripts.run_baselines \
         --config "$CONFIG" --checkpoint "$CKPT"
 else
-    exec pixi run -e gpu -- python -m world_model.scripts.run_baselines \
+    exec pixi run -e "$PIXI_ENV" -- python -m world_model.scripts.run_baselines \
         --config "$CONFIG"
 fi
