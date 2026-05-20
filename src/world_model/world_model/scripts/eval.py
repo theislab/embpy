@@ -47,9 +47,17 @@ def main(argv: list[str] | None = None) -> None:
     setup_logging(level=logging.INFO, log_file=output_dir / "eval.log")
     seed_everything(cfg.seed)
 
+    # Pass action_cfg + state_backbone_cfg so the action-embedding source
+    # (bio_embedder vs precomputed) matches the train run. See the same
+    # fix in run_baselines.py: without these, build_dataloaders falls back
+    # to data.gene_embedding_path (genept 3072d), and load_state_dict
+    # crashes with a shape mismatch when the checkpoint used a non-genept
+    # embedding (e.g. borzoi_v0 -> 1536d).
     artifacts = build_dataloaders(
         cfg.data,
         split_cfg=cfg.split,
+        action_cfg=cfg.action_embedding,
+        state_backbone_cfg=cfg.state_backbone,
         seed=cfg.seed,
         output_dir=output_dir,
     )

@@ -26,6 +26,12 @@ set -euo pipefail
 PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
+# Pin output_dir to ``runs/world_model/${RUN_NAME}`` (no per-job
+# timestamp suffix) so the chained baselines + compare jobs can find
+# the train artifacts by exact path. See submit_gene_embeddings.sh
+# for the same rationale.
+export EMBPY_NO_AUTO_SUFFIX=1
+
 SLURM_DIR="src/world_model/world_model/scripts/slurm"
 CFG="src/world_model/world_model/configs/experiments/transfer_nadig_to_replogle_borzoi.yaml"
 FRACTION="${FRACTION:-0.10}"
@@ -46,7 +52,8 @@ prewarm() {  # $1=dataset label  $2=h5ad
     sbatch --parsable \
         --job-name="wm-prewarm-$1-borzoi" \
         --partition="$PARTITION" --qos="$QOS" \
-        --gres=gpu:1 --time=08:00:00 --mem=64G --cpus-per-task=8 \
+        --gres=gpu:1 --constraint="a100_80gb|h100_80gb" \
+        --time=08:00:00 --mem=64G --cpus-per-task=8 \
         -o logs/%x_%j.out -e logs/%x_%j.err \
         --wrap="set -euo pipefail; cd ${PROJECT_DIR}; \
             export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \

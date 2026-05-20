@@ -33,6 +33,14 @@ set -euo pipefail
 PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
+# Sweep submissions must have STABLE output_dirs so that the chained
+# baselines + compare jobs (which look up RUN_DIR by exact path) can
+# find the train artifacts. train.py's _apply_auto_suffix would
+# otherwise rewrite output_dir to ``${out_dir}__job<id>__<ts>``,
+# breaking the dependency chain. Per-job uniqueness is already
+# guaranteed by the (dataset, embedding) keying in run_name.
+export EMBPY_NO_AUTO_SUFFIX=1
+
 SELF="src/world_model/world_model/scripts/submit_gene_embeddings.sh"
 SLURM_DIR="src/world_model/world_model/scripts/slurm"
 CFG_DIR="src/world_model/world_model/configs/experiments"
@@ -213,10 +221,14 @@ for ds in "${DATASETS[@]}"; do
         echo "[$ds]   train job: $jid  -> $out_dir"
     else
         echo "[$ds] submitting pre-warm (bio_embedder: $EMB_MODEL) ..."
+        # Constrain to 80GB GPUs: protein/DNA foundation models (ESM-2 650M/3B,
+        # Enformer, Evo2, Caduceus, etc.) blow up on 32GB V100s with OOM. The
+        # 80GB A100/H100 nodes have enough headroom for the full token stream.
         prewarm_jid=$(sbatch --parsable \
             --job-name="wm-prewarm-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
-            --gres=gpu:1 --time=08:00:00 --mem=64G --cpus-per-task=8 \
+            --gres=gpu:1 --constraint="a100_80gb|h100_80gb" \
+            --time=08:00:00 --mem=64G --cpus-per-task=8 \
             --wrap="set -euo pipefail; cd ${PROJECT_DIR}; \
                 export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
                 pixi run -e gpu -- python -m world_model.scripts.embed_perturbations \
