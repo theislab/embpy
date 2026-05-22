@@ -96,7 +96,15 @@ class InContextWorldModel(nn.Module):
         s_hat = self.dynamics(
             support_s, support_a, support_sp, query_s, query_a,
         )  # (B,d)
-        s_target = self._encode_one_stack(batch["query_next"])    # (B,d)
+        # The target is only present at train/val time. At inference
+        # ``query_next`` is deliberately absent (the answer is what we
+        # predict) -- encode it only when given, so .predict() works for
+        # both loss computation and held-out inference.
+        s_target = (
+            self._encode_one_stack(batch["query_next"])
+            if "query_next" in batch
+            else None
+        )
 
         x_hat = self.decode(s_hat) if self.decoder is not None else None
         return {"s_hat": s_hat, "s_target": s_target, "x_hat": x_hat}

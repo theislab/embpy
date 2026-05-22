@@ -180,6 +180,136 @@ def _predict_with_world_model(
     return out
 
 
+@torch.no_grad()
+def _predict_incontext(
+    model: Any,
+    artifacts: DataArtifacts,
+    *,
+    real_adata: Any,
+    perturbation_key: str,
+    n_samples_per_pert: int,
+    device: torch.device,
+) -> np.ndarray:
+    """In-context analogue of :func:`_predict_with_world_model`.
+
+    For every held-out (test) perturbation the model is given a SET of
+    support triplets drawn from the TRAIN split -- each
+    ``(control_stack, train_action_i, train_perturbed_stack_i)`` -- plus
+    the query ``(control_stack, test_action, ?)``, and predicts the
+    query's perturbed state. This is the in-context generalization the
+    model was trained for: learn how train perturbations behave, then
+    answer a perturbation never seen in training. Output matches the
+    baseline / world-model contract: ``(n_test_cells, n_genes)``.
+    """
+    model.eval().to(device)
+    full = artifacts.full_dataset
+    train_idx = artifacts.split.train_indices
+    train_labels = full.perturbation_labels[train_idx]
+    control_mask = train_labels == full.control_label
+    control_pool = train_idx[control_mask]
+    if control_pool.size == 0:
+        raise RuntimeError("No control cells in train split for in-context eval.")
+
+    # Train (non-control) perturbations usable as support, with their
+    # train-split cell pools.
+    support_labels_all = sorted(set(train_labels[~control_mask].tolist()))
+    if not support_labels_all:
+        raise RuntimeError("No train perturbations to build a support set from.")
+    pool_by_label = {
+        p: train_idx[train_labels == p] for p in support_labels_all
+    }
+
+    rng = np.random.default_rng(0)
+    K = full.stack_size
+    indexer = full.indexer
+    n_pert = full.n_pert
+    M = min(int(getattr(model, "default_support_size", 16)), len(support_labels_all))
+    n_genes = int(full.expression.shape[1])
+
+    # Bucket-aware context selection ("most similar labels = same
+    # cell-type / batch"), matching the within-bucket sampling the
+    # dataset uses at train time. Falls back to the global train pool
+    # when bucketing is off or a bucket lacks usable support.
+    train_support_set = set(support_labels_all)
+    cbl: dict = getattr(full, "_cells_by_bucket_label", {}) or {}
+    buckets_on = getattr(full, "_cell_buckets", None) is not None and bool(cbl)
+    bucket_control: dict = {}
+    bucket_support: dict = {}
+    if buckets_on:
+        for b, per_label in cbl.items():
+            ctrl = per_label.get(full.control_label)
+            if ctrl is None or ctrl.size == 0:
+                continue
+            sup = [
+                lbl for lbl in per_label
+                if lbl in train_support_set and lbl != full.control_label
+            ]
+            if sup:
+                bucket_control[b] = ctrl
+                bucket_support[b] = sup
+
+    def _action(lbl: str) -> np.ndarray:
+        a = np.zeros((n_pert,), dtype=np.int64)
+        for j, gid in enumerate(indexer.encode(lbl, full.control_label)[:n_pert]):
+            a[j] = gid
+        return a
+
+    def _stack(pool: np.ndarray) -> np.ndarray:
+        idx = rng.choice(pool, size=K, replace=pool.size < K)
+        return full.expression[idx]
+
+    labels = np.asarray(real_adata.obs[perturbation_key].values, dtype=str)
+    unique = np.unique(labels)
+
+    per_pert_pred: dict[str, np.ndarray] = {}
+    for pert in unique:
+        if pert == full.control_label:
+            continue
+        # Buckets where this query perturbation actually occurs and that
+        # carry both a control and >=1 train support perturbation.
+        cand_buckets = (
+            [b for b in bucket_support if str(pert) in cbl[b]]
+            if buckets_on else []
+        )
+        samples: list[np.ndarray] = []
+        for _ in range(n_samples_per_pert):
+            if cand_buckets:  # within-bucket (same substrate as the query)
+                b = cand_buckets[rng.integers(len(cand_buckets))]
+                ctrl_pool = bucket_control[b]
+                sup_pool = [s for s in bucket_support[b] if s != str(pert)] or bucket_support[b]
+                m = min(M, len(sup_pool))
+                sup = list(rng.choice(np.asarray(sup_pool, dtype=object),
+                                      size=m, replace=len(sup_pool) < m))
+                support_next = np.stack([_stack(cbl[b][s]) for s in sup])
+            else:             # global fallback
+                ctrl_pool = control_pool
+                sup = list(rng.choice(support_labels_all, size=M,
+                                      replace=len(support_labels_all) < M))
+                support_next = np.stack([_stack(pool_by_label[s]) for s in sup])
+            support_obs = np.stack([_stack(ctrl_pool) for _ in sup])
+            support_act = np.stack([_action(str(s)) for s in sup])
+            batch = {
+                "support_obs": torch.from_numpy(support_obs).unsqueeze(0).to(device),
+                "support_next": torch.from_numpy(support_next).unsqueeze(0).to(device),
+                "support_act": torch.from_numpy(support_act).unsqueeze(0).to(device),
+                "query_obs": torch.from_numpy(_stack(ctrl_pool)).unsqueeze(0).to(device),
+                "query_act": torch.from_numpy(_action(str(pert))).unsqueeze(0).to(device),
+            }
+            out = model.predict(batch)
+            if out["x_hat"] is None:
+                raise RuntimeError("In-context model without decoder cannot predict genes.")
+            samples.append(out["x_hat"][0].cpu().numpy())
+        per_pert_pred[str(pert)] = np.mean(
+            np.stack(samples, axis=0), axis=0,
+        ).astype(np.float32)
+
+    out = np.empty((labels.size, n_genes), dtype=np.float32)
+    template = _control_template(artifacts)
+    for i, lbl in enumerate(labels):
+        out[i] = per_pert_pred.get(str(lbl), template) if lbl != full.control_label else template
+    return out
+
+
 def _predictions_to_dict(
     predictions: np.ndarray,
     labels: np.ndarray,
@@ -365,7 +495,14 @@ def run_evaluation(
 
     if model is not None:
         logger.info("Evaluating world model on %d test perturbations.", len(test_perts))
-        wm_per_cell = _predict_with_world_model(
+        from ..models.incontext_world_model import InContextWorldModel  # noqa: PLC0415
+
+        predict_fn = (
+            _predict_incontext
+            if isinstance(model, InContextWorldModel)
+            else _predict_with_world_model
+        )
+        wm_per_cell = predict_fn(
             model, artifacts,
             real_adata=real_adata,
             perturbation_key=perturbation_key,

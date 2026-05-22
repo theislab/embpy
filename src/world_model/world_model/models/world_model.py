@@ -559,20 +559,35 @@ def build_world_model(
         else None
     )
 
-    if dynamics_kind == "incontext_set":
-        # Bidirectional set model: predict a held-out query
+    if dynamics_kind in ("incontext_set", "incontext_tokens"):
+        # Bidirectional in-context models: predict a held-out query
         # perturbation from a SET of (control, action, perturbed)
         # support triplets. Non-causal, permutation-invariant.
-        from .dynamics.incontext_set import InContextSetDynamics  # noqa: PLC0415
+        #   * incontext_set    -> one fused token per triplet
+        #   * incontext_tokens -> explicit 3 tokens (s, a, s') per triplet
         from .incontext_world_model import InContextWorldModel  # noqa: PLC0415
 
-        dynamics = InContextSetDynamics(
-            d_model=d_model,
-            n_layers=dynamics_layers,
-            n_heads=dynamics_heads,
-            dropout=dropout,
-            max_set_size=max(int(incontext_support_size) + 1, max_sequence_length),
-        )
+        max_set = max(int(incontext_support_size) + 1, max_sequence_length)
+        if dynamics_kind == "incontext_tokens":
+            from .dynamics.incontext_tokens import InContextTokensDynamics  # noqa: PLC0415
+
+            dynamics = InContextTokensDynamics(
+                d_model=d_model,
+                n_layers=dynamics_layers,
+                n_heads=dynamics_heads,
+                dropout=dropout,
+                max_set_size=max_set,
+            )
+        else:
+            from .dynamics.incontext_set import InContextSetDynamics  # noqa: PLC0415
+
+            dynamics = InContextSetDynamics(
+                d_model=d_model,
+                n_layers=dynamics_layers,
+                n_heads=dynamics_heads,
+                dropout=dropout,
+                max_set_size=max_set,
+            )
         return InContextWorldModel(
             encoder=encoder,
             action_encoder=action_encoder,
@@ -580,6 +595,7 @@ def build_world_model(
             decoder=decoder,
             d_model=d_model,
             backbone=backbone,
+            default_support_size=int(incontext_support_size),
         )
 
     dynamics = GPTAutoregressiveDynamics(

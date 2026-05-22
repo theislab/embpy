@@ -197,7 +197,13 @@ declare -A PIXI_ENV_BY_MODEL
 PIXI_ENV_BY_MODEL[caduceus_ph_131k]=caduceus
 PIXI_ENV_BY_MODEL[caduceus_ps_131k]=caduceus
 PIXI_ENV_BY_MODEL[evo2_7b]=evo2
-PIXI_ENV="${PIXI_ENV_BY_MODEL[$EMB_MODEL]:-gpu}"
+# Precomputed embeddings have no model name; guard the array lookup so an
+# empty key doesn't trip `set -u` ("bad array subscript").
+if [[ -n "$EMB_MODEL" ]]; then
+    PIXI_ENV="${PIXI_ENV_BY_MODEL[$EMB_MODEL]:-gpu}"
+else
+    PIXI_ENV="gpu"
+fi
 
 case "$DATASET" in
     replogle|nadig) DATASETS=("$DATASET") ;;
