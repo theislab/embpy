@@ -10,7 +10,41 @@
 
 Given a perturbation (genetic, chemical, or morphological) and/or single-cell expression data, embpy resolves the underlying biological sequences and images, routes them to the appropriate foundation models, and returns dense vector representations ready for downstream machine learning.
 
-## Repository structure -- two top-level packages
+## Jump to what you need
+
+| I want to&nbsp;... | Go to |
+| --- | --- |
+| **Install** embpy (pixi / uv / conda / pip) | [Installation](#installation) |
+| Run a **GPU notebook on the SLURM cluster** | [Running GPU JupyterLab on a SLURM cluster](#running-gpu-jupyterlab-on-a-slurm-cluster) |
+| See **copy-paste code examples** | [Quick Start](#quick-start) |
+| Browse the **130+ models** and their keys | [Available Models](#available-models) |
+| Learn by **tutorial notebook** | [Tutorials](#tutorials) |
+| Understand the **design / data flow** | [Architecture](#architecture) · [Workflow](#workflow) |
+| Use the **perturbation world model** | [Repository structure](#repository-structure) |
+| Fix an **install / GPU / import** problem | [Troubleshooting](#troubleshooting) |
+
+## Table of contents
+
+- [Repository structure](#repository-structure) — the two packages (`embpy`, `world_model`)
+  - [Cross-package import surface](#cross-package-import-surface)
+  - [Install matrix](#install-matrix)
+- [Workflow](#workflow)
+- [Architecture](#architecture)
+- [Key Features](#key-features)
+- [Quick Start](#quick-start) — one runnable snippet per modality
+  - [DNA](#embed-a-gene-with-a-dna-model) · [Protein](#embed-a-protein-with-esm-2) · [Molecule](#embed-a-small-molecule) · [FASTA](#embed-sequences-from-a-fasta-file) · [Cells (AnnData)](#embed-cells-from-an-anndata) · [Text](#text-knowledge-embeddings) · [Structure (Boltz-2)](#boltz-2-structure-embeddings) · [Morphology](#morphological-embeddings)
+  - [Cell-line context](#cell-line-context-annotation) · [Annotate perturbations](#annotate-perturbations)
+- [Available Models](#available-models)
+  - [DNA](#dna-models) · [Protein](#protein-models) · [Molecule](#molecule-models) · [Single-Cell](#single-cell-foundation-models) · [Morphology](#morphology-models) · [Text](#text-models)
+- [Installation](#installation)
+  - [Pixi (recommended)](#option-1-pixi-recommended) · [uv](#option-2-uv) · [Conda / mamba](#option-3-conda--mamba) · [pip](#option-4-plain-pip)
+  - [Running GPU JupyterLab on a SLURM cluster](#running-gpu-jupyterlab-on-a-slurm-cluster)
+  - [Optional extras](#optional-extras) · [Verifying the installation](#verifying-the-installation) · [Troubleshooting](#troubleshooting)
+- [Tutorials](#tutorials) — the numbered notebooks
+- [Package Structure](#package-structure)
+- [Release Notes](#release-notes) · [Contact](#contact) · [Citation](#citation)
+
+## Repository structure
 
 This repository hosts **two independent Python packages** under `src/`:
 
@@ -569,14 +603,13 @@ sbatch submission_scripts/jupyter_pixi.sbatch
 cat slurm_jupyter_<JOBID>.txt  # token, host, port, SSH tunnel command
 ```
 
-Add your own extras after activation:
-
-```bash
-pixi shell -e gpu
-pip install "embpy[boltz]"       # Boltz-2 (needs CUDA)
-pip install "embpy[caduceus]"    # mamba-ssm (needs CUDA nvcc)
-pip install "embpy[evo2]"        # Evo 2
-```
+> **Note.** A few foundation models (Boltz-2, Evo 2, Caduceus, Arc
+> STATE/STACK) pin dependencies that conflict with the main `gpu` stack
+> (e.g. Boltz-2 requires `numpy<2.0`). They do **not** install into `gpu`
+> via `pip install "embpy[...]"` — each lives in its **own pixi env** with
+> a dedicated launcher. See
+> [Models that need their own pixi env](#models-that-need-their-own-pixi-env)
+> below.
 
 #### Single-cell foundation models: a separate pixi env
 
@@ -611,6 +644,33 @@ All other notebooks (DNA, protein, molecule, morphology, identifier
 handling, ...) run in the default `gpu` env via
 `jupyter_pixi.sbatch`. If you're not touching notebook 12, you can
 ignore `helical-gpu` entirely.
+
+#### Models that need their own pixi env
+
+Some foundation models hard-pin dependencies that cannot coexist with the
+main `gpu` stack, so each gets a dedicated pixi environment **and** a
+matching SLURM JupyterLab launcher. Install the env once, then submit its
+launcher and connect exactly like `jupyter_pixi.sbatch`.
+
+| Models / notebook | Why isolated | Install once | Launcher |
+| --- | --- | --- | --- |
+| **Boltz-2** (`boltz2*`) — nb 04 | pins `numpy<2.0`, `scipy==1.13.1` | `pixi install -e boltz` | [`jupyter_pixi_boltz.sbatch`](submission_scripts/jupyter_pixi_boltz.sbatch) |
+| **Evo 2** (`evo2_*`) | FlashAttn/CUDA build pins | `pixi install -e evo2` | [`jupyter_pixi_evo2.sbatch`](submission_scripts/jupyter_pixi_evo2.sbatch) |
+| **Arc STATE/STACK** — nb 08 §13c | `pytorch>=2.7`, `scipy>=1.15` | `CONDA_OVERRIDE_CUDA=12.0 pixi install -e arc-gpu` | [`jupyter_pixi_arc.sbatch`](submission_scripts/jupyter_pixi_arc.sbatch) |
+| **helical** scFMs — nb 08 | `transformers==4.49`, `scipy==1.13.1` | `CONDA_OVERRIDE_CUDA=12.0 pixi install -e helical-gpu` | [`jupyter_pixi_helical.sbatch`](submission_scripts/jupyter_pixi_helical.sbatch) |
+| **Caduceus** (`caduceus_*`) | needs `mamba-ssm` (CUDA nvcc) | `pixi install -e caduceus` | run via `pixi run -e caduceus` |
+
+```bash
+# Example: Boltz-2 structure embeddings (notebook 04)
+pixi install -e boltz                              # one-time
+sbatch submission_scripts/jupyter_pixi_boltz.sbatch
+cat submission_scripts/logs/jupyter_pixi_boltz_<JOBID>.out   # URL + token
+# In the notebook, pick the kernel from the `boltz` server, NOT the gpu one.
+```
+
+The "Boltz not installed" message in notebook 04 simply means the notebook
+is running on a kernel from a different env (e.g. `gpu`); launch it from the
+`boltz` server above instead.
 
 ---
 
