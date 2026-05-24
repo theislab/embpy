@@ -70,7 +70,7 @@ def compute_pca(
     AnnData with PCA coordinates in ``obsm[output_key]`` and the
     variance-ratio array in ``uns[output_key + "_variance_ratio"]``.
     """
-    from sklearn.decomposition import PCA
+    from .._pca import pca_project
 
     if obsm_key not in adata.obsm:
         raise KeyError(
@@ -78,17 +78,15 @@ def compute_pca(
         )
 
     out = output_key or f"X_pca_{obsm_key}"
-    X = np.asarray(adata.obsm[obsm_key], dtype=np.float64)
-    n_comp = max(1, min(n_components, X.shape[0], X.shape[1]))
-
-    pca = PCA(n_components=n_comp, random_state=random_state)
-    coords = pca.fit_transform(X)
+    coords, variance_ratio = pca_project(
+        adata.obsm[obsm_key], n_components, random_state=random_state,
+    )
     adata.obsm[out] = coords
-    adata.uns[f"{out}_variance_ratio"] = np.asarray(pca.explained_variance_ratio_)
+    adata.uns[f"{out}_variance_ratio"] = variance_ratio
     logging.info(
         "PCA (%d-D) on '%s' stored in obsm['%s'] (variance ratio: %s).",
-        n_comp, obsm_key, out,
-        np.round(pca.explained_variance_ratio_, 3).tolist(),
+        coords.shape[1], obsm_key, out,
+        np.round(variance_ratio, 3).tolist(),
     )
     return adata
 

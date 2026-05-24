@@ -36,10 +36,15 @@ Backward compatibility:
 from __future__ import annotations
 
 from importlib import import_module
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
 
-__version__ = version("embpy")
+try:
+    __version__ = version("embpy")
+except PackageNotFoundError:
+    # Source-tree imports during tests/development may not have installed
+    # package metadata yet. Keep import embpy cheap and usable.
+    __version__ = "0+unknown"
 
 # Static-analysis aid: declare the lazy-exported names so type checkers
 # (basedpyright, mypy) and IDE intellisense see the public surface.

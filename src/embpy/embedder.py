@@ -133,6 +133,64 @@ def _guess_missing_package(msg: str) -> str | None:
     return None
 
 
+def _zip_canon(
+    raw: list[str],
+    canon: list[str | None],
+    *,
+    alias_scheme: str | None = None,
+) -> tuple[list[str], dict[str, dict[str, str]]]:
+    """Drop unresolved canonical ids and keep original ids as display aliases."""
+    kept: list[str] = []
+    aliases: dict[str, dict[str, str]] = {}
+    for orig, cid in zip(raw, canon):
+        if cid is None or cid == "":
+            logging.warning("Dropping %r: could not canonicalize identifier.", orig)
+            continue
+        kept.append(str(cid))
+        if alias_scheme is not None and orig != cid:
+            aliases.setdefault(str(cid), {})[alias_scheme] = orig
+    return kept, aliases
+
+
+def _apply_canon(
+    raw: list[str],
+    canon: list[str | None],
+    *,
+    alias_scheme: str,
+) -> tuple[list[str], dict[str, dict[str, str]]]:
+    """Compatibility wrapper for callers that want one alias scheme."""
+    return _zip_canon(raw, canon, alias_scheme=alias_scheme)
+
+
+def _dedup_rows(
+    canon: list[str] | tuple[list[str], dict[str, dict[str, str]]],
+    matrix: np.ndarray,
+    aliases: dict[str, dict[str, str]] | None = None,
+) -> tuple[list[str], np.ndarray, dict[str, dict[str, str]]]:
+    """Collapse duplicate canonical ids, preserving row order and aliases."""
+    if isinstance(canon, tuple):
+        canon, tuple_aliases = canon
+        aliases = tuple_aliases if aliases is None else {**tuple_aliases, **aliases}
+    aliases = aliases or {}
+
+    seen: set[str] = set()
+    keep_idx: list[int] = []
+    out_ids: list[str] = []
+    n_dup = 0
+    for i, cid in enumerate(canon):
+        if cid in seen:
+            n_dup += 1
+            continue
+        seen.add(cid)
+        keep_idx.append(i)
+        out_ids.append(cid)
+    if n_dup:
+        logging.warning("Dropped %d rows that collapsed to a duplicate canonical id.", n_dup)
+
+    out_aliases = {cid: aliases[cid] for cid in out_ids if cid in aliases}
+    return out_ids, matrix[keep_idx], out_aliases
+
+
 def _parse_oom_attempted_bytes(msg: str) -> int | None:
     """Extract ``B`` from CUDA OOM messages like "Tried to allocate 33.87 GiB".
 
@@ -642,6 +700,261 @@ class BioEmbedder:
                 torch.cuda.ipc_collect()
         except Exception:  # noqa: BLE001
             pass
+
+    # ------------------------------------------------------------------
+    # Standardized output API (canonical EmbeddingResult + exporters)
+    # ------------------------------------------------------------------
+
+    def embed(
+        self,
+        identifiers: Sequence[str],
+        *,
+        entity_type: Literal["gene", "molecule", "protein"],
+        model: str,
+        id_type: str | None = None,
+        organism: str = "human",
+        pooling_strategy: str = "mean",
+        output: Literal["anndata", "table"] = "anndata",
+        target: Any = None,
+        attach_to: Literal["auto", "obs", "var"] = "auto",
+        harmonize_dim: int | None = None,
+        path: str | None = None,
+        fmt: Literal["parquet", "csv"] = "parquet",
+        missing: Literal["error", "nan"] = "error",
+        key: str | None = None,
+        random_state: int = 0,
+        **embed_kwargs: Any,
+    ):
+        """Embed a batch of entities and return a standardized output.
+
+        The single user-facing surface for the canonical output layer. It
+        wraps the existing ``embed_*_batch`` numpy methods into an
+        :class:`embpy.io.EmbeddingResult` (canonical ids -- Ensembl /
+        canonical SMILES / UniProt -- plus provenance and human-readable
+        cross-ref aliases) and routes it through the exporters. The legacy
+        ``embed_*`` methods are untouched; this is purely additive.
+
+        Parameters
+        ----------
+        identifiers
+            Entities to embed (gene symbols / SMILES / protein symbols,
+            per ``entity_type`` and ``id_type``).
+        entity_type
+            ``"gene"``, ``"molecule"`` or ``"protein"``.
+        model
+            Model key in ``MODEL_REGISTRY``.
+        id_type
+            Input id convention. Defaults: gene -> ``"symbol"``,
+            molecule -> ``"smiles"`` (use ``"name"`` for drug names),
+            protein -> ``"symbol"``.
+        output
+            ``"anndata"`` (default) or ``"table"``.
+        target, attach_to, missing, key
+            AnnData attach controls (see :func:`embpy.io.to_anndata`).
+            With ``output="anndata"`` and ``target`` set, the embedding
+            is attached to ``target.obsm``/``.varm``; with ``target=None``
+            a standalone AnnData is built. Ignored (with a warning) when
+            ``output="table"``.
+        harmonize_dim
+            If set, PCA-project to this width before export.
+        path, fmt
+            ``output="table"`` only -- write the frame to ``path`` as
+            parquet (default) or csv, with a ``<path>.meta.json`` sidecar.
+
+        Returns
+        -------
+        AnnData | pandas.DataFrame
+            Depending on ``output``.
+        """
+        from .io.exporters import route_output  # noqa: PLC0415
+
+        result = self._embed_to_result(
+            identifiers,
+            entity_type=entity_type,
+            model=model,
+            id_type=id_type,
+            organism=organism,
+            pooling_strategy=pooling_strategy,
+            **embed_kwargs,
+        )
+        return route_output(
+            result,
+            output=output,
+            target=target,
+            attach_to=attach_to,
+            harmonize_dim=harmonize_dim,
+            path=path,
+            fmt=fmt,
+            missing=missing,
+            key=key,
+            random_state=random_state,
+        )
+
+    def _embed_to_result(
+        self,
+        identifiers: Sequence[str],
+        *,
+        entity_type: str,
+        model: str,
+        id_type: str | None,
+        organism: str,
+        pooling_strategy: str,
+        **embed_kwargs: Any,
+    ):
+        """Dispatch to a batch embedder + canonicalize -> EmbeddingResult.
+
+        The numeric embedding comes from the existing ``embed_*_batch``
+        methods; canonicalization reuses the existing resolvers (the sole
+        owners of id-mapping logic). Rows whose embedding or id-resolution
+        fails are dropped; duplicate canonical ids collapse to the first.
+        """
+        from .io.result import EmbeddingProvenance, EmbeddingResult  # noqa: PLC0415
+
+        ids = [str(x) for x in identifiers]
+        extra: dict[str, str] = {}
+
+        if entity_type == "gene":
+            it = id_type or "symbol"
+            vecs = self.embed_genes_batch(
+                model=model, identifiers=ids, id_type=it, organism=organism,
+                pooling_strategy=pooling_strategy, **embed_kwargs,
+            )
+            raw, matrix = self._aligned_matrix(ids, vecs)
+            canon, aliases, scheme = self._canon_genes(raw, it, organism)
+        elif entity_type == "molecule":
+            it = id_type or "smiles"
+            smiles, name_alias = self._molecule_inputs_to_smiles(ids, it, extra)
+            vecs = self.embed_molecules_batch(
+                smiles, model, pooling_strategy=pooling_strategy, **embed_kwargs,
+            )
+            raw, matrix = self._aligned_matrix(smiles, vecs)
+            canon, aliases, scheme = self._canon_molecules(raw, name_alias)
+        elif entity_type == "protein":
+            it = id_type or "symbol"
+            d = self.embed_proteins_batch(
+                ids, model, id_type=it, organism=organism,
+                pooling_strategy=pooling_strategy, **embed_kwargs,
+            )
+            raw, matrix = self._dict_matrix(d)
+            canon, aliases, scheme = self._canon_proteins(raw, it, organism)
+        else:
+            raise ValueError(
+                f"entity_type must be 'gene'/'molecule'/'protein', got {entity_type!r}."
+            )
+
+        canon, matrix, aliases = _dedup_rows(canon, matrix, aliases)
+        prov = EmbeddingProvenance.create(
+            model=model, pooling=pooling_strategy, extra=extra,
+        )
+        return EmbeddingResult(
+            matrix=matrix,
+            entity_ids=tuple(canon),
+            entity_type=entity_type,
+            id_scheme=scheme,
+            provenance=prov,
+            aliases=aliases or None,
+        )
+
+    @staticmethod
+    def _aligned_matrix(
+        ids: list[str], vecs: list[np.ndarray | None],
+    ) -> tuple[list[str], np.ndarray]:
+        """Drop None embeddings; return (kept_ids, stacked matrix)."""
+        kept_ids = [i for i, v in zip(ids, vecs) if v is not None]
+        kept = [np.asarray(v, dtype=np.float32).ravel() for v in vecs if v is not None]
+        if not kept:
+            raise ValueError("No embeddings were produced (all inputs failed).")
+        return kept_ids, np.stack(kept, axis=0)
+
+    @staticmethod
+    def _dict_matrix(d: dict) -> tuple[list[str], np.ndarray]:
+        """Flatten a {id: vector} batch-protein result into (ids, matrix)."""
+        ids: list[str] = []
+        rows: list[np.ndarray] = []
+        for k, v in d.items():
+            if isinstance(v, dict):
+                raise ValueError(
+                    "embed(output=...) does not support per-isoform protein "
+                    "embeddings (multiple vectors per id). Use isoform='canonical' "
+                    "or the legacy embed_proteins_batch for isoform tables."
+                )
+            ids.append(str(k))
+            rows.append(np.asarray(v, dtype=np.float32).ravel())
+        if not rows:
+            raise ValueError("No protein embeddings were produced.")
+        return ids, np.stack(rows, axis=0)
+
+    def _molecule_inputs_to_smiles(
+        self, ids: list[str], id_type: str, extra: dict[str, str],
+    ) -> tuple[list[str], dict[str, str]]:
+        """Return SMILES to embed + a {smiles: name} alias map.
+
+        For ``id_type="smiles"`` the inputs are passed through. For
+        ``id_type="name"`` each name is resolved to SMILES via the drug
+        resolver chain, recording which API answered (provenance).
+        """
+        if id_type == "smiles":
+            return ids, {}
+        if id_type != "name":
+            raise ValueError(
+                f"molecule id_type must be 'smiles' or 'name', got {id_type!r}."
+            )
+        from .resources.molecule.resolver import DrugResolver  # noqa: PLC0415
+
+        resolver = DrugResolver()
+        smiles: list[str] = []
+        name_alias: dict[str, str] = {}
+        sources: dict[str, int] = {}
+        for name in ids:
+            res = resolver.name_to_smiles_resolved(name)
+            if res.smiles is None:
+                logging.warning("Dropping drug name %r: could not resolve to SMILES.", name)
+                continue
+            smiles.append(res.smiles)
+            name_alias[res.smiles] = name
+            sources[res.source] = sources.get(res.source, 0) + 1
+        if sources:
+            extra["name_resolution_sources"] = ", ".join(
+                f"{k}:{v}" for k, v in sorted(sources.items())
+            )
+        return smiles, name_alias
+
+    def _canon_genes(
+        self, raw: list[str], id_type: str, organism: str,
+    ) -> tuple[list[str], dict[str, dict[str, str]], str]:
+        if id_type == "ensembl_id" or all(str(x).upper().startswith("ENS") for x in raw):
+            return raw, {}, "ensembl_gene_id"
+        mapping = self.gene_resolver.symbols_to_ensembl_batch(raw, organism=organism)
+        canon = [mapping.get(s) for s in raw]
+        return _apply_canon(raw, canon, alias_scheme="gene_symbol"), {}, "ensembl_gene_id"  # type: ignore[return-value]
+
+    def _canon_molecules(
+        self, raw: list[str], name_alias: dict[str, str],
+    ) -> tuple[list[str], dict[str, dict[str, str]], str]:
+        from .resources.molecule.resolver import DrugResolver  # noqa: PLC0415
+
+        resolver = DrugResolver()
+        canon = [resolver.canonicalize_smiles(s) for s in raw]
+        kept, aliases = _zip_canon(raw, canon)
+        # Surface the original drug name (if we came from a name) for display.
+        for cid in list(aliases.keys()):
+            nm = name_alias.get(cid)
+            if nm:
+                aliases[cid]["name"] = nm
+        return kept, aliases, "canonical_smiles"
+
+    def _canon_proteins(
+        self, raw: list[str], id_type: str, organism: str,
+    ) -> tuple[list[str], dict[str, dict[str, str]], str]:
+        canon = [
+            self.protein_resolver.resolve_uniprot_id(x, id_type=id_type, organism=organism)
+            for x in raw
+        ]
+        kept, aliases = _zip_canon(raw, canon)
+        for orig, cid in zip(raw, canon):
+            if cid and orig != cid:
+                aliases.setdefault(cid, {})["gene_symbol"] = orig
+        return kept, aliases, "uniprot"
 
     def embed_gene(
         self,

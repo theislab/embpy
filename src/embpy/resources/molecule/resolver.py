@@ -4,10 +4,29 @@ from __future__ import annotations
 import logging
 import re
 import time
+from dataclasses import dataclass
 from typing import Literal
 from urllib.parse import quote as _url_quote
 
 import requests
+
+MoleculeSource = Literal[
+    "pubchem_name", "pubchem_cid", "cactus", "cirpy", "none"
+]
+
+
+@dataclass(frozen=True, slots=True)
+class DrugResolution:
+    """Outcome of resolving a drug *name* to canonical SMILES.
+
+    Mirrors the gene-side ``Resolution`` so callers can record *which*
+    API a molecule id came from. ``smiles`` is ``None`` if every step
+    failed; ``source`` names the API that succeeded (or ``"none"``).
+    """
+
+    smiles: str | None
+    source: MoleculeSource
+
 
 PUBCHEM = "https://pubchem.ncbi.nlm.nih.gov/rest/pug"
 HEADERS = {"Accept": "application/json", "User-Agent": "DrugResolver/0.1 (contact: you@example.com)"}
@@ -117,8 +136,14 @@ class DrugResolver:
         if self.sleep_sec:
             time.sleep(self.sleep_sec)
 
-    def _clean_and_canonicalise_smiles(self, smiles: str) -> str | None:
-        """Standardise a SMILES string by removing isotope labels, cleaning, and stripping salts.
+    def canonicalize_smiles(self, smiles: str) -> str | None:
+        """Standardise a SMILES string to its canonical form.
+
+        Removes isotope labels, normalises/sanitises, strips known
+        salts/solvents, keeps the largest fragment, neutralises charges,
+        then returns the RDKit-canonical SMILES. This is the package's
+        single SMILES canonicalizer -- the canonical *molecule* id scheme
+        used by the io layer and the legacy loader.
 
         Parameters
         ----------
@@ -149,6 +174,11 @@ class DrugResolver:
         rdMolStandardize.FragmentParentInPlace(mol, skipStandardize=True)  # keep largest remaining fragment
         rdMolStandardize.Uncharger().unchargeInPlace(mol)  # neutralize charges
         return Chem.MolToSmiles(mol)
+
+    # Backward-compatible private alias (internal callers predate the
+    # public name). Prefer :meth:`canonicalize_smiles` in new code.
+    def _clean_and_canonicalise_smiles(self, smiles: str) -> str | None:
+        return self.canonicalize_smiles(smiles)
 
     # ---------- Name cleaning helpers ----------
     @staticmethod
@@ -265,7 +295,17 @@ class DrugResolver:
         return None
 
     def _try_resolve(self, name: str) -> str | None:
-        """Try to resolve *name* to canonical SMILES via PubChem, NIH Cactus, and CIRpy."""
+        """Thin wrapper over :meth:`_resolve_with_source` returning SMILES only."""
+        return self._resolve_with_source(name).smiles
+
+    def _resolve_with_source(self, name: str) -> DrugResolution:
+        """Resolve *name* to canonical SMILES through the API chain.
+
+        Tries, in order: PubChem name -> SMILES, PubChem name -> CID ->
+        SMILES, NIH Cactus, CIRpy. Returns a :class:`DrugResolution`
+        recording which API succeeded so callers can audit provenance
+        (mirrors the gene resolver's ``Resolution.source``).
+        """
         q = _url_quote(name, safe="")
 
         # 1) Direct: name -> SMILES
@@ -275,7 +315,7 @@ class DrugResolver:
             props = js.get("PropertyTable", {}).get("Properties", [])
             smi = self._extract_smiles(props)
             if smi:
-                return self._clean_and_canonicalise_smiles(smi) or smi
+                return DrugResolution(self.canonicalize_smiles(smi) or smi, "pubchem_name")
         except (requests.RequestException, ValueError):
             pass
 
@@ -294,7 +334,7 @@ class DrugResolver:
                 props = js.get("PropertyTable", {}).get("Properties", [])
                 smi = self._extract_smiles(props)
                 if smi:
-                    return self._clean_and_canonicalise_smiles(smi) or smi
+                    return DrugResolution(self.canonicalize_smiles(smi) or smi, "pubchem_cid")
             else:
                 logging.warning("No PubChem CID for name=%r", name)
         except (requests.RequestException, ValueError):
@@ -307,7 +347,7 @@ class DrugResolver:
             url = f"https://cactus.nci.nih.gov/chemical/structure/{q}/smiles"
             smi = _get_text(url).strip()
             if smi and "Error" not in smi:
-                return self._clean_and_canonicalise_smiles(smi) or smi
+                return DrugResolution(self.canonicalize_smiles(smi) or smi, "cactus")
         except (requests.RequestException, ValueError):
             pass
 
@@ -319,11 +359,11 @@ class DrugResolver:
 
                 smi = cirpy.resolve(name, "smiles")
                 if smi:
-                    return self._clean_and_canonicalise_smiles(smi) or smi
+                    return DrugResolution(self.canonicalize_smiles(smi) or smi, "cirpy")
             except (OSError, ValueError):
                 pass
 
-        return None
+        return DrugResolution(None, "none")
 
     # ---------- Public API ----------
     def name_to_smiles(self, name: str) -> str | None:
@@ -360,14 +400,34 @@ class DrugResolver:
             )
             return None
 
+        return self.name_to_smiles_resolved(name).smiles
+
+    def name_to_smiles_resolved(self, name: str) -> DrugResolution:
+        """Like :meth:`name_to_smiles` but reports which API resolved it.
+
+        Returns a :class:`DrugResolution` whose ``source`` names the API
+        (``pubchem_name`` / ``pubchem_cid`` / ``cactus`` / ``cirpy``) that
+        produced the SMILES, or ``"none"`` if every variant/API failed.
+        Use this when you need provenance of where a molecule id came
+        from (e.g. to record it in an embedding's metadata).
+        """
+        classification = self.classify_name(name)
+        if classification in ("control", "target_description"):
+            logging.info(
+                "Skipping non-drug identifier: %r (classified as %s)",
+                name, classification,
+            )
+            return DrugResolution(None, "none")
+
         for variant in self._name_variants(name):
-            result = self._try_resolve(variant)
-            if result is not None:
-                return result
+            res = self._resolve_with_source(variant)
+            if res.smiles is not None:
+                logging.info("Resolved %r -> SMILES via %s", name, res.source)
+                return res
             self._sleep()
 
         logging.error("Could not resolve SMILES for %r", name)
-        return None
+        return DrugResolution(None, "none")
 
     def smiles_to_names(self, smiles: str, top_k: int = 5) -> list[str]:
         """
