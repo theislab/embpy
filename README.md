@@ -12,34 +12,34 @@ Given a perturbation (genetic, chemical, or morphological) and/or single-cell ex
 
 ## Jump to what you need
 
-| I want to&nbsp;... | Go to |
-| --- | --- |
-| **Install** embpy (pixi / uv / conda / pip) | [Installation](#installation) |
+| I want to&nbsp;...                          | Go to                                                                                   |
+| ------------------------------------------- | --------------------------------------------------------------------------------------- |
+| **Install** embpy (pixi / uv / conda / pip) | [Installation](#installation)                                                           |
 | Run a **GPU notebook on the SLURM cluster** | [Running GPU JupyterLab on a SLURM cluster](#running-gpu-jupyterlab-on-a-slurm-cluster) |
-| See **copy-paste code examples** | [Quick Start](#quick-start) |
-| Browse the **130+ models** and their keys | [Available Models](#available-models) |
-| Learn by **tutorial notebook** | [Tutorials](#tutorials) |
-| Understand the **design / data flow** | [Architecture](#architecture) · [Workflow](#workflow) |
-| Use the **perturbation world model** | [Repository structure](#repository-structure) |
-| Fix an **install / GPU / import** problem | [Troubleshooting](#troubleshooting) |
+| See **copy-paste code examples**            | [Quick Start](#quick-start)                                                             |
+| Browse the **130+ models** and their keys   | [Available Models](#available-models)                                                   |
+| Learn by **tutorial notebook**              | [Tutorials](#tutorials)                                                                 |
+| Understand the **design / data flow**       | [Architecture](#architecture) · [Workflow](#workflow)                                   |
+| Use the **perturbation world model**        | [Repository structure](#repository-structure)                                           |
+| Fix an **install / GPU / import** problem   | [Troubleshooting](#troubleshooting)                                                     |
 
 ## Table of contents
 
 - [Repository structure](#repository-structure) — the two packages (`embpy`, `world_model`)
-  - [Cross-package import surface](#cross-package-import-surface)
-  - [Install matrix](#install-matrix)
+    - [Cross-package import surface](#cross-package-import-surface)
+    - [Install matrix](#install-matrix)
 - [Workflow](#workflow)
 - [Architecture](#architecture)
 - [Key Features](#key-features)
 - [Quick Start](#quick-start) — one runnable snippet per modality
-  - [DNA](#embed-a-gene-with-a-dna-model) · [Protein](#embed-a-protein-with-esm-2) · [Molecule](#embed-a-small-molecule) · [FASTA](#embed-sequences-from-a-fasta-file) · [Cells (AnnData)](#embed-cells-from-an-anndata) · [Text](#text-knowledge-embeddings) · [Structure (Boltz-2)](#boltz-2-structure-embeddings) · [Morphology](#morphological-embeddings)
-  - [Cell-line context](#cell-line-context-annotation) · [Annotate perturbations](#annotate-perturbations)
+    - [DNA](#embed-a-gene-with-a-dna-model) · [Protein](#embed-a-protein-with-esm-2) · [Molecule](#embed-a-small-molecule) · [FASTA](#embed-sequences-from-a-fasta-file) · [Cells (AnnData)](#embed-cells-from-an-anndata) · [Text](#text-knowledge-embeddings) · [Structure (Boltz-2)](#boltz-2-structure-embeddings) · [Morphology](#morphological-embeddings)
+    - [Cell-line context](#cell-line-context-annotation) · [Annotate perturbations](#annotate-perturbations)
 - [Available Models](#available-models)
-  - [DNA](#dna-models) · [Protein](#protein-models) · [Molecule](#molecule-models) · [Single-Cell](#single-cell-foundation-models) · [Morphology](#morphology-models) · [Text](#text-models)
+    - [DNA](#dna-models) · [Protein](#protein-models) · [Molecule](#molecule-models) · [Single-Cell](#single-cell-foundation-models) · [Morphology](#morphology-models) · [Text](#text-models)
 - [Installation](#installation)
-  - [Pixi (recommended)](#option-1-pixi-recommended) · [uv](#option-2-uv) · [Conda / mamba](#option-3-conda--mamba) · [pip](#option-4-plain-pip)
-  - [Running GPU JupyterLab on a SLURM cluster](#running-gpu-jupyterlab-on-a-slurm-cluster)
-  - [Optional extras](#optional-extras) · [Verifying the installation](#verifying-the-installation) · [Troubleshooting](#troubleshooting)
+    - [Pixi (recommended)](#option-1-pixi-recommended) · [uv](#option-2-uv) · [Conda / mamba](#option-3-conda--mamba) · [pip](#option-4-plain-pip)
+    - [Running GPU JupyterLab on a SLURM cluster](#running-gpu-jupyterlab-on-a-slurm-cluster)
+    - [Optional extras](#optional-extras) · [Verifying the installation](#verifying-the-installation) · [Troubleshooting](#troubleshooting)
 - [Tutorials](#tutorials) — the numbered notebooks
 - [Package Structure](#package-structure)
 - [Release Notes](#release-notes) · [Contact](#contact) · [Citation](#citation)
@@ -48,10 +48,10 @@ Given a perturbation (genetic, chemical, or morphological) and/or single-cell ex
 
 This repository hosts **two independent Python packages** under `src/`:
 
-| Package       | Purpose                                                                                                                                                | Source path        | Install                                |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ | -------------------------------------- |
+| Package       | Purpose                                                                                                                                                | Source path        | Install                                        |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ | ---------------------------------------------- |
 | `embpy`       | Infrastructure: embeddings, resolvers, annotations, plotting, analysis, and foundation-model wrappers (130+ DNA / protein / RNA / cell / drug models). | `src/embpy/`       | `pip install embpy` (or `uv pip install -e .`) |
-| `world_model` | Perturbation world model: state-stack encoder, gene-embedding action, GPT-style autoregressive dynamics, training / evaluation pipelines.              | `src/world_model/` | `pip install -e ./src/world_model`     |
+| `world_model` | Perturbation world model: state-stack encoder, gene-embedding action, GPT-style autoregressive dynamics, training / evaluation pipelines.              | `src/world_model/` | `pip install -e ./src/world_model`             |
 
 `world_model` depends on `embpy`; the reverse is forbidden and enforced by `tests/embpy/test_boundary.py`. The name `world_model` may be renamed in a follow-up (candidates: `pertwm`, `pertworld`, `worldcell`).
 
@@ -59,11 +59,11 @@ This repository hosts **two independent Python packages** under `src/`:
 
 Every `world_model -> embpy` boundary import is enumerated in `src/world_model/world_model/__init__.py` under the `# --- depends on embpy: ---` block. The current touch points are:
 
-| Symbol                                                                | Used by (in `world_model`)                                  |
-| --------------------------------------------------------------------- | ----------------------------------------------------------- |
-| `embpy.resources.gene.control.ControlPolicy`                          | `data/embeddings/{registry,bio_embedder,precomputed}.py`, `scripts/embed_perturbations.py` |
-| `embpy.embedder.BioEmbedder` *(lazy)*                                 | `data/embeddings/bio_embedder.py` (`_get_embedder`)         |
-| `embpy.models.singlecell_models.{StackWrapper, StateEmbeddingWrapper}` *(lazy)* | `models/encoders/backbones/{stack, state}.py`           |
+| Symbol                                                                          | Used by (in `world_model`)                                                                 |
+| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `embpy.resources.gene.control.ControlPolicy`                                    | `data/embeddings/{registry,bio_embedder,precomputed}.py`, `scripts/embed_perturbations.py` |
+| `embpy.embedder.BioEmbedder` _(lazy)_                                           | `data/embeddings/bio_embedder.py` (`_get_embedder`)                                        |
+| `embpy.models.singlecell_models.{StackWrapper, StateEmbeddingWrapper}` _(lazy)_ | `models/encoders/backbones/{stack, state}.py`                                              |
 
 ### Install matrix
 
@@ -218,6 +218,15 @@ flowchart LR
 - **Morphology embeddings** -- SubCell MAE/ViT models for JUMP Cell Painting and HPA fluorescence images with 8 model variants across 4 channel configurations; `embed_morphological()` for single images, `embed_perturbation_morphology()` for perturbation-level embedding with automatic identifier resolution (`GeneResolver` for genes, `DrugResolver` for compounds), image fetching from CDN or local paths, preprocessing, and aggregation; pre-computed JUMP CellProfiler profiles also supported
 - **Phenotypic activity (mAP)** -- memory-efficient chunked cosine similarity with optional GPU acceleration for computing mean average precision on large perturbation screens (e.g. 50K+ wells)
 - **GPU acceleration** via rapids_singlecell for preprocessing, PCA, UMAP, neighbors, and Leiden
+
+### Standardized embedding output
+
+`BioEmbedder.embed(...)` is the standardized embedding I/O path. It accepts direct identifiers (`list`, tuple, NumPy array, pandas Series/DataFrame, AnnData) or CSV/TSV/Parquet input paths. Multi-column tables require `identifier_column=...`; AnnData identifiers can come from `.obs_names`, `.var_names`, `obs_column=...`, or `var_column=...`.
+
+Canonical IDs are used as primary keys by default: Ensembl gene IDs for genes, canonical SMILES for molecules, UniProt accessions for proteins, and explicit input IDs for raw text/sequence entries. Original symbols, names, and input values are kept as aliases/metadata, not as primary keys.
+
+Outputs are either AnnData or tables. Table output defaults to Parquet and writes a `<file>.meta.json` sidecar. Multiple model/entity outputs use deterministic keys that include entity type and model name; multiple table files require an output directory. AnnData outputs never store generated embeddings in `.X`: gene/protein embeddings go to `.varm`, observation-like embeddings go to `.obsm`, isoform/ragged protein outputs go to `.uns`, and standalone AnnData uses sparse placeholder `.X` only. `whole_genome=True` embeds genome-wide Ensembl genes for an explicit organism using the resolver/resource backend. `harmonize_dim=...` applies per-result PCA before export and records the PCA metadata. Use `show_progress=True` to enable tqdm progress bars.
+
 - **Batch processing** with SLURM array job scripts for full-genome embedding
 - **scverse integration** -- AnnData-native throughout, compatible with scanpy/scvi-tools/pertpy
 
@@ -440,75 +449,75 @@ adata = annotate_proteins(adata, column="gene")
 
 ### DNA Models
 
-| Model | Key | Parameters |
-|---|---|---|
-| Enformer | `enformer_human_rough` | 250M |
-| Borzoi (4 replicates) | `borzoi_v0` -- `borzoi_v3` | 200M |
-| Borzoi Mouse | `borzoi_v0_mouse` -- `borzoi_v3_mouse` | 200M |
-| Flashzoi (4 replicates) | `flashzoi_v0` -- `flashzoi_v3` | 200M |
-| Evo 1 / 1.5 | `evo1_8k`, `evo1_131k`, `evo1.5_8k` | 7B |
-| Evo 2 | `evo2_7b`, `evo2_40b` | 7B / 40B |
-| Nucleotide Transformer v1/v2 | `nt_500m_human_ref`, `nt_v2_500m`, ... | 50M -- 2.5B |
-| Nucleotide Transformer v3 | `ntv3_100m_pre`, `ntv3_650m_pos`, ... | 8M -- 650M |
-| HyenaDNA | `hyenadna_tiny_1k` -- `hyenadna_large_1m` | 1.6M -- 6.6M |
-| GENA-LM | `gena_lm_bert_base`, `gena_lm_bert_large`, ... | 110M -- 336M |
-| Caduceus | `caduceus_ph_131k`, `caduceus_ps_131k` | 16M |
+| Model                        | Key                                            | Parameters   |
+| ---------------------------- | ---------------------------------------------- | ------------ |
+| Enformer                     | `enformer_human_rough`                         | 250M         |
+| Borzoi (4 replicates)        | `borzoi_v0` -- `borzoi_v3`                     | 200M         |
+| Borzoi Mouse                 | `borzoi_v0_mouse` -- `borzoi_v3_mouse`         | 200M         |
+| Flashzoi (4 replicates)      | `flashzoi_v0` -- `flashzoi_v3`                 | 200M         |
+| Evo 1 / 1.5                  | `evo1_8k`, `evo1_131k`, `evo1.5_8k`            | 7B           |
+| Evo 2                        | `evo2_7b`, `evo2_40b`                          | 7B / 40B     |
+| Nucleotide Transformer v1/v2 | `nt_500m_human_ref`, `nt_v2_500m`, ...         | 50M -- 2.5B  |
+| Nucleotide Transformer v3    | `ntv3_100m_pre`, `ntv3_650m_pos`, ...          | 8M -- 650M   |
+| HyenaDNA                     | `hyenadna_tiny_1k` -- `hyenadna_large_1m`      | 1.6M -- 6.6M |
+| GENA-LM                      | `gena_lm_bert_base`, `gena_lm_bert_large`, ... | 110M -- 336M |
+| Caduceus                     | `caduceus_ph_131k`, `caduceus_ps_131k`         | 16M          |
 
 ### Protein Models
 
-| Model | Key | Parameters |
-|---|---|---|
-| ESM-1b | `esm1b` | 650M |
-| ESM-1v (5 seeds) | `esm1v_1` -- `esm1v_5` | 650M |
-| ESM-2 | `esm2_8M` -- `esm2_15B` | 8M -- 15B |
-| ESM-C | `esmc_300m`, `esmc_600m`, `esmc_6b` | 300M -- 6B |
-| ESM3 | `esm3_small`, `esm3_medium`, `esm3_large` | 1.4B -- 98B |
-| ProtT5 | `prot_t5_xl`, `prot_t5_xl_half` | 3B |
-| Boltz-2 | `boltz2`, `boltz2_pairwise`, `boltz2_both` | ~400M (trunk) |
+| Model            | Key                                        | Parameters    |
+| ---------------- | ------------------------------------------ | ------------- |
+| ESM-1b           | `esm1b`                                    | 650M          |
+| ESM-1v (5 seeds) | `esm1v_1` -- `esm1v_5`                     | 650M          |
+| ESM-2            | `esm2_8M` -- `esm2_15B`                    | 8M -- 15B     |
+| ESM-C            | `esmc_300m`, `esmc_600m`, `esmc_6b`        | 300M -- 6B    |
+| ESM3             | `esm3_small`, `esm3_medium`, `esm3_large`  | 1.4B -- 98B   |
+| ProtT5           | `prot_t5_xl`, `prot_t5_xl_half`            | 3B            |
+| Boltz-2          | `boltz2`, `boltz2_pairwise`, `boltz2_both` | ~400M (trunk) |
 
 ### Molecule Models
 
-| Model | Key | Type |
-|---|---|---|
-| ChemBERTa | `chemberta2MTR`, `chemberta2MLM` | Transformer |
-| MolFormer | `molformer_base` | Transformer |
-| RDKit Fingerprints | `rdkit_fp`, `morgan_fp`, `maccs_fp`, ... | Classical |
-| MiniMol | `minimol` | GNN |
-| MHG-GNN | `mhg_gnn` | Hypergraph GNN |
-| MolE | `mole` | Graph Transformer |
+| Model              | Key                                      | Type              |
+| ------------------ | ---------------------------------------- | ----------------- |
+| ChemBERTa          | `chemberta2MTR`, `chemberta2MLM`         | Transformer       |
+| MolFormer          | `molformer_base`                         | Transformer       |
+| RDKit Fingerprints | `rdkit_fp`, `morgan_fp`, `maccs_fp`, ... | Classical         |
+| MiniMol            | `minimol`                                | GNN               |
+| MHG-GNN            | `mhg_gnn`                                | Hypergraph GNN    |
+| MolE               | `mole`                                   | Graph Transformer |
 
 ### Single-Cell Foundation Models
 
-| Model | Key | Parameters |
-|---|---|---|
-| scGPT | `scgpt` | 51M |
-| Geneformer v1/v2 | `geneformer_v1_6L` -- `geneformer_v2_18L` | 10M -- 316M |
-| UCE | `uce` | 1.3B |
-| TranscriptFormer | `transcriptformer_metazoa`, `transcriptformer_sapiens` | 368M -- 542M |
-| Tahoe-x1 | `tahoe_70m`, `tahoe_1b`, `tahoe_3b` | 70M -- 3B |
-| Cell2Sentence-Scale | `cell2sentence_2b`, `cell2sentence_27b` | 2B -- 27B |
-| PCA | `pca` | -- |
-| scVI / scANVI / totalVI | `scvi`, `scanvi`, `totalvi` | -- |
+| Model                   | Key                                                    | Parameters   |
+| ----------------------- | ------------------------------------------------------ | ------------ |
+| scGPT                   | `scgpt`                                                | 51M          |
+| Geneformer v1/v2        | `geneformer_v1_6L` -- `geneformer_v2_18L`              | 10M -- 316M  |
+| UCE                     | `uce`                                                  | 1.3B         |
+| TranscriptFormer        | `transcriptformer_metazoa`, `transcriptformer_sapiens` | 368M -- 542M |
+| Tahoe-x1                | `tahoe_70m`, `tahoe_1b`, `tahoe_3b`                    | 70M -- 3B    |
+| Cell2Sentence-Scale     | `cell2sentence_2b`, `cell2sentence_27b`                | 2B -- 27B    |
+| PCA                     | `pca`                                                  | --           |
+| scVI / scANVI / totalVI | `scvi`, `scanvi`, `totalvi`                            | --           |
 
 ### Morphology Models
 
-| Model | Key | Channels |
-|---|---|---|
-| SubCell MAE (all) | `subcell_mae_rybg` | MT, ER, DNA, Protein |
-| SubCell ViT (all) | `subcell_vit_rybg` | MT, ER, DNA, Protein |
-| SubCell MAE (MT-DNA-Prot) | `subcell_mae_rbg` | MT, DNA, Protein |
-| SubCell ViT (MT-DNA-Prot) | `subcell_vit_rbg` | MT, DNA, Protein |
-| SubCell MAE (ER-DNA-Prot) | `subcell_mae_ybg` | ER, DNA, Protein |
-| SubCell ViT (ER-DNA-Prot) | `subcell_vit_ybg` | ER, DNA, Protein |
-| SubCell MAE (DNA-Prot) | `subcell_mae_bg` | DNA, Protein |
-| SubCell ViT (DNA-Prot) | `subcell_vit_bg` | DNA, Protein |
+| Model                     | Key                | Channels             |
+| ------------------------- | ------------------ | -------------------- |
+| SubCell MAE (all)         | `subcell_mae_rybg` | MT, ER, DNA, Protein |
+| SubCell ViT (all)         | `subcell_vit_rybg` | MT, ER, DNA, Protein |
+| SubCell MAE (MT-DNA-Prot) | `subcell_mae_rbg`  | MT, DNA, Protein     |
+| SubCell ViT (MT-DNA-Prot) | `subcell_vit_rbg`  | MT, DNA, Protein     |
+| SubCell MAE (ER-DNA-Prot) | `subcell_mae_ybg`  | ER, DNA, Protein     |
+| SubCell ViT (ER-DNA-Prot) | `subcell_vit_ybg`  | ER, DNA, Protein     |
+| SubCell MAE (DNA-Prot)    | `subcell_mae_bg`   | DNA, Protein         |
+| SubCell ViT (DNA-Prot)    | `subcell_vit_bg`   | DNA, Protein         |
 
 ### Text Models
 
-| Model | Key |
-|---|---|
-| MiniLM | `minilm_l6_v2` |
-| BERT | `bert_base_uncased` |
+| Model  | Key                 |
+| ------ | ------------------- |
+| MiniLM | `minilm_l6_v2`      |
+| BERT   | `bert_base_uncased` |
 
 ## Installation
 
@@ -516,14 +525,14 @@ Requires **Python 3.11+**. Installing embpy means pulling in PyTorch,
 RDKit, pysam, HuggingFace transformers, and a long tail of model-specific
 packages -- historically this has been the single biggest friction point
 for new users. We now ship three supported install paths, ordered from
-*most reproducible* to *most familiar*:
+_most reproducible_ to _most familiar_:
 
-| Path                   | When to use                                                          |
-| ---------------------- | -------------------------------------------------------------------- |
-| **[Pixi](#option-1-pixi-recommended)** (recommended) | You want *one command* that works. Lockfile-backed, cross-platform, handles CUDA + RDKit + pysam automatically. |
-| **[uv](#option-2-uv)** | You already manage envs with venv/virtualenv and just want something 10-100x faster than pip. |
-| **[Conda / mamba](#option-3-conda--mamba)** | You're on an HPC cluster with existing conda tooling. |
-| **[pip](#option-4-plain-pip)** | Fallback. Works but you'll need to juggle the torch CUDA index yourself. |
+| Path                                                 | When to use                                                                                                     |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| **[Pixi](#option-1-pixi-recommended)** (recommended) | You want _one command_ that works. Lockfile-backed, cross-platform, handles CUDA + RDKit + pysam automatically. |
+| **[uv](#option-2-uv)**                               | You already manage envs with venv/virtualenv and just want something 10-100x faster than pip.                   |
+| **[Conda / mamba](#option-3-conda--mamba)**          | You're on an HPC cluster with existing conda tooling.                                                           |
+| **[pip](#option-4-plain-pip)**                       | Fallback. Works but you'll need to juggle the torch CUDA index yourself.                                        |
 
 > **TL;DR** -- on a fresh machine:
 >
@@ -566,24 +575,24 @@ pixi run verify
 
 Pre-defined environments (switch with `pixi shell -e <name>`):
 
-| Env            | Contents                                                    |
-| -------------- | ----------------------------------------------------------- |
-| `default`      | CPU PyTorch + core embpy + scanpy + morphology + jupyter    |
-| `gpu`          | CUDA 12.4 PyTorch + pertpy + lamindb + ppi + jupyter        |
-| `helical-gpu`  | Standalone env with `helical` (single-cell FMs) on GPU. Lives in its own solve-group with conda pins for `scipy==1.13.1`, `transformers==4.49.0`, `pandas==2.2.2`, `numpy<2`; **does not include ESM-3** (incompatible `transformers` pin). |
-| `helical-cpu`  | Same as `helical-gpu` but CPU only                          |
-| `dev`          | CPU + test + lint + docs tooling (for contributing)         |
-| `docs`         | CPU + Sphinx toolchain (`pixi run -e docs build-docs`)      |
+| Env           | Contents                                                                                                                                                                                                                                    |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `default`     | CPU PyTorch + core embpy + scanpy + morphology + jupyter                                                                                                                                                                                    |
+| `gpu`         | CUDA 12.4 PyTorch + pertpy + lamindb + ppi + jupyter                                                                                                                                                                                        |
+| `helical-gpu` | Standalone env with `helical` (single-cell FMs) on GPU. Lives in its own solve-group with conda pins for `scipy==1.13.1`, `transformers==4.49.0`, `pandas==2.2.2`, `numpy<2`; **does not include ESM-3** (incompatible `transformers` pin). |
+| `helical-cpu` | Same as `helical-gpu` but CPU only                                                                                                                                                                                                          |
+| `dev`         | CPU + test + lint + docs tooling (for contributing)                                                                                                                                                                                         |
+| `docs`        | CPU + Sphinx toolchain (`pixi run -e docs build-docs`)                                                                                                                                                                                      |
 
 Common tasks (run with `pixi run <task>`):
 
-| Task                 | What it does                                              |
-| -------------------- | --------------------------------------------------------- |
-| `verify`             | Smoke-test the install on CPU                             |
-| `jupyter`            | Launch JupyterLab on `0.0.0.0` (any port / ip via args)   |
-| `install-kernel`     | Register this env as a `Python (embpy)` Jupyter kernel    |
-| `-e gpu verify-gpu`  | Smoke-test the GPU install (needs a visible CUDA device)  |
-| `-e gpu install-kernel-gpu` | Register the GPU env as `Python (embpy-gpu)`       |
+| Task                        | What it does                                             |
+| --------------------------- | -------------------------------------------------------- |
+| `verify`                    | Smoke-test the install on CPU                            |
+| `jupyter`                   | Launch JupyterLab on `0.0.0.0` (any port / ip via args)  |
+| `install-kernel`            | Register this env as a `Python (embpy)` Jupyter kernel   |
+| `-e gpu verify-gpu`         | Smoke-test the GPU install (needs a visible CUDA device) |
+| `-e gpu install-kernel-gpu` | Register the GPU env as `Python (embpy-gpu)`             |
 
 ### Running GPU JupyterLab on a SLURM cluster
 
@@ -652,13 +661,13 @@ main `gpu` stack, so each gets a dedicated pixi environment **and** a
 matching SLURM JupyterLab launcher. Install the env once, then submit its
 launcher and connect exactly like `jupyter_pixi.sbatch`.
 
-| Models / notebook | Why isolated | Install once | Launcher |
-| --- | --- | --- | --- |
-| **Boltz-2** (`boltz2*`) — nb 04 | pins `numpy<2.0`, `scipy==1.13.1` | `pixi install -e boltz` | [`jupyter_pixi_boltz.sbatch`](submission_scripts/jupyter_pixi_boltz.sbatch) |
-| **Evo 2** (`evo2_*`) | FlashAttn/CUDA build pins | `pixi install -e evo2` | [`jupyter_pixi_evo2.sbatch`](submission_scripts/jupyter_pixi_evo2.sbatch) |
-| **Arc STATE/STACK** — nb 08 §13c | `pytorch>=2.7`, `scipy>=1.15` | `CONDA_OVERRIDE_CUDA=12.0 pixi install -e arc-gpu` | [`jupyter_pixi_arc.sbatch`](submission_scripts/jupyter_pixi_arc.sbatch) |
-| **helical** scFMs — nb 08 | `transformers==4.49`, `scipy==1.13.1` | `CONDA_OVERRIDE_CUDA=12.0 pixi install -e helical-gpu` | [`jupyter_pixi_helical.sbatch`](submission_scripts/jupyter_pixi_helical.sbatch) |
-| **Caduceus** (`caduceus_*`) | needs `mamba-ssm` (CUDA nvcc) | `pixi install -e caduceus` | run via `pixi run -e caduceus` |
+| Models / notebook                | Why isolated                          | Install once                                           | Launcher                                                                        |
+| -------------------------------- | ------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| **Boltz-2** (`boltz2*`) — nb 04  | pins `numpy<2.0`, `scipy==1.13.1`     | `pixi install -e boltz`                                | [`jupyter_pixi_boltz.sbatch`](submission_scripts/jupyter_pixi_boltz.sbatch)     |
+| **Evo 2** (`evo2_*`)             | FlashAttn/CUDA build pins             | `pixi install -e evo2`                                 | [`jupyter_pixi_evo2.sbatch`](submission_scripts/jupyter_pixi_evo2.sbatch)       |
+| **Arc STATE/STACK** — nb 08 §13c | `pytorch>=2.7`, `scipy>=1.15`         | `CONDA_OVERRIDE_CUDA=12.0 pixi install -e arc-gpu`     | [`jupyter_pixi_arc.sbatch`](submission_scripts/jupyter_pixi_arc.sbatch)         |
+| **helical** scFMs — nb 08        | `transformers==4.49`, `scipy==1.13.1` | `CONDA_OVERRIDE_CUDA=12.0 pixi install -e helical-gpu` | [`jupyter_pixi_helical.sbatch`](submission_scripts/jupyter_pixi_helical.sbatch) |
+| **Caduceus** (`caduceus_*`)      | needs `mamba-ssm` (CUDA nvcc)         | `pixi install -e caduceus`                             | run via `pixi run -e caduceus`                                                  |
 
 ```bash
 # Example: Boltz-2 structure embeddings (notebook 04)
@@ -759,27 +768,27 @@ pip install "embpy[all-cu124] @ git+https://github.com/theislab/embpy.git@main" 
 
 Mix and match beyond the default install:
 
-| Extra       | What it enables                                              | Install path |
-| ----------- | ------------------------------------------------------------ | ------------ |
-| *(base)*    | DNA (GENA-LM, NT v1/v2/v3, HyenaDNA, Borzoi, Enformer), Protein (ESM-1/2, ProtT5), Molecule (ChemBERTa, MolFormer, RDKit), text, PPI resolvers | pip / uv / pixi |
-| `ppi`       | PPI GNN encoder                                              | pip / uv / pixi |
-| `pertpy`    | pertpy metadata annotation                                   | pip / uv / pixi |
-| `lamindb`   | LaminDB dataset loading                                      | pip / uv / pixi |
-| `scanpy`    | scanpy integration                                           | pip / uv / pixi |
-| `morphology`| Cell Painting image preprocessing (Pillow)                   | pip / uv / pixi |
-| `ntv3`      | Nucleotide Transformer v3 (needs transformers >= 5.0)        | pip / uv / pixi |
-| `all`       | All extras above that install cleanly via pure pip/uv        | pip / uv / pixi |
-| `all-cpu`   | `all` + CPU PyTorch                                          | pip / uv / pixi |
-| `all-cu121` | `all` + CUDA 12.1 PyTorch                                    | pip / uv / pixi |
-| `all-cu124` | `all` + CUDA 12.4 PyTorch                                    | pip / uv / pixi |
-| `all-cu128` | `all` + CUDA 12.8 PyTorch                                    | pip / uv / pixi |
-| `esm3`      | ESM-3 / ESM-C (pins `transformers<4.48.2`, cannot coexist with `helical`) | pip / uv / pixi (own env) |
-| `helical`   | Single-cell foundation models (scGPT, Geneformer, UCE, Tahoe, Cell2Sentence) -- transitively needs the `igraph` C library | **conda / pixi only** (pixi `gpu` env includes it) |
-| `minimol`   | MiniMol molecule GNN (needs pre-built `torch-sparse`, `torch-scatter`) | **conda / pixi only** |
-| `evo`       | Evo v1 / v1.5                                                | pip (slow) / pixi |
-| `evo2`      | Evo 2                                                        | **conda / pixi** (needs CUDA) |
-| `caduceus`  | Caduceus (mamba-ssm, **requires CUDA nvcc**)                 | **conda / pixi** |
-| `boltz`     | Boltz-2 structure embeddings (**requires CUDA**, pins `numpy<2`) | separate env only |
+| Extra        | What it enables                                                                                                                                | Install path                                       |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| _(base)_     | DNA (GENA-LM, NT v1/v2/v3, HyenaDNA, Borzoi, Enformer), Protein (ESM-1/2, ProtT5), Molecule (ChemBERTa, MolFormer, RDKit), text, PPI resolvers | pip / uv / pixi                                    |
+| `ppi`        | PPI GNN encoder                                                                                                                                | pip / uv / pixi                                    |
+| `pertpy`     | pertpy metadata annotation                                                                                                                     | pip / uv / pixi                                    |
+| `lamindb`    | LaminDB dataset loading                                                                                                                        | pip / uv / pixi                                    |
+| `scanpy`     | scanpy integration                                                                                                                             | pip / uv / pixi                                    |
+| `morphology` | Cell Painting image preprocessing (Pillow)                                                                                                     | pip / uv / pixi                                    |
+| `ntv3`       | Nucleotide Transformer v3 (needs transformers >= 5.0)                                                                                          | pip / uv / pixi                                    |
+| `all`        | All extras above that install cleanly via pure pip/uv                                                                                          | pip / uv / pixi                                    |
+| `all-cpu`    | `all` + CPU PyTorch                                                                                                                            | pip / uv / pixi                                    |
+| `all-cu121`  | `all` + CUDA 12.1 PyTorch                                                                                                                      | pip / uv / pixi                                    |
+| `all-cu124`  | `all` + CUDA 12.4 PyTorch                                                                                                                      | pip / uv / pixi                                    |
+| `all-cu128`  | `all` + CUDA 12.8 PyTorch                                                                                                                      | pip / uv / pixi                                    |
+| `esm3`       | ESM-3 / ESM-C (pins `transformers<4.48.2`, cannot coexist with `helical`)                                                                      | pip / uv / pixi (own env)                          |
+| `helical`    | Single-cell foundation models (scGPT, Geneformer, UCE, Tahoe, Cell2Sentence) -- transitively needs the `igraph` C library                      | **conda / pixi only** (pixi `gpu` env includes it) |
+| `minimol`    | MiniMol molecule GNN (needs pre-built `torch-sparse`, `torch-scatter`)                                                                         | **conda / pixi only**                              |
+| `evo`        | Evo v1 / v1.5                                                                                                                                  | pip (slow) / pixi                                  |
+| `evo2`       | Evo 2                                                                                                                                          | **conda / pixi** (needs CUDA)                      |
+| `caduceus`   | Caduceus (mamba-ssm, **requires CUDA nvcc**)                                                                                                   | **conda / pixi**                                   |
+| `boltz`      | Boltz-2 structure embeddings (**requires CUDA**, pins `numpy<2`)                                                                               | separate env only                                  |
 
 ---
 
@@ -826,6 +835,7 @@ export PYTHONNOUSERSITE=1
 For Jupyter, add `"env": {"PYTHONNOUSERSITE": "1"}` (and `-s` to the
 python `argv`) in your kernel's `kernel.json`. The pixi / conda envs
 shipped here set this automatically.
+
 </details>
 
 <details>
@@ -848,12 +858,13 @@ matching CUDA toolkit:
 ```bash
 pip install mamba-ssm --no-build-isolation
 ```
+
 </details>
 
 <details>
 <summary><b>torch installed CPU-only when I wanted CUDA (or vice-versa)</b></summary>
 
-PyTorch ships different wheels per CUDA version on a *separate* index
+PyTorch ships different wheels per CUDA version on a _separate_ index
 (`https://download.pytorch.org/whl/cuXXX`). If you use pixi or uv with
 the `all-cu124` extra, the correct wheel is picked automatically. With
 plain pip you must pass `--extra-index-url`:
@@ -869,6 +880,7 @@ Verify with:
 import torch
 print(torch.__version__, torch.cuda.is_available(), torch.version.cuda)
 ```
+
 </details>
 
 <details>
@@ -884,25 +896,26 @@ uv sync --extra all-cu124
 # pixi -- solve once, reuse lockfile forever
 pixi install
 ```
+
 </details>
 
 ## Tutorials
 
-| # | Topic | Notebook |
-|---|---|---|
-| 01 | Identifiers, Resolvers & Data Loading            | [01_identifiers_and_preprocessing.ipynb](docs/notebooks/01_identifiers_and_preprocessing.ipynb) |
-| 02 | Gene & DNA Embeddings                             | [02_gene_embeddings.ipynb](docs/notebooks/02_gene_embeddings.ipynb) |
-| 03 | Protein Embeddings                                | [03_protein_embeddings.ipynb](docs/notebooks/03_protein_embeddings.ipynb) |
-| 04 | Boltz-2 Structure Embeddings                      | [04_boltz2_structure_embeddings.ipynb](docs/notebooks/04_boltz2_structure_embeddings.ipynb) |
-| 05 | Molecule (Drug) Embeddings                        | [05_molecule_embeddings.ipynb](docs/notebooks/05_molecule_embeddings.ipynb) |
-| 06 | Text Embeddings                                   | [06_text_embeddings.ipynb](docs/notebooks/06_text_embeddings.ipynb) |
-| 07 | PPI Network Embeddings                            | [07_ppi_embeddings.ipynb](docs/notebooks/07_ppi_embeddings.ipynb) |
-| 08 | Single-Cell Foundation Model Embeddings           | [08_singlecell_foundation_models.ipynb](docs/notebooks/08_singlecell_foundation_models.ipynb) |
-| 09 | JUMP Cell Painting Morphological Embeddings       | [09_morphology_jump_cell_painting.ipynb](docs/notebooks/09_morphology_jump_cell_painting.ipynb) |
-| 10 | Annotation & Entity Context (genes, proteins, molecules, cell lines, text) | [10_annotation_and_context.ipynb](docs/notebooks/10_annotation_and_context.ipynb) |
-| 11 | Cross-Species Ortholog Embeddings                 | [11_cross_species_embeddings.ipynb](docs/notebooks/11_cross_species_embeddings.ipynb) |
-| 12 | Unified Embedding with embed_adata                | [12_unified_embedding.ipynb](docs/notebooks/12_unified_embedding.ipynb) |
-| 13 | DepMap Cancer Dependency Analysis                 | [13_depmap_analysis.ipynb](docs/notebooks/13_depmap_analysis.ipynb) |
+| #   | Topic                                                                      | Notebook                                                                                        |
+| --- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| 01  | Identifiers, Resolvers & Data Loading                                      | [01_identifiers_and_preprocessing.ipynb](docs/notebooks/01_identifiers_and_preprocessing.ipynb) |
+| 02  | Gene & DNA Embeddings                                                      | [02_gene_embeddings.ipynb](docs/notebooks/02_gene_embeddings.ipynb)                             |
+| 03  | Protein Embeddings                                                         | [03_protein_embeddings.ipynb](docs/notebooks/03_protein_embeddings.ipynb)                       |
+| 04  | Boltz-2 Structure Embeddings                                               | [04_boltz2_structure_embeddings.ipynb](docs/notebooks/04_boltz2_structure_embeddings.ipynb)     |
+| 05  | Molecule (Drug) Embeddings                                                 | [05_molecule_embeddings.ipynb](docs/notebooks/05_molecule_embeddings.ipynb)                     |
+| 06  | Text Embeddings                                                            | [06_text_embeddings.ipynb](docs/notebooks/06_text_embeddings.ipynb)                             |
+| 07  | PPI Network Embeddings                                                     | [07_ppi_embeddings.ipynb](docs/notebooks/07_ppi_embeddings.ipynb)                               |
+| 08  | Single-Cell Foundation Model Embeddings                                    | [08_singlecell_foundation_models.ipynb](docs/notebooks/08_singlecell_foundation_models.ipynb)   |
+| 09  | JUMP Cell Painting Morphological Embeddings                                | [09_morphology_jump_cell_painting.ipynb](docs/notebooks/09_morphology_jump_cell_painting.ipynb) |
+| 10  | Annotation & Entity Context (genes, proteins, molecules, cell lines, text) | [10_annotation_and_context.ipynb](docs/notebooks/10_annotation_and_context.ipynb)               |
+| 11  | Cross-Species Ortholog Embeddings                                          | [11_cross_species_embeddings.ipynb](docs/notebooks/11_cross_species_embeddings.ipynb)           |
+| 12  | Unified Embedding with embed_adata                                         | [12_unified_embedding.ipynb](docs/notebooks/12_unified_embedding.ipynb)                         |
+| 13  | DepMap Cancer Dependency Analysis                                          | [13_depmap_analysis.ipynb](docs/notebooks/13_depmap_analysis.ipynb)                             |
 
 ## Package Structure
 

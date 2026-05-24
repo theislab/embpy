@@ -31,17 +31,19 @@ def test_obs_aligned_goes_to_obsm():
     res = _result(["pertA", "pertB", "pertC"])
     tgt = _make_target(["pertA", "pertB", "pertC"], ["g1", "g2"])
     out = to_anndata(res, target=tgt)
-    assert "X_emb_m" in out.obsm
-    assert out.obsm["X_emb_m"].shape == (3, 4)
-    np.testing.assert_allclose(out.obsm["X_emb_m"], res.matrix)
+    key = "X_emb__gene__m"
+    assert key in out.obsm
+    assert out.obsm[key].shape == (3, 4)
+    np.testing.assert_allclose(out.obsm[key], res.matrix)
 
 
 def test_var_aligned_goes_to_varm():
     res = _result(["pertA", "pertB", "pertC"])
     tgt = _make_target(["c1", "c2"], ["pertA", "pertB", "pertC"])
     out = to_anndata(res, target=tgt)
-    assert "X_emb_m" in out.varm
-    assert out.varm["X_emb_m"].shape == (3, 4)
+    key = "X_emb__gene__m"
+    assert key in out.varm
+    assert out.varm[key].shape == (3, 4)
 
 
 def test_no_overlap_raises_with_counts():
@@ -58,7 +60,7 @@ def test_both_axes_match_is_ambiguous_then_override():
     with pytest.raises(ValueError, match=r"Cannot auto-resolve attach axis"):
         to_anndata(res, target=tgt)
     out = to_anndata(res, target=tgt, attach_to="obs")
-    assert "X_emb_m" in out.obsm
+    assert "X_emb__gene__m" in out.obsm
 
 
 def test_missing_error_vs_nan():
@@ -68,10 +70,10 @@ def test_missing_error_vs_nan():
         to_anndata(res, target=tgt, missing="error")
 
     out = to_anndata(res, target=tgt, missing="nan")
-    m = out.obsm["X_emb_m"]
+    m = out.obsm["X_emb__gene__m"]
     assert m.shape == (4, 4)
-    assert np.isnan(m[3]).all()          # pertD NaN-filled
-    assert not np.isnan(m[:3]).any()     # A,B,C intact
+    assert np.isnan(m[3]).all()  # pertD NaN-filled
+    assert not np.isnan(m[:3]).any()  # A,B,C intact
 
 
 def test_custom_key():

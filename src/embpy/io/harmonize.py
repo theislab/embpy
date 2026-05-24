@@ -53,23 +53,41 @@ def harmonize(
         updated with ``harmonized_n_components`` + ``explained_variance_ratio``.
         Entity ids / type / id_scheme / aliases are carried over unchanged.
     """
-    from .._pca import pca_project
+    from embpy._pca import pca_project
 
     coords_f64, variance = pca_project(
-        result.matrix, n_components, random_state=random_state,
+        result.matrix,
+        n_components,
+        random_state=random_state,
     )
     coords = np.ascontiguousarray(coords_f64, dtype=np.float32)
     variance_ratio = tuple(float(x) for x in variance)
+    extra = dict(result.provenance.extra)
+    extra["harmonization"] = {
+        "method": "pca",
+        "fit_scope": "per_embedding_result",
+        "requested_n_components": int(n_components),
+        "actual_n_components": int(coords.shape[1]),
+        "random_state": int(random_state),
+        "coordinate_basis": (
+            "PCA was fit separately for this embedding result; components "
+            "are not a shared cross-model coordinate basis."
+        ),
+    }
 
     new_prov = dataclasses.replace(
         result.provenance,
         harmonized_n_components=int(coords.shape[1]),
         explained_variance_ratio=variance_ratio,
         random_state=int(random_state),
+        extra=extra,
     )
     logger.info(
         "Harmonized %s embedding %d -> %d dims (cumulative variance %.3f).",
-        result.entity_type, result.n_dims, coords.shape[1], sum(variance_ratio),
+        result.entity_type,
+        result.n_dims,
+        coords.shape[1],
+        sum(variance_ratio),
     )
     return EmbeddingResult(
         matrix=coords,

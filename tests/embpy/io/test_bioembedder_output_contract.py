@@ -30,7 +30,8 @@ def _result(ids=("ENSG1", "ENSG2", "ENSG3"), n_dims=4):
 def test_anndata_standalone_when_no_target():
     out = route_output(_result(), output="anndata")
     assert isinstance(out, AnnData)
-    assert list(out.obs_names) == ["ENSG1", "ENSG2", "ENSG3"]
+    assert list(out.var_names) == ["ENSG1", "ENSG2", "ENSG3"]
+    assert "X_emb__gene__m" in out.varm
 
 
 def test_anndata_attach_when_target_given():
@@ -38,7 +39,7 @@ def test_anndata_attach_when_target_given():
     tgt.obs_names = ["ENSG1", "ENSG2", "ENSG3"]
     tgt.var_names = ["g1", "g2"]
     out = route_output(_result(), output="anndata", target=tgt)
-    assert "X_emb_m" in out.obsm
+    assert "X_emb__gene__m" in out.obsm
 
 
 def test_table_output_returns_dataframe():

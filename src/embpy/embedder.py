@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import os
+import pathlib
 import re
 import traceback
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -21,38 +22,13 @@ from .errors import (
     ModelNotFoundError,
     ModelOOMError,
 )
+from .models.base import BaseModelWrapper
 from .observability import log_event, time_block
 from .reporting import ResolutionReport
 from .retry import embed_batch_with_oom_recovery
-from .models.base import BaseModelWrapper
-from .models.dna_models import (
-    BorzoiWrapper,
-    CaduceusWrapper,
-    EnformerWrapper,
-    GENALMWrapper,
-    HyenaDNAWrapper,
-    NucleotideTransformerV3Wrapper,
-    NucleotideTransformerWrapper,
-)
 
 if TYPE_CHECKING:
     pass
-from .models.api_models import APIEmbeddingWrapper
-from .models.molecule_models import (
-    ChembertaWrapper,
-    MHGGNNWrapper,
-    MiniMolWrapper,
-    MolEWrapper,
-    MolformerWrapper,
-    RDKitWrapper,
-)
-from .models.morphology_models import SubCellWrapper
-from .models.protein_models import ESM2Wrapper, ESM3Wrapper, ESMCWrapper, ProtT5Wrapper
-from .models.text_models import LlamaEmbeddingWrapper, TextLLMWrapper
-from .resources.gene_resolver import GeneResolver
-from .resources.protein_resolver import ProteinResolver
-from .resources.text_resolver import TextResolver
-
 # MODEL_REGISTRY + the three DNA species sets live in
 # `embpy.embedder_registry` (audit steps 2 + 3). The DNA / Protein /
 # Molecule / Text / Morphology / Single-cell / API entries are split
@@ -69,8 +45,13 @@ from .embedder_registry.flat import (
     HUMAN_ONLY_MODELS,
     MODEL_REGISTRY,
     MOUSE_ONLY_MODELS,
-    MULTI_SPECIES_DNA,
 )
+from .models.api_models import APIEmbeddingWrapper
+from .models.morphology_models import SubCellWrapper
+from .models.text_models import TextLLMWrapper
+from .resources.gene_resolver import GeneResolver
+from .resources.protein_resolver import ProteinResolver
+from .resources.text_resolver import TextResolver
 
 
 # Helper function (can be moved to utils later)
@@ -133,64 +114,6 @@ def _guess_missing_package(msg: str) -> str | None:
     return None
 
 
-def _zip_canon(
-    raw: list[str],
-    canon: list[str | None],
-    *,
-    alias_scheme: str | None = None,
-) -> tuple[list[str], dict[str, dict[str, str]]]:
-    """Drop unresolved canonical ids and keep original ids as display aliases."""
-    kept: list[str] = []
-    aliases: dict[str, dict[str, str]] = {}
-    for orig, cid in zip(raw, canon):
-        if cid is None or cid == "":
-            logging.warning("Dropping %r: could not canonicalize identifier.", orig)
-            continue
-        kept.append(str(cid))
-        if alias_scheme is not None and orig != cid:
-            aliases.setdefault(str(cid), {})[alias_scheme] = orig
-    return kept, aliases
-
-
-def _apply_canon(
-    raw: list[str],
-    canon: list[str | None],
-    *,
-    alias_scheme: str,
-) -> tuple[list[str], dict[str, dict[str, str]]]:
-    """Compatibility wrapper for callers that want one alias scheme."""
-    return _zip_canon(raw, canon, alias_scheme=alias_scheme)
-
-
-def _dedup_rows(
-    canon: list[str] | tuple[list[str], dict[str, dict[str, str]]],
-    matrix: np.ndarray,
-    aliases: dict[str, dict[str, str]] | None = None,
-) -> tuple[list[str], np.ndarray, dict[str, dict[str, str]]]:
-    """Collapse duplicate canonical ids, preserving row order and aliases."""
-    if isinstance(canon, tuple):
-        canon, tuple_aliases = canon
-        aliases = tuple_aliases if aliases is None else {**tuple_aliases, **aliases}
-    aliases = aliases or {}
-
-    seen: set[str] = set()
-    keep_idx: list[int] = []
-    out_ids: list[str] = []
-    n_dup = 0
-    for i, cid in enumerate(canon):
-        if cid in seen:
-            n_dup += 1
-            continue
-        seen.add(cid)
-        keep_idx.append(i)
-        out_ids.append(cid)
-    if n_dup:
-        logging.warning("Dropped %d rows that collapsed to a duplicate canonical id.", n_dup)
-
-    out_aliases = {cid: aliases[cid] for cid in out_ids if cid in aliases}
-    return out_ids, matrix[keep_idx], out_aliases
-
-
 def _parse_oom_attempted_bytes(msg: str) -> int | None:
     """Extract ``B`` from CUDA OOM messages like "Tried to allocate 33.87 GiB".
 
@@ -202,8 +125,13 @@ def _parse_oom_attempted_bytes(msg: str) -> int | None:
         return None
     val, unit = float(m.group(1)), m.group(2).lower()
     scale = {
-        "gib": 1024 ** 3, "mib": 1024 ** 2, "kib": 1024,
-        "gb": 1000 ** 3, "mb": 1000 ** 2, "kb": 1000, "b": 1,
+        "gib": 1024**3,
+        "mib": 1024**2,
+        "kib": 1024,
+        "gb": 1000**3,
+        "mb": 1000**2,
+        "kb": 1000,
+        "b": 1,
     }.get(unit, 1)
     return int(val * scale)
 
@@ -242,9 +170,7 @@ def _classify_embedder_exception(
 
     # 2) Context overflow: the model's positional buffer or attention
     #    mask got expanded to a sequence length it cannot represent.
-    if isinstance(exc, RuntimeError) and any(
-        p in msg_lower for p in _CONTEXT_OVERFLOW_PATTERNS
-    ):
+    if isinstance(exc, RuntimeError) and any(p in msg_lower for p in _CONTEXT_OVERFLOW_PATTERNS):
         # Best-effort length parsing from messages like
         # "Target sizes: [16, 16596]. Tensor sizes: [1, 512]"
         m = re.search(r"\[\d+,\s*(\d+)\][\s\S]*\[\d+,\s*(\d+)\]", msg)
@@ -269,8 +195,7 @@ def _classify_embedder_exception(
         model_name=model_name,
         cause=f"{type(exc).__name__}: {exc}",
         message=(
-            f"embed_batch failed for model='{model_name}' on {n_inputs} inputs. "
-            f"Root cause: {type(exc).__name__}: {exc}"
+            f"embed_batch failed for model='{model_name}' on {n_inputs} inputs. Root cause: {type(exc).__name__}: {exc}"
         ),
     )
 
@@ -450,9 +375,7 @@ class BioEmbedder:
                 # "needs `pixi install` of a different env" from "the model
                 # is genuinely broken on HF".
                 pkg = _guess_missing_package(str(e)) or "unknown"
-                logging.error(
-                    f"Failed to load model '{model_name}': missing dependency '{pkg}'."
-                )
+                logging.error(f"Failed to load model '{model_name}': missing dependency '{pkg}'.")
                 raise DependencyError(package=pkg, feature=f"model '{model_name}'") from e
             except Exception as e:
                 logging.error(
@@ -483,8 +406,10 @@ class BioEmbedder:
                 raise ModelNotFoundError(message) from e
 
     @staticmethod
-    def _detect_vocab_type(var_names: Sequence[str], sample: int = 200) -> Literal["symbol", "ensembl_id", "mixed", "unknown"]:
-        """Guess the gene-identifier convention of an AnnData's ``var_names``.
+    def _detect_vocab_type(
+        var_names: Sequence[str], sample: int = 200
+    ) -> Literal["symbol", "ensembl_id", "mixed", "unknown"]:
+        r"""Guess the gene-identifier convention of an AnnData's ``var_names``.
 
         Heuristic: sample up to ``sample`` names and check what fraction
         look like Ensembl gene IDs (``ENSG`` / ``ENSMUSG`` / ``ENSRNOG`` /
@@ -518,8 +443,7 @@ class BioEmbedder:
         model_key: str,
         organism: str = "human",
     ):
-        """Auto-convert ``adata.var_names`` to the format expected by a
-        single-cell foundation model.
+        """Auto-convert ``adata.var_names`` for a single-cell foundation model.
 
         Does nothing if the model's ``vocab_type`` is ``"any"`` or
         ``"either"`` (the wrapper handles it internally), or if the
@@ -566,17 +490,16 @@ class BioEmbedder:
         # Need to convert from `current` to `target`.
         logging.info(
             "Auto-converting adata.var_names for model '%s': %s -> %s (%d genes)",
-            model_key, current, target, adata.n_vars,
+            model_key,
+            current,
+            target,
+            adata.n_vars,
         )
 
         if current == "ensembl_id" and target == "symbol":
-            mapping = self.gene_resolver.ensembl_to_symbols_batch(
-                list(adata.var_names), organism=organism
-            )
+            mapping = self.gene_resolver.ensembl_to_symbols_batch(list(adata.var_names), organism=organism)
         elif current == "symbol" and target == "ensembl_id":
-            mapping = self.gene_resolver.symbols_to_ensembl_batch(
-                list(adata.var_names), organism=organism
-            )
+            mapping = self.gene_resolver.symbols_to_ensembl_batch(list(adata.var_names), organism=organism)
         else:
             return adata, {"action": "none", "reason": f"unhandled {current}->{target}"}
 
@@ -587,12 +510,14 @@ class BioEmbedder:
             logging.error(
                 "Vocabulary conversion %s -> %s produced 0 mapped genes for "
                 "model '%s'. Returning original adata; embedding will likely fail.",
-                current, target, model_key,
+                current,
+                target,
+                model_key,
             )
             return adata, {"action": "failed", "detected": current, "target": target, "n_mapped": 0}
 
         out = adata[:, keep_mask].copy()
-        new_names_arr = np.array([n for n, keep in zip(new_names, keep_mask) if keep])
+        new_names_arr = np.array([n for n, keep in zip(new_names, keep_mask, strict=False) if keep])
         # Drop duplicates (multiple Ensembl IDs can map to the same symbol
         # and vice versa). Keep first occurrence.
         seen: set[str] = set()
@@ -604,7 +529,9 @@ class BioEmbedder:
         if (~unique_mask).any():
             logging.info(
                 "Dropped %d duplicate names during %s -> %s conversion.",
-                int((~unique_mask).sum()), current, target,
+                int((~unique_mask).sum()),
+                current,
+                target,
             )
             out = out[:, unique_mask].copy()
             new_names_arr = new_names_arr[unique_mask]
@@ -617,7 +544,10 @@ class BioEmbedder:
         out.var_names = new_names_arr
         logging.info(
             "Vocabulary conversion OK: %d -> %d genes mapped (%s -> %s).",
-            adata.n_vars, out.n_vars, current, target,
+            adata.n_vars,
+            out.n_vars,
+            current,
+            target,
         )
         return out, {
             "action": "converted",
@@ -633,8 +563,7 @@ class BioEmbedder:
         batch_size: int,
         device_str: str,
     ):
-        """Return a cached single-cell foundation-model wrapper, loading it
-        the first time.
+        """Return a cached single-cell foundation-model wrapper.
 
         The cache is keyed by ``(model_key, device_str)`` only;
         ``batch_size`` is applied on every call so it can change between
@@ -707,83 +636,126 @@ class BioEmbedder:
 
     def embed(
         self,
-        identifiers: Sequence[str],
+        identifiers: Any | None = None,
         *,
-        entity_type: Literal["gene", "molecule", "protein"],
-        model: str,
-        id_type: str | None = None,
-        organism: str = "human",
+        entity_type: str | Sequence[str] | None = None,
+        model: str | Sequence[str],
+        id_type: str | Mapping[str, str] | None = None,
+        organism: str | None = None,
         pooling_strategy: str = "mean",
-        output: Literal["anndata", "table"] = "anndata",
+        output: Literal["anndata", "table"] | None = None,
         target: Any = None,
+        input_path: str | os.PathLike[str] | None = None,
+        output_path: str | os.PathLike[str] | None = None,
         attach_to: Literal["auto", "obs", "var"] = "auto",
         harmonize_dim: int | None = None,
-        path: str | None = None,
+        path: str | os.PathLike[str] | None = None,
         fmt: Literal["parquet", "csv"] = "parquet",
         missing: Literal["error", "nan"] = "error",
+        id_column: str | None = None,
+        identifier_column: str | None = None,
+        anndata_axis: Literal["obs", "var"] | None = None,
+        obs_column: str | None = None,
+        var_column: str | None = None,
+        whole_genome: bool = False,
+        biotype: str = "protein_coding",
+        show_progress: bool = False,
         key: str | None = None,
         random_state: int = 0,
         **embed_kwargs: Any,
     ):
-        """Embed a batch of entities and return a standardized output.
+        """Embed entities and return the standardized embpy output.
 
-        The single user-facing surface for the canonical output layer. It
-        wraps the existing ``embed_*_batch`` numpy methods into an
-        :class:`embpy.io.EmbeddingResult` (canonical ids -- Ensembl /
-        canonical SMILES / UniProt -- plus provenance and human-readable
-        cross-ref aliases) and routes it through the exporters. The legacy
-        ``embed_*`` methods are untouched; this is purely additive.
+        This is the package-wide output path. It accepts direct in-memory
+        inputs (sequences, NumPy arrays, pandas Series/DataFrames, AnnData)
+        and CSV/TSV/Parquet paths, normalizes them before inference,
+        canonicalizes identifiers by entity type, then exports either
+        AnnData or a table. Generated embeddings are never stored in
+        AnnData ``.X``; standalone AnnData uses sparse placeholder ``.X``
+        and stores matrices in ``.obsm``, ``.varm`` or ``.uns``.
 
-        Parameters
-        ----------
-        identifiers
-            Entities to embed (gene symbols / SMILES / protein symbols,
-            per ``entity_type`` and ``id_type``).
-        entity_type
-            ``"gene"``, ``"molecule"`` or ``"protein"``.
-        model
-            Model key in ``MODEL_REGISTRY``.
-        id_type
-            Input id convention. Defaults: gene -> ``"symbol"``,
-            molecule -> ``"smiles"`` (use ``"name"`` for drug names),
-            protein -> ``"symbol"``.
-        output
-            ``"anndata"`` (default) or ``"table"``.
-        target, attach_to, missing, key
-            AnnData attach controls (see :func:`embpy.io.to_anndata`).
-            With ``output="anndata"`` and ``target`` set, the embedding
-            is attached to ``target.obsm``/``.varm``; with ``target=None``
-            a standalone AnnData is built. Ignored (with a warning) when
-            ``output="table"``.
-        harmonize_dim
-            If set, PCA-project to this width before export.
-        path, fmt
-            ``output="table"`` only -- write the frame to ``path`` as
-            parquet (default) or csv, with a ``<path>.meta.json`` sidecar.
-
-        Returns
-        -------
-        AnnData | pandas.DataFrame
-            Depending on ``output``.
+        Defaults are explicit: if ``output`` is omitted, an output path
+        chooses tabular Parquet/CSV, otherwise AnnData is returned. Multiple
+        models or multiple entity types return the same output family with
+        deterministic keys that include entity type and model name.
         """
-        from .io.exporters import route_output  # noqa: PLC0415
+        from .io.exporters import route_output
+        from .io.normalize import normalize_embedding_input
 
-        result = self._embed_to_result(
-            identifiers,
-            entity_type=entity_type,
-            model=model,
-            id_type=id_type,
-            organism=organism,
-            pooling_strategy=pooling_strategy,
-            **embed_kwargs,
-        )
+        org = organism or self.organism
+        out_path = output_path if output_path is not None else path
+        data = input_path if input_path is not None else identifiers
+
+        if data is None and target is not None and not whole_genome:
+            data = target
+        if data is None and not whole_genome:
+            raise ValueError(
+                "input normalization: no identifiers or input_path were provided. "
+                "Pass identifiers, an input file path, an AnnData object, or "
+                "whole_genome=True."
+            )
+
+        if target is None and data is not None and self._is_anndata_like(data):
+            target = data
+
+        entity_types = self._resolve_entity_types(entity_type, data, whole_genome)
+        models = self._as_string_list(model, arg_name="model")
+        normalized_by_entity = {}
+        for et in entity_types:
+            if whole_genome:
+                normalized_by_entity[et] = self._whole_genome_input(
+                    entity_type=et,
+                    organism=org,
+                    biotype=biotype,
+                )
+                continue
+            entity_data = data[et] if isinstance(data, Mapping) and et in data else data
+            try:
+                normalized_by_entity[et] = normalize_embedding_input(
+                    entity_data,
+                    entity_type=et,
+                    id_column=id_column,
+                    identifier_column=identifier_column,
+                    anndata_axis=anndata_axis,
+                    obs_column=obs_column,
+                    var_column=var_column,
+                )
+            except Exception as exc:
+                if str(exc).startswith(("input loading:", "input normalization:")):
+                    raise
+                raise ValueError(
+                    f"input normalization: failed for entity_type={et!r}: {type(exc).__name__}: {exc}"
+                ) from exc
+
+        tasks = [(et, m) for et in entity_types for m in models]
+        iterator = tasks
+        if show_progress:
+            from tqdm.auto import tqdm
+
+            iterator = tqdm(tasks, desc="embpy embed", unit="result")
+
+        results = []
+        for et, model_name in iterator:
+            result = self._embed_to_result(
+                normalized_by_entity[et],
+                entity_type=et,
+                model=model_name,
+                id_type=self._id_type_for_entity(id_type, et),
+                organism=org,
+                pooling_strategy=pooling_strategy,
+                show_progress=show_progress,
+                **embed_kwargs,
+            )
+            results.append(result)
+
+        resolved_output = output or ("table" if out_path is not None else "anndata")
         return route_output(
-            result,
-            output=output,
+            results,
+            output=resolved_output,
             target=target,
             attach_to=attach_to,
             harmonize_dim=harmonize_dim,
-            path=path,
+            path=out_path,
             fmt=fmt,
             missing=missing,
             key=key,
@@ -792,13 +764,14 @@ class BioEmbedder:
 
     def _embed_to_result(
         self,
-        identifiers: Sequence[str],
+        identifiers: Any,
         *,
         entity_type: str,
         model: str,
         id_type: str | None,
         organism: str,
         pooling_strategy: str,
+        show_progress: bool = False,
         **embed_kwargs: Any,
     ):
         """Dispatch to a batch embedder + canonicalize -> EmbeddingResult.
@@ -808,84 +781,373 @@ class BioEmbedder:
         owners of id-mapping logic). Rows whose embedding or id-resolution
         fails are dropped; duplicate canonical ids collapse to the first.
         """
-        from .io.result import EmbeddingProvenance, EmbeddingResult  # noqa: PLC0415
+        from .io._canon import SCHEME, build_aliases, canonicalize, drop_and_dedup
+        from .io.normalize import NormalizedInput, normalize_embedding_input
+        from .io.result import EmbeddingProvenance, EmbeddingResult
 
-        ids = [str(x) for x in identifiers]
-        extra: dict[str, str] = {}
+        norm = (
+            identifiers
+            if isinstance(identifiers, NormalizedInput)
+            else normalize_embedding_input(identifiers, entity_type=entity_type)
+        )
+        ids = list(norm.identifiers)
+        alias_cols = {k: list(v) for k, v in norm.alias_columns.items()}
+        requested_n = len(ids)
+        extra: dict[str, Any] = {
+            "entity_type": entity_type,
+            "organism": organism,
+            "input_kind": norm.input_kind,
+            "input_source": norm.source,
+            "input_id_column": norm.id_column,
+            "input_id_type": id_type,
+            "n_requested_inputs": requested_n,
+        }
+        layer = (
+            embed_kwargs.get("target_layer")
+            or embed_kwargs.get("layer")
+            or embed_kwargs.get("embedding_layer")
+            or embed_kwargs.get("layer_name")
+        )
+        if "region" in embed_kwargs:
+            extra["region"] = embed_kwargs["region"]
+        if "isoform" in embed_kwargs:
+            extra["isoform_mode"] = embed_kwargs["isoform"]
+        whole_genome_sequences = norm.metadata.get("prefetched_sequences")
+        output_entity_type = entity_type
 
         if entity_type == "gene":
-            it = id_type or "symbol"
+            it = "ensembl_id" if norm.metadata.get("whole_genome") else (id_type or "symbol")
             vecs = self.embed_genes_batch(
-                model=model, identifiers=ids, id_type=it, organism=organism,
-                pooling_strategy=pooling_strategy, **embed_kwargs,
+                model=model,
+                identifiers=ids,
+                id_type=it,
+                organism=organism,
+                pooling_strategy=pooling_strategy,
+                **embed_kwargs,
+                fetch_all_dna=bool(norm.metadata.get("whole_genome")),
+                biotype=str(norm.metadata.get("biotype", "protein_coding")),
+                prefetched_sequences=whole_genome_sequences,
             )
             raw, matrix = self._aligned_matrix(ids, vecs)
-            canon, aliases, scheme = self._canon_genes(raw, it, organism)
+            canon, keep = canonicalize(
+                raw,
+                "gene",
+                organism,
+                id_type=it,
+                gene_resolver=self.gene_resolver,
+            )
+            scheme = SCHEME["gene"]
         elif entity_type == "molecule":
             it = id_type or "smiles"
             smiles, name_alias = self._molecule_inputs_to_smiles(ids, it, extra)
             vecs = self.embed_molecules_batch(
-                smiles, model, pooling_strategy=pooling_strategy, **embed_kwargs,
+                smiles,
+                model,
+                pooling_strategy=pooling_strategy,
+                **embed_kwargs,
             )
             raw, matrix = self._aligned_matrix(smiles, vecs)
-            canon, aliases, scheme = self._canon_molecules(raw, name_alias)
+            alias_cols = self._molecule_alias_columns(raw, name_alias)
+            canon, keep = canonicalize(raw, "molecule", organism, id_type=it)
+            scheme = SCHEME["molecule"]
         elif entity_type == "protein":
             it = id_type or "symbol"
             d = self.embed_proteins_batch(
-                ids, model, id_type=it, organism=organism,
-                pooling_strategy=pooling_strategy, **embed_kwargs,
+                ids,
+                model,
+                id_type=it,
+                organism=organism,
+                pooling_strategy=pooling_strategy,
+                **embed_kwargs,
             )
-            raw, matrix = self._dict_matrix(d)
-            canon, aliases, scheme = self._canon_proteins(raw, it, organism)
+            raw, matrix, protein_aliases, output_entity_type, scheme = self._dict_matrix(d)
+            if output_entity_type == "protein_isoform":
+                extra.setdefault("isoform_mode", "all")
+                canon = [str(x) for x in raw]
+                keep = np.array([True] * len(canon), dtype=bool)
+                aliases = protein_aliases
+            else:
+                canon, keep = canonicalize(
+                    raw,
+                    "protein",
+                    organism,
+                    id_type=it,
+                    protein_resolver=self.protein_resolver,
+                )
+                aliases = protein_aliases
+                scheme = SCHEME["protein"]
+        elif entity_type in ("sequence", "text"):
+            raw, matrix = self._embed_raw_inputs(
+                ids,
+                model=model,
+                pooling_strategy=pooling_strategy,
+                show_progress=show_progress,
+                **embed_kwargs,
+            )
+            canon, keep = canonicalize(
+                raw,
+                entity_type,
+                organism,
+                id_type=entity_type,
+            )
+            scheme = SCHEME[entity_type]
+            aliases = {}
         else:
             raise ValueError(
-                f"entity_type must be 'gene'/'molecule'/'protein', got {entity_type!r}."
+                "embedding generation: entity_type must be one of "
+                "'gene', 'molecule', 'protein', 'sequence', or 'text', "
+                f"got {entity_type!r}."
             )
 
-        canon, matrix, aliases = _dedup_rows(canon, matrix, aliases)
+        n_embedding_failures = max(0, requested_n - len(raw))
+        n_canonical_unresolved = int((~keep).sum())
+        kept_canonical = [str(c) for c, ok in zip(canon, keep, strict=False) if ok and c]
+        n_duplicate_canonical = len(kept_canonical) - len(set(kept_canonical))
+        canon, matrix, alias_cols, kept_raw = drop_and_dedup(
+            canon,
+            matrix,
+            keep,
+            raw,
+            alias_cols,
+        )
+        built_aliases = build_aliases(output_entity_type, canon, kept_raw, alias_cols)
+        aliases = self._merge_aliases(built_aliases, aliases if "aliases" in locals() else {})
+        extra.update(
+            {
+                "canonical_id_scheme": scheme,
+                "n_successfully_embedded_entities": len(canon),
+                "n_embedding_failures": n_embedding_failures,
+                "n_unresolved_identifiers": n_canonical_unresolved,
+                "duplicate_canonical_ids_dropped": n_duplicate_canonical,
+                "n_dropped_or_unresolved_entities": (
+                    n_embedding_failures + n_canonical_unresolved + n_duplicate_canonical
+                ),
+            }
+        )
         prov = EmbeddingProvenance.create(
-            model=model, pooling=pooling_strategy, extra=extra,
+            model=model,
+            pooling=pooling_strategy,
+            layer=layer,
+            extra=extra,
         )
         return EmbeddingResult(
             matrix=matrix,
             entity_ids=tuple(canon),
-            entity_type=entity_type,
+            entity_type=output_entity_type,
             id_scheme=scheme,
             provenance=prov,
             aliases=aliases or None,
         )
 
     @staticmethod
+    def _as_string_list(value: str | Sequence[str], *, arg_name: str) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        values = [str(x) for x in value]
+        if not values:
+            raise ValueError(f"input normalization: {arg_name} cannot be empty.")
+        return values
+
+    def _resolve_entity_types(
+        self,
+        entity_type: str | Sequence[str] | None,
+        data: Any,
+        whole_genome: bool,
+    ) -> list[str]:
+        if entity_type is None:
+            if whole_genome:
+                return ["gene"]
+            if isinstance(data, Mapping):
+                return [str(k) for k in data.keys()]
+            raise ValueError(
+                "input normalization: entity_type is required unless identifiers "
+                "is a mapping keyed by entity type or whole_genome=True."
+            )
+        values = self._as_string_list(entity_type, arg_name="entity_type")
+        allowed = {"gene", "molecule", "protein", "sequence", "text"}
+        bad = [x for x in values if x not in allowed]
+        if bad:
+            raise ValueError(
+                f"input normalization: unsupported entity_type(s) {bad}; expected one of {sorted(allowed)}."
+            )
+        if isinstance(data, Mapping):
+            missing = [x for x in values if x not in data]
+            if missing and not whole_genome:
+                raise ValueError(
+                    "input normalization: identifiers mapping is missing "
+                    f"entity_type key(s) {missing}. Available keys: {list(data.keys())}."
+                )
+        return values
+
+    @staticmethod
+    def _id_type_for_entity(
+        id_type: str | Mapping[str, str] | None,
+        entity_type: str,
+    ) -> str | None:
+        if isinstance(id_type, Mapping):
+            return id_type.get(entity_type)
+        return id_type
+
+    @staticmethod
+    def _is_anndata_like(value: Any) -> bool:
+        try:
+            from anndata import AnnData
+        except ImportError:  # pragma: no cover
+            return False
+        return isinstance(value, AnnData)
+
+    def _whole_genome_input(
+        self,
+        *,
+        entity_type: str,
+        organism: str,
+        biotype: str,
+    ):
+        from .io.normalize import NormalizedInput
+
+        if entity_type != "gene":
+            raise ValueError(
+                "input loading: whole_genome=True is currently supported for "
+                f"entity_type='gene' only, got {entity_type!r}."
+            )
+        try:
+            sequences = self.gene_resolver.get_gene_sequences(biotype=biotype)
+        except Exception as exc:
+            raise RuntimeError(
+                "input loading: whole-genome gene request failed while reading "
+                f"the genome annotation resource for organism={organism!r}, "
+                f"biotype={biotype!r}: {type(exc).__name__}: {exc}. "
+                "Install/index the resolver backend (for example pyensembl or "
+                "a local Mart/genome resource) or pass explicit identifiers."
+            ) from exc
+        if not sequences:
+            raise RuntimeError(
+                "input loading: whole-genome gene request could not load any "
+                f"Ensembl gene IDs for organism={organism!r}, biotype={biotype!r}. "
+                "The resolver backend or genome annotation resource is missing "
+                "or empty; install/index the resource or pass explicit identifiers."
+            )
+        return NormalizedInput(
+            identifiers=tuple(str(x) for x in sequences.keys()),
+            input_kind="whole_genome",
+            source=f"whole_genome:{organism}:{biotype}",
+            id_column="ensembl_gene_id",
+            metadata={
+                "whole_genome": True,
+                "organism": organism,
+                "biotype": biotype,
+                "prefetched_sequences": sequences,
+            },
+        )
+
+    @staticmethod
+    def _merge_aliases(
+        left: dict[str, dict[str, str]],
+        right: dict[str, dict[str, str]],
+    ) -> dict[str, dict[str, str]]:
+        out = {k: dict(v) for k, v in left.items()}
+        for key, mapping in right.items():
+            out.setdefault(key, {}).update(mapping)
+        return out
+
+    @staticmethod
+    def _molecule_alias_columns(
+        raw_smiles: list[str],
+        name_alias: dict[str, str],
+    ) -> dict[str, list[str]]:
+        names = [name_alias.get(s) for s in raw_smiles]
+        return {"name": list(names)} if any(names) else {}
+
+    def _embed_raw_inputs(
+        self,
+        identifiers: list[str],
+        *,
+        model: str,
+        pooling_strategy: str,
+        show_progress: bool = False,
+        **kwargs: Any,
+    ) -> tuple[list[str], np.ndarray]:
+        inst = self._get_model(model)
+        raw_iter = identifiers
+        rows: list[np.ndarray] = []
+        kept: list[str] = []
+
+        if hasattr(inst, "embed_batch"):
+            try:
+                batch = inst.embed_batch(
+                    inputs=identifiers,
+                    pooling_strategy=pooling_strategy,
+                    **kwargs,
+                )
+            except TypeError:
+                batch = inst.embed_batch(
+                    input=identifiers,
+                    pooling_strategy=pooling_strategy,
+                    **kwargs,
+                )
+            return self._aligned_matrix(identifiers, list(batch))
+
+        if show_progress:
+            from tqdm.auto import tqdm
+
+            raw_iter = tqdm(identifiers, desc=f"{model} inputs", unit="input")
+        for item in raw_iter:
+            try:
+                rows.append(
+                    np.asarray(
+                        inst.embed(input=item, pooling_strategy=pooling_strategy, **kwargs),
+                        dtype=np.float32,
+                    ).ravel()
+                )
+                kept.append(item)
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("Failed to embed input %r with %s: %s", item, model, exc)
+        if not rows:
+            raise ValueError("embedding generation: no embeddings were produced.")
+        return kept, np.stack(rows, axis=0)
+
+    @staticmethod
     def _aligned_matrix(
-        ids: list[str], vecs: list[np.ndarray | None],
+        ids: list[str],
+        vecs: list[np.ndarray | None],
     ) -> tuple[list[str], np.ndarray]:
         """Drop None embeddings; return (kept_ids, stacked matrix)."""
-        kept_ids = [i for i, v in zip(ids, vecs) if v is not None]
+        kept_ids = [i for i, v in zip(ids, vecs, strict=False) if v is not None]
         kept = [np.asarray(v, dtype=np.float32).ravel() for v in vecs if v is not None]
         if not kept:
-            raise ValueError("No embeddings were produced (all inputs failed).")
+            raise ValueError("embedding generation: no embeddings were produced (all inputs failed).")
         return kept_ids, np.stack(kept, axis=0)
 
     @staticmethod
-    def _dict_matrix(d: dict) -> tuple[list[str], np.ndarray]:
+    def _dict_matrix(
+        d: dict,
+    ) -> tuple[list[str], np.ndarray, dict[str, dict[str, str]], str, str]:
         """Flatten a {id: vector} batch-protein result into (ids, matrix)."""
         ids: list[str] = []
         rows: list[np.ndarray] = []
+        aliases: dict[str, dict[str, str]] = {}
+        has_isoforms = any(isinstance(v, dict) for v in d.values())
+
         for k, v in d.items():
             if isinstance(v, dict):
-                raise ValueError(
-                    "embed(output=...) does not support per-isoform protein "
-                    "embeddings (multiple vectors per id). Use isoform='canonical' "
-                    "or the legacy embed_proteins_batch for isoform tables."
-                )
+                for iso_id, iso_vec in v.items():
+                    ids.append(str(iso_id))
+                    rows.append(np.asarray(iso_vec, dtype=np.float32).ravel())
+                    aliases.setdefault(str(iso_id), {})["parent_input_id"] = str(k)
+                continue
             ids.append(str(k))
             rows.append(np.asarray(v, dtype=np.float32).ravel())
         if not rows:
-            raise ValueError("No protein embeddings were produced.")
-        return ids, np.stack(rows, axis=0)
+            raise ValueError("embedding generation: no protein embeddings were produced.")
+        if has_isoforms:
+            return ids, np.stack(rows, axis=0), aliases, "protein_isoform", "uniprot_isoform"
+        return ids, np.stack(rows, axis=0), aliases, "protein", "uniprot"
 
     def _molecule_inputs_to_smiles(
-        self, ids: list[str], id_type: str, extra: dict[str, str],
+        self,
+        ids: list[str],
+        id_type: str,
+        extra: dict[str, Any],
     ) -> tuple[list[str], dict[str, str]]:
         """Return SMILES to embed + a {smiles: name} alias map.
 
@@ -893,13 +1155,13 @@ class BioEmbedder:
         ``id_type="name"`` each name is resolved to SMILES via the drug
         resolver chain, recording which API answered (provenance).
         """
-        if id_type == "smiles":
+        if id_type in ("smiles", "canonical_smiles"):
             return ids, {}
         if id_type != "name":
             raise ValueError(
-                f"molecule id_type must be 'smiles' or 'name', got {id_type!r}."
+                f"canonicalization: molecule id_type must be 'smiles', 'canonical_smiles', or 'name', got {id_type!r}."
             )
-        from .resources.molecule.resolver import DrugResolver  # noqa: PLC0415
+        from .resources.molecule.resolver import DrugResolver
 
         resolver = DrugResolver()
         smiles: list[str] = []
@@ -914,47 +1176,8 @@ class BioEmbedder:
             name_alias[res.smiles] = name
             sources[res.source] = sources.get(res.source, 0) + 1
         if sources:
-            extra["name_resolution_sources"] = ", ".join(
-                f"{k}:{v}" for k, v in sorted(sources.items())
-            )
+            extra["name_resolution_sources"] = ", ".join(f"{k}:{v}" for k, v in sorted(sources.items()))
         return smiles, name_alias
-
-    def _canon_genes(
-        self, raw: list[str], id_type: str, organism: str,
-    ) -> tuple[list[str], dict[str, dict[str, str]], str]:
-        if id_type == "ensembl_id" or all(str(x).upper().startswith("ENS") for x in raw):
-            return raw, {}, "ensembl_gene_id"
-        mapping = self.gene_resolver.symbols_to_ensembl_batch(raw, organism=organism)
-        canon = [mapping.get(s) for s in raw]
-        return _apply_canon(raw, canon, alias_scheme="gene_symbol"), {}, "ensembl_gene_id"  # type: ignore[return-value]
-
-    def _canon_molecules(
-        self, raw: list[str], name_alias: dict[str, str],
-    ) -> tuple[list[str], dict[str, dict[str, str]], str]:
-        from .resources.molecule.resolver import DrugResolver  # noqa: PLC0415
-
-        resolver = DrugResolver()
-        canon = [resolver.canonicalize_smiles(s) for s in raw]
-        kept, aliases = _zip_canon(raw, canon)
-        # Surface the original drug name (if we came from a name) for display.
-        for cid in list(aliases.keys()):
-            nm = name_alias.get(cid)
-            if nm:
-                aliases[cid]["name"] = nm
-        return kept, aliases, "canonical_smiles"
-
-    def _canon_proteins(
-        self, raw: list[str], id_type: str, organism: str,
-    ) -> tuple[list[str], dict[str, dict[str, str]], str]:
-        canon = [
-            self.protein_resolver.resolve_uniprot_id(x, id_type=id_type, organism=organism)
-            for x in raw
-        ]
-        kept, aliases = _zip_canon(raw, canon)
-        for orig, cid in zip(raw, canon):
-            if cid and orig != cid:
-                aliases.setdefault(cid, {})["gene_symbol"] = orig
-        return kept, aliases, "uniprot"
 
     def embed_gene(
         self,
@@ -1256,6 +1479,7 @@ class BioEmbedder:
         gene_description_format: str | None = None,
         fetch_all_dna: bool = False,
         biotype: str = "protein_coding",
+        prefetched_sequences: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> list[np.ndarray | None]:
         """
@@ -1271,11 +1495,15 @@ class BioEmbedder:
         mtype = inst.model_type
 
         # Dictionary to hold pre-fetched sequences (if any)
-        prefetched_data: dict[str, str] = {}
+        prefetched_data: dict[str, str] = dict(prefetched_sequences or {})
+        if prefetched_data and identifiers is None:
+            identifiers = list(prefetched_data.keys())
+            id_type = "ensembl_id"
+            logging.info("Using %d prefetched whole-genome sequences.", len(prefetched_data))
 
         # --- LOGIC CHANGE: Discovery Mode ---
         # If identifiers is None OR we explicitly want to pre-fetch
-        if fetch_all_dna or identifiers is None:
+        if (fetch_all_dna or identifiers is None) and not prefetched_data:
             if self.resolver_backend == "api":
                 logging.info(f"Fetching list of all '{biotype}' genes via API...")
                 # This returns {ensembl_id: dna_sequence} or None
@@ -1369,9 +1597,7 @@ class BioEmbedder:
                                         id_type,
                                         ident,
                                     )
-                                    state["reason"] = (
-                                        f"resolver:unsupported_id_type:{id_type}"
-                                    )
+                                    state["reason"] = f"resolver:unsupported_id_type:{id_type}"
                                 elif self.resolver_backend == "local":
                                     data = self.gene_resolver.get_local_dna_sequence(ident, dna_id)
                                     state["source"] = "gene_resolver_local"
@@ -1392,12 +1618,12 @@ class BioEmbedder:
                         # thin but non-None description (e.g. just "Gene
                         # TP53 (human). TP53: tumor protein p53.").
                         state["attempted"].append("mygene")
-                        fmt = gene_description_format or (
-                            "Gene {identifier} ({organism}). "
-                            "{symbol}: {name}. {summary}"
-                        )
+                        fmt = gene_description_format or ("Gene {identifier} ({organism}). {symbol}: {name}. {summary}")
                         data = self.gene_resolver.get_gene_description(
-                            ident, id_type, organism, format_string=fmt,
+                            ident,
+                            id_type,
+                            organism,
+                            format_string=fmt,
                         )
                         state["source"] = "mygene_description"
 
@@ -1456,11 +1682,13 @@ class BioEmbedder:
         # still OOMs propagates so it can be classified as
         # ContextOverflowError / ModelOOMError below.
         def _do_embed(batch: Sequence[str]) -> list[Any]:
-            return list(inst.embed_batch(
-                inputs=list(batch),
-                pooling_strategy=pooling_strategy,
-                **kwargs,
-            ))
+            return list(
+                inst.embed_batch(
+                    inputs=list(batch),
+                    pooling_strategy=pooling_strategy,
+                    **kwargs,
+                )
+            )
 
         try:
             with time_block(
@@ -1496,11 +1724,16 @@ class BioEmbedder:
             # embeddings" error several layers up. We refuse to do that.
             logging.error(
                 "Batch embed failed for model='%s' (n_inputs=%d): %s",
-                model, len(valid_inputs), e,
+                model,
+                len(valid_inputs),
+                e,
             )
             traceback.print_exc()
             typed = _classify_embedder_exception(
-                e, model_name=model, n_inputs=len(valid_inputs), device=str(self.device),
+                e,
+                model_name=model,
+                n_inputs=len(valid_inputs),
+                device=str(self.device),
             )
             raise typed from e
 
@@ -1515,9 +1748,7 @@ class BioEmbedder:
         # this point, so anything in ``results[i] is None`` here is a
         # resolver miss with state already captured.
         valid_index_set = set(valid_indices)
-        for i, (ident, state) in enumerate(
-            zip(identifiers, per_input_state, strict=False)
-        ):
+        for i, (ident, state) in enumerate(zip(identifiers, per_input_state, strict=False)):
             if i in valid_index_set and results[i] is not None:
                 report.record(
                     ident,
@@ -2042,7 +2273,6 @@ class BioEmbedder:
         from .models.singlecell_models import (
             PCAEmbedding,
             ScVIToolsWrapper,
-            get_singlecell_wrapper,
             list_singlecell_models,
         )
         from .pp.sc_preprocessing import preprocess_counts
@@ -2133,9 +2363,7 @@ class BioEmbedder:
                     # to embed_cells -- e.g. chunked inference over a large
                     # AnnData -- reuse the already-loaded torch model
                     # instead of re-instantiating it on every call.
-                    wrapper = self._get_or_load_singlecell_wrapper(
-                        model_key, batch_size, device_str
-                    )
+                    wrapper = self._get_or_load_singlecell_wrapper(model_key, batch_size, device_str)
                     # Auto-adapt var_names to the model's vocabulary.
                     # This is the difference between a silent zero-match
                     # failure (e.g. passing Ensembl IDs to scGPT) and a
@@ -2244,10 +2472,7 @@ class BioEmbedder:
 
         if latent is None:
             if adata is None:
-                raise ValueError(
-                    "decode_cells needs either `latent` or `adata` "
-                    "(+ optional `obsm_key`)."
-                )
+                raise ValueError("decode_cells needs either `latent` or `adata` (+ optional `obsm_key`).")
             key = obsm_key or f"X_{model}"
             if key not in adata.obsm:
                 raise KeyError(
@@ -2283,10 +2508,8 @@ class BioEmbedder:
         if write_layer is not None and adata is not None:
             if decoded.shape[1] != adata.n_vars:
                 raise ValueError(
-                    "Decoded matrix has %d genes but adata has %d "
-                    "var_names; cannot write to adata.layers." % (
-                        decoded.shape[1], adata.n_vars,
-                    )
+                    f"Decoded matrix has {decoded.shape[1]} genes but adata has "
+                    f"{adata.n_vars} var_names; cannot write to adata.layers."
                 )
             adata.layers[write_layer] = decoded
 
@@ -2328,10 +2551,7 @@ class BioEmbedder:
 
         card = singlecell_info(model)
         if not card.supports_generation:
-            raise ValueError(
-                f"Model '{model}' does not expose an in-context "
-                f"generation head. Supported: stack."
-            )
+            raise ValueError(f"Model '{model}' does not expose an in-context generation head. Supported: stack.")
 
         if wrapper is None:
             device_str = str(self.device)
@@ -3019,7 +3239,7 @@ class BioEmbedder:
                 else:
                     raise ValueError(f"Unknown dataset: {dataset!r}")
                 return pert, imgs, ctx.final_source, None
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 return pert, [], ctx.final_source, exc
 
         per_gene_images: dict[str, list[np.ndarray]] = {}
@@ -3239,7 +3459,7 @@ class BioEmbedder:
                 subcell_4ch = cell_painting_to_subcell(fov)
                 canvas = prepare_subcell_canvas(subcell_4ch, nm_per_pixel=325.0)
                 images.append(canvas)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 failed_count += 1
         if failed_count > 0 and resolution_ctx:
             resolution_ctx.add_step(f"{failed_count} image(s) failed to load")
@@ -3291,7 +3511,7 @@ class BioEmbedder:
                         try:
                             img = load_hpa_if_image(prefix=str(gene_dir / prefix))
                             images.append(img)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             failed_local += 1
                     if max_images is not None:
                         images = images[:max_images]
@@ -3307,8 +3527,6 @@ class BioEmbedder:
             resolution_ctx.add_step("HPA API lookup")
 
         antibodies, gene_source = get_hpa_antibodies_quiet(perturbation)
-        used_xml_fallback = False
-
         if not antibodies:
             if resolution_ctx:
                 resolution_ctx.add_step("HPA XML catalog fallback")
@@ -3333,9 +3551,8 @@ class BioEmbedder:
                             "_url_prefix": row.get("image_url_prefix", ""),
                         }
                     )
-                used_xml_fallback = True
                 gene_source = "HPA XML catalog"
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return []
 
         # Cap the antibody list *before* downloading so we only fetch
@@ -3381,7 +3598,7 @@ class BioEmbedder:
                         sample,
                     )
                 return img
-            except Exception:
+            except Exception:  # noqa: BLE001
                 failed_fetch[0] += 1
                 return None
 
@@ -3948,7 +4165,7 @@ def _resolve_compound_jump_fallback(
             if rows:
                 return _ret(rows, "DrugResolver SMILES")
 
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return _ret([], None)
@@ -4004,10 +4221,10 @@ def _resolve_gene_jump_fallback(
                     )
                     if rows:
                         return _ret(rows, f"mygene alias '{alt}'")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return _ret([], None)
