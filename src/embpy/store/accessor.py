@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -10,7 +9,11 @@ from anndata import AnnData
 from scipy import sparse
 
 from embpy.io.result import EmbeddingProvenance, EmbeddingResult
+from embpy.store.actions import compile_action_table
 from embpy.store.core import EmbeddingBlock, EmbeddingStore, RelationTable
+
+if TYPE_CHECKING:
+    from embpy.resources.gene.control import ControlPolicy
 
 Axis = Literal["auto", "obs", "var"]
 
@@ -435,8 +438,28 @@ class EmbpyAccessor:
         perturbation_key: str | None = None,
         aggregation: Literal["mean", "sum"] = "mean",
         store: str | EmbeddingStore | None = None,
+        *,
+        control_values: Sequence[str] | None = None,
+        control_policy: ControlPolicy | None = None,
+        on_unresolved: Literal["raise", "zero", "control"] = "raise",
+        control_sentinel_seed: int = 0,
     ) -> pd.DataFrame:
-        """Compile observation-level perturbation/action embeddings."""
+        """Compile observation-level perturbation/action embeddings.
+
+        Pools the ``target_embedding`` vectors of each condition's targets into
+        one action vector per observation (written to ``.obsm[output_key]``).
+
+        Combo labels (``"g1+g2"``) split on ``+ , ; / |``; pass a
+        ``control_policy`` to classify control / mixed labels instead. Control
+        conditions -- those in ``control_values`` or classified control by the
+        policy -- map to a deterministic non-zero sentinel rather than being
+        resolved against the target table. ``on_unresolved`` chooses what
+        happens when a non-control condition resolves to no target:
+        ``"raise"`` (default, historical behaviour), ``"zero"`` (loud
+        UNRESOLVED zero row), or ``"control"`` (route to the sentinel). Per-
+        condition statuses and missing targets are recorded under
+        ``adata.uns['embpy']['actions'][output_key]``.
+        """
         if target_embedding is None:
             raise ValueError("adata.embpy.compile_actions: target_embedding is required.")
         perturbation_key = perturbation_key or _registry(self._adata).get("conditions", {}).get("condition_key")
@@ -447,7 +470,6 @@ class EmbpyAccessor:
 
         block = self._store_embedding(target_embedding, store)
         target_matrix = np.asarray(block.matrix, dtype=np.float32)
-        target_lookup = {eid: i for i, eid in enumerate(block.entity_ids)}
 
         relation_frame = self._resolve_relation_frame(relation)
         relation_lookup: dict[str, list[str]] = {}
@@ -455,42 +477,45 @@ class EmbpyAccessor:
             for source, target in zip(relation_frame["source_id"], relation_frame["target_id"], strict=True):
                 relation_lookup.setdefault(str(source), []).append(str(target))
 
-        unique_conditions = sorted(self._adata.obs[perturbation_key].astype(str).unique())
-        condition_vectors: dict[str, np.ndarray] = {}
-        missing: dict[str, list[str]] = {}
-        for condition in unique_conditions:
-            target_ids = relation_lookup.get(condition, _split_targets(condition))
-            found = [target_matrix[target_lookup[t]] for t in target_ids if t in target_lookup]
-            miss = [t for t in target_ids if t not in target_lookup]
-            if miss:
-                missing[condition] = miss
-            if not found:
-                raise ValueError(
-                    f"adata.embpy.compile_actions: no target embeddings found for perturbation {condition!r} "
-                    f"(missing targets: {miss[:5]})."
-                )
-            stacked = np.vstack(found)
-            if aggregation == "mean":
-                condition_vectors[condition] = stacked.mean(axis=0)
-            elif aggregation == "sum":
-                condition_vectors[condition] = stacked.sum(axis=0)
-            else:
-                raise ValueError("adata.embpy.compile_actions: aggregation must be 'mean' or 'sum'.")
+        # Default control labels from setup_conditions() when not given explicitly.
+        if control_values is None:
+            registered = _registry(self._adata).get("conditions", {}).get("control_values")
+            control_values = list(registered) if registered else None
 
+        unique_conditions = sorted(self._adata.obs[perturbation_key].astype(str).unique())
+        compiled = compile_action_table(
+            unique_conditions,
+            target_matrix,
+            block.entity_ids,
+            relation=relation_lookup or None,
+            aggregation=aggregation,
+            control_policy=control_policy,
+            control_values=control_values,
+            on_unresolved=on_unresolved,
+            control_sentinel_seed=control_sentinel_seed,
+            stage="adata.embpy.compile_actions",
+        )
+
+        table = compiled.table
+        table.index.name = perturbation_key
+        condition_vectors = {str(c): table.loc[c].to_numpy(dtype=np.float32) for c in table.index}
         action = np.vstack([condition_vectors[str(x)] for x in self._adata.obs[perturbation_key]])
         self._adata.obsm[output_key] = action.astype(np.float32)
-        table = pd.DataFrame.from_dict(condition_vectors, orient="index")
-        table.index.name = perturbation_key
-        table.columns = [f"dim_{i}" for i in range(table.shape[1])]
 
         _registry(self._adata)["actions"][output_key] = {
             "perturbation_key": perturbation_key,
             "relation": relation,
             "target_embedding": target_embedding,
             "aggregation": aggregation,
-            "n_conditions": int(len(condition_vectors)),
-            "n_missing_conditions": int(len(missing)),
-            "missing_targets": missing,
+            "n_conditions": int(len(table.index)),
+            "n_resolved": compiled.n_resolved,
+            "n_control": compiled.n_control,
+            "n_unresolved": compiled.n_unresolved,
+            "on_unresolved": on_unresolved,
+            "control_sentinel_seed": int(control_sentinel_seed),
+            "statuses": dict(compiled.statuses),
+            "n_missing_conditions": int(len(compiled.missing_targets)),
+            "missing_targets": dict(compiled.missing_targets),
             "condition_vectors": table.reset_index().to_dict(orient="list"),
         }
         _registry(self._adata)["embeddings"][output_key] = {
@@ -759,11 +784,6 @@ def _relation_frame(registry_entry: Mapping[str, Any]) -> pd.DataFrame:
 
 def _issue(kind: str, name: str, issue: str, count: int, examples: Sequence[Any] | None = None) -> dict[str, Any]:
     return {"kind": kind, "name": name, "issue": issue, "count": int(count), "examples": list(examples or [])}
-
-
-def _split_targets(value: str) -> list[str]:
-    parts = [p.strip() for p in re.split(r"[+,;/|]", value) if p.strip()]
-    return parts or [value]
 
 
 def _dense(matrix: Any) -> np.ndarray:

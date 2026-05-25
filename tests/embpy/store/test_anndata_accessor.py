@@ -182,3 +182,36 @@ def test_plotting_wrappers_return_figures():
     assert fig.axes
     assert sim_fig.axes
     assert diag_fig.axes
+
+
+def test_compile_actions_records_status_and_handles_control_and_unresolved():
+    from embpy.store.actions import control_sentinel_vector
+
+    obs = pd.DataFrame(
+        {"perturbation": ["g1", "g1", "non-targeting", "g2", "ghost", "ghost"]},
+        index=[f"c{i}" for i in range(6)],
+    )
+    var = pd.DataFrame(index=["g1", "g2", "g3"])
+    adata = AnnData(X=np.zeros((6, 3), dtype=np.float32), obs=obs, var=var)
+    store = EmbeddingStore.from_results(_gene_result())
+    adata.embpy.register_store(store)
+    # control_values flow from setup_conditions into compile_actions by default.
+    adata.embpy.setup_conditions("perturbation", control_values=["non-targeting"])
+
+    table = adata.embpy.compile_actions(
+        target_embedding="gene:toy_gene",
+        perturbation_key="perturbation",
+        on_unresolved="zero",
+    )
+
+    sentinel = control_sentinel_vector(2, seed=0)
+    assert table.loc["non-targeting"].to_numpy().tolist() == pytest.approx(sentinel.tolist())
+    assert table.loc["ghost"].to_numpy().tolist() == [0.0, 0.0]
+    assert adata.obsm["X_embpy_action"].shape == (6, 2)
+
+    meta = adata.uns["embpy"]["actions"]["X_embpy_action"]
+    assert meta["statuses"]["non-targeting"] == "CONTROL"
+    assert meta["statuses"]["ghost"] == "UNRESOLVED"
+    assert meta["statuses"]["g1"] == "RESOLVED"
+    assert (meta["n_control"], meta["n_unresolved"], meta["n_resolved"]) == (1, 1, 2)
+    assert meta["missing_targets"]["ghost"] == ["ghost"]
