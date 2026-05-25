@@ -70,9 +70,9 @@ Every `world_model -> embpy` boundary import is enumerated in `src/world_model/w
 Pixi (recommended for GPU / reproducible envs):
 
 ```bash
-pixi install -e gpu                       # GPU env (Linux + CUDA 12.4), both packages editable
-pixi install -e gpu-state-stack           # + Arc STATE + Arc STACK backbones
 pixi install -e default                   # CPU env, both packages editable
+pixi install -e mps                       # MacBook / Apple Silicon GPU via PyTorch MPS
+pixi install -e gpu                       # GPU env (Linux + CUDA 12.4), both packages editable
 pixi run -e gpu embpy-shell               # interactive shell, cwd=src/embpy/
 pixi run -e gpu wm-shell                  # interactive shell, cwd=src/world_model/
 ```
@@ -563,6 +563,12 @@ _most reproducible_ to _most familiar_:
 > pixi install              # CPU (default)
 > pixi shell                # activate
 > pixi run verify           # smoke test
+>
+> # Apple Silicon / MacBook GPU
+> pixi install -e mps
+> pixi run -e mps verify-mps
+> pixi run -e mps install-kernel-mps
+> pixi run -e mps jupyter --port 8888
 > ```
 
 ---
@@ -588,6 +594,11 @@ pixi install
 pixi shell                    # activate
 pixi run verify               # smoke-test
 
+# Apple Silicon / MacBook GPU (PyTorch MPS backend)
+pixi install -e mps
+pixi shell -e mps
+pixi run -e mps verify-mps
+
 # GPU install (CUDA 12.4)
 pixi install -e gpu
 pixi shell -e gpu
@@ -599,6 +610,7 @@ Pre-defined environments (switch with `pixi shell -e <name>`):
 | Env           | Contents                                                                                                                                                                                                                                    |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `default`     | CPU PyTorch + core embpy + scanpy + morphology + jupyter                                                                                                                                                                                    |
+| `mps`         | Apple Silicon PyTorch MPS backend + core embpy + scanpy + morphology + jupyter                                                                                                                                                              |
 | `gpu`         | CUDA 12.4 PyTorch + pertpy + lamindb + ppi + jupyter                                                                                                                                                                                        |
 | `helical-gpu` | Standalone env with `helical` (single-cell FMs) on GPU. Lives in its own solve-group with conda pins for `scipy==1.13.1`, `transformers==4.49.0`, `pandas==2.2.2`, `numpy<2`; **does not include ESM-3** (incompatible `transformers` pin). |
 | `helical-cpu` | Same as `helical-gpu` but CPU only                                                                                                                                                                                                          |
@@ -612,8 +624,36 @@ Common tasks (run with `pixi run <task>`):
 | `verify`                    | Smoke-test the install on CPU                            |
 | `jupyter`                   | Launch JupyterLab on `0.0.0.0` (any port / ip via args)  |
 | `install-kernel`            | Register this env as a `Python (embpy)` Jupyter kernel   |
+| `-e mps verify-mps`         | Smoke-test Apple Silicon MPS visibility                  |
+| `-e mps install-kernel-mps` | Register the MPS env as `Python (embpy-mps)`             |
 | `-e gpu verify-gpu`         | Smoke-test the GPU install (needs a visible CUDA device) |
 | `-e gpu install-kernel-gpu` | Register the GPU env as `Python (embpy-gpu)`             |
+
+### Running notebooks locally
+
+For the standard notebooks in `docs/notebooks`, use Pixi's Jupyter task:
+
+```bash
+pixi install -e mps                 # or: pixi install -e dev
+pixi run -e mps install-kernel-mps  # one-time kernel registration
+pixi run -e mps jupyter --port 8888
+```
+
+Then open the printed local URL and select the `Python (embpy-mps)` kernel.
+If you do not need the Mac GPU, the same flow works with the default/dev env:
+
+```bash
+pixi run -e dev install-kernel
+pixi run -e dev jupyter --port 8888
+```
+
+Inside a notebook you can check the active accelerator with:
+
+```python
+import torch
+
+torch.backends.mps.is_available()
+```
 
 ### Running GPU JupyterLab on a SLURM cluster
 

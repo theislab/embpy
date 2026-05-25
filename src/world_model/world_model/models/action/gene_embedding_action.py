@@ -82,13 +82,13 @@ from typing import TYPE_CHECKING
 import torch
 from torch import nn
 
-from .adapters import ActionAdapter, build_action_adapter
+from world_model.models.action.adapters import ActionAdapter, build_action_adapter
 
 if TYPE_CHECKING:
-    from ...configs import ActionAdapterConfig
+    from world_model.configs import ActionAdapterConfig
 
 
-def _default_adapter_cfg(project_hidden: int | None) -> "ActionAdapterConfig":
+def _default_adapter_cfg(project_hidden: int | None) -> ActionAdapterConfig:
     """Pick an :class:`ActionAdapterConfig` matching the legacy ``project_hidden`` knob.
 
     * ``project_hidden is None`` -> ``kind="linear"``, byte-equivalent to
@@ -96,7 +96,7 @@ def _default_adapter_cfg(project_hidden: int | None) -> "ActionAdapterConfig":
     * ``project_hidden is int``  -> ``kind="mlp"`` with that hidden dim
       and the legacy ``GELU`` activation.
     """
-    from ...configs import ActionAdapterConfig  # noqa: PLC0415
+    from world_model.configs import ActionAdapterConfig
 
     if project_hidden is None:
         return ActionAdapterConfig(kind="linear")
@@ -146,13 +146,11 @@ class GeneEmbeddingAction(nn.Module):
         pool: str = "mean",
         freeze_embeddings: bool = True,
         project_hidden: int | None = None,
-        adapter_cfg: "ActionAdapterConfig | None" = None,
+        adapter_cfg: ActionAdapterConfig | None = None,
     ) -> None:
         super().__init__()
         if gene_embedding_table.ndim != 2:
-            raise ValueError(
-                f"gene_embedding_table must be 2D, got shape {tuple(gene_embedding_table.shape)}"
-            )
+            raise ValueError(f"gene_embedding_table must be 2D, got shape {tuple(gene_embedding_table.shape)}")
         if pool not in {"mean", "sum"}:
             raise ValueError(f"pool must be 'mean' or 'sum', got {pool!r}")
 
@@ -169,6 +167,7 @@ class GeneEmbeddingAction(nn.Module):
             self.embed.weight.copy_(gene_embedding_table)
         if freeze_embeddings:
             self.embed.weight.requires_grad_(False)
+        self._frozen_embedding_table_cpu = gene_embedding_table.detach().cpu().clone() if freeze_embeddings else None
 
         if adapter_cfg is None:
             adapter_cfg = _default_adapter_cfg(project_hidden)
@@ -193,25 +192,14 @@ class GeneEmbeddingAction(nn.Module):
         module docstring for the exact data flow and the byte-equivalence
         argument with the legacy aggregate-then-project ordering.
         """
-        if gene_indices.ndim != 3:
-            raise ValueError(
-                f"Expected (B, T, n_pert) indices, got shape {tuple(gene_indices.shape)}"
-            )
-        if gene_indices.dtype not in (torch.long, torch.int64, torch.int32):
-            raise TypeError(f"gene_indices must be int/long, got {gene_indices.dtype}")
-        if (gene_indices < 0).any() or (gene_indices >= self.n_rows).any():
-            raise ValueError(
-                f"gene_indices out of range [0, {self.n_rows - 1}]: "
-                f"min={int(gene_indices.min())}, max={int(gene_indices.max())}"
-            )
-
-        emb = self.embed(gene_indices)  # (B, T, n_pert, embedding_dim)
+        self._validate_gene_indices(gene_indices)
+        emb = self._lookup_gene_embeddings(gene_indices)  # (B, T, n_pert, embedding_dim)
         # Project per gene. nn.Linear (and the Sequential / LoRA stacks built
         # on it) broadcast over arbitrary leading dimensions, so this single
         # forward pass produces one d_model vector per (B, T, n_pert) slot.
         projected = self.proj(emb)  # (B, T, n_pert, d_model)
 
-        valid = (gene_indices != 0).float().unsqueeze(-1)  # (B, T, n_pert, 1)
+        valid = (gene_indices != 0).to(device=projected.device, dtype=projected.dtype).unsqueeze(-1)
         n_valid = valid.sum(dim=-2)  # (B, T, 1); 0 for all-padding (control) steps
         masked_sum = (projected * valid).sum(dim=-2)  # (B, T, d_model)
 
@@ -236,10 +224,36 @@ class GeneEmbeddingAction(nn.Module):
             # padding_idx=0 gradient-zeroing rule keeps applying when the
             # embedding table is trainable (freeze_embeddings=False).
             pad_idx = torch.zeros(1, dtype=torch.long, device=gene_indices.device)
-            pad_token = self.proj(self.embed(pad_idx))  # (1, d_model)
+            pad_token = self.proj(self._lookup_gene_embeddings(pad_idx))  # (1, d_model)
             pooled = pooled + control_mask * pad_token.view(1, 1, -1)
 
         return pooled
+
+    def _validate_gene_indices(self, gene_indices: torch.Tensor) -> None:
+        """Validate integer action indices before table lookup."""
+        if gene_indices.ndim != 3:
+            raise ValueError(f"Expected (B, T, n_pert) indices, got shape {tuple(gene_indices.shape)}")
+        if gene_indices.dtype not in (torch.long, torch.int64, torch.int32):
+            raise TypeError(f"gene_indices must be int/long, got {gene_indices.dtype}")
+        if (gene_indices < 0).any() or (gene_indices >= self.n_rows).any():
+            raise ValueError(
+                f"gene_indices out of range [0, {self.n_rows - 1}]: "
+                f"min={int(gene_indices.min())}, max={int(gene_indices.max())}"
+            )
+
+    def _lookup_gene_embeddings(self, gene_indices: torch.Tensor) -> torch.Tensor:
+        """Lookup frozen action rows, using a CPU-index path for Apple MPS."""
+        weight_device = self.embed.weight.device
+        if weight_device.type == "mps" and gene_indices.device.type == "cpu":
+            if self._frozen_embedding_table_cpu is None:
+                raise RuntimeError("MPS CPU-index action lookup requires frozen action embeddings.")
+            emb = nn.functional.embedding(
+                gene_indices.to(torch.long),
+                self._frozen_embedding_table_cpu,
+                padding_idx=0,
+            )
+            return emb.to(weight_device)
+        return self.embed(gene_indices)
 
 
 __all__ = ["GeneEmbeddingAction"]

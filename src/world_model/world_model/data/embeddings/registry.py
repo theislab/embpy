@@ -7,23 +7,19 @@ new backend is a four-line patch here plus a new file under
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from embpy.resources.gene.control import ControlPolicy
 
 from .bio_embedder import BioEmbedderProvider
-from .precomputed import PrecomputedProvider
 from .provider import ActionEmbeddingProvider
 from .store_provider import StoreProvider
 
 if TYPE_CHECKING:
-    from ...configs import ActionEmbeddingConfig, DataConfig
-
-logger = logging.getLogger(__name__)
+    from world_model.configs import ActionEmbeddingConfig, DataConfig
 
 
-def _policy_from_cfg(cfg: "ActionEmbeddingConfig") -> ControlPolicy:
+def _policy_from_cfg(cfg: ActionEmbeddingConfig) -> ControlPolicy:
     """Build a :class:`ControlPolicy` from the YAML knobs.
 
     All three knobs are optional; defaults are the curated regex set.
@@ -36,45 +32,34 @@ def _policy_from_cfg(cfg: "ActionEmbeddingConfig") -> ControlPolicy:
     if patterns_override is None or len(patterns_override) == 0:
         return ControlPolicy.from_iterable(extras, strict=strict)
     return ControlPolicy.from_iterable(
-        extras, patterns=tuple(patterns_override), strict=strict,
+        extras,
+        patterns=tuple(patterns_override),
+        strict=strict,
     )
 
 
 def build_provider(
-    cfg: "ActionEmbeddingConfig",
+    cfg: ActionEmbeddingConfig,
     *,
-    data_cfg: "DataConfig | None" = None,
+    data_cfg: DataConfig | None = None,
 ) -> ActionEmbeddingProvider:
     """Build an :class:`ActionEmbeddingProvider` from config.
 
-    The precomputed-fallback rule lives here: when
-    ``cfg.source == "precomputed"`` and ``cfg.path`` is empty, we fall
-    back to ``data_cfg.gene_embedding_path`` (the legacy single field).
-    A one-time ``warning`` log line documents the deprecation.
+    New runs should use ``source='store'`` and point at a ``.emstore``.
+    The old CSV/NPZ provider remains importable for one-shot migrations and
+    legacy tests, but the registry no longer routes production configs through
+    ``data.gene_embedding_path``. That prevents accidental training on stale
+    CSV tables when the store path was forgotten.
     """
     src = cfg.source
     if src == "precomputed":
-        path = cfg.path
-        if not path and data_cfg is not None and data_cfg.gene_embedding_path:
-            logger.warning(
-                "ActionEmbeddingConfig.path is empty; falling back to "
-                "DataConfig.gene_embedding_path=%s. This legacy path is "
-                "supported but deprecated -- migrate to the explicit "
-                "action_embedding: block in your YAML.",
-                data_cfg.gene_embedding_path,
-            )
-            path = data_cfg.gene_embedding_path
-        if not path:
-            raise ValueError(
-                "Precomputed action embeddings require either "
-                "action_embedding.path or data.gene_embedding_path to be set."
-            )
-        return PrecomputedProvider(
-            path=path,
-            control_policy=_policy_from_cfg(cfg),
-            control_sentinel_seed=int(
-                getattr(cfg, "control_sentinel_seed", 0) or 0
-            ),
+        legacy_path = cfg.path or (data_cfg.gene_embedding_path if data_cfg is not None else "")
+        hint = f" Existing path: {legacy_path!r}." if legacy_path else ""
+        raise ValueError(
+            "action_embedding.source='precomputed' is retired for world-model runs."
+            f"{hint} Convert CSV/NPZ tables once with "
+            "`python -m embpy.store.migrate <table> <out.emstore> --model <name>` "
+            "and set action_embedding.source='store' plus action_embedding.store_path."
         )
 
     if src == "store":
@@ -105,15 +90,10 @@ def build_provider(
             cache_dir=cfg.cache_dir or None,
             extra_kwargs=dict(cfg.extra_kwargs or {}),
             control_policy=_policy_from_cfg(cfg),
-            control_sentinel_seed=int(
-                getattr(cfg, "control_sentinel_seed", 0) or 0
-            ),
+            control_sentinel_seed=int(getattr(cfg, "control_sentinel_seed", 0) or 0),
         )
 
-    raise ValueError(
-        f"Unknown action_embedding.source={src!r}. "
-        f"Supported: 'store', 'precomputed', 'bio_embedder'."
-    )
+    raise ValueError(f"Unknown action_embedding.source={src!r}. Supported: 'store', 'bio_embedder'.")
 
 
 __all__ = ["build_provider"]

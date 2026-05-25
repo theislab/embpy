@@ -30,6 +30,7 @@ PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
 CONFIG="${1:-${CONFIG:-src/world_model/world_model/configs/experiments/transfer.yaml}}"
+if [[ $# -gt 0 ]]; then shift; fi
 FRACTION="${FRACTION:-0.10}"
 RUN_NAME="transfer_nadig_to_replogle_p$(printf '%03d' $(python -c "print(int(float('${FRACTION}')*100))"))"
 OUTPUT_DIR="runs/world_model/${RUN_NAME}"
@@ -37,6 +38,7 @@ OUTPUT_DIR="runs/world_model/${RUN_NAME}"
 echo "Config: $CONFIG"
 echo "Fraction: $FRACTION"
 echo "Run name: $RUN_NAME"
+echo "Overrides: $*"
 
 mkdir -p logs
 
@@ -44,4 +46,5 @@ exec pixi run -e gpu -- python -m world_model.scripts.train \
     --config "$CONFIG" \
     "transfer.finetune_fraction=${FRACTION}" \
     "run_name=${RUN_NAME}" \
-    "output_dir=${OUTPUT_DIR}"
+    "output_dir=${OUTPUT_DIR}" \
+    "$@"

@@ -15,13 +15,12 @@ from world_model.evaluation.plots import (
     plot_pred_vs_real_scatter,
 )
 
-
 pytest.importorskip("matplotlib")
 
 
 def test_plot_pred_vs_real_scatter_creates_files(tmp_path: Path):
     pytest.importorskip("anndata")
-    import anndata as ad  # noqa: PLC0415
+    import anndata as ad
 
     rng = np.random.default_rng(0)
     n_cells = 20
@@ -64,15 +63,40 @@ def test_plot_deg_overlap_bar_creates_files(tmp_path: Path):
     plot_deg_overlap_bar(df, out)
     assert out.exists()
     assert out.with_suffix(".svg").exists()
+    long = pd.read_csv(out.with_suffix(".csv"))
+    assert set(long.columns) == {"dataset", "model", "baseline", "seed", "perturbation", "metric", "value"}
+    assert len(long) == 2
 
 
 def test_plot_baseline_comparison_creates_files(tmp_path: Path):
-    df = pd.DataFrame({
-        "name": ["world_model", "identity", "control_mean"],
-        "mse": [0.1, 0.5, 0.4],
-        "r2": [0.7, -0.1, -0.05],
-    })
+    df = pd.DataFrame(
+        {
+            "name": ["world_model", "identity", "control_mean"],
+            "mse": [0.1, 0.5, 0.4],
+            "r2": [0.7, -0.1, -0.05],
+        }
+    )
     out = tmp_path / "comparison.png"
     plot_baseline_comparison(df, out, metrics=["mse", "r2"])
     assert out.exists()
     assert out.with_suffix(".svg").exists()
+    assert out.with_suffix(".csv").exists()
+
+
+def test_plot_baseline_comparison_prefers_per_perturbation_long(tmp_path: Path):
+    aggregate = pd.DataFrame({"name": ["world_model"], "r2": [0.7]})
+    long = pd.DataFrame(
+        {
+            "dataset": ["d", "d"],
+            "model": ["world_model", "world_model"],
+            "baseline": ["world_model", "world_model"],
+            "seed": ["0", "1"],
+            "perturbation": ["P0", "P0"],
+            "metric": ["r2", "r2"],
+            "value": [0.5, 0.9],
+        }
+    )
+    out = tmp_path / "comparison.png"
+    plot_baseline_comparison(aggregate, out, metrics=["r2"], per_perturbation_long=long)
+    written = pd.read_csv(out.with_suffix(".csv"))
+    assert written["value"].tolist() == [0.5, 0.9]

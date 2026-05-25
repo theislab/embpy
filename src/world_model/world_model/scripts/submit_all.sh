@@ -11,6 +11,8 @@
 #   PARTITION=gpu_p QOS=gpu_normal bash .../submit_all.sh
 # Override the transfer fraction:
 #   FRACTION=0.05 bash .../submit_all.sh
+# Run multiple seed replicates (default: one seed, 0):
+#   SEEDS="0 1 2" bash .../submit_all.sh
 # Skip a setup (default: run all three):
 #   SKIP_NADIG=1 SKIP_REPLOGLE=1 SKIP_TRANSFER=1 bash .../submit_all.sh
 #
@@ -266,26 +268,56 @@ SETUP_OUT[single_nadig]="runs/world_model/single_nadig"
 SETUP_OUT[single_replogle]="runs/world_model/single_replogle"
 
 FRACTION="${FRACTION:-0.10}"
+SEEDS="${SEEDS:-0}"
+read -r -a SEED_LIST <<<"${SEEDS}"
 P_INT=$(python -c "print(int(float('${FRACTION}')*100))")
 TRANSFER_RUN_NAME="transfer_nadig_to_replogle_p$(printf '%03d' $P_INT)"
 SETUP_OUT[transfer]="runs/world_model/${TRANSFER_RUN_NAME}"
 
 declare -A TRAIN_JOB
 
-if [[ "${SKIP_NADIG:-0}" != "1" ]]; then
-    echo "Submitting single_nadig ..."
-    TRAIN_JOB[single_nadig]=$(sbatch --parsable "${SLURM_DIR}/train_single_nadig.sbatch")
-fi
+seed_suffix() {
+    local seed="$1"
+    if [[ "${#SEED_LIST[@]}" -eq 1 && "$seed" == "0" ]]; then
+        echo ""
+    else
+        echo "_seed${seed}"
+    fi
+}
 
-if [[ "${SKIP_REPLOGLE:-0}" != "1" ]]; then
-    echo "Submitting single_replogle ..."
-    TRAIN_JOB[single_replogle]=$(sbatch --parsable "${SLURM_DIR}/train_single_replogle.sbatch")
-fi
+for seed in "${SEED_LIST[@]}"; do
+    suffix="$(seed_suffix "$seed")"
+    if [[ "${SKIP_NADIG:-0}" != "1" ]]; then
+        setup="single_nadig${suffix}"
+        out_dir="${SETUP_OUT[single_nadig]}${suffix}"
+        echo "Submitting ${setup} (seed=${seed}) ..."
+        TRAIN_JOB[$setup]=$(sbatch --parsable "${SLURM_DIR}/train_single_nadig.sbatch" \
+            "seed=${seed}" "split.seed=${seed}" \
+            "run_name=${setup}" "output_dir=${out_dir}")
+        SETUP_OUT[$setup]="$out_dir"
+    fi
 
-if [[ "${SKIP_TRANSFER:-0}" != "1" ]]; then
-    echo "Submitting transfer (fraction=${FRACTION}) ..."
-    TRAIN_JOB[transfer]=$(FRACTION="${FRACTION}" sbatch --parsable "${SLURM_DIR}/train_transfer.sbatch")
-fi
+    if [[ "${SKIP_REPLOGLE:-0}" != "1" ]]; then
+        setup="single_replogle${suffix}"
+        out_dir="${SETUP_OUT[single_replogle]}${suffix}"
+        echo "Submitting ${setup} (seed=${seed}) ..."
+        TRAIN_JOB[$setup]=$(sbatch --parsable "${SLURM_DIR}/train_single_replogle.sbatch" \
+            "seed=${seed}" "split.seed=${seed}" \
+            "run_name=${setup}" "output_dir=${out_dir}")
+        SETUP_OUT[$setup]="$out_dir"
+    fi
+
+    if [[ "${SKIP_TRANSFER:-0}" != "1" ]]; then
+        setup="transfer${suffix}"
+        run_name="${TRANSFER_RUN_NAME}${suffix}"
+        out_dir="${SETUP_OUT[transfer]}${suffix}"
+        echo "Submitting ${setup} (fraction=${FRACTION}, seed=${seed}) ..."
+        TRAIN_JOB[$setup]=$(FRACTION="${FRACTION}" sbatch --parsable "${SLURM_DIR}/train_transfer.sbatch" \
+            "seed=${seed}" "split.seed=${seed}" \
+            "run_name=${run_name}" "output_dir=${out_dir}")
+        SETUP_OUT[$setup]="$out_dir"
+    fi
+done
 
 declare -A BASELINE_JOB
 declare -A COMPARE_JOB

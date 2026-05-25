@@ -27,8 +27,10 @@ PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
 CONFIG="${1:-${CONFIG:-src/world_model/world_model/configs/experiments/single_nadig.yaml}}"
+if [[ $# -gt 0 ]]; then shift; fi
 echo "Config: $CONFIG"
+echo "Overrides: $*"
 
 mkdir -p logs
 
-exec pixi run -e gpu -- python -m world_model.scripts.train --config "$CONFIG"
+exec pixi run -e gpu -- python -m world_model.scripts.train --config "$CONFIG" "$@"

@@ -15,6 +15,8 @@
 #   pixi install                   # resolve + install the default env (CPU)
 #   pixi shell                     # drop into the activated env
 #   pixi run verify                # smoke-test the install
+#   pixi install -e mps            # Apple Silicon env (PyTorch MPS backend)
+#   pixi run -e mps verify-mps     # smoke-test Mac GPU visibility
 #   pixi run -e gpu install        # install the CUDA 12.4 env
 #   pixi shell -e gpu              # activate the CUDA 12.4 env
 #   pixi run -e dev test           # run the test suite in the dev env
@@ -27,8 +29,8 @@ version = "0.0.1"
 description = "A package for biological embeddings in the perturbation experimental space"
 authors = ["Goncalo Rei Pinto <goncalo.pinto@helmholtz-munich.de>"]
 channels = ["conda-forge", "bioconda", "pytorch", "nvidia"]
-# Only linux-64 gets the GPU env (no NVIDIA on macOS / Apple Silicon).
-# macOS platforms are still listed so the CPU env works on a Mac laptop.
+# Only linux-64 gets the CUDA env (no NVIDIA on macOS / Apple Silicon).
+# Apple Silicon uses PyTorch's MPS backend through the conda-forge build.
 platforms = ["linux-64", "osx-arm64"]
 
 # Activation env vars that apply to every `pixi run` / `pixi shell` call.
@@ -116,6 +118,14 @@ torch-geometric = ">=2.5"
 # `channel = "pytorch"` here would break macOS installs.
 [feature.cpu.dependencies]
 pytorch = ">=2.5.1,<3.0"
+
+# Apple Silicon GPU support. This intentionally reuses the conda-forge
+# PyTorch build from [feature.cpu]: on osx-arm64 that build exposes
+# torch.backends.mps. The feature exists mostly to give users a discoverable
+# `pixi shell -e mps` / `pixi run -e mps ...` target instead of asking them
+# to remember that the "cpu" env can also see the Mac GPU.
+[feature.mps]
+platforms = ["osx-arm64"]
 
 # CUDA 12.4 PyTorch -- linux-64 only (macOS has no NVIDIA GPUs). The `pytorch`
 # channel is required here because conda-forge doesn't ship the CUDA runtime
@@ -537,6 +547,10 @@ embpy = { path = ".", editable = true, extras = ["dev", "test"] }
 # Default CPU env for anyone who just wants to try embpy.
 default = { features = ["cpu", "morphology", "jump", "scanpy", "esm3", "seqmodels", "jupyter"], solve-group = "cpu" }
 
+# Apple Silicon env. Same package stack as `default`, but named for the
+# PyTorch MPS backend and exposing MPS-specific helper tasks.
+mps = { features = ["cpu", "mps", "morphology", "jump", "scanpy", "esm3", "seqmodels", "jupyter"] }
+
 # GPU env with CUDA 12.4 PyTorch and everything compatible with the modern
 # transformers/scipy stack. NOTE: helical is NOT here -- it hard-pins
 # transformers==4.49.0 and scipy==1.13.1 which conflicts with the rest of the
@@ -662,6 +676,17 @@ wm-shell    = { cmd = "bash -c 'cd src/world_model && exec bash -i'", descriptio
 verify-gpu = "python -c \"import torch; from embpy.embedder import BioEmbedder; e = BioEmbedder(device='auto'); print(f'torch={torch.__version__} cuda={torch.cuda.is_available()} device={e.device} gpus={torch.cuda.device_count()}')\""
 # Register the GPU env as a separate jupyter kernel so notebooks can pick it up explicitly.
 install-kernel-gpu = "python -m ipykernel install --user --name embpy-gpu --display-name 'Python (embpy-gpu)'"
+
+[feature.mps.tasks]
+# Apple Silicon smoke test. MPS is not CUDA; torch.cuda.is_available() should
+# remain false on a MacBook, while torch.backends.mps.is_available() should be true.
+verify-mps = "python -c \"import torch; built=hasattr(torch.backends, 'mps') and torch.backends.mps.is_built(); available=hasattr(torch.backends, 'mps') and torch.backends.mps.is_available(); print(f'torch={torch.__version__} mps_built={built} mps_available={available}'); assert available, 'PyTorch MPS is not available in this pixi env'\""
+# Register this env as a separate Jupyter kernel so notebooks can select it explicitly.
+install-kernel-mps = "python -m ipykernel install --user --name embpy-mps --display-name 'Python (embpy-mps)'"
+# Convenience world-model commands. Extra CLI args are appended by pixi, e.g.
+#   pixi run -e mps wm-train-mps --config ... train.device=mps
+wm-train-mps = "python -m world_model.scripts.train"
+wm-smoke-mps = "python -m world_model.scripts.smoke_test train.device=mps"
 
 [feature.dev.tasks]
 test = "pytest -xvs tests/"

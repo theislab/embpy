@@ -86,6 +86,11 @@ def test_build_provider_store_requires_path():
         build_provider(ActionEmbeddingConfig(source="store"))
 
 
+def test_build_provider_precomputed_is_retired():
+    with pytest.raises(ValueError, match="source='precomputed' is retired"):
+        build_provider(ActionEmbeddingConfig(source="precomputed", path="legacy.csv"))
+
+
 def test_make_control_vector_bit_compatible_with_embpy():
     # StoreProvider keeps world_model.sentinel dependency-light (no embpy import);
     # this guards that the two control sentinels stay bit-identical.

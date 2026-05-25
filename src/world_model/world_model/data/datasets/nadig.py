@@ -13,21 +13,21 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ..preprocessing import log_normalize_counts, select_highly_variable_genes
-from .base import (
+from world_model.data.datasets.base import (
     GeneIndexer,
     PerturbationSequenceDataset,
 )
+from world_model.data.preprocessing import log_normalize_counts, select_highly_variable_genes
 
 if TYPE_CHECKING:
-    from ..embeddings.provider import ActionEmbeddingProvider
+    from world_model.data.embeddings.provider import ActionEmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
 
 def _load_adata(path):  # type: ignore[no-untyped-def]
     try:
-        import anndata as ad  # noqa: PLC0415
+        import anndata as ad
     except ImportError as exc:
         raise ImportError("anndata is required to load Nadig datasets.") from exc
     path = Path(path)
@@ -44,7 +44,7 @@ class NadigSequenceDataset(PerturbationSequenceDataset):
         cls,
         h5ad_path: str | Path,
         *,
-        provider: "ActionEmbeddingProvider | None" = None,
+        provider: ActionEmbeddingProvider | None = None,
         gene_embedding_path: str | Path | None = None,
         perturbation_key: str = "perturbation",
         control_label: str = "non-targeting",
@@ -57,21 +57,18 @@ class NadigSequenceDataset(PerturbationSequenceDataset):
         bucket_key: str | None = None,
         context_mode: str = "trajectory",
         incontext_support_size: int = 16,
-    ) -> tuple["NadigSequenceDataset", np.ndarray, GeneIndexer, list[str]]:
+    ) -> tuple[NadigSequenceDataset, np.ndarray, GeneIndexer, list[str]]:
         """Build a dataset from a Nadig ``.h5ad`` file.
 
-        Exactly one of ``provider`` or ``gene_embedding_path`` must be
-        set. The path form is accepted for backward compatibility and
-        is wrapped in a :class:`PrecomputedProvider` internally.
+        ``provider`` must be set. The path form is retired; migrate legacy
+        CSV/NPZ tables to ``.emstore`` and build a store provider instead.
 
         ``bucket_key`` (optional) names an ``adata.obs`` column whose
         values define the per-cell context bucket (e.g. ``"batch"``).
         """
         adata = _load_adata(h5ad_path)
         if perturbation_key not in adata.obs.columns:
-            raise KeyError(
-                f"'{perturbation_key}' not in adata.obs (got {list(adata.obs.columns)})"
-            )
+            raise KeyError(f"'{perturbation_key}' not in adata.obs (got {list(adata.obs.columns)})")
 
         x = adata.X
         if hasattr(x, "toarray"):
@@ -85,13 +82,11 @@ class NadigSequenceDataset(PerturbationSequenceDataset):
             x = log_normalize_counts(x)
 
         labels = adata.obs[perturbation_key].astype(str).values
-        unique_perturbed = [
-            str(label) for label in np.unique(labels) if str(label) != control_label
-        ]
+        unique_perturbed = [str(label) for label in np.unique(labels) if str(label) != control_label]
 
         # Reuse the Replogle helper so the bucketing semantics stay
         # exactly the same across adapters.
-        from .replogle import _extract_bucket_codes  # noqa: PLC0415
+        from .replogle import _extract_bucket_codes
 
         cell_buckets, bucket_value_map = _extract_bucket_codes(adata, bucket_key)
 
@@ -116,27 +111,20 @@ class NadigSequenceDataset(PerturbationSequenceDataset):
 
 
 def _resolve_provider(
-    provider: "ActionEmbeddingProvider | None",
+    provider: ActionEmbeddingProvider | None,
     gene_embedding_path: str | Path | None,
-) -> "ActionEmbeddingProvider":
+) -> ActionEmbeddingProvider:
     if provider is not None and gene_embedding_path is not None:
-        raise ValueError(
-            "Pass either provider= or gene_embedding_path=, not both."
-        )
+        raise ValueError("Pass either provider= or gene_embedding_path=, not both.")
     if provider is not None:
         return provider
     if gene_embedding_path is None:
-        raise ValueError(
-            "from_h5ad requires either an ActionEmbeddingProvider or a "
-            "legacy gene_embedding_path."
-        )
-    from ..embeddings.precomputed import PrecomputedProvider  # noqa: PLC0415
-
-    logger.warning(
-        "NadigSequenceDataset.from_h5ad: gene_embedding_path is "
-        "deprecated -- pass an ActionEmbeddingProvider instead.",
+        raise ValueError("from_h5ad requires either an ActionEmbeddingProvider or a legacy gene_embedding_path.")
+    raise ValueError(
+        "NadigSequenceDataset.from_h5ad: legacy gene_embedding_path is retired. "
+        "Convert the CSV/NPZ to .emstore with `python -m embpy.store.migrate` "
+        "and pass an ActionEmbeddingProvider from action_embedding.source='store'."
     )
-    return PrecomputedProvider(gene_embedding_path)
 
 
 __all__ = ["NadigSequenceDataset"]

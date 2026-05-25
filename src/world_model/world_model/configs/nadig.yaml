@@ -8,7 +8,7 @@ seed: 0
 data:
   dataset: "nadig"
   h5ad_path: "data/datasets/nadig/NadigOConner2024_jurkat.h5ad"
-  gene_embedding_path: "data/embeddings/gene_embeddings/genept/embeddings_3072.csv"
+  gene_embedding_path: "" # deprecated; use action_embedding.store_path
   perturbation_key: "perturbation"
   control_label: "non-targeting"
   # Nadig has a single cell line per file, so context-aware sampling is a no-op.
@@ -21,6 +21,11 @@ data:
   val_fraction: 0.1
   num_workers: 4
   pin_memory: true
+
+action_embedding:
+  source: "store"
+  store_path: "data/embeddings/gene_embeddings/genept/genept.emstore"
+  store_key: "gene:genept"
 
 encoder:
   kind: "transformer"

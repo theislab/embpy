@@ -1,4 +1,4 @@
-"""Run every baseline against the same train/test split as a world-model run.
+r"""Run every baseline against the same train/test split as a world-model run.
 
 Loads the same :class:`SplitConfig` as the trainer, fits all baselines
 on the train side, evaluates them on the test side, and writes:
@@ -28,7 +28,10 @@ from world_model.configs import (
 )
 from world_model.data import build_dataloaders
 from world_model.evaluation import run_evaluation
-from world_model.evaluation.plots import plot_baseline_comparison
+from world_model.evaluation.plots import (
+    per_perturbation_tables_to_long,
+    plot_baseline_comparison,
+)
 from world_model.models.world_model import build_world_model
 from world_model.utils import load_checkpoint, seed_everything, setup_logging
 
@@ -36,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Run baselines for a world-model run.")
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument(
@@ -75,7 +79,8 @@ def _build_optional_model(cfg: WorldModelConfig, n_genes: int, gene_table, ckpt_
 
 
 def main(argv: list[str] | None = None) -> None:
-    import pandas as pd  # noqa: PLC0415
+    """Run baseline evaluation from CLI arguments."""
+    import pandas as pd
 
     args = parse_args(argv)
     cfg = load_yaml_config(args.config)
@@ -87,11 +92,9 @@ def main(argv: list[str] | None = None) -> None:
     seed_everything(cfg.seed)
 
     # Pass action_cfg + state_backbone_cfg so the action-embedding source
-    # (bio_embedder vs precomputed) matches the train run. Without these,
-    # build_dataloaders falls back to the legacy data.gene_embedding_path
-    # default (genept 3072d), and load_state_dict crashes with a shape
-    # mismatch when the trained checkpoint used a non-genept embedding
-    # (e.g. borzoi_v0 -> 1536d).
+    # (store vs bio_embedder) matches the train run. Without these,
+    # build_dataloaders would use its default action config and can
+    # instantiate a model with the wrong action dimension.
     artifacts = build_dataloaders(
         cfg.data,
         split_cfg=cfg.split,
@@ -102,10 +105,15 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     model = _build_optional_model(
-        cfg, len(artifacts.gene_symbols), artifacts.gene_table, args.checkpoint,
+        cfg,
+        len(artifacts.gene_symbols),
+        artifacts.gene_table,
+        args.checkpoint,
     )
-    device = "cuda" if (cfg.train.device == "auto" and torch.cuda.is_available()) else (
-        cfg.train.device if cfg.train.device != "auto" else "cpu"
+    device = (
+        "cuda"
+        if (cfg.train.device == "auto" and torch.cuda.is_available())
+        else (cfg.train.device if cfg.train.device != "auto" else "cpu")
     )
 
     results = run_evaluation(
@@ -120,20 +128,39 @@ def main(argv: list[str] | None = None) -> None:
 
     rows = []
     long_rows = []
+    per_pert_tables = {}
+    eval_dir = output_dir / "eval"
+    eval_dir.mkdir(parents=True, exist_ok=True)
     for name, res in results.items():
         if res.aggregate is None or res.aggregate.empty:
             continue
         agg = res.aggregate.copy()
         agg["name"] = name
         rows.append(agg)
+        per_pert_tables[name] = res.per_perturbation
+        if res.per_perturbation is not None and not res.per_perturbation.empty:
+            res.per_perturbation.to_csv(eval_dir / f"per_pert_{name}.csv", index=False)
         for col in res.aggregate.columns:
             long_rows.append({"baseline": name, "metric": col, "value": float(res.aggregate[col].iloc[0])})
     aggregate_table = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+    per_pert_long = per_perturbation_tables_to_long(
+        per_pert_tables,
+        dataset=cfg.data.dataset,
+        seed=cfg.seed,
+    )
+    if not per_pert_long.empty:
+        per_pert_long.to_csv(eval_dir / "per_perturbation_long.csv", index=False)
     if not aggregate_table.empty:
         cols = ["name"] + [c for c in aggregate_table.columns if c != "name"]
         aggregate_table = aggregate_table[cols]
         aggregate_table.to_csv(output_dir / "comparison.csv", index=False)
-        plot_baseline_comparison(aggregate_table, output_dir / "plots" / "comparison.png")
+        plot_baseline_comparison(
+            aggregate_table,
+            output_dir / "plots" / "comparison.png",
+            per_perturbation_long=per_pert_long,
+            dataset=cfg.data.dataset,
+            seed=cfg.seed,
+        )
     if long_rows:
         pd.DataFrame(long_rows).to_csv(output_dir / "baselines.csv", index=False)
         logger.info("Wrote baselines.csv (long format) and comparison.csv (wide format).")

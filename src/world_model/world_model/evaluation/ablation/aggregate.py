@@ -19,7 +19,7 @@ import argparse
 import json
 import logging
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -159,28 +159,32 @@ def aggregate_ablation(
         }
 
         if wm_metrics.empty:
-            long_rows.append({
-                **wide_row,
-                "metric": np.nan,
-                "value": np.nan,
-            })
+            long_rows.append(
+                {
+                    **wide_row,
+                    "metric": np.nan,
+                    "value": np.nan,
+                }
+            )
         else:
             row0 = wm_metrics.iloc[0]
             for metric in wm_metrics.columns:
                 value = row0[metric]
-                long_rows.append({
-                    "grid_key": spec.key,
-                    "model_name": spec.model_name,
-                    "id_type": spec.id_type,
-                    "region": spec.region,
-                    "pooling": spec.pooling,
-                    "status": status,
-                    "embedding_dim": embedding_dim,
-                    "n_unresolved": n_unresolved,
-                    "metric": metric,
-                    "value": _to_float(value),
-                    "run_dir": str(run_dir),
-                })
+                long_rows.append(
+                    {
+                        "grid_key": spec.key,
+                        "model_name": spec.model_name,
+                        "id_type": spec.id_type,
+                        "region": spec.region,
+                        "pooling": spec.pooling,
+                        "status": status,
+                        "embedding_dim": embedding_dim,
+                        "n_unresolved": n_unresolved,
+                        "metric": metric,
+                        "value": _to_float(value),
+                        "run_dir": str(run_dir),
+                    }
+                )
                 wide_row[str(metric)] = _to_float(value)
         wide_rows.append(wide_row)
 
@@ -204,13 +208,30 @@ def _to_float(x: Any) -> float | None:
 def _save_fig(fig, path: Path) -> None:  # type: ignore[no-untyped-def]
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150, bbox_inches="tight")
+    fig.savefig(path.with_suffix(".svg"), bbox_inches="tight")
+
+
+def _save_plot_data(frame: pd.DataFrame, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    frame.to_csv(path.with_suffix(".csv"), index=False)
 
 
 def _metric_columns(wide: pd.DataFrame) -> list[str]:
     skip = {
-        "grid_key", "model_name", "id_type", "region", "pooling", "status",
-        "embedding_dim", "n_unresolved", "wall_clock_s", "peak_gpu_mem_mb",
-        "final_train_loss", "final_val_loss", "error", "run_dir",
+        "grid_key",
+        "model_name",
+        "id_type",
+        "region",
+        "pooling",
+        "status",
+        "embedding_dim",
+        "n_unresolved",
+        "wall_clock_s",
+        "peak_gpu_mem_mb",
+        "final_train_loss",
+        "final_val_loss",
+        "error",
+        "run_dir",
     }
     out: list[str] = []
     for col in wide.columns:
@@ -224,10 +245,10 @@ def _metric_columns(wide: pd.DataFrame) -> list[str]:
 
 def render_plots(wide: pd.DataFrame, plots_dir: Path) -> list[Path]:
     """Generate the per-metric / Pareto / scaling plots. Returns their paths."""
-    import matplotlib  # noqa: PLC0415
+    import matplotlib
 
     matplotlib.use("Agg", force=True)
-    import matplotlib.pyplot as plt  # noqa: PLC0415
+    import matplotlib.pyplot as plt
 
     plots_dir.mkdir(parents=True, exist_ok=True)
     metric_cols = _metric_columns(wide)
@@ -243,18 +264,34 @@ def render_plots(wide: pd.DataFrame, plots_dir: Path) -> list[Path]:
         if sub.empty:
             continue
 
-        # Bar plot per spec.
+        # Box plot per spec. Each box is a run/seed distribution when the
+        # aggregator has multiple rows per key; with a single run it becomes a
+        # one-point box and the sidecar CSV still carries the exact value.
         fig, ax = plt.subplots(figsize=(max(4, 0.6 * len(sub) + 2), 3.5))
-        ax.bar(sub["grid_key"].tolist(), sub[metric].tolist(), color="#4C72B0")
+        plot_df = sub[["grid_key", metric, "run_dir"]].rename(columns={metric: "value"})
+        groups = [(key, g["value"].astype(float).to_numpy()) for key, g in plot_df.groupby("grid_key", sort=False)]
+        values = [vals for _, vals in groups]
+        ax.boxplot(
+            values,
+            tick_labels=[f"{key}\nn={len(vals)}" for key, vals in groups],
+            showfliers=False,
+            patch_artist=True,
+            boxprops={"facecolor": "#D8E7F5", "edgecolor": "#365F7D"},
+            medianprops={"color": "#9B2D20", "linewidth": 1.5},
+        )
+        rng = np.random.default_rng(0)
+        for i, vals in enumerate(values, start=1):
+            ax.scatter(i + rng.normal(0, 0.035, size=len(vals)), vals, s=16, alpha=0.65, color="#333333")
         ax.set_ylabel(metric)
         ax.set_title(f"World-model {metric} by action encoder")
         for tick in ax.get_xticklabels():
             tick.set_rotation(30)
             tick.set_ha("right")
-        bar_path = plots_dir / f"metric_bar_{metric}.png"
-        _save_fig(fig, bar_path)
+        box_path = plots_dir / f"metric_box_{metric}.png"
+        _save_plot_data(plot_df.assign(metric=metric), box_path)
+        _save_fig(fig, box_path)
         plt.close(fig)
-        out_paths.append(bar_path)
+        out_paths.append(box_path)
 
         # Scaling: embedding_dim vs metric.
         if sub["embedding_dim"].notna().any():
@@ -325,7 +362,7 @@ def write_report(
     lines: list[str] = []
     lines.append(f"# Action-encoder ablation: {output_root.name}")
     lines.append("")
-    lines.append(f"Generated: {datetime.now(timezone.utc).isoformat()}")
+    lines.append(f"Generated: {datetime.now(UTC).isoformat()}")
     lines.append("")
     lines.append("## Resolved grid")
     lines.append("")
@@ -365,6 +402,7 @@ def persist_summary(
     long_df: pd.DataFrame,
     wide_df: pd.DataFrame,
 ) -> dict[str, Path]:
+    """Persist encoder-ablation summary tables and metadata."""
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     long_path = output_root / "summary_long.csv"
@@ -372,12 +410,18 @@ def persist_summary(
     json_path = output_root / "summary.json"
     long_df.to_csv(long_path, index=False)
     wide_df.to_csv(wide_path, index=False)
-    json_path.write_text(json.dumps({
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "output_root": str(output_root),
-        "grid": [s.as_dict() for s in grid],
-        "n_specs": len(grid),
-    }, indent=2, default=str))
+    json_path.write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "output_root": str(output_root),
+                "grid": [s.as_dict() for s in grid],
+                "n_specs": len(grid),
+            },
+            indent=2,
+            default=str,
+        )
+    )
     return {"long": long_path, "wide": wide_path, "json": json_path}
 
 
@@ -400,10 +444,10 @@ def run(
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Aggregate the action-encoder ablation outputs.")
     parser.add_argument("--output-root", required=True)
-    parser.add_argument("--grid", default=None,
-                        help="YAML grid file. Defaults to the package default grid.")
+    parser.add_argument("--grid", default=None, help="YAML grid file. Defaults to the package default grid.")
     parser.add_argument("--only", default=None, help="Comma-separated grid keys.")
     parser.add_argument("--skip", default=None, help="Comma-separated grid keys.")
     parser.add_argument(
@@ -416,6 +460,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Run ablation aggregation from CLI arguments."""
     args = parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
     if args.mode == "adapter":
@@ -447,7 +492,7 @@ def _read_per_run_yaml(run_dir: Path) -> dict[str, Any]:
     if not p.exists():
         return {}
     try:
-        import yaml  # noqa: PLC0415
+        import yaml
 
         return yaml.safe_load(p.read_text()) or {}
     except (OSError, ImportError) as exc:
@@ -562,19 +607,21 @@ def aggregate_adapter(
             row0 = wm_metrics.iloc[0]
             for metric in wm_metrics.columns:
                 value = row0[metric]
-                long_rows.append({
-                    "grid_key": spec.key,
-                    "kind": kind,
-                    "hidden_dim": hidden_dim,
-                    "lora_rank": lora_rank,
-                    "param_count": param_count,
-                    "embedding_dim": d_in,
-                    "d_model": d_model,
-                    "status": status,
-                    "metric": metric,
-                    "value": _to_float(value),
-                    "run_dir": str(run_dir),
-                })
+                long_rows.append(
+                    {
+                        "grid_key": spec.key,
+                        "kind": kind,
+                        "hidden_dim": hidden_dim,
+                        "lora_rank": lora_rank,
+                        "param_count": param_count,
+                        "embedding_dim": d_in,
+                        "d_model": d_model,
+                        "status": status,
+                        "metric": metric,
+                        "value": _to_float(value),
+                        "run_dir": str(run_dir),
+                    }
+                )
                 wide_row[str(metric)] = _to_float(value)
         wide_rows.append(wide_row)
 
@@ -584,9 +631,21 @@ def aggregate_adapter(
 
 
 _ADAPTER_NON_METRIC_COLS = {
-    "grid_key", "kind", "hidden_dim", "dropout", "lora_rank", "embedding_dim",
-    "d_model", "param_count", "status", "wall_clock_s", "peak_gpu_mem_mb",
-    "final_train_loss", "final_val_loss", "error", "run_dir",
+    "grid_key",
+    "kind",
+    "hidden_dim",
+    "dropout",
+    "lora_rank",
+    "embedding_dim",
+    "d_model",
+    "param_count",
+    "status",
+    "wall_clock_s",
+    "peak_gpu_mem_mb",
+    "final_train_loss",
+    "final_val_loss",
+    "error",
+    "run_dir",
 }
 
 
@@ -603,10 +662,10 @@ def _adapter_metric_columns(wide: pd.DataFrame) -> list[str]:
 
 def render_adapter_plots(wide: pd.DataFrame, plots_dir: Path) -> list[Path]:
     """Adapter-specific plots: per-metric bar, param_count scaling, Pareto."""
-    import matplotlib  # noqa: PLC0415
+    import matplotlib
 
     matplotlib.use("Agg", force=True)
-    import matplotlib.pyplot as plt  # noqa: PLC0415
+    import matplotlib.pyplot as plt
 
     plots_dir.mkdir(parents=True, exist_ok=True)
     metric_cols = _adapter_metric_columns(wide)
@@ -622,18 +681,32 @@ def render_adapter_plots(wide: pd.DataFrame, plots_dir: Path) -> list[Path]:
         if sub.empty:
             continue
 
-        # Per-spec bar.
+        # Per-spec boxplot.
         fig, ax = plt.subplots(figsize=(max(4, 0.6 * len(sub) + 2), 3.5))
-        ax.bar(sub["grid_key"].tolist(), sub[metric].tolist(), color="#55A868")
+        plot_df = sub[["grid_key", metric, "run_dir"]].rename(columns={metric: "value"})
+        groups = [(key, g["value"].astype(float).to_numpy()) for key, g in plot_df.groupby("grid_key", sort=False)]
+        values = [vals for _, vals in groups]
+        ax.boxplot(
+            values,
+            tick_labels=[f"{key}\nn={len(vals)}" for key, vals in groups],
+            showfliers=False,
+            patch_artist=True,
+            boxprops={"facecolor": "#DCEFD8", "edgecolor": "#4E7A41"},
+            medianprops={"color": "#9B2D20", "linewidth": 1.5},
+        )
+        rng = np.random.default_rng(0)
+        for i, vals in enumerate(values, start=1):
+            ax.scatter(i + rng.normal(0, 0.035, size=len(vals)), vals, s=16, alpha=0.65, color="#333333")
         ax.set_ylabel(metric)
         ax.set_title(f"World-model {metric} by adapter")
         for tick in ax.get_xticklabels():
             tick.set_rotation(30)
             tick.set_ha("right")
-        bar_path = plots_dir / f"metric_bar_{metric}.png"
-        _save_fig(fig, bar_path)
+        box_path = plots_dir / f"metric_box_{metric}.png"
+        _save_plot_data(plot_df.assign(metric=metric), box_path)
+        _save_fig(fig, box_path)
         plt.close(fig)
-        out_paths.append(bar_path)
+        out_paths.append(box_path)
 
         # param_count vs metric (capacity scaling).
         if sub["param_count"].notna().any():
@@ -693,13 +766,14 @@ def write_adapter_report(
     wide_df: pd.DataFrame,
     plot_paths: Iterable[Path],
 ) -> Path:
+    """Write the adapter-ablation Markdown report."""
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     rep_path = output_root / "report.md"
     lines: list[str] = []
     lines.append(f"# Action-adapter ablation: {output_root.name}")
     lines.append("")
-    lines.append(f"Generated: {datetime.now(timezone.utc).isoformat()}")
+    lines.append(f"Generated: {datetime.now(UTC).isoformat()}")
     lines.append("")
     lines.append("## Resolved grid")
     lines.append("")
@@ -734,6 +808,7 @@ def persist_adapter_summary(
     long_df: pd.DataFrame,
     wide_df: pd.DataFrame,
 ) -> dict[str, Path]:
+    """Persist adapter-ablation summary tables and metadata."""
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     long_path = output_root / "summary_long.csv"
@@ -741,13 +816,19 @@ def persist_adapter_summary(
     json_path = output_root / "summary.json"
     long_df.to_csv(long_path, index=False)
     wide_df.to_csv(wide_path, index=False)
-    json_path.write_text(json.dumps({
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "output_root": str(output_root),
-        "mode": "adapter",
-        "grid": [s.as_dict() for s in grid],
-        "n_specs": len(grid),
-    }, indent=2, default=str))
+    json_path.write_text(
+        json.dumps(
+            {
+                "generated_at": datetime.now(UTC).isoformat(),
+                "output_root": str(output_root),
+                "mode": "adapter",
+                "grid": [s.as_dict() for s in grid],
+                "n_specs": len(grid),
+            },
+            indent=2,
+            default=str,
+        )
+    )
     return {"long": long_path, "wide": wide_path, "json": json_path}
 
 
@@ -761,7 +842,8 @@ def run_adapter(
     """End-to-end adapter aggregation: load -> aggregate -> persist -> plot -> report."""
     grid = (
         resolve_adapter_grid(grid_path=grid_path, only=only, skip=skip)
-        if (only or skip) else load_adapter_grid(grid_path)
+        if (only or skip)
+        else load_adapter_grid(grid_path)
     )
     long_df, wide_df = aggregate_adapter(output_root, grid)
     paths = persist_adapter_summary(Path(output_root), grid, long_df, wide_df)

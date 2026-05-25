@@ -1,4 +1,4 @@
-"""Cross-embedding aggregator for the gene-embedding sweep.
+r"""Cross-embedding aggregator for the gene-embedding sweep.
 
 Each embedding's run writes ``runs/world_model/single_<ds>_<emb>/comparison.csv``
 (world_model row + every baseline row + cell_eval metrics) via
@@ -15,7 +15,7 @@ Outputs (under ``--out``, default ``runs/world_model/_sweep``):
                                    sorted by the primary metric. This is the
                                    "which embedding wins" table.
 * ``report.md``                 -- the same, rendered as Markdown.
-* ``plots/sweep_<metric>.png``  -- grouped bar per embedding (if matplotlib).
+* ``plots/sweep_<metric>.png``  -- boxplot per embedding (if matplotlib).
 
 Re-runnable any time; it only reads CSVs already on disk, so missing /
 still-running embeddings are simply skipped.
@@ -27,9 +27,11 @@ still-running embeddings are simply skipped.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
 from world_model.utils import setup_logging
@@ -41,12 +43,14 @@ _LOWER_IS_BETTER = {"mse", "mae"}
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
     p = argparse.ArgumentParser(description="Aggregate the embedding sweep.")
     p.add_argument("--runs-root", default="runs/world_model")
     p.add_argument("--datasets", nargs="+", default=["replogle", "nadig"])
     p.add_argument("--out", default="runs/world_model/_sweep")
     p.add_argument(
-        "--primary-metric", default="deg_overlap@50",
+        "--primary-metric",
+        default="deg_overlap@50",
         help="Metric used to rank embeddings in the wide table / report.",
     )
     return p.parse_args(argv)
@@ -57,27 +61,22 @@ def _emb_name(run_dir: Path, dataset: str) -> str:
     stem = run_dir.name
     prefix = f"single_{dataset}_"
     if stem.startswith(prefix):
-        stem = stem[len(prefix):]
+        stem = stem[len(prefix) :]
     return stem.split("__", 1)[0]
 
 
 def _collect(runs_root: Path, datasets: list[str]) -> pd.DataFrame:
     rows: list[pd.DataFrame] = []
     for ds in datasets:
-        # Exact run dir first, then any job/timestamp-stamped variants.
-        seen: dict[str, tuple[float, Path]] = {}
         for csv in sorted(runs_root.glob(f"single_{ds}_*/comparison.csv")):
             emb = _emb_name(csv.parent, ds)
-            mtime = csv.stat().st_mtime
-            # Keep the most recently written comparison.csv per embedding.
-            if emb not in seen or mtime > seen[emb][0]:
-                seen[emb] = (mtime, csv)
-        for emb, (_, csv) in sorted(seen.items()):
             try:
                 df = pd.read_csv(csv)
             except Exception as e:  # noqa: BLE001
                 logger.warning("Skipping unreadable %s (%s)", csv, e)
                 continue
+            df.insert(0, "run_dir", str(csv.parent))
+            df.insert(0, "seed", _run_seed(csv.parent))
             df.insert(0, "embedding", emb)
             df.insert(0, "dataset", ds)
             rows.append(df)
@@ -87,7 +86,79 @@ def _collect(runs_root: Path, datasets: list[str]) -> pd.DataFrame:
     return pd.concat(rows, ignore_index=True)
 
 
+def _run_seed(run_dir: Path) -> str:
+    for rel in ("run_info.json", "config.yaml"):
+        path = run_dir / rel
+        if not path.exists():
+            continue
+        try:
+            if path.suffix == ".json":
+                payload = json.loads(path.read_text())
+            else:
+                import yaml
+
+                payload = yaml.safe_load(path.read_text()) or {}
+            seed = payload.get("seed")
+            if seed is not None:
+                return str(seed)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Could not read seed from %s: %s", path, exc)
+    return "unknown"
+
+
+def _collect_per_perturbation(runs_root: Path, datasets: list[str]) -> pd.DataFrame:
+    rows: list[pd.DataFrame] = []
+    for ds in datasets:
+        for run_dir in sorted(runs_root.glob(f"single_{ds}_*")):
+            if not run_dir.is_dir():
+                continue
+            emb = _emb_name(run_dir, ds)
+            seed = _run_seed(run_dir)
+            long_path = run_dir / "eval" / "per_perturbation_long.csv"
+            if long_path.exists():
+                try:
+                    df = pd.read_csv(long_path)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Skipping unreadable %s (%s)", long_path, exc)
+                    continue
+                df["dataset"] = df.get("dataset", ds)
+                df["embedding"] = emb
+                df["seed"] = df.get("seed", seed)
+                df["run_dir"] = str(run_dir)
+                rows.append(df)
+                continue
+            for csv in sorted((run_dir / "eval").glob("per_pert_*.csv")):
+                try:
+                    per = pd.read_csv(csv)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Skipping unreadable %s (%s)", csv, exc)
+                    continue
+                evaluator = csv.stem.removeprefix("per_pert_")
+                metric_cols = [c for c in per.columns if c != "perturbation" and pd.api.types.is_numeric_dtype(per[c])]
+                if not metric_cols or "perturbation" not in per.columns:
+                    continue
+                melted = per.melt(
+                    id_vars=["perturbation"],
+                    value_vars=metric_cols,
+                    var_name="metric",
+                    value_name="value",
+                )
+                melted.insert(0, "seed", seed)
+                melted.insert(0, "baseline", evaluator)
+                melted.insert(0, "model", evaluator)
+                melted.insert(0, "embedding", emb)
+                melted.insert(0, "dataset", ds)
+                melted["run_dir"] = str(run_dir)
+                rows.append(melted)
+    if not rows:
+        return pd.DataFrame()
+    out = pd.concat(rows, ignore_index=True)
+    out["value"] = pd.to_numeric(out["value"], errors="coerce")
+    return out.dropna(subset=["value"]).reset_index(drop=True)
+
+
 def main(argv: list[str] | None = None) -> int:
+    """Aggregate sweep artifacts from CLI arguments."""
     args = parse_args(argv)
     setup_logging(level=logging.INFO)
 
@@ -97,9 +168,9 @@ def main(argv: list[str] | None = None) -> int:
     long_df = _collect(Path(args.runs_root), list(args.datasets))
     if long_df.empty:
         logger.error(
-            "No comparison.csv found under %s for datasets %s. "
-            "Have the sweep runs finished?",
-            args.runs_root, args.datasets,
+            "No comparison.csv found under %s for datasets %s. Have the sweep runs finished?",
+            args.runs_root,
+            args.datasets,
         )
         return 1
 
@@ -107,14 +178,24 @@ def main(argv: list[str] | None = None) -> int:
     long_df.to_csv(long_path, index=False)
     logger.info("Wrote %s (%d rows)", long_path, len(long_df))
 
+    per_pert_long = _collect_per_perturbation(Path(args.runs_root), list(args.datasets))
+    per_pert_path = out / "per_perturbation_long.csv"
+    if not per_pert_long.empty:
+        per_pert_long.to_csv(per_pert_path, index=False)
+        logger.info("Wrote %s (%d rows)", per_pert_path, len(per_pert_long))
+
     name_col = "name" if "name" in long_df.columns else long_df.columns[2]
     wm = long_df[long_df[name_col] == "world_model"].copy()
     metric = args.primary_metric
+    numeric_metrics = [
+        c
+        for c in wm.columns
+        if c not in {"dataset", "embedding", "seed", "run_dir", name_col} and pd.api.types.is_numeric_dtype(wm[c])
+    ]
+    if not wm.empty and numeric_metrics:
+        wm = wm.groupby(["dataset", "embedding"], as_index=False)[numeric_metrics].median(numeric_only=True)
     if metric in wm.columns and not wm.empty:
-        wm = wm.sort_values(
-            ["dataset", metric],
-            ascending=[True, metric in _LOWER_IS_BETTER],
-        )
+        wm = wm.sort_values(["dataset", metric], ascending=[True, metric in _LOWER_IS_BETTER])
     wide_path = out / "world_model_by_embedding.csv"
     wm.to_csv(wide_path, index=False)
     logger.info("Wrote %s (%d embeddings)", wide_path, len(wm))
@@ -124,8 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         "# Gene-embedding sweep",
         "",
         f"Datasets: {', '.join(args.datasets)}  ",
-        f"Primary metric: `{metric}` "
-        f"({'lower' if metric in _LOWER_IS_BETTER else 'higher'} is better)",
+        f"Primary metric: `{metric}` ({'lower' if metric in _LOWER_IS_BETTER else 'higher'} is better)",
         "",
         "## World-model performance by embedding",
         "",
@@ -140,28 +220,66 @@ def main(argv: list[str] | None = None) -> int:
     report.write_text("\n".join(lines))
     logger.info("Wrote %s", report)
 
-    # Optional plot.
+    # Optional plots.
     try:
         import matplotlib
 
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
-        if metric in wm.columns and not wm.empty:
-            (out / "plots").mkdir(exist_ok=True)
-            for ds, g in wm.groupby("dataset"):
-                fig, ax = plt.subplots(
-                    figsize=(max(6, 0.5 * len(g)), 4),
+        plots_dir = out / "plots"
+        plots_dir.mkdir(exist_ok=True)
+        plot_source = per_pert_long
+        if plot_source.empty and metric in long_df.columns:
+            rows = []
+            for row in long_df.to_dict(orient="records"):
+                value = row.get(metric)
+                if value is None or pd.isna(value):
+                    continue
+                rows.append(
+                    {
+                        "dataset": row.get("dataset"),
+                        "embedding": row.get("embedding"),
+                        "model": row.get(name_col, "unknown"),
+                        "seed": row.get("seed", "unknown"),
+                        "perturbation": "aggregate",
+                        "metric": metric,
+                        "value": float(value),
+                    }
                 )
-                ax.bar(g["embedding"].astype(str), g[metric].astype(float))
-                ax.set_title(f"{ds}: world_model {metric} by embedding")
-                ax.set_ylabel(metric)
-                ax.tick_params(axis="x", rotation=75)
-                fig.tight_layout()
-                fp = out / "plots" / f"sweep_{ds}_{metric.replace('@', '')}.png"
-                fig.savefig(fp, dpi=120)
-                plt.close(fig)
-                logger.info("Wrote %s", fp)
+            plot_source = pd.DataFrame(rows)
+        if plot_source.empty or "dataset" not in plot_source.columns:
+            return 0
+        for ds, g in plot_source.groupby("dataset"):
+            sub = g[g["metric"] == metric].dropna(subset=["value"]).copy()
+            if sub.empty:
+                continue
+            labels = sorted(sub["embedding"].astype(str).unique())
+            data = [sub.loc[sub["embedding"].astype(str) == label, "value"].to_numpy(dtype=float) for label in labels]
+            med = [float(np.nanmedian(v)) if len(v) else np.nan for v in data]
+            order = np.argsort(med)
+            if metric not in _LOWER_IS_BETTER:
+                order = order[::-1]
+            labels = [labels[i] for i in order]
+            data = [data[i] for i in order]
+            fig, ax = plt.subplots(figsize=(max(6, 0.6 * len(labels)), 4))
+            ax.boxplot(
+                data,
+                tick_labels=[f"{label}\nn={len(vals)}" for label, vals in zip(labels, data, strict=False)],
+                showfliers=False,
+            )
+            rng = np.random.default_rng(0)
+            for i, vals in enumerate(data, start=1):
+                ax.scatter(i + rng.normal(0, 0.035, size=len(vals)), vals, s=14, alpha=0.6, color="#333333")
+            ax.set_title(f"{ds}: {metric} by embedding")
+            ax.set_ylabel(metric)
+            ax.tick_params(axis="x", rotation=45)
+            fig.tight_layout()
+            fp = plots_dir / f"sweep_{ds}_{metric.replace('@', '')}.png"
+            fig.savefig(fp, dpi=120)
+            fig.savefig(fp.with_suffix(".svg"))
+            plt.close(fig)
+            logger.info("Wrote %s", fp)
     except Exception as e:  # noqa: BLE001
         logger.warning("Plot skipped (%s); CSV/MD are still written.", e)
 

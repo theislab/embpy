@@ -12,7 +12,8 @@
 #      command for each, then copy/paste the one you want:
 #        bash .../submit_gene_embeddings.sh list
 #
-# precomputed embedding -> training job submitted directly.
+# legacy table embedding -> migrated once into .emstore, then training uses
+#   the store provider directly.
 # bio_embedder embedding -> a pre-warm job (embed_perturbations) is submitted
 #   first and training is chained after it with afterok, so GPU time is not
 #   wasted recomputing embeddings during epoch 1 (same pattern as submit_all.sh).
@@ -33,13 +34,9 @@ set -euo pipefail
 PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
-# Sweep submissions must have STABLE output_dirs so that the chained
-# baselines + compare jobs (which look up RUN_DIR by exact path) can
-# find the train artifacts. train.py's _apply_auto_suffix would
-# otherwise rewrite output_dir to ``${out_dir}__job<id>__<ts>``,
-# breaking the dependency chain. Per-job uniqueness is already
-# guaranteed by the (dataset, embedding) keying in run_name.
-export EMBPY_NO_AUTO_SUFFIX=1
+# train.py appends a per-job suffix to output_dir. Chained baseline/compare
+# jobs receive the logical output_dir and resolve the newest suffixed run dir
+# before reading artifacts.
 
 SELF="src/world_model/world_model/scripts/submit_gene_embeddings.sh"
 SLURM_DIR="src/world_model/world_model/scripts/slurm"
@@ -64,7 +61,7 @@ H5AD[nadig]="data/datasets/nadig/NadigOConner2024_jurkat.h5ad"
 
 # ---------------------------------------------------------------------------
 #  CATALOG  --  name | kind | target | description
-#    kind=precomputed : target is a single symbol-indexed CSV (loads directly)
+#    kind=precomputed : target is a single symbol-indexed CSV migrated to .emstore
 #    kind=bio         : target is a MODEL_REGISTRY key (computed + cached)
 #    kind=convert     : on disk but NOT in a loadable shape -> one-time
 #                       conversion to a symbol-keyed CSV/NPZ required first
@@ -114,7 +111,7 @@ lookup() {  # $1=name -> echoes "kind|target|desc" or returns 1
 print_catalog() {
     local row n k t d
     echo "Gene / action embeddings for the world model"
-    echo "  precomputed = loads directly | bio = computed+cached | convert = needs prep"
+    echo "  precomputed = one-time CSV/NPZ -> .emstore migration | bio = computed+cached | convert = needs prep"
     echo
     printf "  %-24s %-11s %s\n" "NAME" "KIND" "DESCRIPTION"
     for row in "${CATALOG[@]}"; do
@@ -185,6 +182,15 @@ if [[ "$KIND" == "precomputed" ]]; then
         echo "ERROR: precomputed embedding not found: $EMB_PATH" >&2
         exit 1
     fi
+    STORE_PATH="${EMB_PATH%.*}.emstore"
+    if [[ ! -d "$STORE_PATH" ]]; then
+        echo "Migrating legacy table -> .emstore:"
+        echo "  source: $EMB_PATH"
+        echo "  dest:   $STORE_PATH"
+        pixi run -e gpu -- python -m embpy.store.migrate \
+            "$EMB_PATH" "$STORE_PATH" \
+            --model "$EMB" --entity-type gene --id-scheme symbol
+    fi
 else
     EMB_MODEL="$TARGET"
 fi
@@ -224,15 +230,15 @@ for ds in "${DATASETS[@]}"; do
     out_dir="runs/world_model/${run_name}"
 
     if [[ "$KIND" == "precomputed" ]]; then
-        echo "[$ds] submitting train (precomputed: $EMB, pixi env: $PIXI_ENV) ..."
+        echo "[$ds] submitting train (store-migrated table: $EMB, pixi env: $PIXI_ENV) ..."
         jid=$(sbatch --parsable \
             --job-name="wm-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
             --export=ALL,EMBPY_PIXI_ENV="${PIXI_ENV}" \
             "$LAUNCHER" "$cfg" \
-            "action_embedding.source=precomputed" \
-            "action_embedding.path=${EMB_PATH}" \
-            "data.gene_embedding_path=${EMB_PATH}" \
+            "action_embedding.source=store" \
+            "action_embedding.store_path=${STORE_PATH}" \
+            "action_embedding.store_key=gene:${EMB}" \
             "run_name=${run_name}" \
             "output_dir=${out_dir}")
         echo "[$ds]   train job: $jid  -> $out_dir"

@@ -9,7 +9,7 @@ mode: "single"
 data:
   dataset: "nadig"
   h5ad_path: "data/datasets/nadig/NadigOConner2024_jurkat.h5ad"
-  gene_embedding_path: "data/embeddings/gene_embeddings/genept/embeddings_3072.csv"
+  gene_embedding_path: "" # deprecated; use action_embedding.store_path
   perturbation_key: "perturbation"
   control_label: "non-targeting"
   cell_type_key: null
@@ -24,12 +24,13 @@ data:
   pin_memory: false
   n_sequences_per_epoch: 64
 
-# The smoke test runs the precomputed path. scripts/smoke_test.py
-# generates a tiny synthetic NPZ at runtime if the configured CSV is
-# missing, so the smoke target stays self-contained.
+# The smoke test uses the store path. scripts/smoke_test.py generates
+# tiny synthetic .h5ad + .emstore assets at runtime if the configured
+# assets are missing, so the smoke target stays self-contained.
 action_embedding:
-  source: "precomputed"
-  path: ""
+  source: "store"
+  store_path: "data/embeddings/gene_embeddings/genept/genept.emstore"
+  store_key: "gene:genept"
 
 # Keep the smoke test dependency-light: the local backbone is the
 # existing StateStackEncoder, no arc-state / arc-stack required.

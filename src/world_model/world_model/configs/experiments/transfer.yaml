@@ -10,7 +10,7 @@ mode: "transfer"
 data:
   dataset: "replogle"
   h5ad_path: "data/datasets/replogle/replogle_2022_k562_essential.h5ad"
-  gene_embedding_path: "data/embeddings/gene_embeddings/genept/embeddings_3072.csv"
+  gene_embedding_path: "" # deprecated; use action_embedding.store_path
   perturbation_key: "perturbation"
   control_label: "non-targeting"
   cell_type_key: "cell_type"
@@ -24,15 +24,14 @@ data:
   num_workers: 4
   pin_memory: true
 
-# A single action_embedding block applies to BOTH phases. The
-# pretrain phase additionally honours transfer.pretrain_gene_embedding_path
-# (legacy precomputed-source override) so the existing path-based YAMLs
-# keep working without changes. To use BioEmbedder for both phases,
-# set source: bio_embedder and a model_name -- pretrain and fine-tune
-# will share the same cache file.
+# A single action_embedding block applies to BOTH phases unless
+# transfer.pretrain_action_encoder / transfer.finetune_action_encoder
+# override it. Legacy CSV/NPZ embedding paths should be migrated once
+# into .emstore directories with `python -m embpy.store.migrate`.
 action_embedding:
-  source: "precomputed"
-  path: ""
+  source: "store"
+  store_path: "data/embeddings/gene_embeddings/genept/genept.emstore"
+  store_key: "gene:genept"
 
 state_backbone:
   kind: "local"
@@ -47,7 +46,7 @@ transfer:
   enabled: true
   pretrain_dataset: "nadig"
   pretrain_h5ad_path: "data/datasets/nadig/NadigOConner2024_jurkat.h5ad"
-  pretrain_gene_embedding_path: "data/embeddings/gene_embeddings/genept/embeddings_3072.csv"
+  pretrain_gene_embedding_path: "" # deprecated; use pretrain_action_encoder.store_path if different
   pretrain_epochs: 30
   finetune_fraction: 0.10
   finetune_epochs: 20
@@ -86,7 +85,7 @@ optim:
   warmup_steps: 1000
 
 train:
-  n_epochs: 20         # only used if you bypass transfer.* above
+  n_epochs: 20 # only used if you bypass transfer.* above
   log_every_n_steps: 50
   eval_every_n_epochs: 1
   save_every_n_epochs: 5

@@ -32,8 +32,8 @@ from typing import Any
 
 import numpy as np
 
-from ..datasets.base import GeneIndexer
-from .sentinel import EmbeddingStatus, make_control_vector
+from world_model.data.datasets.base import GeneIndexer
+from world_model.data.embeddings.sentinel import EmbeddingStatus, make_control_vector
 
 
 @dataclass
@@ -128,30 +128,23 @@ class ActionEmbeddingProvider(ABC):
 
         Default implementation calls :meth:`embed_with_status` once over
         the deduplicated symbol list and assembles the table. Subclasses
-        whose source already hands back ``(table, indexer)`` (notably
-        :class:`PrecomputedProvider`) can override this to skip the
-        intermediate copy.
+        whose source already hands back ``(table, indexer)`` can override
+        this to skip the intermediate copy.
 
         Row 0 is the "<control>" padding row. Its concrete contents are
         controlled by the dataset / provider: in the status-aware code
         path, row 0 is left at its existing zero default because the
         per-row CONTROL sentinel vector is materialised *at use time*
-        when the gene-action table is populated by the dataloader. This
-        keeps :meth:`build_table` byte-equivalent with the pre-Part-A
-        precomputed code path.
+        when the gene-action table is populated by the dataloader.
         """
         indexer = GeneIndexer.from_symbols(symbols)
-        ordered = [
-            indexer.index_to_symbol[i] for i in range(1, len(indexer))
-        ]
+        ordered = [indexer.index_to_symbol[i] for i in range(1, len(indexer))]
         if ordered:
             rows, _statuses = self.embed_with_status(ordered)
         else:
             rows = np.zeros((0, self.embedding_dim), dtype=np.float32)
         if rows.ndim != 2 or rows.shape[0] != len(ordered):
-            raise ValueError(
-                f"Provider returned shape {rows.shape}, expected ({len(ordered)}, *)."
-            )
+            raise ValueError(f"Provider returned shape {rows.shape}, expected ({len(ordered)}, *).")
         dim = int(rows.shape[1]) if rows.size else int(self.embedding_dim)
         table = np.zeros((len(indexer), dim), dtype=np.float32)
         if rows.shape[0]:

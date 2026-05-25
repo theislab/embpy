@@ -1,4 +1,4 @@
-"""Render ``runs/<run_id>/report.md`` from existing artefacts.
+r"""Render ``runs/<run_id>/report.md`` from existing artefacts.
 
 Reads whatever the training / baseline / compare scripts have written
 into ``run_dir`` and produces a single self-contained markdown file:
@@ -24,15 +24,21 @@ from typing import Any
 
 from world_model.evaluation.report import write_report
 from world_model.utils import setup_logging
+from world_model.utils.run_identity import resolve_latest_suffixed_run_dir
 
 logger = logging.getLogger(__name__)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Render report.md from a run directory.")
     parser.add_argument("--run-dir", type=str, required=True)
-    parser.add_argument("--config", type=str, default=None,
-                        help="Optional YAML config to embed; defaults to <run-dir>/config.yaml if present.")
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Optional YAML config to embed; defaults to <run-dir>/config.yaml if present.",
+    )
     return parser.parse_args(argv)
 
 
@@ -40,7 +46,7 @@ def _load_config_dict(config_path: Path | None) -> dict[str, Any]:
     if config_path is None or not config_path.exists():
         return {}
     try:
-        import yaml  # noqa: PLC0415
+        import yaml
 
         with open(config_path) as fp:
             return yaml.safe_load(fp) or {}
@@ -60,10 +66,11 @@ def _collect_plots(run_dir: Path) -> dict[str, str]:
 
 
 def main(argv: list[str] | None = None) -> None:
-    import pandas as pd  # noqa: PLC0415
+    """Render the report from CLI arguments."""
+    import pandas as pd
 
     args = parse_args(argv)
-    run_dir = Path(args.run_dir)
+    run_dir = resolve_latest_suffixed_run_dir(args.run_dir)
     if not run_dir.exists():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
     setup_logging(level=logging.INFO, log_file=run_dir / "report.log")

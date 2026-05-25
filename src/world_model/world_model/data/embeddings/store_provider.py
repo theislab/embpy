@@ -29,9 +29,6 @@ from embpy.resources.gene.control import ControlPolicy
 from .provider import ActionEmbeddingProvider, ProviderMetadata
 from .sentinel import (
     CONTROL_SENTINEL_SEED,
-    EmbeddingStatus,
-    make_control_vector,
-    make_unresolved_vector,
 )
 
 if TYPE_CHECKING:
@@ -109,64 +106,43 @@ class StoreProvider(ActionEmbeddingProvider):
         self,
         symbols: Sequence[str],
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Resolve ``symbols`` against the store block; see the module docstring."""
+        """Resolve ``symbols`` against the store block; see the module docstring.
+
+        Combo splitting, control handling, and UNRESOLVED zero rows are
+        delegated to :func:`embpy.store.actions.compile_action_table` so the
+        AnnData accessor and the world-model provider share exactly one action
+        compilation implementation.
+        """
         symbols = list(symbols)
         block = self._load_block()
         dim = int(self._embedding_dim)  # type: ignore[arg-type]
-        matrix = block.matrix
-        lookup = self._lookup or {}
         if not symbols:
             return np.zeros((0, dim), dtype=np.float32), np.asarray([], dtype=object)
 
-        classifications = [self.control_policy.classify(s) for s in symbols]
-        out = np.zeros((len(symbols), dim), dtype=np.float32)
-        statuses: list[EmbeddingStatus] = []
-        unresolved_symbols: list[str] = []
-        control_symbols: list[str] = []
-        mixed_symbols: list[str] = []
-        control_vec = make_control_vector(dim, seed=self.control_sentinel_seed)
+        from embpy.store.actions import compile_action_table
 
-        for i, c in enumerate(classifications):
-            if c.kind == "control":
-                out[i] = control_vec
-                statuses.append(EmbeddingStatus.CONTROL)
-                control_symbols.append(c.label)
-                continue
-            if c.kind == "mixed":
-                mixed_symbols.append(c.label)
-            genes = list(c.gene_components) if c.kind == "mixed" else list(c.components)
-            vecs: list[np.ndarray] = []
-            missing_components: list[str] = []
-            for g in genes:
-                idx = lookup.get(g)
-                if idx is None:
-                    missing_components.append(g)
-                    continue
-                vecs.append(np.asarray(matrix[idx], dtype=np.float32))
-            if vecs:
-                out[i] = np.mean(np.stack(vecs, axis=0), axis=0).astype(np.float32)
-                statuses.append(EmbeddingStatus.RESOLVED)
-                if missing_components:
-                    unresolved_symbols.extend(missing_components)
-                    logger.warning(
-                        "StoreProvider: label %r partially unresolved: %d/%d components "
-                        "missing from store (%s). Row is the mean of resolved components.",
-                        c.label,
-                        len(missing_components),
-                        len(genes),
-                        missing_components,
-                    )
-            else:
-                out[i] = make_unresolved_vector(dim)
-                statuses.append(EmbeddingStatus.UNRESOLVED)
-                unresolved_symbols.append(c.label)
+        table = compile_action_table(
+            symbols,
+            block.matrix,
+            block.entity_ids,
+            control_policy=self.control_policy,
+            on_unresolved="zero",
+            control_sentinel_seed=self.control_sentinel_seed,
+            stage="StoreProvider",
+        )
+        out = table.table.reindex([str(s) for s in symbols]).to_numpy(dtype=np.float32)
+        statuses = [table.statuses[str(s)] for s in symbols]
+
+        unresolved_symbols = [missing for missing_list in table.missing_targets.values() for missing in missing_list]
+        control_symbols = table.control_conditions
+        mixed_symbols = [str(s) for s in dict.fromkeys(symbols) if self.control_policy.classify(str(s)).kind == "mixed"]
 
         self._last_unresolved = unresolved_symbols
         self._last_controls = control_symbols
         self._last_mixed = mixed_symbols
         if unresolved_symbols:
             logger.warning(
-                "StoreProvider: %d / %d input rows are UNRESOLVED against store key %r "
+                "StoreProvider: %d missing target component(s) across %d input rows against store key %r "
                 "(first 10: %s). UNRESOLVED rows are zero vectors -- treat this as a "
                 "data-quality bug, not a default.",
                 len(unresolved_symbols),
@@ -183,7 +159,7 @@ class StoreProvider(ActionEmbeddingProvider):
                 self.control_sentinel_seed,
                 dim,
             )
-        return out, self._status_array(statuses)
+        return out, np.asarray(statuses, dtype=object)
 
     def metadata(self, n_symbols: int, n_unresolved: int) -> ProviderMetadata:
         """Provider metadata for ``action_embedding_meta.json`` (source ``store``)."""

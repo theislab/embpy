@@ -7,8 +7,8 @@ file containing multiple lines can be filtered down at load time.
 
 Action embeddings are obtained via an injected
 :class:`ActionEmbeddingProvider`. The legacy ``gene_embedding_path``
-argument is still accepted for backward compatibility and routed
-through a transient :class:`PrecomputedProvider`.
+argument is kept only to produce an actionable migration error; new runs
+should pass a store-backed provider.
 """
 
 from __future__ import annotations
@@ -19,21 +19,21 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from ..preprocessing import log_normalize_counts, select_highly_variable_genes
-from .base import (
+from world_model.data.datasets.base import (
     GeneIndexer,
     PerturbationSequenceDataset,
 )
+from world_model.data.preprocessing import log_normalize_counts, select_highly_variable_genes
 
 if TYPE_CHECKING:
-    from ..embeddings.provider import ActionEmbeddingProvider
+    from world_model.data.embeddings.provider import ActionEmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
 
 def _load_adata(path: str | Path):  # type: ignore[no-untyped-def]
     try:
-        import anndata as ad  # noqa: PLC0415
+        import anndata as ad
     except ImportError as exc:
         raise ImportError("anndata is required to load Replogle datasets.") from exc
     path = Path(path)
@@ -50,7 +50,7 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
         cls,
         h5ad_path: str | Path,
         *,
-        provider: "ActionEmbeddingProvider | None" = None,
+        provider: ActionEmbeddingProvider | None = None,
         gene_embedding_path: str | Path | None = None,
         perturbation_key: str = "perturbation",
         control_label: str = "non-targeting",
@@ -68,9 +68,8 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
     ) -> tuple[ReplogleSequenceDataset, np.ndarray, GeneIndexer, list[str]]:
         """Build a dataset from a Replogle ``.h5ad`` file.
 
-        Exactly one of ``provider`` or ``gene_embedding_path`` must be
-        set. The path form is accepted for backward compatibility and
-        is wrapped in a :class:`PrecomputedProvider` internally.
+        ``provider`` must be set. The path form is retired; migrate legacy
+        CSV/NPZ tables to ``.emstore`` and build a store provider instead.
 
         ``bucket_key`` (optional) names an ``adata.obs`` column whose
         values define the per-cell context bucket (e.g. ``"batch"``).
@@ -80,9 +79,7 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
         """
         adata = _load_adata(h5ad_path)
         if perturbation_key not in adata.obs.columns:
-            raise KeyError(
-                f"'{perturbation_key}' not in adata.obs (got {list(adata.obs.columns)})"
-            )
+            raise KeyError(f"'{perturbation_key}' not in adata.obs (got {list(adata.obs.columns)})")
 
         if cell_type_filter is not None:
             if cell_type_key is None:
@@ -91,7 +88,10 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
             n_before = adata.n_obs
             adata = adata[mask].copy()
             logger.info(
-                "Filtered to cell_type=%s: %d -> %d cells", cell_type_filter, n_before, adata.n_obs,
+                "Filtered to cell_type=%s: %d -> %d cells",
+                cell_type_filter,
+                n_before,
+                adata.n_obs,
             )
 
         x = adata.X
@@ -106,9 +106,7 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
             x = log_normalize_counts(x)
 
         labels = adata.obs[perturbation_key].astype(str).values
-        unique_perturbed = [
-            str(label) for label in np.unique(labels) if str(label) != control_label
-        ]
+        unique_perturbed = [str(label) for label in np.unique(labels) if str(label) != control_label]
 
         cell_buckets, bucket_value_map = _extract_bucket_codes(adata, bucket_key)
 
@@ -133,7 +131,8 @@ class ReplogleSequenceDataset(PerturbationSequenceDataset):
 
 
 def _extract_bucket_codes(
-    adata, bucket_key: str | None,
+    adata,
+    bucket_key: str | None,
 ) -> tuple[np.ndarray | None, dict[int, str] | None]:
     """Convert ``adata.obs[bucket_key]`` into an int code array.
 
@@ -145,11 +144,8 @@ def _extract_bucket_codes(
     if bucket_key is None:
         return None, None
     if bucket_key not in adata.obs.columns:
-        raise KeyError(
-            f"bucket_key='{bucket_key}' not in adata.obs "
-            f"(got {list(adata.obs.columns)})"
-        )
-    import pandas as pd  # noqa: PLC0415
+        raise KeyError(f"bucket_key='{bucket_key}' not in adata.obs (got {list(adata.obs.columns)})")
+    import pandas as pd
 
     col = adata.obs[bucket_key]
     cat = col.astype("category")
@@ -157,37 +153,28 @@ def _extract_bucket_codes(
     id_to_value = {int(i): str(v) for i, v in enumerate(cat.cat.categories)}
     n_unique = int((pd.Series(codes) >= 0).sum() and len(id_to_value))
     logger.info(
-        "ReplogleSequenceDataset: bucket_key='%s' yields %d unique buckets "
-        "(NaN/unknown -> -1, will be skipped).",
-        bucket_key, n_unique,
+        "ReplogleSequenceDataset: bucket_key='%s' yields %d unique buckets (NaN/unknown -> -1, will be skipped).",
+        bucket_key,
+        n_unique,
     )
     return codes, id_to_value
 
 
 def _resolve_provider(
-    provider: "ActionEmbeddingProvider | None",
+    provider: ActionEmbeddingProvider | None,
     gene_embedding_path: str | Path | None,
-) -> "ActionEmbeddingProvider":
+) -> ActionEmbeddingProvider:
     if provider is not None and gene_embedding_path is not None:
-        raise ValueError(
-            "Pass either provider= or gene_embedding_path=, not both."
-        )
+        raise ValueError("Pass either provider= or gene_embedding_path=, not both.")
     if provider is not None:
         return provider
     if gene_embedding_path is None:
-        raise ValueError(
-            "from_h5ad requires either an ActionEmbeddingProvider or a "
-            "legacy gene_embedding_path."
-        )
-    # Lazy import: keeps the dataset module free of the embeddings
-    # subpackage at import time, so circular imports stay impossible.
-    from ..embeddings.precomputed import PrecomputedProvider  # noqa: PLC0415
-
-    logger.warning(
-        "ReplogleSequenceDataset.from_h5ad: gene_embedding_path is "
-        "deprecated -- pass an ActionEmbeddingProvider instead.",
+        raise ValueError("from_h5ad requires either an ActionEmbeddingProvider or a legacy gene_embedding_path.")
+    raise ValueError(
+        "ReplogleSequenceDataset.from_h5ad: legacy gene_embedding_path is retired. "
+        "Convert the CSV/NPZ to .emstore with `python -m embpy.store.migrate` "
+        "and pass an ActionEmbeddingProvider from action_embedding.source='store'."
     )
-    return PrecomputedProvider(gene_embedding_path)
 
 
 __all__ = ["ReplogleSequenceDataset"]

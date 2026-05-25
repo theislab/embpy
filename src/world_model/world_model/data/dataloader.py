@@ -20,18 +20,18 @@ from typing import Any
 
 import numpy as np
 
-from ..configs import ActionEmbeddingConfig, DataConfig, SplitConfig, StateBackboneConfig
-from ..models.encoders.backbones import (
+from world_model.configs import ActionEmbeddingConfig, DataConfig, SplitConfig, StateBackboneConfig
+from world_model.data.datasets.base import GeneIndexer, PerturbationSequenceDataset
+from world_model.data.datasets.nadig import NadigSequenceDataset
+from world_model.data.datasets.replogle import ReplogleSequenceDataset
+from world_model.data.embeddings import ActionEmbeddingProvider, build_provider
+from world_model.data.preprocessing import sequence_collate_fn
+from world_model.data.splits import SplitArtifact, split_or_load
+from world_model.models.encoders.backbones import (
     StateBackboneProvider,
     build_backbone,
     cache_path_for,
 )
-from .datasets.base import GeneIndexer, PerturbationSequenceDataset
-from .datasets.nadig import NadigSequenceDataset
-from .datasets.replogle import ReplogleSequenceDataset
-from .embeddings import ActionEmbeddingProvider, build_provider
-from .preprocessing import sequence_collate_fn
-from .splits import SplitArtifact, split_or_load
 
 logger = logging.getLogger(__name__)
 
@@ -86,9 +86,9 @@ def build_dataloaders(
         Split policy. Defaults to a fresh :class:`SplitConfig` (perturbation
         split, 80/20).
     action_cfg
-        Action-embedding config. Defaults to ``"precomputed"`` with
-        empty path -- the registry then falls back to
-        ``cfg.gene_embedding_path``.
+        Action-embedding config. Defaults to ``source="store"``; callers must
+        provide ``action_embedding.store_path`` unless they explicitly use the
+        BioEmbedder backend.
     seed
         Used for the random sampler RNG; the split's own seed is
         independent so split results are stable across model seeds.
@@ -100,7 +100,7 @@ def build_dataloaders(
         train side. Used by the transfer setup to fine-tune on a
         fraction of the train perturbations.
     """
-    from torch.utils.data import DataLoader  # noqa: PLC0415
+    from torch.utils.data import DataLoader
 
     if cfg.dataset not in _DATASET_REGISTRY:
         raise KeyError(f"Unknown dataset '{cfg.dataset}'. Available: {sorted(_DATASET_REGISTRY)}")
@@ -157,11 +157,33 @@ def build_dataloaders(
         meta_path = Path(output_dir) / "action_embedding_meta.json"
         meta_path.parent.mkdir(parents=True, exist_ok=True)
         meta_path.write_text(json.dumps(asdict(meta), indent=2, default=str))
+        status_path = Path(output_dir) / "action_embedding_status.json"
+        status_path.write_text(
+            json.dumps(
+                {
+                    "n_resolved": int(meta.n_resolved),
+                    "n_control": int(meta.n_control),
+                    "n_unresolved": int(meta.n_unresolved),
+                    "n_mixed": int(meta.n_mixed),
+                    "unresolved_symbols": list(meta.unresolved_symbols),
+                    "control_symbols": list(meta.control_symbols),
+                    "mixed_symbols": list(meta.mixed_symbols),
+                    "control_sentinel_seed": meta.control_sentinel_seed,
+                },
+                indent=2,
+                default=str,
+            )
+        )
         logger.info(
-            "Action embedding meta -> %s (source=%s, dim=%d, "
-            "resolved=%d, control=%d, unresolved=%d/%d)",
-            meta_path, meta.source, meta.embedding_dim,
-            meta.n_resolved, meta.n_control, meta.n_unresolved, meta.n_symbols,
+            "Action embedding meta -> %s and %s (source=%s, dim=%d, resolved=%d, control=%d, unresolved=%d/%d)",
+            meta_path,
+            status_path,
+            meta.source,
+            meta.embedding_dim,
+            meta.n_resolved,
+            meta.n_control,
+            meta.n_unresolved,
+            meta.n_symbols,
         )
 
     if getattr(action_cfg, "fail_on_unresolved", False) and len(n_unresolved_attr) > 0:
@@ -177,8 +199,7 @@ def build_dataloaders(
         )
     if n_control_attr:
         logger.info(
-            "Action embedding: %d CONTROL rows mapped to deterministic "
-            "sentinel vector (seed=%s).",
+            "Action embedding: %d CONTROL rows mapped to deterministic sentinel vector (seed=%s).",
             len(n_control_attr),
             getattr(action_cfg, "control_sentinel_seed", 0),
         )
@@ -205,12 +226,18 @@ def build_dataloaders(
         labels = full_dataset.perturbation_labels
         is_control = labels == cfg.control_label
         keep_mask = np.array([(lbl in keep) for lbl in labels])
-        train_indices = np.unique(np.concatenate([
-            np.flatnonzero(is_control),
-            np.flatnonzero(keep_mask),
-        ]))
+        train_indices = np.unique(
+            np.concatenate(
+                [
+                    np.flatnonzero(is_control),
+                    np.flatnonzero(keep_mask),
+                ]
+            )
+        )
         logger.info(
-            "Sub-selecting fine-tune train: %d perts, %d cells", len(keep), train_indices.size,
+            "Sub-selecting fine-tune train: %d perts, %d cells",
+            len(keep),
+            train_indices.size,
         )
 
     train_dataset = full_dataset.subset(
@@ -303,7 +330,7 @@ def _maybe_pre_encode_with_backbone(
 
     provider = override_provider if override_provider is not None else build_backbone(state_backbone_cfg)
 
-    import anndata as ad  # noqa: PLC0415  (heavy import; only on the foreign path)
+    import anndata as ad
 
     adata = ad.read_h5ad(h5ad_path)
     if cell_type_filter is not None and cell_type_key is not None:
@@ -363,7 +390,11 @@ def _maybe_pre_encode_with_backbone(
         out_path.write_text(json.dumps(asdict(meta), indent=2, default=str))
         logger.info(
             "State-backbone meta -> %s (kind=%s, dim=%d, cache_hit=%s, n_cells=%d)",
-            out_path, meta.kind, meta.embedding_dim, meta.cache_hit, meta.n_cells_encoded,
+            out_path,
+            meta.kind,
+            meta.embedding_dim,
+            meta.cache_hit,
+            meta.n_cells_encoded,
         )
 
     return provider, int(embeddings.shape[1])

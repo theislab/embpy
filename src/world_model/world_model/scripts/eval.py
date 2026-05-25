@@ -1,4 +1,4 @@
-"""Evaluate a trained world model and produce the full report.
+r"""Evaluate a trained world model and produce the full report.
 
 Loads a checkpoint produced by :mod:`world_model.scripts.train` and
 runs the perturbation evaluation pipeline (cell-eval-style metrics +
@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for the eval-only entrypoint."""
     parser = argparse.ArgumentParser(description="Evaluate a trained world model.")
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--checkpoint", type=str, required=True)
@@ -39,6 +40,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Run eval-only reporting for an existing checkpoint."""
     args = parse_args(argv)
     cfg: WorldModelConfig = load_yaml_config(args.config)
     cfg = apply_cli_overrides(cfg, args.overrides)
@@ -48,11 +50,9 @@ def main(argv: list[str] | None = None) -> None:
     seed_everything(cfg.seed)
 
     # Pass action_cfg + state_backbone_cfg so the action-embedding source
-    # (bio_embedder vs precomputed) matches the train run. See the same
-    # fix in run_baselines.py: without these, build_dataloaders falls back
-    # to data.gene_embedding_path (genept 3072d), and load_state_dict
-    # crashes with a shape mismatch when the checkpoint used a non-genept
-    # embedding (e.g. borzoi_v0 -> 1536d).
+    # (store vs bio_embedder) matches the train run. Without these,
+    # build_dataloaders can instantiate a model with the wrong action
+    # dimension and load_state_dict then fails with a shape mismatch.
     artifacts = build_dataloaders(
         cfg.data,
         split_cfg=cfg.split,

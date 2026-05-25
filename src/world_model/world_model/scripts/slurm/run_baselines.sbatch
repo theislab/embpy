@@ -27,7 +27,12 @@ export PYTHONNOUSERSITE=1
 PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
+# Pixi env propagated from the submit driver. Caduceus / Evo2 sweep runs
+# set EMBPY_PIXI_ENV=caduceus|evo2; everything else stays on `gpu`.
+PIXI_ENV="${EMBPY_PIXI_ENV:-gpu}"
+
 if [[ -n "${RUN_DIR:-}" ]]; then
+    RUN_DIR=$(pixi run -e "$PIXI_ENV" -- python -c "from world_model.utils.run_identity import resolve_latest_suffixed_run_dir; print(resolve_latest_suffixed_run_dir('${RUN_DIR}'))")
     CONFIG="${CONFIG:-${RUN_DIR}/config.yaml}"
     if [[ -z "${CKPT:-}" ]]; then
         # Pick the latest *_final.pt or *_finetune_final.pt under RUN_DIR.
@@ -37,9 +42,6 @@ fi
 
 CONFIG="${1:-${CONFIG:?CONFIG env var (or first positional arg) required}}"
 CKPT="${2:-${CKPT:-}}"
-# Pixi env propagated from the submit driver. Caduceus / Evo2 sweep runs
-# set EMBPY_PIXI_ENV=caduceus|evo2; everything else stays on `gpu`.
-PIXI_ENV="${EMBPY_PIXI_ENV:-gpu}"
 echo "Config: $CONFIG"
 echo "Checkpoint: ${CKPT:-<none>}"
 echo "Pixi env: $PIXI_ENV"

@@ -28,6 +28,7 @@ PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
 RUN_DIR="${1:-${RUN_DIR:?RUN_DIR env var or first positional arg required}}"
+RUN_DIR=$(pixi run -e gpu -- python -c "from world_model.utils.run_identity import resolve_latest_suffixed_run_dir; print(resolve_latest_suffixed_run_dir('${RUN_DIR}'))")
 echo "Run dir: $RUN_DIR"
 
 mkdir -p logs

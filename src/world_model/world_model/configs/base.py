@@ -49,7 +49,12 @@ class DataConfig:
     """Absolute path to the .h5ad file."""
 
     gene_embedding_path: str = ""
-    """CSV / NPZ table mapping gene_symbol -> embedding vector."""
+    """Deprecated legacy CSV / NPZ gene-embedding path.
+
+    World-model runs now use ``action_embedding.store_path``. Keep this field
+    only so older YAMLs fail with a migration hint instead of an unknown-key
+    error.
+    """
 
     perturbation_key: str = "perturbation"
     control_label: str = "non-targeting"
@@ -99,6 +104,8 @@ class DataConfig:
 
 @dataclass
 class EncoderConfig:
+    """Observation encoder hyperparameters."""
+
     kind: str = "transformer"
     d_model: int = 256
     n_layers: int = 2
@@ -109,6 +116,8 @@ class EncoderConfig:
 
 @dataclass
 class DynamicsConfig:
+    """Latent dynamics model hyperparameters."""
+
     kind: str = "gpt"
     d_model: int = 256
     n_layers: int = 6
@@ -120,6 +129,8 @@ class DynamicsConfig:
 
 @dataclass
 class LossConfig:
+    """Training loss weights and contrastive knobs."""
+
     latent_mse: float = 1.0
     decoder_mse: float = 0.5
     info_nce: float = 0.0
@@ -141,6 +152,8 @@ class LossConfig:
 
 @dataclass
 class OptimConfig:
+    """Optimizer and scheduler hyperparameters."""
+
     lr: float = 3e-4
     weight_decay: float = 1e-2
     betas: tuple[float, float] = (0.9, 0.95)
@@ -151,6 +164,8 @@ class OptimConfig:
 
 @dataclass
 class TrainConfig:
+    """Training loop runtime options."""
+
     n_epochs: int = 50
     log_every_n_steps: int = 50
     eval_every_n_epochs: int = 1
@@ -202,6 +217,11 @@ class TransferConfig:
     pretrain_h5ad_path: str = ""
     pretrain_dataset: str = "nadig"
     pretrain_gene_embedding_path: str = ""
+    """Deprecated legacy pretrain CSV / NPZ embedding path.
+
+    Use ``pretrain_action_encoder.store_path`` or the top-level
+    ``action_embedding.store_path`` instead.
+    """
     pretrain_epochs: int = 30
 
     finetune_fraction: float = 0.1
@@ -248,20 +268,22 @@ class EvalConfig:
 class ActionEmbeddingConfig:
     """How to materialise the action (perturbation) embedding table.
 
-    Two backends are supported:
+    Two run-time backends are supported:
 
-    * ``"precomputed"`` -- read a CSV / NPZ from ``path``. If ``path``
-      is empty, falls back to :attr:`DataConfig.gene_embedding_path`
-      so the legacy YAMLs keep working unchanged.
+    * ``"store"`` -- read a canonical embpy ``.emstore`` embedding block.
     * ``"bio_embedder"`` -- delegate to :class:`embpy.embedder.BioEmbedder`.
       ``model_name`` must be a key in ``embpy.embedder.MODEL_REGISTRY``.
+
+    The old ``"precomputed"`` CSV / NPZ path is intentionally retired from
+    the provider registry. Convert those tables once with
+    ``python -m embpy.store.migrate <table> <out.emstore> --model <name>``.
     """
 
-    source: str = "precomputed"
-    """One of ``{"store", "precomputed", "bio_embedder"}``."""
+    source: str = "store"
+    """One of ``{"store", "bio_embedder"}``."""
 
     path: str = ""
-    """``precomputed`` only -- CSV / NPZ. Empty means fall back to data.gene_embedding_path."""
+    """Deprecated CSV / NPZ path kept only to produce actionable migration errors."""
 
     store_path: str = ""
     """``store`` only -- path to a ``.emstore`` directory (embpy EmbeddingStore).
@@ -420,6 +442,8 @@ class StateBackboneConfig:
 
 @dataclass
 class WorldModelConfig:
+    """Top-level resolved world-model configuration."""
+
     data: DataConfig = field(default_factory=DataConfig)
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
     dynamics: DynamicsConfig = field(default_factory=DynamicsConfig)
@@ -441,6 +465,7 @@ class WorldModelConfig:
     """One of ``{"single", "transfer"}``."""
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON/YAML-serialisable representation."""
         return asdict(self)
 
     def validate(self) -> None:

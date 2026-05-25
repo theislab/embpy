@@ -6,7 +6,7 @@ mode: "single"
 data:
   dataset: "replogle"
   h5ad_path: "data/datasets/replogle/replogle_2022_k562_essential.h5ad"
-  gene_embedding_path: "data/embeddings/gene_embeddings/genept/embeddings_3072.csv"
+  gene_embedding_path: "" # deprecated; use action_embedding.store_path
   perturbation_key: "perturbation"
   control_label: "control"
   cell_type_key: "cell_type"
@@ -21,8 +21,9 @@ data:
   pin_memory: true
 
 action_embedding:
-  source: "precomputed"
-  path: ""
+  source: "store"
+  store_path: "data/embeddings/gene_embeddings/genept/genept.emstore"
+  store_key: "gene:genept"
 
 state_backbone:
   kind: "local"

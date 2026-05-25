@@ -48,7 +48,7 @@ Pipeline overview:
 
 ![Phase 5 model schematic](assets/phase5_architecture.png)
 
-*Method overview. Cells from **Nadig** and **Replogle** (K562, RPE1)
+_Method overview. Cells from **Nadig** and **Replogle** (K562, RPE1)
 flow through a **frozen** foundation state encoder -- Arc Institute
 `STATE` or `STACK`, with cell embeddings cached on disk keyed by
 `(backbone, ckpt_hash, dataset_hash)`. A local-trainable
@@ -63,19 +63,19 @@ trained under three regimes (`single_nadig`, `single_replogle`,
 baselines (Mean / Control Mean / Additive / Linear Regression /
 Identity) using STATE's cell-eval suite (DEG@K, R^2 / Pearson / MMD).
 The two dashed brackets in the figure highlight the Phase-2
-(backbone-swap) and Phase-3 (adapter-kind: LoRA / MLP) ablations.*
+(backbone-swap) and Phase-3 (adapter-kind: LoRA / MLP) ablations._
 
 ### Mapping the reference paper to transcriptomics
 
-| Paper component                | Transcriptomics counterpart                 |
-| ------------------------------ | ------------------------------------------- |
-| Stack of K image frames        | Stack of K gene-expression vectors          |
-| ResNet trunk + flat token      | Per-frame Linear + Stack Transformer + CLS  |
-| Discrete agent action          | Gene-embedding of the perturbed gene(s)     |
-| GRU / world-model dynamics     | Causal GPT over `(s, a)` tokens             |
-| Pixel reconstruction loss      | Gene-expression reconstruction (MSE)        |
-| Latent consistency loss        | Latent next-state MSE (`s_hat` vs `s_next`) |
-| Goal-conditioning              | Future work: condition on target cell-state |
+| Paper component            | Transcriptomics counterpart                 |
+| -------------------------- | ------------------------------------------- |
+| Stack of K image frames    | Stack of K gene-expression vectors          |
+| ResNet trunk + flat token  | Per-frame Linear + Stack Transformer + CLS  |
+| Discrete agent action      | Gene-embedding of the perturbed gene(s)     |
+| GRU / world-model dynamics | Causal GPT over `(s, a)` tokens             |
+| Pixel reconstruction loss  | Gene-expression reconstruction (MSE)        |
+| Latent consistency loss    | Latent next-state MSE (`s_hat` vs `s_next`) |
+| Goal-conditioning          | Future work: condition on target cell-state |
 
 ### State-stack encoder
 
@@ -84,10 +84,10 @@ scRNA-seq observations are extremely noisy and zero-inflated. Stacking
 the same way frame stacking averages out per-frame motion blur in
 Atari. Two encoder variants are provided:
 
-* `TransformerStateStackEncoder` (default): per-frame linear projection
+- `TransformerStateStackEncoder` (default): per-frame linear projection
   followed by a small transformer encoder + CLS pooling. Closest
   analogue of the paper's ResNet trunk.
-* `MLPStateStackEncoder`: cheap baseline that flattens `(K * G)` and
+- `MLPStateStackEncoder`: cheap baseline that flattens `(K * G)` and
   runs an MLP. Useful as an ablation.
 
 ### Action encoding
@@ -150,13 +150,13 @@ are combined.
 
 The total loss is a weighted sum of:
 
-* `latent_mse` -- MSE between predicted next-state token `s_hat` and
+- `latent_mse` -- MSE between predicted next-state token `s_hat` and
   the encoder's output on the true next stack `s_next` (with stop-grad
   on the target, BYOL-style). This is the primary signal.
-* `decoder_mse` -- MSE between the decoded gene-expression
+- `decoder_mse` -- MSE between the decoded gene-expression
   reconstruction and the true mean expression vector. Anchors the
   state space to gene space.
-* `info_nce` (optional) -- contrastive alignment between predicted and
+- `info_nce` (optional) -- contrastive alignment between predicted and
   true tokens within a batch. Helpful when paired data is sparse.
 
 ### Key shapes (defaults)
@@ -280,67 +280,67 @@ notebooks.
 
 ### `data`
 
-* `data.preprocessing` -- log-normalisation, dependency-free HVG
+- `data.preprocessing` -- log-normalisation, dependency-free HVG
   selection, and a custom collate fn that stacks dataset samples into
   the world-model batch dict.
-* `data.datasets.base` -- `GeneIndexer` (gene symbol <-> int row),
+- `data.datasets.base` -- `GeneIndexer` (gene symbol <-> int row),
   `load_gene_embedding_table` (CSV / NPZ), and the core
   `PerturbationSequenceDataset` that emits `(T, K, G)` sequences.
-* `data.datasets.nadig` and `data.datasets.replogle` -- thin
+- `data.datasets.nadig` and `data.datasets.replogle` -- thin
   `from_h5ad(...)` adapters that load the AnnData, run preprocessing,
   and return `(dataset, gene_table, indexer, gene_symbols)`.
-* `data.dataloader.build_dataloaders(cfg)` -- one-call setup that
+- `data.dataloader.build_dataloaders(cfg)` -- one-call setup that
   takes a `DataConfig` and returns `train_loader`, `val_loader`, and
   the artefacts needed to instantiate the model.
 
 ### `models`
 
-* `blocks` -- shared building blocks (`MLP`, `CausalSelfAttention`,
+- `blocks` -- shared building blocks (`MLP`, `CausalSelfAttention`,
   `TransformerBlock`).
-* `encoders.state_stack_encoder` -- `TransformerStateStackEncoder`
+- `encoders.state_stack_encoder` -- `TransformerStateStackEncoder`
   (default) and `MLPStateStackEncoder`. Both subclass
   `StateStackEncoder` and accept `(B, T, K, G)`, return `(B, T, d)`.
-* `action.gene_embedding_action` -- `GeneEmbeddingAction` looks up
+- `action.gene_embedding_action` -- `GeneEmbeddingAction` looks up
   perturbed-gene rows in a pretrained embedding table, projects each
   row to `d_model` via the swappable `ActionAdapter` (Linear / MLP /
   LoRA), and then aggregates over the `n_pert` axis (mean / sum, with
   padded slots masked) into a single action token.
-* `dynamics.gpt_autoregressive` -- `GPTAutoregressiveDynamics`,
+- `dynamics.gpt_autoregressive` -- `GPTAutoregressiveDynamics`,
   Decision-Transformer-style causal transformer over interleaved
   `(s, a)` tokens. The next-state prediction is read off the
   action-token output positions.
-* `decoders.expression_decoder` -- MLP `d_model -> n_genes`. Optional
+- `decoders.expression_decoder` -- MLP `d_model -> n_genes`. Optional
   log-variance head for Gaussian NLL training.
-* `world_model.WorldModel` -- composes the four pieces and exposes
+- `world_model.WorldModel` -- composes the four pieces and exposes
   `encode`, `encode_action`, `predict_next`, `decode`, `forward`,
   `loss` and `rollout`. A `build_world_model(...)` factory wires the
   defaults.
 
 ### `training`
 
-* `losses` -- `latent_mse`, `delta_mse`, `gaussian_nll`, `info_nce`.
-* `schedulers.build_scheduler` -- cosine + warmup, linear warmup,
+- `losses` -- `latent_mse`, `delta_mse`, `gaussian_nll`, `info_nce`.
+- `schedulers.build_scheduler` -- cosine + warmup, linear warmup,
   constant.
-* `trainer.WorldModelTrainer` -- minimal training loop with AdamW,
+- `trainer.WorldModelTrainer` -- minimal training loop with AdamW,
   AMP on CUDA, gradient clipping and per-epoch checkpoints.
 
 ### `evaluation`
 
-* `metrics` -- `latent_l2_error`, `cosine_similarity`,
+- `metrics` -- `latent_l2_error`, `cosine_similarity`,
   `expression_r2`, `delta_pearson` (the standard headline metric in
   the perturbation-prediction literature).
-* `rollouts.imagined_rollout` -- runs autoregressive rollouts on a
+- `rollouts.imagined_rollout` -- runs autoregressive rollouts on a
   loader and aggregates metrics.
 
 ### `utils`
 
-* `seeding.seed_everything(seed)` -- python / numpy / torch seeds.
-* `logging.setup_logging` + `get_logger`.
-* `checkpoint.save_checkpoint` / `load_checkpoint`.
+- `seeding.seed_everything(seed)` -- python / numpy / torch seeds.
+- `logging.setup_logging` + `get_logger`.
+- `checkpoint.save_checkpoint` / `load_checkpoint`.
 
 ### `scripts`
 
-* `train.py` and `eval.py` -- thin `python -m` entry-points wrapping
+- `train.py` and `eval.py` -- thin `python -m` entry-points wrapping
   the pieces above.
 
 ## Install
@@ -380,11 +380,11 @@ The package now ships **three training setups**, all driven by the same
 `scripts/train.py` entry point. The YAML config alone selects which one
 runs (no special branches in the code):
 
-| Setup                       | Config                                                | Mode flag      |
-| --------------------------- | ----------------------------------------------------- | -------------- |
-| `single_nadig`              | `configs/experiments/single_nadig.yaml`               | `mode: single` |
-| `single_replogle`           | `configs/experiments/single_replogle.yaml`            | `mode: single` |
-| `transfer_nadig_to_replogle`| `configs/experiments/transfer.yaml`                   | `mode: transfer` |
+| Setup                        | Config                                     | Mode flag        |
+| ---------------------------- | ------------------------------------------ | ---------------- |
+| `single_nadig`               | `configs/experiments/single_nadig.yaml`    | `mode: single`   |
+| `single_replogle`            | `configs/experiments/single_replogle.yaml` | `mode: single`   |
+| `transfer_nadig_to_replogle` | `configs/experiments/transfer.yaml`        | `mode: transfer` |
 
 ### Locally
 
@@ -444,19 +444,19 @@ to match your cluster.
 
 Per-script summary:
 
-| Script                          | Purpose                                                              |
-| ------------------------------- | -------------------------------------------------------------------- |
-| `train_single_nadig.sbatch`     | Setup 1: train on Nadig only.                                        |
-| `train_single_replogle.sbatch`  | Setup 2: train on Replogle only.                                     |
-| `train_transfer.sbatch`         | Setup 3: pretrain on Nadig, fine-tune on `FRACTION` of Replogle.     |
-| `run_baselines.sbatch`          | Fit + evaluate every baseline against the saved split.               |
-| `eval_only.sbatch`              | Re-evaluate a finished checkpoint without retraining.                |
-| `compare.sbatch`                | Build `comparison.csv` + `comparison.png` + `report.md`.             |
+| Script                         | Purpose                                                          |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `train_single_nadig.sbatch`    | Setup 1: train on Nadig only.                                    |
+| `train_single_replogle.sbatch` | Setup 2: train on Replogle only.                                 |
+| `train_transfer.sbatch`        | Setup 3: pretrain on Nadig, fine-tune on `FRACTION` of Replogle. |
+| `run_baselines.sbatch`         | Fit + evaluate every baseline against the saved split.           |
+| `eval_only.sbatch`             | Re-evaluate a finished checkpoint without retraining.            |
+| `compare.sbatch`               | Build `comparison.csv` + `comparison.png` + `report.md`.         |
 
 ### Train/test split policy
 
 The default and recommended split is **by perturbation identity**
-(`split.split_by: perturbation`): test perturbations are *unseen* by
+(`split.split_by: perturbation`): test perturbations are _unseen_ by
 the model, which is the scientifically meaningful generalisation
 setting. Set `split.split_by: cell` for a per-cell sanity check (any
 sufficiently expressive model trivially memorises this -- never
@@ -496,13 +496,13 @@ The full pipeline runs:
 Five small baselines under `evaluation/baselines/` share a
 `Baseline` interface (`fit`, `predict`, `name`):
 
-| Baseline           | Predicts                                          | Beats identity when                                              |
-| ------------------ | ------------------------------------------------- | ---------------------------------------------------------------- |
-| `IdentityBaseline` | `control_template`                                | never (sanity floor)                                             |
-| `ControlMeanBaseline` | train-control mean                              | never (no perturbation signal)                                   |
-| `MeanBaseline`     | mean of all train-perturbed cells                  | global response direction is informative                          |
-| `AdditiveBaseline` | `control + delta(p)` if `p` seen in train          | only for cell-level splits or when p was observed                |
-| `LinearRegressionBaseline` | Ridge: action embedding -> per-gene delta  | gene embedding carries the perturbation signal                   |
+| Baseline                   | Predicts                                  | Beats identity when                               |
+| -------------------------- | ----------------------------------------- | ------------------------------------------------- |
+| `IdentityBaseline`         | `control_template`                        | never (sanity floor)                              |
+| `ControlMeanBaseline`      | train-control mean                        | never (no perturbation signal)                    |
+| `MeanBaseline`             | mean of all train-perturbed cells         | global response direction is informative          |
+| `AdditiveBaseline`         | `control + delta(p)` if `p` seen in train | only for cell-level splits or when p was observed |
+| `LinearRegressionBaseline` | Ridge: action embedding -> per-gene delta | gene embedding carries the perturbation signal    |
 
 Run them against the same split as a world-model run:
 
@@ -519,9 +519,9 @@ CKPT=runs/world_model/single_replogle/single_replogle_final.pt \
 
 Outputs:
 
-* `runs/<run_id>/baselines.csv`  -- one row per (baseline, metric).
-* `runs/<run_id>/comparison.csv` -- wide format, world model + every baseline.
-* `runs/<run_id>/plots/comparison.png` -- bar chart per metric.
+- `runs/<run_id>/baselines.csv` -- one row per (baseline, metric).
+- `runs/<run_id>/comparison.csv` -- wide format, world model + every baseline.
+- `runs/<run_id>/plots/comparison.png` -- bar chart per metric.
 
 ## Comparison and final report (standalone)
 
@@ -560,7 +560,7 @@ Two layers exist:
    (`mse`, `mae`, `r2_score`, `pearson_corr`, `spearman_corr`,
    `deg_overlap_top_k`). Any new helper added there should also be
    re-exported from `evaluation/__init__.py`.
-2. The metric *set* used by the comparison pipeline lives in
+2. The metric _set_ used by the comparison pipeline lives in
    `evaluation/cell_eval_runner.py::_internal_metrics`. Add a column
    there to make the new metric flow through `comparison.csv`,
    `comparison.png`, and `report.md` automatically. When `cell_eval`
@@ -631,22 +631,22 @@ runs/<run_id>/
 
 ## How to read the plots and report
 
-* `plots/loss_curves.png` -- per-epoch train/val loss. Both should
+- `plots/loss_curves.png` -- per-epoch train/val loss. Both should
   decrease together; a growing gap indicates overfitting (drop
   `train.n_epochs` or raise `optim.weight_decay` / `dynamics.dropout`).
-* `plots/scatter_world_model.png` -- predicted vs real *mean*
+- `plots/scatter_world_model.png` -- predicted vs real _mean_
   expression per perturbation. Points should cluster around the
   identity line; systematic bias appears as a slope.
-* `plots/perpert_r2.png` -- distribution of R^2 across test
+- `plots/perpert_r2.png` -- distribution of R^2 across test
   perturbations. A wide tail of negative values means the model is
   worse than control on those perturbations.
-* `plots/deg_overlap.png` -- top-K differentially expressed gene
+- `plots/deg_overlap.png` -- top-K differentially expressed gene
   overlap per perturbation. A robust target is ~0.4-0.6 for K=50;
   random baselines hover around K/G.
-* `plots/comparison.png` -- world model vs every baseline on each
+- `plots/comparison.png` -- world model vs every baseline on each
   aggregated metric. The world model should beat every baseline on
   at least the headline ones (R^2, delta-cosine, DEG overlap).
-* `report.md` -- one self-contained markdown file embedding the
+- `report.md` -- one self-contained markdown file embedding the
   config, the metric tables, and links to all plots.
 
 ## Training diagnostics
@@ -654,12 +654,12 @@ runs/<run_id>/
 The trainer routes everything through pluggable hooks
 (`training/hooks.py`):
 
-* per-step train loss, learning rate, gradient norm, every loss
+- per-step train loss, learning rate, gradient norm, every loss
   component -> stdout (every `train.log_every_n_steps`),
-* per-epoch train/val loss + components -> CSV at
+- per-epoch train/val loss + components -> CSV at
   `runs/<run_id>/train_log.csv` and TensorBoard at
   `runs/<run_id>/tb/`,
-* loss curves + report rendered automatically at end of training.
+- loss curves + report rendered automatically at end of training.
 
 Drop hooks by passing `hooks=[]` to `WorldModelTrainer.__init__`; add
 custom ones by subclassing `Hook`.
@@ -675,16 +675,16 @@ the suite finishes in seconds on CPU.
 
 ## References
 
-* Hu et al. *Learning World Models for Unconstrained Goal Navigation.*
+- Hu et al. _Learning World Models for Unconstrained Goal Navigation._
   arXiv 2024. <https://arxiv.org/pdf/2405.18193>
-* Garg et al. *In-Context-Symmetries.* GitHub.
+- Garg et al. _In-Context-Symmetries._ GitHub.
   <https://github.com/Sharut/In-Context-Symmetries>
-* Replogle et al. *Mapping information-rich genotype-phenotype
-  landscapes with genome-scale Perturb-seq.* Cell 2022.
-* Nadig & O'Connor et al. *Transcriptome-wide characterization of
-  genetic perturbations.* 2024.
-* Cui et al. *GenePT: A simple but hard-to-beat foundation model for
-  genes and cells built from ChatGPT.* 2023.
+- Replogle et al. _Mapping information-rich genotype-phenotype
+  landscapes with genome-scale Perturb-seq._ Cell 2022.
+- Nadig & O'Connor et al. _Transcriptome-wide characterization of
+  genetic perturbations._ 2024.
+- Cui et al. _GenePT: A simple but hard-to-beat foundation model for
+  genes and cells built from ChatGPT._ 2023.
 
 ## Debug checklist (component-by-component)
 
@@ -723,7 +723,7 @@ Expected output shape: `(B, T, d_model)`. Encoder collapse check:
 pixi run -e gpu python -m pytest -x tests/world_model/test_gene_embedding_action.py
 ```
 
-Confirm two different perturbations produce *distinct* tokens (cosine
+Confirm two different perturbations produce _distinct_ tokens (cosine
 similarity below 1).
 
 ### Dynamics
@@ -839,24 +839,34 @@ bash -n src/world_model/world_model/scripts/submit_all.sh && echo OK submit_all.
 
 Expected: every line prints `OK <path>`. Submit smallest first
 (`train_single_nadig.sbatch`); `logs/wm-nadig_<jobid>.out` should print
-"Run single_nadig -- output_dir=runs/world_model/single_nadig"
+`Run single_nadig -- output_dir=runs/world_model/single_nadig__job...`
 within seconds of the job starting.
 
 ## Action embeddings
 
 The world model treats a perturbation as the embedding of the perturbed
-gene(s). Where that embedding *comes from* is selected at config time
-through the `action_embedding` block. Two backends ship with the
-package:
+gene(s). Where that embedding _comes from_ is selected at config time
+through the `action_embedding` block. Runtime configs should use one of
+two backends:
 
-| backend         | source                                | used for                                                         |
-| --------------- | ------------------------------------- | ---------------------------------------------------------------- |
-| `precomputed`   | CSV / NPZ on disk (legacy code path)  | reproducing prior runs, swapping in any custom embedding         |
-| `bio_embedder`  | `embpy.embedder.BioEmbedder`          | foundation-model embeddings (Borzoi, ESM2, ESMC, prot_t5, ...)   |
+| backend        | source                       | used for                                                       |
+| -------------- | ---------------------------- | -------------------------------------------------------------- |
+| `store`        | embpy `.emstore` directory   | reusable gene/action embeddings, migrated legacy tables        |
+| `bio_embedder` | `embpy.embedder.BioEmbedder` | foundation-model embeddings (Borzoi, ESM2, ESMC, prot_t5, ...) |
 
 Both backends return the same `(table, indexer)` tuple downstream code
-expects, so the rest of the world model is identical regardless of the
-source.
+expects. The old CSV/NPZ `precomputed` provider remains importable only
+as a migration utility; the registry no longer falls back to
+`data.gene_embedding_path`.
+
+Convert an existing table once:
+
+```bash
+pixi run -e gpu python -m embpy.store.migrate \
+    data/embeddings/gene_embeddings/genept/embeddings_3072.csv \
+    data/embeddings/gene_embeddings/genept/genept.emstore \
+    --model genept --entity-type gene --id-scheme symbol
+```
 
 ### Provider abstraction
 
@@ -872,10 +882,10 @@ class ActionEmbeddingProvider(ABC):
     def build_table(self, symbols) -> tuple[np.ndarray, GeneIndexer]: ...
 ```
 
-Adding a third backend (e.g. fetching from a vector DB) is roughly:
+Adding another backend (e.g. fetching from a vector DB) is roughly:
 
-1. Subclass `ActionEmbeddingProvider`, implement `embed` (the default
-   `build_table` is fine).
+1. Subclass `ActionEmbeddingProvider`, implement `embed_with_status`
+   (the default `build_table` is fine).
 2. Register it in `data/embeddings/registry.py::build_provider` under a
    new `source: "<your_backend>"` value.
 3. Optional: persist a richer `ProviderMetadata` for `action_embedding_meta.json`.
@@ -891,17 +901,17 @@ Adding a third backend (e.g. fetching from a vector DB) is roughly:
 
 Each NPZ holds two arrays: `symbols: object[N]` and `embeddings:
 float32[N, D]`. Subsequent calls with the same key only embed the
-*new* symbols and merge them into the archive via a temp-file +
+_new_ symbols and merge them into the archive via a temp-file +
 `os.replace` atomic rename (so readers always see the old or the new
 file, never a half-written one). The default `cache_dir` is
 `runs/_cache/action_embeddings/`.
 
 ### Switching the action representation
 
-Same Replogle config, swap `model_name`:
+Same Replogle config, swap the store or model:
 
 ```bash
-# (a) precomputed (default; legacy NPZ / CSV)
+# (a) Store-backed GenePT (default after CSV -> .emstore migration)
 pixi run -e gpu python -m world_model.scripts.train \
     --config src/world_model/world_model/configs/experiments/single_replogle.yaml
 
@@ -932,24 +942,28 @@ pixi run -e gpu python -m world_model.scripts.embed_perturbations \
 These come straight from `embpy.embedder.MODEL_REGISTRY`. Selected
 representatives by modality:
 
-| modality | examples                                                                      |
-| -------- | ----------------------------------------------------------------------------- |
+| modality | examples                                                                                                                  |
+| -------- | ------------------------------------------------------------------------------------------------------------------------- |
 | DNA      | `enformer_human_rough`, `borzoi_v0..v3`, `flashzoi_v0..v3`, `evo1_8k`, `evo2_7b`, `nt_v2_500m`, `hyenadna_*`, `gena_lm_*` |
-| Protein  | `esm2_8M`..`esm2_15B`, `esmc_300m`..`6b`, `esm3_*`, `prot_t5_xl`              |
-| Text     | `minilm_l6_v2`, `bert_base_uncased`, `llama3.x_*`                             |
+| Protein  | `esm2_8M`..`esm2_15B`, `esmc_300m`..`6b`, `esm3_*`, `prot_t5_xl`                                                          |
+| Text     | `minilm_l6_v2`, `bert_base_uncased`, `llama3.x_*`                                                                         |
 
 Run `python -c "from embpy.embedder import MODEL_REGISTRY; print(sorted(MODEL_REGISTRY))"`
 for the full, env-aware list.
 
 ### Action-embedding debug checklist
 
-| symptom                                          | what to inspect                                                                                              |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| Loss does not move; baselines beat the model     | `cat runs/<run>/action_embedding_meta.json` -- check `embedding_dim` is non-zero and `n_unresolved` is small |
-| Half the test perturbations show identical predictions | Same file -- `n_unresolved` near `n_symbols` means rows are zero, the model has no signal for those genes  |
-| Transfer training blows up after pretrain        | Check `embedding_dim` in `runs/<run>/pretrain/action_embedding_meta.json` vs `finetune/action_embedding_meta.json` -- they must match |
-| Slow first epoch                                 | Run `scripts/embed_perturbations.py` first to populate the cache                                             |
-| Want to revert from BioEmbedder to precomputed   | Set `action_embedding.source: precomputed` and `action_embedding.path: <your_npz>` (or leave empty to fall back to `data.gene_embedding_path`); no retraining needed if you just want to re-evaluate |
+| symptom                                                | what to inspect                                                                                                                                       |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Loss does not move; baselines beat the model           | `cat runs/<run>/action_embedding_meta.json` -- check `embedding_dim` is non-zero and `n_unresolved` is small                                          |
+| Half the test perturbations show identical predictions | Same file -- `n_unresolved` near `n_symbols` means rows are zero, the model has no signal for those genes                                             |
+| Transfer training blows up after pretrain              | Check `embedding_dim` in `runs/<run>/pretrain/action_embedding_meta.json` vs `finetune/action_embedding_meta.json` -- they must match                 |
+| Slow first epoch                                       | Run `scripts/embed_perturbations.py` first to populate the cache                                                                                      |
+| Want to use an old CSV/NPZ table                       | Convert it once with `python -m embpy.store.migrate ...`, then set `action_embedding.source: store` and `action_embedding.store_path: <your.emstore>` |
+
+Every run also writes `action_embedding_status.json` next to
+`action_embedding_meta.json`, carrying resolved/control/unresolved counts
+and the exact unresolved/control labels.
 
 Inspect the cache directly:
 
@@ -963,7 +977,7 @@ python -c "import numpy as np; a=np.load('runs/_cache/action_embeddings/esm2_650
 
 Once the provider abstraction is wired in, "which action encoder
 matters?" becomes a one-config-file question. The ablation harness
-trains the *same* world model on the *same* dataset with the *same*
+trains the _same_ world model on the _same_ dataset with the _same_
 train/test split, swapping only the `action_embedding` block, then
 emits a single CSV that puts every backend on the same row.
 
@@ -1001,11 +1015,11 @@ Zero lines of Python. Add one row to the grid YAML:
 ```yaml
 # src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml
 grid:
-  - key: flashzoi
-    model_name: flashzoi_v0
-    region: full
-    pooling: mean
-    notes: "DNA, 3x faster Borzoi"
+    - key: flashzoi
+      model_name: flashzoi_v0
+      region: full
+      pooling: mean
+      notes: "DNA, 3x faster Borzoi"
 ```
 
 `spec.key` becomes the per-run sub-directory (`<output_root>/flashzoi/`)
@@ -1018,16 +1032,16 @@ and skipped at the resolver layer.
 `summary_wide.csv` is the headline artifact. One row per spec, columns
 in order:
 
-| column                                | meaning                                                          |
-| ------------------------------------- | ---------------------------------------------------------------- |
-| `grid_key`                            | spec identifier (e.g. `borzoi`)                                  |
-| `model_name`, `id_type`, `region`, `pooling` | the action-embedding overrides applied                    |
-| `status`                              | `"ok"` or `"failed"`                                             |
-| `embedding_dim`, `n_unresolved`       | from `action_embedding_meta.json`                                |
-| `wall_clock_s`, `peak_gpu_mem_mb`     | from the runner's per-spec `_ablation_run.json`                  |
-| `final_train_loss`, `final_val_loss`  | scraped from `train_log.csv`                                     |
-| `error`                               | populated only when `status == "failed"`                         |
-| `r2`, `mse`, `pearson`, `deg_overlap_top_k`, ... | one column per metric in `world_model_metrics.csv`    |
+| column                                           | meaning                                            |
+| ------------------------------------------------ | -------------------------------------------------- |
+| `grid_key`                                       | spec identifier (e.g. `borzoi`)                    |
+| `model_name`, `id_type`, `region`, `pooling`     | the action-embedding overrides applied             |
+| `status`                                         | `"ok"` or `"failed"`                               |
+| `embedding_dim`, `n_unresolved`                  | from `action_embedding_meta.json`                  |
+| `wall_clock_s`, `peak_gpu_mem_mb`                | from the runner's per-spec `_ablation_run.json`    |
+| `final_train_loss`, `final_val_loss`             | scraped from `train_log.csv`                       |
+| `error`                                          | populated only when `status == "failed"`           |
+| `r2`, `mse`, `pearson`, `deg_overlap_top_k`, ... | one column per metric in `world_model_metrics.csv` |
 
 Quick comparisons from the long form:
 
@@ -1039,10 +1053,10 @@ df.query("metric == 'r2' and status == 'ok'").sort_values("value", ascending=Fal
 
 The companion plots in `runs/<root>/plots/` give:
 
-* `metric_bar_<metric>.png` -- one bar per spec, easiest visual sort.
-* `embedding_dim_vs_<metric>.png` -- does adding capacity (larger
+- `metric_bar_<metric>.png` -- one bar per spec, easiest visual sort.
+- `embedding_dim_vs_<metric>.png` -- does adding capacity (larger
   embedding_dim) actually help? (often: no, by a lot.)
-* `pareto_<metric>_vs_walltime.png` -- the Pareto frontier between
+- `pareto_<metric>_vs_walltime.png` -- the Pareto frontier between
   quality and training cost.
 
 ### What to do when a spec fails
@@ -1050,26 +1064,25 @@ The companion plots in `runs/<root>/plots/` give:
 1. Check `logs/<job>.err` (or `runs/<root>/<key>/_ablation_run.json` for the in-process traceback).
 2. Inspect `runs/<root>/<key>/action_embedding_meta.json`. The two
    most common failure modes are:
-   * `embedding_dim == 0` -- every symbol failed to resolve. Usually a
-     bad `id_type` (DNA models need `symbol` or `ensembl_id`, never
-     `uniprot_id`) or the wrong `organism`.
-   * `n_unresolved == n_symbols` -- the resolver works but the model
-     itself is failing. Likely an optional dep missing (Evo, Boltz, ...).
+    - `embedding_dim == 0` -- every symbol failed to resolve. Usually a
+      bad `id_type` (DNA models need `symbol` or `ensembl_id`, never
+      `uniprot_id`) or the wrong `organism`.
+    - `n_unresolved == n_symbols` -- the resolver works but the model
+      itself is failing. Likely an optional dep missing (Evo, Boltz, ...).
 3. Re-run only the failing spec without redoing the others:
-   ```bash
-   pixi run -e gpu python -m world_model.scripts.ablate_action_encoder \
-       --base-config src/world_model/world_model/configs/experiments/single_replogle.yaml \
-       --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
-       --output-root runs/ablation_action_replogle \
-       --only flashzoi
-   ```
+    ```bash
+    pixi run -e gpu python -m world_model.scripts.ablate_action_encoder \
+        --base-config src/world_model/world_model/configs/experiments/single_replogle.yaml \
+        --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
+        --output-root runs/ablation_action_replogle \
+        --only flashzoi
+    ```
 4. Re-run the aggregator on its own (no retraining of any spec):
-   ```bash
-   pixi run -e gpu python -m world_model.evaluation.ablation.aggregate \
-       --output-root runs/ablation_action_replogle \
-       --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml
-   ```
-
+    ```bash
+    pixi run -e gpu python -m world_model.evaluation.ablation.aggregate \
+        --output-root runs/ablation_action_replogle \
+        --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml
+    ```
 
 ## Action adapters and cross-encoder transfer
 
@@ -1078,7 +1091,7 @@ The companion plots in `runs/<root>/plots/` give:
 The figure above summarises the three new pieces:
 
 1. **World model with a swappable adapter** -- the foundation embedder
-   stays frozen; the adapter (linear / mlp / lora) is the *only*
+   stays frozen; the adapter (linear / mlp / lora) is the _only_
    trainable bridge to the dynamics token width.
 2. **Encoder x adapter ablation sweep** -- a 5x6 grid that holds the
    train/test split and embedding cache fixed, so any difference in the
@@ -1093,10 +1106,10 @@ The figure above summarises the three new pieces:
 The foundation model that produces the action embedding (Borzoi, ESM2,
 NT-V2, ...) stays frozen. The only learned bridge between its output
 dimension and the dynamics token width is a small projection -- the
-*adapter*. With Phase 1/2 you got a single `nn.Linear`; Phase 3 lets
+_adapter_. With Phase 1/2 you got a single `nn.Linear`; Phase 3 lets
 you swap in `MLP` (more non-linear capacity) or `LoRA` (a frozen base
 linear plus a low-rank residual). The adapter sweep tells you, for the
-*same* foundation embeddings, how much of the headroom is attributable
+_same_ foundation embeddings, how much of the headroom is attributable
 to extra adapter capacity vs the foundation model itself.
 
 ### Why the leave-one-encoder-out matrix matters
@@ -1109,9 +1122,9 @@ trains 5x5 cells: rows = pretrain encoder X, columns = fine-tune
 encoder Y. The diagonal is the same-encoder transfer baseline; the
 off-diagonal cells let you compare three explicit swap strategies:
 
-* `reset_adapter`     -- keep dynamics + state encoder + decoder; rebuild only the adapter.
-* `learn_alignment`   -- freeze everything; learn a small `Linear(d_Y, d_X)` against shared symbols, then prepend it to the original frozen adapter.
-* `reset_all_action`  -- rebuild the entire action encoder; only dynamics + state encoder survive.
+- `reset_adapter` -- keep dynamics + state encoder + decoder; rebuild only the adapter.
+- `learn_alignment` -- freeze everything; learn a small `Linear(d_Y, d_X)` against shared symbols, then prepend it to the original frozen adapter.
+- `reset_all_action` -- rebuild the entire action encoder; only dynamics + state encoder survive.
 
 If `learn_alignment` rows are close to the diagonal, your encoders agree
 geometrically once you bridge them; if `reset_all_action` is stronger,
@@ -1164,8 +1177,8 @@ bash src/world_model/world_model/scripts/submit_all.sh --lone \
 
 `runs/lone_replogle/<strategy>/heatmaps/<metric>.png` is a 5x5 grid
 where the rows are pretrain encoders and the columns are fine-tune
-encoders. To argue something like *"encoder Y closes the gap with
-encoder X under `learn_alignment`"*, look up the cell `X -> Y` and
+encoders. To argue something like _"encoder Y closes the gap with
+encoder X under `learn_alignment`"_, look up the cell `X -> Y` and
 compare against the diagonal `X -> X` cell. If
 `learn_alignment[X][Y] / learn_alignment[X][X] > 0.95` for the metric
 you care about, the alignment bridge is recovering most of the within-
@@ -1185,20 +1198,20 @@ df.sort_values("r2", ascending=False)[["grid_key", "kind", "param_count", "r2"]]
 
 ### What to do when a swap fails
 
-* **Dim mismatch with `swap_strategy="none"`** -- the helper raises with
+- **Dim mismatch with `swap_strategy="none"`** -- the helper raises with
   the exact `(d_pretrain, d_finetune)` tuple. Either align the encoders
   via `transfer.pretrain_action_encoder = transfer.finetune_action_encoder`,
   or pick `reset_adapter` / `learn_alignment` / `reset_all_action`.
-* **Frozen-grad assertion failure** -- a downstream optimizer is
+- **Frozen-grad assertion failure** -- a downstream optimizer is
   expecting a gradient on the adapter's frozen `W0`. Inspect the log
   line `[swap=<strategy>] trainable params: total=N {...}` -- the
   `action_encoder` count must drop accordingly.
-* **`alignment_loss` does not decrease** -- `_train_alignment` logs
+- **`alignment_loss` does not decrease** -- `_train_alignment` logs
   the per-epoch MSE. If it plateaus high, the two encoders place
   shared symbols in incompatible geometries; switch to
   `reset_all_action` and accept paying the full retrain cost on the
   action side.
-* **`learn_alignment needs at least 2 shared perturbation symbols`** --
+- **`learn_alignment needs at least 2 shared perturbation symbols`** --
   Nadig and Replogle perturbation sets are disjoint enough that the
   intersection is empty; switch to `reset_adapter` or pre-process the
   AnnDatas to a shared symbol vocabulary.
@@ -1287,11 +1300,11 @@ so the foundation forward only runs once per dataset.
 
 ### Options at a glance
 
-| `state_backbone.kind` | Backbone                            | Extra dep   | Checkpoint files                              | Typical `embedding_dim` |
-|-----------------------|-------------------------------------|-------------|-----------------------------------------------|-------------------------|
-| `local` (default)     | `StateStackEncoder` (in-repo)       | none        | none                                          | `d_model` (e.g. 256)    |
-| `state`               | STATE / SE-600M (Arc Institute)     | `arc-state` | `<folder>/*.ckpt`, `<folder>/protein_embeddings.pt` | `z_dim + z_dim_ds` (e.g. 768) |
-| `stack`               | STACK (Arc Institute)               | `arc-stack` | `<ckpt>.ckpt`, `<genelist>.pkl`               | model-dependent (e.g. 512) |
+| `state_backbone.kind` | Backbone                        | Extra dep   | Checkpoint files                                    | Typical `embedding_dim`       |
+| --------------------- | ------------------------------- | ----------- | --------------------------------------------------- | ----------------------------- |
+| `local` (default)     | `StateStackEncoder` (in-repo)   | none        | none                                                | `d_model` (e.g. 256)          |
+| `state`               | STATE / SE-600M (Arc Institute) | `arc-state` | `<folder>/*.ckpt`, `<folder>/protein_embeddings.pt` | `z_dim + z_dim_ds` (e.g. 768) |
+| `stack`               | STACK (Arc Institute)           | `arc-stack` | `<ckpt>.ckpt`, `<genelist>.pkl`                     | model-dependent (e.g. 512)    |
 
 ### Install the opt-in deps
 
@@ -1314,39 +1327,39 @@ Local (default; equivalent to the pre-Phase-5 behavior):
 
 ```yaml
 state_backbone:
-  kind: "local"
-  freeze: true
+    kind: "local"
+    freeze: true
 ```
 
 STATE:
 
 ```yaml
 state_backbone:
-  kind: "state"
-  state_checkpoint: "data/checkpoints/SE-600M/se600m_epoch15.ckpt"
-  state_model_folder: "data/checkpoints/SE-600M"
-  state_protein_embeddings: null  # auto-detect from model_folder
-  state_config: null
-  device: "auto"
-  freeze: true
-  batch_size: 64
-  cache_dir: "runs/_cache/state_backbone"
-  require_cache_hit: false
+    kind: "state"
+    state_checkpoint: "data/checkpoints/SE-600M/se600m_epoch15.ckpt"
+    state_model_folder: "data/checkpoints/SE-600M"
+    state_protein_embeddings: null # auto-detect from model_folder
+    state_config: null
+    device: "auto"
+    freeze: true
+    batch_size: 64
+    cache_dir: "runs/_cache/state_backbone"
+    require_cache_hit: false
 ```
 
 STACK:
 
 ```yaml
 state_backbone:
-  kind: "stack"
-  stack_checkpoint: "data/checkpoints/stack/bc_large.ckpt"
-  stack_genelist: "data/checkpoints/stack/basecount_1000per_15000max.pkl"
-  stack_gene_name_col: null  # auto-detect
-  device: "auto"
-  freeze: true
-  batch_size: 32
-  cache_dir: "runs/_cache/state_backbone"
-  require_cache_hit: false
+    kind: "stack"
+    stack_checkpoint: "data/checkpoints/stack/bc_large.ckpt"
+    stack_genelist: "data/checkpoints/stack/basecount_1000per_15000max.pkl"
+    stack_gene_name_col: null # auto-detect
+    device: "auto"
+    freeze: true
+    batch_size: 32
+    cache_dir: "runs/_cache/state_backbone"
+    require_cache_hit: false
 ```
 
 Ready-to-run experiment configs are at
@@ -1379,10 +1392,10 @@ point at the same checkpoint:
 
 ```yaml
 state_backbone:
-  kind: "state"
-  state_checkpoint: "data/checkpoints/SE-600M/se600m_epoch15.ckpt"
-  state_model_folder: "data/checkpoints/SE-600M"
-  freeze: false        # <- end-to-end fine-tune
+    kind: "state"
+    state_checkpoint: "data/checkpoints/SE-600M/se600m_epoch15.ckpt"
+    state_model_folder: "data/checkpoints/SE-600M"
+    freeze: false # <- end-to-end fine-tune
 ```
 
 Expect a longer run (the backbone is the parameter-count dominant
@@ -1399,14 +1412,14 @@ nested under `data:`).
 
 ### Failure runbook
 
-| Symptom                                                                                          | Fix                                                                                                                                                                                                          |
-|--------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `ImportError: arc-state` (or `arc-stack`)                                                        | `pip install 'embpy[state]'` (or `[stack]`). The provider only fails at first encode, not at import time.                                                                                                    |
-| `FileNotFoundError: protein_embeddings.pt`                                                       | Set `state_protein_embeddings` explicitly, or drop the file into `state_model_folder/protein_embeddings.pt`. STATE's decoder is gene-parametric; without these embeddings only the encode path works.        |
-| `KeyError` on a gene symbol during STACK encode                                                  | The dataset's `adata.var` does not overlap STACK's training gene list. Try `stack_gene_name_col: gene_symbol` (or `feature_name`) explicitly; auto-detect uses the first column with a non-trivial overlap.   |
-| OOM during STATE / STACK encode                                                                  | Lower `state_backbone.batch_size`. The cache is persisted incrementally only at the end of a successful encode -- if you OOM you re-encode from scratch.                                                      |
-| `require_cache_hit=True` but cache miss                                                          | A cluster eval-only job hit a checkpoint or AnnData it has not seen. Run `encode_cells.py` once on the head node, then re-launch the job -- the cluster job will then pick up the warm cache.                 |
-| `Row mismatch` from `_maybe_pre_encode_with_backbone`                                            | The dataset's `cell_type_filter` does not match the AnnData. Either set `data.cell_type_filter` to the same value used at dataset construction, or strip the filter and let both code paths see all cells.    |
+| Symptom                                               | Fix                                                                                                                                                                                                         |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ImportError: arc-state` (or `arc-stack`)             | `pip install 'embpy[state]'` (or `[stack]`). The provider only fails at first encode, not at import time.                                                                                                   |
+| `FileNotFoundError: protein_embeddings.pt`            | Set `state_protein_embeddings` explicitly, or drop the file into `state_model_folder/protein_embeddings.pt`. STATE's decoder is gene-parametric; without these embeddings only the encode path works.       |
+| `KeyError` on a gene symbol during STACK encode       | The dataset's `adata.var` does not overlap STACK's training gene list. Try `stack_gene_name_col: gene_symbol` (or `feature_name`) explicitly; auto-detect uses the first column with a non-trivial overlap. |
+| OOM during STATE / STACK encode                       | Lower `state_backbone.batch_size`. The cache is persisted incrementally only at the end of a successful encode -- if you OOM you re-encode from scratch.                                                    |
+| `require_cache_hit=True` but cache miss               | A cluster eval-only job hit a checkpoint or AnnData it has not seen. Run `encode_cells.py` once on the head node, then re-launch the job -- the cluster job will then pick up the warm cache.               |
+| `Row mismatch` from `_maybe_pre_encode_with_backbone` | The dataset's `cell_type_filter` does not match the AnnData. Either set `data.cell_type_filter` to the same value used at dataset construction, or strip the filter and let both code paths see all cells.  |
 
 ### Inspect the cache
 
@@ -1420,8 +1433,8 @@ plus a total at the bottom.
 
 ### Citations
 
-* STATE (Arc Institute) -- repository: <https://github.com/ArcInstitute/state>
-* STACK (Arc Institute) -- repository: <https://github.com/ArcInstitute/stack>
+- STATE (Arc Institute) -- repository: <https://github.com/ArcInstitute/state>
+- STACK (Arc Institute) -- repository: <https://github.com/ArcInstitute/stack>
 
 ---
 

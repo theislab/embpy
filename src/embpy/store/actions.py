@@ -232,9 +232,13 @@ def compile_action_table(
         Label used in error / log messages so callers (e.g.
         ``adata.embpy.compile_actions``) get attributable diagnostics.
     """
-    matrix = np.ascontiguousarray(np.asarray(target_matrix), dtype=np.float32)
+    matrix = np.asarray(target_matrix)
     if matrix.ndim != 2:
         raise ValueError(f"{stage}: target_matrix must be 2D, got shape {matrix.shape!r}.")
+    if not np.issubdtype(matrix.dtype, np.number):
+        raise ValueError(f"{stage}: target_matrix must be numeric, got dtype {matrix.dtype}.")
+    if matrix.dtype != np.float32:
+        matrix = matrix.astype(np.float32, copy=False)
     ids = [str(t) for t in target_ids]
     if len(ids) != matrix.shape[0]:
         raise ValueError(f"{stage}: target_ids has length {len(ids)} but target_matrix has {matrix.shape[0]} rows.")

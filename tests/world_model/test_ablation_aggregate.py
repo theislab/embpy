@@ -34,24 +34,23 @@ def _seed_run_dir(
 ) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     if write_metrics:
-        (run_dir / "world_model_metrics.csv").write_text(
-            f"name,r2,mse\nworld_model,{r2},{mse}\n"
+        (run_dir / "world_model_metrics.csv").write_text(f"name,r2,mse\nworld_model,{r2},{mse}\n")
+        (run_dir / "comparison.csv").write_text(f"name,r2,mse\nworld_model,{r2},{mse}\nmean_baseline,0.1,0.2\n")
+    (run_dir / "action_embedding_meta.json").write_text(
+        json.dumps(
+            {
+                "source": "bio_embedder",
+                "model_name": model_name,
+                "embedding_dim": embedding_dim,
+                "n_symbols": 100,
+                "n_unresolved": n_unresolved,
+            }
         )
-        (run_dir / "comparison.csv").write_text(
-            f"name,r2,mse\nworld_model,{r2},{mse}\nmean_baseline,0.1,0.2\n"
-        )
-    (run_dir / "action_embedding_meta.json").write_text(json.dumps({
-        "source": "bio_embedder",
-        "model_name": model_name,
-        "embedding_dim": embedding_dim,
-        "n_symbols": 100,
-        "n_unresolved": n_unresolved,
-    }))
+    )
     (run_dir / "train_log.csv").write_text(
         f"epoch,train_loss,val_loss\n1,1.0,1.2\n2,{final_train_loss},{final_val_loss}\n"
     )
-    meta = {"status": status, "wall_clock_s": wall_clock_s, "key": run_dir.name,
-            "model_name": model_name}
+    meta = {"status": status, "wall_clock_s": wall_clock_s, "key": run_dir.name, "model_name": model_name}
     if error is not None:
         meta["error"] = error
     (run_dir / "_ablation_run.json").write_text(json.dumps(meta))
@@ -64,17 +63,36 @@ def fake_runs(tmp_path: Path):
         ActionEncoderSpec(key="esm2", model_name="esm2_650M"),
         ActionEncoderSpec(key="minilm", model_name="minilm_l6_v2"),
     ]
-    _seed_run_dir(tmp_path / "borzoi", model_name="borzoi_v0",
-                  r2=0.55, mse=0.10, embedding_dim=2048, n_unresolved=0,
-                  wall_clock_s=300.0)
-    _seed_run_dir(tmp_path / "esm2", model_name="esm2_650M",
-                  r2=0.60, mse=0.08, embedding_dim=1280, n_unresolved=2,
-                  wall_clock_s=180.0)
-    _seed_run_dir(tmp_path / "minilm", model_name="minilm_l6_v2",
-                  r2=0.0, mse=0.0, embedding_dim=384, n_unresolved=0,
-                  status="failed", error="OOM",
-                  wall_clock_s=42.0,
-                  write_metrics=False)
+    _seed_run_dir(
+        tmp_path / "borzoi",
+        model_name="borzoi_v0",
+        r2=0.55,
+        mse=0.10,
+        embedding_dim=2048,
+        n_unresolved=0,
+        wall_clock_s=300.0,
+    )
+    _seed_run_dir(
+        tmp_path / "esm2",
+        model_name="esm2_650M",
+        r2=0.60,
+        mse=0.08,
+        embedding_dim=1280,
+        n_unresolved=2,
+        wall_clock_s=180.0,
+    )
+    _seed_run_dir(
+        tmp_path / "minilm",
+        model_name="minilm_l6_v2",
+        r2=0.0,
+        mse=0.0,
+        embedding_dim=384,
+        n_unresolved=0,
+        status="failed",
+        error="OOM",
+        wall_clock_s=42.0,
+        write_metrics=False,
+    )
     return tmp_path, grid
 
 
@@ -118,14 +136,15 @@ def test_render_plots_creates_expected_files(fake_runs):
     long_df, wide_df = aggregate_ablation(output_root, grid)
     plot_paths = render_plots(wide_df, output_root / "plots")
     names = {p.name for p in plot_paths}
-    # Three categories per metric (r2 + mse): bar, scaling, pareto.
+    # Three categories per metric (r2 + mse): box, scaling, pareto.
     for metric in ("r2", "mse"):
-        assert f"metric_bar_{metric}.png" in names
+        assert f"metric_box_{metric}.png" in names
         assert f"embedding_dim_vs_{metric}.png" in names
         assert f"pareto_{metric}_vs_walltime.png" in names
     for p in plot_paths:
         assert p.exists()
         assert p.stat().st_size > 0
+    assert (output_root / "plots" / "metric_box_r2.csv").exists()
 
 
 def test_report_embeds_grid_and_plots(fake_runs):
@@ -139,16 +158,14 @@ def test_report_embeds_grid_and_plots(fake_runs):
     assert "Wide summary" in text
     for spec in grid:
         assert spec.key in text
-    assert "metric_bar_r2.png" in text
+    assert "metric_box_r2.png" in text
 
 
 def test_aggregate_handles_missing_metrics_csv(tmp_path: Path):
     grid = [ActionEncoderSpec(key="only", model_name="m")]
     run_dir = tmp_path / "only"
     run_dir.mkdir()
-    (run_dir / "_ablation_run.json").write_text(json.dumps(
-        {"status": "failed", "error": "boom"}
-    ))
+    (run_dir / "_ablation_run.json").write_text(json.dumps({"status": "failed", "error": "boom"}))
     long_df, wide_df = aggregate_ablation(tmp_path, grid)
     assert len(wide_df) == 1
     assert wide_df.iloc[0]["status"] == "failed"

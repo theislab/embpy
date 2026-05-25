@@ -25,22 +25,23 @@ import torch
 
 anndata = pytest.importorskip("anndata")
 
-from world_model.configs import (
+from embpy.io.result import EmbeddingProvenance, EmbeddingResult  # noqa: E402
+from embpy.store import EmbeddingStore  # noqa: E402
+from world_model.configs import (  # noqa: E402
     ActionEmbeddingConfig,
     DataConfig,
     SplitConfig,
     StateBackboneConfig,
 )
-from world_model.data.dataloader import build_dataloaders
-from world_model.models.encoders.backbones import (
+from world_model.data.dataloader import build_dataloaders  # noqa: E402
+from world_model.models.encoders.backbones import (  # noqa: E402
     StateBackboneProvider,
     inspect_cache,
 )
-from world_model.models.encoders.backbones.cache import (
+from world_model.models.encoders.backbones.cache import (  # noqa: E402
     cache_path_for,
     save_cached,
 )
-
 
 # ---------------------------------------------------------------------
 # Fake provider
@@ -110,19 +111,24 @@ def _make_tiny_adata(tmp_path: Path) -> Path:
     return out
 
 
-def _make_tiny_embedding(tmp_path: Path) -> Path:
+def _make_tiny_store(tmp_path: Path) -> Path:
     syms = ["GENE_000", "GENE_001", "GENE_002"]
     emb = np.arange(12, dtype=np.float32).reshape(3, 4)
-    out = tmp_path / "tiny_emb.npz"
-    np.savez(out, symbols=np.asarray(syms, dtype=object), embeddings=emb)
-    return out
+    result = EmbeddingResult(
+        matrix=emb,
+        entity_ids=tuple(syms),
+        entity_type="gene",
+        id_scheme="symbol",
+        provenance=EmbeddingProvenance(model="tiny"),
+    )
+    return EmbeddingStore.from_results(result).write(tmp_path / "tiny.emstore")
 
 
-def _data_cfg(h5ad: Path, emb: Path) -> DataConfig:
+def _data_cfg(h5ad: Path) -> DataConfig:
     return DataConfig(
         dataset="replogle",
         h5ad_path=str(h5ad),
-        gene_embedding_path=str(emb),
+        gene_embedding_path="",
         n_top_genes=10,
         log_normalize=True,
         sequence_length=4,
@@ -137,7 +143,7 @@ def _data_cfg(h5ad: Path, emb: Path) -> DataConfig:
 
 def test_build_dataloaders_pre_encodes_with_backbone_and_caches(tmp_path: Path) -> None:
     h5ad = _make_tiny_adata(tmp_path)
-    emb_path = _make_tiny_embedding(tmp_path)
+    store_path = _make_tiny_store(tmp_path)
     cache_dir = tmp_path / "cache"
     output_dir = tmp_path / "run"
 
@@ -149,9 +155,9 @@ def test_build_dataloaders_pre_encodes_with_backbone_and_caches(tmp_path: Path) 
     )
     provider = _FakeProvider(embedding_dim=24, cache_dir=cache_dir)
     artifacts = build_dataloaders(
-        _data_cfg(h5ad, emb_path),
+        _data_cfg(h5ad),
         split_cfg=SplitConfig(split_by="perturbation", train_fraction=0.6, seed=0),
-        action_cfg=ActionEmbeddingConfig(source="precomputed", path=""),
+        action_cfg=ActionEmbeddingConfig(source="store", store_path=str(store_path)),
         state_backbone_cfg=sb_cfg,
         state_backbone_override=provider,
         seed=0,
@@ -183,7 +189,7 @@ def test_build_dataloaders_pre_encodes_with_backbone_and_caches(tmp_path: Path) 
 
 def test_dataloader_reuses_provider_override_without_extra_encode(tmp_path: Path) -> None:
     h5ad = _make_tiny_adata(tmp_path)
-    emb_path = _make_tiny_embedding(tmp_path)
+    store_path = _make_tiny_store(tmp_path)
     cache_dir = tmp_path / "cache"
 
     sb_cfg = StateBackboneConfig(
@@ -194,9 +200,9 @@ def test_dataloader_reuses_provider_override_without_extra_encode(tmp_path: Path
     )
     provider = _FakeProvider(embedding_dim=24, cache_dir=cache_dir)
     build_dataloaders(
-        _data_cfg(h5ad, emb_path),
+        _data_cfg(h5ad),
         split_cfg=SplitConfig(split_by="perturbation", train_fraction=0.6, seed=0),
-        action_cfg=ActionEmbeddingConfig(source="precomputed", path=""),
+        action_cfg=ActionEmbeddingConfig(source="store", store_path=str(store_path)),
         state_backbone_cfg=sb_cfg,
         state_backbone_override=provider,
         seed=0,
@@ -211,9 +217,9 @@ def test_dataloader_reuses_provider_override_without_extra_encode(tmp_path: Path
     # when override is reused -- only one encode per build_dataloaders
     # call. So we just check it ticked exactly one more time.
     build_dataloaders(
-        _data_cfg(h5ad, emb_path),
+        _data_cfg(h5ad),
         split_cfg=SplitConfig(split_by="perturbation", train_fraction=0.6, seed=0),
-        action_cfg=ActionEmbeddingConfig(source="precomputed", path=""),
+        action_cfg=ActionEmbeddingConfig(source="store", store_path=str(store_path)),
         state_backbone_cfg=sb_cfg,
         state_backbone_override=provider,
         seed=0,
