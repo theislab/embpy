@@ -51,7 +51,7 @@ except PackageNotFoundError:
 # These imports are NOT executed at runtime; `__getattr__` below is the
 # real load path.
 if TYPE_CHECKING:
-    from . import dt, models, pl, pp, resources, tl
+    from . import dt, models, pl, pp, resources, store, tl
     from .embedder import BioEmbedder
     from .errors import (
         ConfigError,
@@ -86,6 +86,7 @@ _LAZY: dict[str, str] = {
     "pl": "embpy.pl",
     "pp": "embpy.pp",
     "resources": "embpy.resources",
+    "store": "embpy.store",
     "tl": "embpy.tl",
     "BioEmbedder": "embpy.embedder:BioEmbedder",
     "ConfigError": "embpy.errors:ConfigError",
@@ -170,6 +171,7 @@ __all__ = [
     "pp",
     "resources",
     "retry_with_backoff",
+    "store",
     "time_block",
     "tl",
 ]

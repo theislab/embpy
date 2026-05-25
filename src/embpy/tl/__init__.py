@@ -13,11 +13,18 @@ __all__ = [
     "compute_tsne",
     "compute_umap",
     # similarity
+    "aggregate_embedding_table",
+    "compare_embedding_matrices",
     "compute_distance_matrix",
     "compute_knn_overlap",
     "compute_similarity",
+    "embedding_similarity_matrix",
+    "knn_jaccard",
+    "nearest_neighbors",
+    "nearest_neighbors_table",
     "pseudobulk_embeddings",
     "rank_perturbations",
+    "similarity_correlation",
     # activity
     "phenotypic_activity",
     # basic
@@ -76,6 +83,9 @@ __all__ = [
     "embed_vcf",
 ]
 
+from .activity import phenotypic_activity
+from .basic import basic_tool
+from .benchmark import benchmark_embeddings
 from .clustering import (
     cluster_annotation_enrichment,
     cluster_embeddings,
@@ -83,18 +93,15 @@ from .clustering import (
     leiden,
 )
 from .dimred import compute_pca, compute_tsne, compute_umap
-from .similarity import (
-    compute_distance_matrix,
-    compute_knn_overlap,
-    compute_similarity,
-    pseudobulk_embeddings,
-    rank_perturbations,
+from .genomics.snp_utils import (
+    SequenceProvider,
+    SNPContext,
+    SNPEmbedder,
+    SNPEmbeddingResult,
+    download_hg38_per_chrom,
+    download_hg38_single_fasta,
+    embed_vcf,
 )
-
-from .activity import phenotypic_activity
-from .basic import basic_tool
-
-from .benchmark import benchmark_embeddings
 from .metadata import (
     annotate_bulk_rna,
     annotate_cell_lines,
@@ -136,12 +143,17 @@ from .protein.cross_species import (
     ortholog_similarity_matrix,
 )
 from .protein.weighted_embedding import WeightedProteinEmbedder
-from .genomics.snp_utils import (
-    SequenceProvider,
-    SNPContext,
-    SNPEmbedder,
-    SNPEmbeddingResult,
-    download_hg38_per_chrom,
-    download_hg38_single_fasta,
-    embed_vcf,
+from .similarity import (
+    aggregate_embedding_table,
+    compare_embedding_matrices,
+    compute_distance_matrix,
+    compute_knn_overlap,
+    compute_similarity,
+    embedding_similarity_matrix,
+    knn_jaccard,
+    nearest_neighbors,
+    nearest_neighbors_table,
+    pseudobulk_embeddings,
+    rank_perturbations,
+    similarity_correlation,
 )

@@ -227,6 +227,27 @@ Canonical IDs are used as primary keys by default: Ensembl gene IDs for genes, c
 
 Outputs are either AnnData or tables. Table output defaults to Parquet and writes a `<file>.meta.json` sidecar. Multiple model/entity outputs use deterministic keys that include entity type and model name; multiple table files require an output directory. AnnData outputs never store generated embeddings in `.X`: gene/protein embeddings go to `.varm`, observation-like embeddings go to `.obsm`, isoform/ragged protein outputs go to `.uns`, and standalone AnnData uses sparse placeholder `.X` only. `whole_genome=True` embeds genome-wide Ensembl genes for an explicit organism using the resolver/resource backend. `harmonize_dim=...` applies per-result PCA before export and records the PCA metadata. Use `show_progress=True` to enable tqdm progress bars.
 
+### EmbeddingStore and `adata.embpy`
+
+`EmbeddingStore` is the reusable embedding universe for large biological collections such as genes, proteins, molecules, cytokines, pathways, text descriptions, or sequences. It stores validated canonical embeddings plus typed relations in a `.emstore` directory: entity/relation/index tables are Parquet and matrices are `.npy` files, with optional memory-mapped reads for large libraries.
+
+`adata.embpy` is the AnnData-native semantic bridge. AnnData remains the experiment container: `.X` and layers hold expression/count-like data, `.obs`/`.var` hold experiment metadata, and generated embeddings still live only in `.obsm` or `.varm`. The accessor records the embpy registry in `adata.uns["embpy"]`, links external stores, registers embeddings/relations, audits missing IDs, aggregates embeddings by biological groups, runs nearest-neighbor/correlation/model-comparison analyses, wraps existing `embpy.tl`/`embpy.pl` visualization tools, and compiles perturbation/action embeddings for ML.
+
+```python
+from embpy.store import EmbeddingStore
+
+store = EmbeddingStore.from_results(gene_result)
+adata.embpy.register_store(store)
+adata.embpy.register_embedding("X_cells", cell_matrix, entity_ids=adata.obs_names, entity_type="cell", id_scheme="obs_name")
+adata.embpy.setup_conditions(condition_key="perturbation", control_values=["DMSO"])
+adata.embpy.compile_actions(target_embedding="gene:geneformer", perturbation_key="perturbation")
+
+centroids = adata.embpy.aggregate("X_cells", by="perturbation")
+neighbors = adata.embpy.neighbors("X_cells", query=adata.obs_names[0])
+activity = adata.embpy.score_activity("X_cells", perturbation_col="perturbation")
+dataset = adata.embpy.make_torch_dataset(action_key="X_embpy_action")
+```
+
 - **Batch processing** with SLURM array job scripts for full-genome embedding
 - **scverse integration** -- AnnData-native throughout, compatible with scanpy/scvi-tools/pertpy
 
