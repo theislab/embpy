@@ -10,6 +10,10 @@
 
 Given a perturbation (genetic, chemical, or morphological) and/or single-cell expression data, embpy resolves the underlying biological sequences and images, routes them to the appropriate foundation models, and returns dense vector representations ready for downstream machine learning.
 
+<p align="center">
+  <img src="docs/full_stack.png" alt="embpy and world_model full stack" width="1000"/>
+</p>
+
 ## Jump to what you need
 
 | I want to&nbsp;...                          | Go to                                                                                   |
