@@ -2,23 +2,26 @@
 
 The world model treats a perturbation as the embedding of the
 perturbed gene(s). This subpackage exposes a small ABC,
-:class:`ActionEmbeddingProvider`, plus two backends:
+:class:`ActionEmbeddingProvider`, plus three backends:
 
+* :class:`StoreProvider` -- reads gene embeddings from an embpy
+  ``.emstore`` (:class:`embpy.store.EmbeddingStore`). Canonical source
+  after the embedding migration.
 * :class:`PrecomputedProvider` -- wraps a CSV / NPZ on disk (the
-  legacy code path).
+  legacy code path; retired in favour of :class:`StoreProvider`).
 * :class:`BioEmbedderProvider` -- delegates to
   :class:`embpy.embedder.BioEmbedder`, with a disk-backed cache.
 
-Both backends speak the status-aware contract introduced in Part A.2:
+All backends speak the status-aware contract introduced in Part A.2:
 :meth:`ActionEmbeddingProvider.embed_with_status` returns
 ``(rows, statuses)`` where each row in ``statuses`` is an
 :class:`EmbeddingStatus` value (``RESOLVED`` / ``CONTROL`` /
 ``UNRESOLVED``).
 
 Use :func:`build_provider` to construct one from an
-:class:`world_model.configs.ActionEmbeddingConfig`. The two backends
-return identical ``(table, indexer)`` tuples so downstream code is
-agnostic to the source.
+:class:`world_model.configs.ActionEmbeddingConfig`. The backends return
+identical ``(table, indexer)`` tuples so downstream code is agnostic to
+the source.
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ from .sentinel import (
     make_unresolved_vector,
     status_array,
 )
+from .store_provider import StoreProvider
 
 __all__ = [
     "CONTROL_SENTINEL_SEED",
@@ -45,6 +49,7 @@ __all__ = [
     "EmbeddingStatus",
     "PrecomputedProvider",
     "ProviderMetadata",
+    "StoreProvider",
     "build_provider",
     "describe_status_counts",
     "load_cached",

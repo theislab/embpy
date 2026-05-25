@@ -15,6 +15,7 @@ from embpy.resources.gene.control import ControlPolicy
 from .bio_embedder import BioEmbedderProvider
 from .precomputed import PrecomputedProvider
 from .provider import ActionEmbeddingProvider
+from .store_provider import StoreProvider
 
 if TYPE_CHECKING:
     from ...configs import ActionEmbeddingConfig, DataConfig
@@ -76,6 +77,20 @@ def build_provider(
             ),
         )
 
+    if src == "store":
+        if not cfg.store_path:
+            raise ValueError(
+                "action_embedding.source='store' requires action_embedding.store_path "
+                "(path to a .emstore). Migrate a legacy CSV/NPZ with "
+                "`python -m embpy.store.migrate <table> <out.emstore> --model <name>`."
+            )
+        return StoreProvider(
+            store_path=cfg.store_path,
+            store_key=cfg.store_key or None,
+            control_policy=_policy_from_cfg(cfg),
+            control_sentinel_seed=int(getattr(cfg, "control_sentinel_seed", 0) or 0),
+        )
+
     if src == "bio_embedder":
         return BioEmbedderProvider(
             model_name=cfg.model_name,
@@ -97,7 +112,7 @@ def build_provider(
 
     raise ValueError(
         f"Unknown action_embedding.source={src!r}. "
-        f"Supported: 'precomputed', 'bio_embedder'."
+        f"Supported: 'store', 'precomputed', 'bio_embedder'."
     )
 
 

@@ -258,10 +258,20 @@ class ActionEmbeddingConfig:
     """
 
     source: str = "precomputed"
-    """One of ``{"precomputed", "bio_embedder"}``."""
+    """One of ``{"store", "precomputed", "bio_embedder"}``."""
 
     path: str = ""
     """``precomputed`` only -- CSV / NPZ. Empty means fall back to data.gene_embedding_path."""
+
+    store_path: str = ""
+    """``store`` only -- path to a ``.emstore`` directory (embpy EmbeddingStore).
+
+    Migrate a legacy CSV/NPZ gene table with
+    ``python -m embpy.store.migrate <table> <out.emstore> --model <name>``."""
+
+    store_key: str = ""
+    """``store`` only -- embedding key within the store. Empty = the sole block
+    (or the single ``entity_type == "gene"`` block)."""
 
     model_name: str = "esm2_650M"
     """``bio_embedder`` only -- key in :attr:`embpy.embedder.MODEL_REGISTRY`."""
