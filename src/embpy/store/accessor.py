@@ -220,6 +220,93 @@ class EmbpyAccessor:
             "n_analyses": len(reg["analyses"]),
         }
 
+    def prompt_context(
+        self,
+        *,
+        output: Literal["dict", "markdown"] = "dict",
+        max_examples: int = 5,
+    ) -> dict[str, Any] | str:
+        """Return a compact prompt-ready summary of the embpy registry.
+
+        The returned context is intentionally metadata-only: it includes
+        shapes, keys, id schemes, relations, actions, and small examples, but
+        never dumps embedding matrices or dense action vectors. This makes it
+        useful for analysis agents, reports, and notebooks that need to explain
+        what an AnnData object can do next.
+        """
+        if output not in {"dict", "markdown"}:
+            raise ValueError("adata.embpy.prompt_context: output must be 'dict' or 'markdown'.")
+        if max_examples < 0:
+            raise ValueError("adata.embpy.prompt_context: max_examples must be non-negative.")
+
+        adata = self._adata
+        reg = _registry(adata)
+        relations = []
+        for name, relation in sorted(reg["relations"].items()):
+            frame = _relation_frame(relation)
+            relations.append(
+                {
+                    "name": name,
+                    "source_type": relation.get("source_type"),
+                    "target_type": relation.get("target_type"),
+                    "n_edges": int(len(frame)),
+                    "examples": frame.head(max_examples).to_dict(orient="records"),
+                }
+            )
+
+        stores = []
+        live_stores = _STORE_CACHE.get(id(adata), {})
+        if live_stores:
+            for name, store in sorted(live_stores.items()):
+                stores.append(
+                    {
+                        "name": name,
+                        "keys": store.keys(),
+                        "summary": store.describe().to_dict(orient="records"),
+                    }
+                )
+        else:
+            for name, meta in sorted(reg["stores"].items()):
+                stores.append(
+                    {
+                        "name": name,
+                        "keys": list(meta.get("keys", [])),
+                        "n_embeddings": int(meta.get("n_embeddings", 0)),
+                        "n_entities": dict(meta.get("n_entities", {})),
+                        "n_relations": int(meta.get("n_relations", 0)),
+                    }
+                )
+
+        payload: dict[str, Any] = {
+            "anndata": {
+                "n_obs": int(adata.n_obs),
+                "n_vars": int(adata.n_vars),
+                "obs_columns": list(map(str, adata.obs.columns)),
+                "var_columns": list(map(str, adata.var.columns)),
+                "obsm_keys": list(map(str, adata.obsm.keys())),
+                "varm_keys": list(map(str, adata.varm.keys())),
+                "layers": list(map(str, adata.layers.keys())),
+            },
+            "embpy": self.describe(),
+            "embeddings": self.list_embeddings().to_dict(orient="records"),
+            "stores": stores,
+            "relations": relations,
+            "conditions": _compact_registry_block(reg.get("conditions", {}), max_examples=max_examples),
+            "actions": {
+                key: _compact_registry_block(value, max_examples=max_examples)
+                for key, value in sorted(reg.get("actions", {}).items())
+            },
+            "splits": _compact_registry_block(reg.get("splits", {}), max_examples=max_examples),
+            "analyses": {
+                key: _compact_registry_block(value, max_examples=max_examples)
+                for key, value in sorted(reg.get("analyses", {}).items())
+            },
+        }
+        payload = _json_safe(payload)
+        if output == "markdown":
+            return _prompt_context_markdown(payload)
+        return payload
+
     def audit(self) -> pd.DataFrame:
         """Audit registered embeddings, relations, stores, and AnnData placement."""
         rows: list[dict[str, Any]] = []
@@ -780,6 +867,169 @@ def _relation_frame(registry_entry: Mapping[str, Any]) -> pd.DataFrame:
             str(registry_entry.get("target_col", "target_id")): "target_id",
         }
     )
+
+
+def _compact_registry_block(value: Any, *, max_examples: int) -> Any:
+    if isinstance(value, Mapping):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if key in {"condition_vectors", "indices", "table"}:
+                out[f"n_{key}"] = _compact_size(item)
+            elif key == "statuses" and isinstance(item, Mapping):
+                out["status_counts"] = _value_counts(item.values())
+                out["status_examples"] = _mapping_examples(item, max_examples=max_examples)
+            elif key == "missing_targets" and isinstance(item, Mapping):
+                out["n_missing_targets"] = _compact_size(item)
+                out["missing_target_examples"] = _mapping_examples(item, max_examples=max_examples)
+            elif key in {"edges"}:
+                out["examples"] = _compact_registry_block(item, max_examples=max_examples)
+            else:
+                out[str(key)] = _compact_registry_block(item, max_examples=max_examples)
+        return out
+    if isinstance(value, pd.DataFrame):
+        return value.head(max_examples).to_dict(orient="records")
+    if isinstance(value, np.ndarray):
+        return {"shape": list(value.shape), "dtype": str(value.dtype)}
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        items = list(value)
+        preview = items[:max_examples]
+        out = [_compact_registry_block(item, max_examples=max_examples) for item in preview]
+        if len(items) > max_examples:
+            out.append(f"... {len(items) - max_examples} more")
+        return out
+    return value
+
+
+def _compact_size(value: Any) -> int | dict[str, Any]:
+    if isinstance(value, Mapping):
+        return {str(key): _compact_size(item) for key, item in value.items()}
+    if isinstance(value, pd.DataFrame):
+        return int(len(value))
+    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
+        return int(len(value))
+    return 1
+
+
+def _value_counts(values: Any) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        key = str(value)
+        counts[key] = counts.get(key, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _mapping_examples(value: Mapping[Any, Any], *, max_examples: int) -> list[dict[str, Any]]:
+    examples: list[dict[str, Any]] = []
+    for key, item in list(value.items())[:max_examples]:
+        examples.append(
+            {
+                "key": str(key),
+                "value": _compact_registry_block(item, max_examples=max_examples),
+            }
+        )
+    if len(value) > max_examples:
+        examples.append({"key": "...", "value": f"{len(value) - max_examples} more"})
+    return examples
+
+
+def _json_safe(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return {"shape": list(value.shape), "dtype": str(value.dtype)}
+    if not isinstance(value, list | tuple | dict | np.ndarray):
+        try:
+            if pd.isna(value):
+                return None
+        except (TypeError, ValueError):
+            pass
+    return value
+
+
+def _prompt_context_markdown(payload: Mapping[str, Any]) -> str:
+    adata = payload["anndata"]
+    lines = [
+        "# embpy context",
+        "",
+        f"- AnnData: {adata['n_obs']} observations x {adata['n_vars']} variables",
+        f"- `.obsm`: {', '.join(adata['obsm_keys']) or 'none'}",
+        f"- `.varm`: {', '.join(adata['varm_keys']) or 'none'}",
+        f"- obs columns: {', '.join(adata['obs_columns']) or 'none'}",
+        "",
+        "## Registered embeddings",
+    ]
+    embeddings = payload.get("embeddings", [])
+    if embeddings:
+        for row in embeddings:
+            prov = row.get("provenance") or {}
+            model = prov.get("model") or prov.get("source") or "unknown"
+            lines.append(
+                f"- `{row.get('key')}`: axis={row.get('axis')}, entity={row.get('entity_type')}, "
+                f"ids={row.get('id_scheme')}, shape={row.get('n_entities')}x{row.get('n_dims')}, model={model}"
+            )
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "## Linked stores"])
+    stores = payload.get("stores", [])
+    if stores:
+        for store in stores:
+            lines.append(f"- `{store.get('name')}`: keys={', '.join(store.get('keys', [])) or 'none'}")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "## Relations"])
+    relations = payload.get("relations", [])
+    if relations:
+        for relation in relations:
+            lines.append(
+                f"- `{relation.get('name')}`: {relation.get('source_type')} -> "
+                f"{relation.get('target_type')} ({relation.get('n_edges')} edges)"
+            )
+    else:
+        lines.append("- none")
+
+    conditions = payload.get("conditions", {})
+    if conditions:
+        lines.extend(["", "## Conditions"])
+        lines.append(
+            f"- key={conditions.get('condition_key')}, "
+            f"n_conditions={conditions.get('n_conditions')}, controls={conditions.get('control_values') or []}"
+        )
+
+    actions = payload.get("actions", {})
+    if actions:
+        lines.extend(["", "## Compiled actions"])
+        for key, action in actions.items():
+            lines.append(
+                f"- `{key}`: target={action.get('target_embedding')}, "
+                f"aggregation={action.get('aggregation')}, resolved={action.get('n_resolved')}, "
+                f"control={action.get('n_control')}, unresolved={action.get('n_unresolved')}"
+            )
+            status_counts = action.get("status_counts")
+            if status_counts:
+                lines.append(f"  status counts: {status_counts}")
+
+    splits = payload.get("splits", {})
+    if splits:
+        lines.extend(["", "## Splits"])
+        lines.append(
+            f"- by={splits.get('by')}, group_col={splits.get('group_col')}, "
+            f"strategy={splits.get('strategy')}, index_counts={splits.get('n_indices')}"
+        )
+
+    analyses = payload.get("analyses", {})
+    if analyses:
+        lines.extend(["", "## Analyses"])
+        for key, analysis in analyses.items():
+            lines.append(f"- `{key}`: type={analysis.get('type', 'unknown')}")
+    return "\n".join(lines)
 
 
 def _issue(kind: str, name: str, issue: str, count: int, examples: Sequence[Any] | None = None) -> dict[str, Any]:

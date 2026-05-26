@@ -1,45 +1,4 @@
-# Default action-encoder ablation grid.
-#
-# Each entry maps onto an ActionEncoderSpec. Add / remove rows freely:
-# the runner reads this file with PyYAML and never re-imports Python.
-#
-# Required fields per row: key, model_name.
-# Optional fields:         id_type, region, pooling, extra_kwargs, notes.
-#
-# Use a sub-key like 'borzoi_v0_exons' if you want to ablate the same
-# model with different region / pooling settings.
-grid:
-  - key: borzoi
-    model_name: borzoi_v0
-    id_type: symbol
-    region: full
-    pooling: mean
-    notes: "DNA, replicate 0"
+# Compatibility alias. Canonical grid:
+#   src/world_model/world_model/configs/grids/ablation_action_encoder.yaml
+extends: ../grids/ablation_action_encoder.yaml
 
-  - key: enformer
-    model_name: enformer_human_rough
-    id_type: symbol
-    region: full
-    pooling: mean
-    notes: "DNA, rough"
-
-  - key: nt_v2_500m
-    model_name: nt_v2_500m
-    id_type: symbol
-    region: full
-    pooling: mean
-    notes: "DNA, multi-species"
-
-  - key: esm2_650m
-    model_name: esm2_650M
-    id_type: symbol
-    region: full
-    pooling: mean
-    notes: "Protein"
-
-  - key: minilm
-    model_name: minilm_l6_v2
-    id_type: symbol
-    region: full
-    pooling: mean
-    notes: "Text baseline"

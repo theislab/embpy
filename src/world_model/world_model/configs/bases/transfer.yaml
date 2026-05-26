@@ -1,0 +1,26 @@
+extends: single.yaml
+
+run_name: "transfer_nadig_to_replogle_p10"
+output_dir: "runs/world_model/transfer_nadig_to_replogle_p10"
+mode: "transfer"
+
+data:
+  dataset: "replogle"
+  h5ad_path: "data/crispr_datasets/replogle/replogle_2022_k562_essential.h5ad"
+  cell_type_key: "cell_type"
+
+transfer:
+  enabled: true
+  pretrain_dataset: "nadig"
+  pretrain_h5ad_path: "data/crispr_datasets/nadig/NadigOConner2024_jurkat.h5ad"
+  pretrain_gene_embedding_path: ""
+  pretrain_epochs: 30
+  finetune_fraction: 0.10
+  finetune_epochs: 20
+  pretrain_checkpoint: null
+  freeze_encoder_during_finetune: false
+  freeze_dynamics_during_finetune: false
+
+train:
+  n_epochs: 20
+

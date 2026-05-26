@@ -1,0 +1,5 @@
+action_embedding:
+  source: "store"
+  store_path: "data/embeddings/gene_embeddings/genept/genept.emstore"
+  store_key: "gene:genept"
+

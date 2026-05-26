@@ -1,31 +1,4 @@
-# Default action-adapter ablation grid.
-#
-# Each entry maps to ActionAdapterConfig overrides applied on top of a
-# base WorldModelConfig. The base config picks the encoder; this grid
-# only varies action_adapter.*. Add or remove entries freely -- a
-# duplicate `key` will raise.
+# Compatibility alias. Canonical grid:
+#   src/world_model/world_model/configs/grids/ablation_action_adapter.yaml
+extends: ../grids/ablation_action_adapter.yaml
 
-- key: linear
-  kind: linear
-
-- key: mlp_h256
-  kind: mlp
-  hidden_dim: 256
-  dropout: 0.1
-
-- key: mlp_h1024
-  kind: mlp
-  hidden_dim: 1024
-  dropout: 0.1
-
-- key: lora_r4
-  kind: lora
-  lora_rank: 4
-
-- key: lora_r16
-  kind: lora
-  lora_rank: 16
-
-- key: lora_r64
-  kind: lora
-  lora_rank: 64

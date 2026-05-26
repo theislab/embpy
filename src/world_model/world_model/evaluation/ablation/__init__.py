@@ -9,7 +9,7 @@ Two responsibilities, kept in two files for testability:
                       summary CSVs and plots.
 
 The runner itself lives at
-``world_model.scripts.ablate_action_encoder`` so it sits next to
+``world_model.scripts.sweeps.ablate_action_encoder`` so it sits next to
 the other entry points.
 """
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -160,6 +162,48 @@ def test_splits_by_target_prevent_group_overlap_and_torch_dataset():
     assert train_targets.isdisjoint(test_targets)
     sample = dataset[0]
     assert {"state", "action", "target", "obs_index", "obs_name"} <= set(sample)
+
+
+def test_prompt_context_is_compact_and_prompt_ready():
+    adata = _adata()
+    store = EmbeddingStore.from_results(_gene_result())
+    adata.embpy.register_store(store)
+    adata.embpy.register_relation(
+        "perturbation_targets_gene",
+        pd.DataFrame({"source_id": ["g1", "g2", "g1+g2"], "target_id": ["g1", "g2", "g1"]}),
+        source_type="perturbation",
+        target_type="gene",
+    )
+    adata.embpy.register_embedding(
+        "X_cells",
+        _obs_embedding(),
+        entity_ids=adata.obs_names,
+        entity_type="cell",
+        id_scheme="obs_name",
+    )
+    adata.embpy.setup_conditions("perturbation", control_values=[])
+    adata.embpy.compile_actions(target_embedding="gene:toy_gene", perturbation_key="perturbation")
+    adata.embpy.make_splits(by="target", random_state=0)
+
+    context = adata.embpy.prompt_context()
+    markdown = adata.embpy.prompt_context(output="markdown")
+    payload = json.dumps(context)
+
+    assert context["anndata"]["n_obs"] == adata.n_obs
+    assert context["embeddings"][0]["key"] == "X_cells"
+    assert "gene:toy_gene" in context["stores"][0]["keys"]
+    assert context["relations"][0]["n_edges"] == 3
+    assert context["conditions"]["n_table"]["obs_id"] == adata.n_obs
+    assert context["actions"]["X_embpy_action"]["status_counts"] == {"RESOLVED": 3}
+    assert context["actions"]["X_embpy_action"]["n_condition_vectors"]["dim_0"] == 3
+    assert context["splits"]["n_indices"]["train"] > 0
+    assert "condition_vectors" not in context["actions"]["X_embpy_action"]
+    assert "statuses" not in context["actions"]["X_embpy_action"]
+    assert len(payload) < 8000
+    assert "AnnData:" in markdown
+    assert "`X_embpy_action`" in markdown
+    assert "## Conditions" in markdown
+    assert "## Splits" in markdown
 
 
 def test_plotting_wrappers_return_figures():

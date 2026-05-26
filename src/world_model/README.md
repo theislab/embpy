@@ -386,6 +386,28 @@ runs (no special branches in the code):
 | `single_replogle`            | `configs/experiments/single_replogle.yaml` | `mode: single`   |
 | `transfer_nadig_to_replogle` | `configs/experiments/transfer.yaml`        | `mode: transfer` |
 
+### Canonical layout
+
+The world-model area is intentionally split by responsibility:
+
+- `world_model.scripts.train`, `eval`, `run_baselines`, `compare`,
+  `make_report`, `embed_perturbations`, `encode_cells`,
+  `cross_dataset_train_eval`, and `smoke_test` are the supported CLIs.
+- Experiment sweeps live under `world_model.scripts.sweeps.*`.
+  The old `world_model.scripts.ablate_*` and `leave_one_encoder_out`
+  module paths still exist as compatibility wrappers.
+- Local launchers live under `world_model/scripts/local/`.
+- SLURM launchers live under `world_model/scripts/slurm/`.
+- DAG-style submitters live under `world_model/scripts/submit/`.
+- Reusable config bases live under `configs/bases/`, dataset defaults under
+  `configs/datasets/`, grid YAMLs under `configs/grids/`, and exploratory
+  STATE/STACK/Borzoi variants under `configs/prototypes/`.
+
+World-model YAML supports a small `extends:` field. A child config inherits one
+parent YAML and recursively overrides only the fields it changes. This keeps
+user-facing paths such as `configs/experiments/single_replogle.yaml` stable
+while avoiding full-copy config drift.
+
 ### Locally
 
 ```bash
@@ -424,7 +446,7 @@ done
 
 # everything in one shot: train (3 setups) -> baselines -> compare/report
 # chained via `sbatch --dependency=afterok:...`.
-bash src/world_model/world_model/scripts/submit_all.sh
+bash src/world_model/world_model/scripts/submit/submit_all.sh
 ```
 
 `submit_all.sh` submits, for each of the three setups:
@@ -446,6 +468,7 @@ Per-script summary:
 
 | Script                         | Purpose                                                          |
 | ------------------------------ | ---------------------------------------------------------------- |
+| `train_embedding.sbatch`       | Canonical single-dataset launcher with override passthrough.     |
 | `train_single_nadig.sbatch`    | Setup 1: train on Nadig only.                                    |
 | `train_single_replogle.sbatch` | Setup 2: train on Replogle only.                                 |
 | `train_transfer.sbatch`        | Setup 3: pretrain on Nadig, fine-tune on `FRACTION` of Replogle. |
@@ -834,7 +857,7 @@ Syntax-check every launcher without submitting (no actual job is queued):
 for f in src/world_model/world_model/scripts/slurm/*.sbatch; do
     bash -n "$f" && echo OK "$f"
 done
-bash -n src/world_model/world_model/scripts/submit_all.sh && echo OK submit_all.sh
+bash -n src/world_model/world_model/scripts/submit/submit_all.sh && echo OK submit_all.sh
 ```
 
 Expected: every line prints `OK <path>`. Submit smallest first
@@ -985,9 +1008,9 @@ emits a single CSV that puts every backend on the same row.
 
 ```bash
 # Two-spec smoke ablation: text + protein, on top of smoke.yaml. <10 min on a laptop.
-pixi run -e gpu python -m world_model.scripts.ablate_action_encoder \
+pixi run -e gpu python -m world_model.scripts.sweeps.ablate_action_encoder \
     --base-config src/world_model/world_model/configs/experiments/smoke.yaml \
-    --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --grid src/world_model/world_model/configs/grids/ablation_action_encoder.yaml \
     --output-root runs/ablation_smoke \
     --only minilm,esm2_650m
 ```
@@ -1002,9 +1025,9 @@ sbatch src/world_model/world_model/scripts/slurm/ablate_action_encoder.sbatch
 sbatch --array=0-4 src/world_model/world_model/scripts/slurm/ablate_action_encoder.sbatch
 
 # Or use submit_all.sh, which also pre-warms the BioEmbedder cache and chains the aggregator + report:
-bash src/world_model/world_model/scripts/submit_all.sh --ablate-action-encoder \
+bash src/world_model/world_model/scripts/submit/submit_all.sh --ablate-action-encoder \
     --base-config src/world_model/world_model/configs/experiments/single_replogle.yaml \
-    --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --grid src/world_model/world_model/configs/grids/ablation_action_encoder.yaml \
     --array
 ```
 
@@ -1013,7 +1036,7 @@ bash src/world_model/world_model/scripts/submit_all.sh --ablate-action-encoder \
 Zero lines of Python. Add one row to the grid YAML:
 
 ```yaml
-# src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml
+# src/world_model/world_model/configs/grids/ablation_action_encoder.yaml
 grid:
     - key: flashzoi
       model_name: flashzoi_v0
@@ -1071,9 +1094,9 @@ The companion plots in `runs/<root>/plots/` give:
       itself is failing. Likely an optional dep missing (Evo, Boltz, ...).
 3. Re-run only the failing spec without redoing the others:
     ```bash
-    pixi run -e gpu python -m world_model.scripts.ablate_action_encoder \
+    pixi run -e gpu python -m world_model.scripts.sweeps.ablate_action_encoder \
         --base-config src/world_model/world_model/configs/experiments/single_replogle.yaml \
-        --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
+        --grid src/world_model/world_model/configs/grids/ablation_action_encoder.yaml \
         --output-root runs/ablation_action_replogle \
         --only flashzoi
     ```
@@ -1081,7 +1104,7 @@ The companion plots in `runs/<root>/plots/` give:
     ```bash
     pixi run -e gpu python -m world_model.evaluation.ablation.aggregate \
         --output-root runs/ablation_action_replogle \
-        --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml
+        --grid src/world_model/world_model/configs/grids/ablation_action_encoder.yaml
     ```
 
 ## Action adapters and cross-encoder transfer
@@ -1135,9 +1158,9 @@ the original action encoder was the bottleneck.
 Adapter sweep (smoke run on CPU):
 
 ```bash
-pixi run -e gpu python -m world_model.scripts.ablate_action_adapter \
+pixi run -e gpu python -m world_model.scripts.sweeps.ablate_action_adapter \
     --base-config src/world_model/world_model/configs/experiments/smoke.yaml \
-    --grid src/world_model/world_model/configs/experiments/ablation_action_adapter.yaml \
+    --grid src/world_model/world_model/configs/grids/ablation_action_adapter.yaml \
     --output-root runs/ablation_adapter_smoke \
     --only linear,lora_r4
 ```
@@ -1146,19 +1169,19 @@ Encoder x adapter cross sweep (30 cells; expect 6-12h on a single A100
 for full Replogle, much less for smoke):
 
 ```bash
-pixi run -e gpu python -m world_model.scripts.ablate_encoder_x_adapter \
+pixi run -e gpu python -m world_model.scripts.sweeps.ablate_encoder_x_adapter \
     --base-config src/world_model/world_model/configs/experiments/single_replogle.yaml \
-    --encoder-grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
-    --adapter-grid src/world_model/world_model/configs/experiments/ablation_action_adapter.yaml \
+    --encoder-grid src/world_model/world_model/configs/grids/ablation_action_encoder.yaml \
+    --adapter-grid src/world_model/world_model/configs/grids/ablation_action_adapter.yaml \
     --output-root runs/cross_replogle
 ```
 
 Leave-one-encoder-out (5 pretrains + 20 off-diagonal fine-tunes):
 
 ```bash
-pixi run -e gpu python -m world_model.scripts.leave_one_encoder_out \
+pixi run -e gpu python -m world_model.scripts.sweeps.leave_one_encoder_out \
     --base-config src/world_model/world_model/configs/experiments/transfer.yaml \
-    --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --grid src/world_model/world_model/configs/grids/ablation_action_encoder.yaml \
     --strategy reset_adapter \
     --output-root runs/lone_replogle
 ```
@@ -1166,9 +1189,9 @@ pixi run -e gpu python -m world_model.scripts.leave_one_encoder_out \
 On the cluster, the `--lone` flag launches the whole DAG:
 
 ```bash
-bash src/world_model/world_model/scripts/submit_all.sh --lone \
+bash src/world_model/world_model/scripts/submit/submit_all.sh --lone \
     --base-config src/world_model/world_model/configs/experiments/transfer.yaml \
-    --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --grid src/world_model/world_model/configs/grids/ablation_action_encoder.yaml \
     --strategy reset_adapter \
     --output-root runs/lone_replogle
 ```
@@ -1248,9 +1271,9 @@ for name, ad in adapters:
 Run a 2-spec adapter sweep on smoke.yaml end-to-end on CPU:
 
 ```bash
-pixi run -e gpu python -m world_model.scripts.ablate_action_adapter \
+pixi run -e gpu python -m world_model.scripts.sweeps.ablate_action_adapter \
     --base-config src/world_model/world_model/configs/experiments/smoke.yaml \
-    --grid src/world_model/world_model/configs/experiments/ablation_action_adapter.yaml \
+    --grid src/world_model/world_model/configs/grids/ablation_action_adapter.yaml \
     --output-root runs/ablation_adapter_smoke \
     --only linear,lora_r4
 ```
@@ -1258,9 +1281,9 @@ pixi run -e gpu python -m world_model.scripts.ablate_action_adapter \
 Run a 3-encoder leave-one-encoder-out diagonal sweep on CPU:
 
 ```bash
-pixi run -e gpu python -m world_model.scripts.leave_one_encoder_out \
+pixi run -e gpu python -m world_model.scripts.sweeps.leave_one_encoder_out \
     --base-config src/world_model/world_model/configs/experiments/transfer.yaml \
-    --grid src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
+    --grid src/world_model/world_model/configs/grids/ablation_action_encoder.yaml \
     --strategy reset_adapter \
     --output-root runs/lone_smoke \
     --diagonal-only --only enformer:enformer,esm2_650m:esm2_650m,minilm:minilm
@@ -1272,7 +1295,7 @@ Re-render the adapter aggregation without retraining anything:
 pixi run -e gpu python -m world_model.evaluation.ablation.aggregate \
     --mode adapter \
     --output-root runs/ablation_adapter_replogle \
-    --grid src/world_model/world_model/configs/experiments/ablation_action_adapter.yaml
+    --grid src/world_model/world_model/configs/grids/ablation_action_adapter.yaml
 ```
 
 Compare any two specs head-to-head from `summary_long.csv`:

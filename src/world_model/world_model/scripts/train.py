@@ -31,6 +31,7 @@ from world_model.configs import (
     WorldModelConfig,
     apply_cli_overrides,
     load_yaml_config,
+    validate_world_model_data_sources,
 )
 from world_model.data import build_dataloaders
 from world_model.data.inspect import dump_sample_contexts
@@ -781,6 +782,7 @@ def main(argv: list[str] | None = None) -> None:
     cfg: WorldModelConfig = load_yaml_config(args.config)
     cfg = apply_cli_overrides(cfg, args.overrides)
     cfg.validate()
+    validate_world_model_data_sources(cfg)
 
     # Append a unique __job{jobid}__{timestamp} suffix to output_dir
     # so concurrent submissions of the same run_name never collide.

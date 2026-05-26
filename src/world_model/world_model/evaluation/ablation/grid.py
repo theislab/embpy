@@ -38,6 +38,7 @@ class ActionEncoderSpec:
     notes: str = ""
 
     def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable representation."""
         return {
             "key": self.key,
             "model_name": self.model_name,
@@ -99,12 +100,7 @@ def load_grid(path: str | Path | None) -> list[ActionEncoderSpec]:
     """Load specs from a YAML file. Returns the default grid when ``path`` is None."""
     if path is None:
         return list(DEFAULT_ACTION_ENCODER_GRID)
-    import yaml  # noqa: PLC0415
-
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Ablation grid file not found: {p}")
-    raw = yaml.safe_load(p.read_text()) or {}
+    raw = _load_grid_yaml(path, kind="Ablation")
     if isinstance(raw, list):
         rows = raw
     elif isinstance(raw, dict):
@@ -220,6 +216,7 @@ class ActionAdapterSpec:
     notes: str = ""
 
     def as_dict(self) -> dict[str, Any]:
+        """Return a JSON-serialisable representation."""
         return {
             "key": self.key,
             "kind": self.kind,
@@ -258,14 +255,10 @@ def _adapter_spec_from_mapping(row: dict[str, Any]) -> ActionAdapterSpec:
 
 
 def load_adapter_grid(path: str | Path | None) -> list[ActionAdapterSpec]:
+    """Load adapter specs from YAML, or return the default adapter grid."""
     if path is None:
         return list(DEFAULT_ACTION_ADAPTER_GRID)
-    import yaml  # noqa: PLC0415
-
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Adapter ablation grid file not found: {p}")
-    raw = yaml.safe_load(p.read_text()) or {}
+    raw = _load_grid_yaml(path, kind="Adapter ablation")
     rows: list[Any]
     if isinstance(raw, list):
         rows = raw
@@ -289,6 +282,38 @@ def load_adapter_grid(path: str | Path | None) -> list[ActionAdapterSpec]:
     return specs
 
 
+def _load_grid_yaml(path: str | Path, *, kind: str) -> Any:
+    """Load a grid YAML file with a tiny ``extends:`` compatibility hook."""
+    import yaml
+
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"{kind} grid file not found: {p}")
+    raw = yaml.safe_load(p.read_text()) or {}
+    if isinstance(raw, dict) and "extends" in raw:
+        if set(raw) - {"extends"}:
+            raise ValueError(
+                f"{kind} grid alias {p} may only contain 'extends'; "
+                f"found extra keys {sorted(set(raw) - {'extends'})}."
+            )
+        parent = _resolve_grid_parent(p, raw["extends"])
+        return _load_grid_yaml(parent, kind=kind)
+    return raw
+
+
+def _resolve_grid_parent(path: Path, parent_spec: Any) -> Path:
+    if not isinstance(parent_spec, str) or not parent_spec:
+        raise ValueError(f"Grid 'extends' in {path} must be a non-empty string.")
+    parent = Path(parent_spec)
+    config_root = Path(__file__).parents[2] / "configs"
+    candidates = [parent] if parent.is_absolute() else [path.parent / parent, config_root / parent]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    tried = ", ".join(str(c) for c in candidates)
+    raise FileNotFoundError(f"Grid parent for {path} not found. Tried: {tried}")
+
+
 def _check_unique_adapter_keys(specs: Iterable[ActionAdapterSpec]) -> None:
     seen: dict[str, int] = {}
     for s in specs:
@@ -304,6 +329,7 @@ def filter_adapter_grid(
     only: Iterable[str] | str | None = None,
     skip: Iterable[str] | str | None = None,
 ) -> list[ActionAdapterSpec]:
+    """Apply ``--only`` / ``--skip`` filters by adapter key."""
     only_set = _parse_filter(only)
     skip_set = _parse_filter(skip)
     if only_set is not None:
@@ -324,6 +350,7 @@ def resolve_adapter_grid(
     only: Iterable[str] | str | None = None,
     skip: Iterable[str] | str | None = None,
 ) -> list[ActionAdapterSpec]:
+    """Load and filter the adapter ablation grid in one call."""
     specs = load_adapter_grid(grid_path)
     _check_unique_adapter_keys(specs)
     return filter_adapter_grid(specs, only=only, skip=skip)

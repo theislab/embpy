@@ -659,6 +659,54 @@ import torch
 torch.backends.mps.is_available()
 ```
 
+To launch the embedding-store/accessor tutorial directly:
+
+```bash
+pixi run -e mps jupyter docs/notebooks/14_embedding_store_and_accessor_tutorial.ipynb --port 8888
+```
+
+To run a local world-model action-embedding sweep on the MacBook GPU:
+
+```bash
+# quick local profile:
+#   1. Nadig 80/20
+#   2. Replogle 80/20
+#   3. train 100% Nadig -> fine-tune Replogle -> evaluate held-out Replogle
+#   4. train 100% Replogle -> fine-tune Nadig -> evaluate held-out Nadig
+#   5. train 100% Nadig -> zero-shot evaluate Replogle
+#   6. train 100% Replogle -> zero-shot evaluate Nadig
+# across the available MPS-safe action embeddings
+pixi run -e mps wm-sweep-mps
+
+# dry-run first: prints the planned commands without importing torch or training
+DRYRUN=1 EMBEDDINGS=minilm_l6_v2 pixi run -e mps wm-sweep-mps
+
+# tiny six-job smoke test before leaving it running
+EMBEDDINGS=minilm_l6_v2 EPOCHS=1 FINETUNE_EPOCHS=1 pixi run -e mps wm-sweep-mps
+
+# single-dataset-only smoke test
+SETUPS=single DATASETS=replogle EMBEDDINGS="esm2_650M minilm_l6_v2" EPOCHS=1 pixi run -e mps wm-sweep-mps
+
+# override local dataset paths without editing the launcher
+NADIG_H5AD=/path/to/nadig.h5ad REPLOGLE_H5AD=/path/to/replogle.h5ad pixi run -e mps wm-sweep-mps
+
+# run only one setup group
+SETUPS=single pixi run -e mps wm-sweep-mps
+SETUPS=finetune pixi run -e mps wm-sweep-mps
+SETUPS=zeroshot pixi run -e mps wm-sweep-mps
+
+# full-size profile
+PROFILE=full pixi run -e mps wm-sweep-mps
+```
+
+The MPS launcher writes runs under `runs/world_model/mps_action_sweep/`.
+It uses the shared world-model run matrix in
+`world_model.configs.run_matrix`, so local MPS sweeps and SLURM submitters use
+the same dataset defaults, action-embedding catalog, and setup names. The
+canonical launcher path is
+`src/world_model/world_model/scripts/local/run_embedding_sweep_mps.sh`; the old
+`scripts/run_embedding_sweep_mps.sh` path remains as a compatibility wrapper.
+
 ### Running GPU JupyterLab on a SLURM cluster
 
 A ready-to-use SLURM launcher lives at

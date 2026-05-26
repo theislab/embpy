@@ -6,7 +6,7 @@ report. Re-runnable on its own:
 
     python -m world_model.evaluation.ablation.aggregate \
         --output-root runs/ablation_action_replogle \
-        --grid configs/experiments/ablation_action_encoder.yaml
+        --grid configs/grids/ablation_action_encoder.yaml
 
 The aggregator never touches network / GPU; it only reads CSV / JSON
 already on disk, so re-rendering after a hot-fix takes a couple of

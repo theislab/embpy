@@ -687,6 +687,7 @@ install-kernel-mps = "python -m ipykernel install --user --name embpy-mps --disp
 #   pixi run -e mps wm-train-mps --config ... train.device=mps
 wm-train-mps = "python -m world_model.scripts.train"
 wm-smoke-mps = "python -m world_model.scripts.smoke_test train.device=mps"
+wm-sweep-mps = "env USE_PIXI=0 bash src/world_model/world_model/scripts/local/run_embedding_sweep_mps.sh"
 
 [feature.dev.tasks]
 test = "pytest -xvs tests/"

@@ -4,7 +4,7 @@
 # -----------------------------------------------------------------------------
 # Usage (single job, walks the grid sequentially):
 #   BASE_CONFIG=src/world_model/world_model/configs/experiments/single_replogle.yaml \
-#   GRID=src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml \
+#   GRID=src/world_model/world_model/configs/grids/ablation_action_encoder.yaml \
 #   OUTPUT_ROOT=runs/ablation_action_replogle \
 #   sbatch src/world_model/world_model/scripts/slurm/ablate_action_encoder.sbatch
 #
@@ -37,7 +37,7 @@ cd "$PROJECT_DIR"
 mkdir -p logs
 
 BASE_CONFIG="${BASE_CONFIG:-src/world_model/world_model/configs/experiments/single_replogle.yaml}"
-GRID="${GRID:-src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml}"
+GRID="${GRID:-src/world_model/world_model/configs/grids/ablation_action_encoder.yaml}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-runs/ablation_action_replogle}"
 ONLY="${ONLY:-}"
 SKIP="${SKIP:-}"
@@ -75,7 +75,7 @@ echo "OUTPUT_ROOT=${OUTPUT_ROOT}"
 echo "ONLY=${ONLY:-(none)}"
 echo "SKIP=${SKIP:-(none)}"
 
-exec pixi run -e gpu -- python -m world_model.scripts.ablate_action_encoder \
+exec pixi run -e gpu -- python -m world_model.scripts.sweeps.ablate_action_encoder \
     --base-config "$BASE_CONFIG" \
     --grid "$GRID" \
     --output-root "$OUTPUT_ROOT" \

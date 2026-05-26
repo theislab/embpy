@@ -1,0 +1,138 @@
+# Replogle (K562 essential), v2: anti-overfit pass.
+#
+# Diff vs single_replogle_stack_borzoi.yaml:
+#   * optim.lr                       1.0e-4  -> 5.0e-5
+#   * optim.weight_decay             1.0e-2  -> 5.0e-2
+#   * optim.grad_clip                1.0     -> 0.5
+#   * loss.action_counterfactual     1.0     -> 0.5
+#   * loss.info_nce_mask_same_pert   false   -> true
+#   * encoder.dropout                0.1     -> 0.3
+#   * dynamics.dropout               0.1     -> 0.3
+#   * action_adapter.dropout         0.0     -> 0.3   (no-op while kind=linear)
+#
+# Motivation (from inspection of job 36409155 logs at epoch 4):
+#   * Train descending steadily; val jumped 10.31 -> 10.94 in one epoch.
+#   * grad_norm exploding (10 -> 23) while still in LR warmup.
+#   * s_hat_norm growing without bound (8 -> 12); pos_sim and neg_sim
+#     both rising together -> representation cone collapse.
+#   * action_counterfactual crashing (0.7 -> 0.18) and
+#     cf_real_minus_counter blowing up (0.04 -> 0.50) -> the action
+#     adapter is memorizing train perturbation -> effect maps that do
+#     not generalize to the 411 held-out perturbations.
+#
+# The lower LR + tighter grad clipping calms the warmup-driven
+# gradient blow-up. Weight decay + dropout pull s_hat_norm back and
+# regularize the encoder / dynamics. info_nce_mask_same_pert=true is
+# safe here despite bucketing because we are decreasing
+# action_counterfactual weight in parallel (the contrastive signal no
+# longer has to compete with a runaway counterfactual term).
+
+run_name: "single_replogle_stack_borzoi_v2"
+output_dir: "runs/world_model/single_replogle_stack_borzoi_v2"
+seed: 0
+mode: "single"
+
+data:
+  dataset: "replogle"
+  h5ad_path: "data/datasets/replogle/replogle_2022_k562_essential.h5ad"
+  gene_embedding_path: "" # unused: action_embedding.source = bio_embedder
+  perturbation_key: "perturbation"
+  control_label: "control"
+  cell_type_key: "cell_type"
+  n_top_genes: 8000
+  log_normalize: true
+  stack_size: 4
+  sequence_length: 32
+  n_pert: 2
+  batch_size: 512
+  val_fraction: 0.1
+  num_workers: 8
+  pin_memory: true
+  sequence_bucket_key: "batch"
+
+action_embedding:
+  source: "bio_embedder"
+  model_name: "borzoi_v0"
+  organism: "human"
+  id_type: "symbol"
+  region: "full"
+  pooling_strategy: "mean"
+  resolver_backend: "api"
+  device: "auto"
+  cache_dir: "runs/_cache/action_embeddings"
+
+state_backbone:
+  kind: "stack"
+  stack_checkpoint: "data/checkpoints/stack/bc_large.ckpt"
+  stack_genelist: "data/checkpoints/stack/basecount_1000per_15000max.pkl"
+  stack_gene_name_col: null
+  device: "auto"
+  freeze: true
+  batch_size: 32
+  cache_dir: "runs/_cache/state_backbone"
+  require_cache_hit: false
+
+split:
+  split_by: "perturbation"
+  train_fraction: 0.8
+  seed: 0
+
+encoder:
+  kind: "transformer"
+  d_model: 256
+  n_layers: 2
+  n_heads: 4
+  dropout: 0.3
+
+dynamics:
+  kind: "gpt"
+  d_model: 256
+  n_layers: 6
+  n_heads: 8
+  dropout: 0.3
+  max_sequence_length: 128
+  use_action_token: true
+
+# action_adapter.dropout is wired only for kind="mlp"/"lora"; keep 0.3
+# here for forward-compat. To actually engage the adapter dropout,
+# flip kind to "mlp" (adds ~0.9M params, hidden_dim=512).
+action_adapter:
+  kind: "linear"
+  hidden_dim: 512
+  dropout: 0.3
+  activation: "gelu"
+  lora_rank: 0
+  lora_alpha: 1.0
+
+loss:
+  latent_mse: 1.0
+  decoder_mse: 0.5
+  info_nce: 1.0
+  info_nce_temperature: 0.1
+  info_nce_mask_same_pert: true
+  action_counterfactual: 0.5
+  action_counterfactual_temperature: 0.1
+
+optim:
+  lr: 5.0e-5
+  weight_decay: 5.0e-2
+  betas: [0.9, 0.95]
+  grad_clip: 0.5
+  scheduler: "cosine"
+  warmup_steps: 2000
+
+train:
+  n_epochs: 50
+  log_every_n_steps: 50
+  eval_every_n_epochs: 1
+  save_every_n_epochs: 5
+  device: "auto"
+  amp: true
+  enable_tensorboard: true
+  enable_csv_log: true
+
+eval:
+  n_control_samples_per_pert: 32
+  use_cell_eval: true
+  deg_top_k: 50
+  save_predictions: true

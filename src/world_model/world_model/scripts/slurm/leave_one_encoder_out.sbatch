@@ -10,7 +10,7 @@
 # requires Stage A's checkpoints to already exist.
 #
 # Usage (Stage A, array of pretrains):
-#   STAGE=A BASE_CONFIG=.../transfer.yaml GRID=.../ablation_action_encoder.yaml \
+#   STAGE=A BASE_CONFIG=.../transfer.yaml GRID=.../grids/ablation_action_encoder.yaml \
 #       STRATEGY=reset_adapter OUTPUT_ROOT=runs/lone_replogle \
 #       sbatch --array=0-4 src/.../slurm/leave_one_encoder_out.sbatch
 #
@@ -42,7 +42,7 @@ cd "$PROJECT_DIR"
 mkdir -p logs
 
 BASE_CONFIG="${BASE_CONFIG:-src/world_model/world_model/configs/experiments/transfer.yaml}"
-GRID="${GRID:-src/world_model/world_model/configs/experiments/ablation_action_encoder.yaml}"
+GRID="${GRID:-src/world_model/world_model/configs/grids/ablation_action_encoder.yaml}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-runs/lone_replogle}"
 STRATEGY="${STRATEGY:-reset_adapter}"
 STAGE="${STAGE:-A}"
@@ -67,7 +67,7 @@ if i < 0 or i >= len(specs):
 print(specs[i].key)
 " "$GRID" "$SLURM_ARRAY_TASK_ID")
     echo "Stage A: pretrain X=${X_KEY}"
-    exec pixi run -e gpu -- python -m world_model.scripts.leave_one_encoder_out \
+    exec pixi run -e gpu -- python -m world_model.scripts.sweeps.leave_one_encoder_out \
         --base-config "$BASE_CONFIG" \
         --grid "$GRID" \
         --strategy "$STRATEGY" \
@@ -94,7 +94,7 @@ x, y = pairs[i]
 print(f'{x}:{y}')
 " "$GRID" "$SLURM_ARRAY_TASK_ID")
     echo "Stage B: cell ${PAIR}"
-    exec pixi run -e gpu -- python -m world_model.scripts.leave_one_encoder_out \
+    exec pixi run -e gpu -- python -m world_model.scripts.sweeps.leave_one_encoder_out \
         --base-config "$BASE_CONFIG" \
         --grid "$GRID" \
         --strategy "$STRATEGY" \

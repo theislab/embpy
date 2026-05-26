@@ -1,0 +1,22 @@
+extends: single.yaml
+
+data:
+  context_mode: "incontext_set"
+  incontext_support_size: 64
+  sequence_bucket_key: "batch"
+  batch_size: 32
+  num_workers: 8
+
+state_backbone:
+  kind: "local"
+  freeze: false
+
+dynamics:
+  kind: "incontext_set"
+  max_sequence_length: 64
+  use_action_token: true
+
+loss:
+  action_counterfactual: 0.5
+  action_counterfactual_temperature: 0.1
+

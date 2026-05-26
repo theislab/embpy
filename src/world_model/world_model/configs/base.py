@@ -492,6 +492,7 @@ class WorldModelConfig:
 # arrive as a dict. We materialise the dict into the dataclass type
 # named here so the rest of the merge stays uniform.
 _OPTIONAL_DATACLASS_FIELDS: dict[str, type] = {}
+_CONFIG_ROOT = Path(__file__).resolve().parent
 
 
 def _register_optional_dataclass_field(field_name: str, dc_type: type) -> None:
@@ -522,20 +523,129 @@ def _merge_into_dataclass(dc: Any, overrides: dict[str, Any]) -> Any:
     return dc
 
 
+def _deep_merge_mapping(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge two YAML mappings without mutating either input."""
+    merged = dict(base)
+    for key, value in overrides.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge_mapping(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
 _register_optional_dataclass_field("pretrain_action_encoder", ActionEmbeddingConfig)
 _register_optional_dataclass_field("finetune_action_encoder", ActionEmbeddingConfig)
 
 
-def load_yaml_config(path: str | Path) -> WorldModelConfig:
-    """Load a :class:`WorldModelConfig` from a YAML file."""
+def _load_yaml_mapping(path: Path, *, seen: set[Path] | None = None) -> dict[str, Any]:
+    """Load a YAML config mapping, resolving one-parent ``extends:`` chains."""
     if not _HAS_YAML:
         raise ImportError("PyYAML is required to load YAML configs. Install with: pip install pyyaml")
-    with open(path) as fp:
+    resolved = path.expanduser().resolve()
+    seen = set() if seen is None else seen
+    if resolved in seen:
+        chain = " -> ".join(str(p) for p in [*seen, resolved])
+        raise ValueError(f"Config extends cycle detected: {chain}")
+    seen.add(resolved)
+    with open(resolved) as fp:
         raw = yaml.safe_load(fp) or {}
     if not isinstance(raw, dict):
-        raise ValueError(f"YAML config root must be a mapping, got {type(raw).__name__}")
+        raise ValueError(f"YAML config root must be a mapping, got {type(raw).__name__}: {path}")
+    parent_spec = raw.pop("extends", None)
+    if parent_spec is None:
+        return raw
+    parent = _resolve_config_parent(resolved, parent_spec)
+    parent_raw = _load_yaml_mapping(parent, seen=seen)
+    return _deep_merge_mapping(parent_raw, raw)
+
+
+def _resolve_config_parent(path: Path, parent_spec: Any) -> Path:
+    if not isinstance(parent_spec, str) or not parent_spec:
+        raise ValueError(f"Config 'extends' in {path} must be a non-empty string.")
+    parent = Path(parent_spec).expanduser()
+    if parent.is_absolute():
+        candidates = [parent]
+    else:
+        candidates = [path.parent / parent, _CONFIG_ROOT / parent]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    tried = ", ".join(str(c) for c in candidates)
+    raise FileNotFoundError(f"Config parent for {path} not found. Tried: {tried}")
+
+
+def load_yaml_config(path: str | Path) -> WorldModelConfig:
+    """Load a :class:`WorldModelConfig` from YAML, resolving optional ``extends:``."""
+    raw = _load_yaml_mapping(Path(path))
     cfg = WorldModelConfig()
     return _merge_into_dataclass(cfg, raw)
+
+
+def validate_world_model_data_sources(cfg: WorldModelConfig) -> None:
+    """Fail early when a local H5AD exists but lacks the configured controls."""
+    _validate_h5ad_control_label(
+        cfg.data.h5ad_path,
+        perturbation_key=cfg.data.perturbation_key,
+        control_label=cfg.data.control_label,
+        stage="target/training data",
+    )
+    if cfg.mode == "transfer" or cfg.transfer.enabled:
+        _validate_h5ad_control_label(
+            cfg.transfer.pretrain_h5ad_path,
+            perturbation_key=cfg.data.perturbation_key,
+            control_label=cfg.data.control_label,
+            stage="transfer pretrain data",
+        )
+
+
+def _validate_h5ad_control_label(
+    h5ad_path: str,
+    *,
+    perturbation_key: str,
+    control_label: str,
+    stage: str,
+) -> None:
+    if not h5ad_path:
+        return
+    path = Path(h5ad_path).expanduser()
+    if not path.exists():
+        return
+    try:
+        import anndata as ad  # type: ignore[import-not-found]
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise ImportError(
+            "world-model config validation: anndata is required to inspect "
+            f"local H5AD files for {stage}."
+        ) from exc
+    try:
+        adata = ad.read_h5ad(path, backed="r")
+    except (OSError, ValueError) as exc:
+        raise ValueError(
+            "world-model config validation: failed to inspect local H5AD for "
+            f"{stage}: {path}. Check that the file exists, is a valid .h5ad, "
+            "and is not truncated."
+        ) from exc
+    try:
+        if perturbation_key not in adata.obs.columns:
+            raise ValueError(
+                "world-model config validation: perturbation key "
+                f"{perturbation_key!r} is missing from {stage} at {path}. "
+                f"Available obs columns: {list(adata.obs.columns)}."
+            )
+        labels = adata.obs[perturbation_key].astype(str)
+        if not labels.eq(str(control_label)).any():
+            examples = labels.value_counts().head(10).index.tolist()
+            raise ValueError(
+                "world-model config validation: control label "
+                f"{control_label!r} was not found in {stage} at {path} "
+                f"under obs[{perturbation_key!r}]. Example labels: {examples}. "
+                "Set data.control_label to the exact control string used by the dataset."
+            )
+    finally:
+        if hasattr(adata, "file"):
+            adata.file.close()
 
 
 def apply_cli_overrides(cfg: WorldModelConfig, overrides: list[str]) -> WorldModelConfig:
@@ -589,4 +699,5 @@ __all__ = [
     "WorldModelConfig",
     "apply_cli_overrides",
     "load_yaml_config",
+    "validate_world_model_data_sources",
 ]
