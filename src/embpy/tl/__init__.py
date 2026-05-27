@@ -16,6 +16,7 @@ __all__ = [
     "compute_distance_matrix",
     "compute_knn_overlap",
     "compute_similarity",
+    "cross_modal_mantel",
     "pseudobulk_embeddings",
     "rank_perturbations",
     # activity
@@ -63,9 +64,11 @@ __all__ = [
     "run_pipeline",
     # protein
     "WeightedProteinEmbedder",
+    "alignment_summary",
     "build_cross_species_adata",
     "identity_vs_similarity",
     "ortholog_similarity_matrix",
+    "protein_phenotype_alignment",
     # genomics
     "SequenceProvider",
     "SNPContext",
@@ -87,6 +90,7 @@ from .similarity import (
     compute_distance_matrix,
     compute_knn_overlap,
     compute_similarity,
+    cross_modal_mantel,
     pseudobulk_embeddings,
     rank_perturbations,
 )
@@ -135,6 +139,7 @@ from .protein.cross_species import (
     identity_vs_similarity,
     ortholog_similarity_matrix,
 )
+from .protein.phenotype_alignment import alignment_summary, protein_phenotype_alignment
 from .protein.weighted_embedding import WeightedProteinEmbedder
 from .genomics.snp_utils import (
     SequenceProvider,

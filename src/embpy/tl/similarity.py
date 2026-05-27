@@ -10,6 +10,8 @@ from scipy.stats import pearsonr, spearmanr, wasserstein_distance
 from sklearn.metrics.pairwise import cosine_similarity, euclidean_distances
 from sklearn.neighbors import NearestNeighbors
 
+logger = logging.getLogger(__name__)
+
 
 def _get_embedding(adata: AnnData, obsm_key: str) -> np.ndarray:
     """Extract an embedding matrix from *adata.obsm* with validation."""
@@ -245,6 +247,73 @@ def rank_perturbations(
     order = np.argsort(sims)[::-1]
     names = list(adata.obs_names)
     return [(names[i], float(sims[i])) for i in order[:top_k]]
+
+
+def cross_modal_mantel(
+    adata: AnnData,
+    obsm_key_a: str,
+    obsm_key_b: str,
+    metric: str = "cosine",
+) -> tuple[float, float]:
+    """Mantel test: Spearman correlation between two pairwise distance matrices.
+
+    A non-zero correlation indicates that observations that are far apart in
+    space *A* also tend to be far apart in space *B*.  Used to quantify
+    cross-modal geometric alignment (e.g. protein embedding vs. transcriptomic
+    phenotype space) without requiring the two spaces to have the same
+    dimensionality.
+
+    Parameters
+    ----------
+    adata
+        AnnData containing both embeddings.
+    obsm_key_a, obsm_key_b
+        Keys in ``.obsm`` for the two embedding spaces.
+    metric
+        Distance metric used to build both matrices.
+        ``"cosine"`` (default) or ``"euclidean"``.
+
+    Returns
+    -------
+    Tuple of ``(rho, p_value)`` — Spearman correlation between the upper
+    triangles of the two distance matrices and the corresponding two-sided
+    p-value.
+
+    Examples
+    --------
+    >>> rho, p = tl.cross_modal_mantel(adata_pb, "X_esm2_650M", "X_scgpt")
+    >>> print(f"Mantel ρ = {rho:.3f}  (p = {p:.2e})")
+    """
+    X_a = _get_embedding(adata, obsm_key_a)
+    X_b = _get_embedding(adata, obsm_key_b)
+
+    if X_a.shape[0] != X_b.shape[0]:
+        raise ValueError(
+            f"Embeddings must have the same number of observations; "
+            f"got {X_a.shape[0]} for '{obsm_key_a}' and {X_b.shape[0]} for '{obsm_key_b}'."
+        )
+    n = X_a.shape[0]
+    if n < 3:
+        raise ValueError(f"Need at least 3 observations for a Mantel test, got {n}.")
+
+    if metric == "cosine":
+        dist_a = 1.0 - cosine_similarity(X_a.astype(np.float64))
+        dist_b = 1.0 - cosine_similarity(X_b.astype(np.float64))
+    elif metric == "euclidean":
+        dist_a = euclidean_distances(X_a.astype(np.float64))
+        dist_b = euclidean_distances(X_b.astype(np.float64))
+    else:
+        raise ValueError(f"Unknown metric '{metric}'. Choose from: cosine, euclidean.")
+
+    triu = np.triu_indices(n, k=1)
+    rho, p = spearmanr(dist_a[triu], dist_b[triu])
+    rho, p = float(rho), float(p)
+
+    logger.info(
+        "Mantel test ('%s' vs '%s', metric=%s, n=%d): rho=%.4f, p=%.4e",
+        obsm_key_a, obsm_key_b, metric, n, rho, p,
+    )
+    return rho, p
 
 
 def pseudobulk_embeddings(
