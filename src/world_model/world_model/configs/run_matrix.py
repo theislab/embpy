@@ -79,9 +79,9 @@ ACTION_EMBEDDINGS: dict[str, ActionEmbeddingSpec] = {
     ),
     "ccle_ensembl": ActionEmbeddingSpec(
         "ccle_ensembl",
-        "precomputed",
+        "convert",
         f"{GE}/ccle/expression_300_ensemblid.csv",
-        "CCLE expression, 300d Ensembl-keyed",
+        "CCLE expression, 300d Ensembl-keyed; convert to symbols before training",
     ),
     "crispr_gene_effect": ActionEmbeddingSpec(
         "crispr_gene_effect",
@@ -201,6 +201,8 @@ DEFAULT_MPS_EMBEDDINGS = (
     "esm2_650M",
     "minilm_l6_v2",
 )
+
+
 def dataset(name: str) -> DatasetSpec:
     """Return defaults for a named perturb-seq dataset."""
     try:

@@ -92,6 +92,47 @@ an `(n_obs, d)` matrix to `adata.obsm["X_state"]`.
 
 ## Cluster Commands
 
+Generate STACK state embeddings and action perturbation embeddings first, then
+write final world-model-ready AnnData files:
+
+```bash
+pixi install -e arc-gpu
+pixi install -e gpu
+pixi install -e caduceus
+pixi install -e evo2
+
+DATASET=both EMBEDDINGS=all \
+  STACK_CHECKPOINT=/path/to/bc_large.ckpt \
+  STACK_GENELIST=/path/to/basecount_1000per_15000max.pkl \
+  bash src/world_model/world_model/scripts/submit/submit_world_model_ready_adatas.sh
+```
+
+This creates:
+
+```text
+runs/_cache/world_model_ready_h5ad/nadig_stack_all_gene_embeddings.h5ad
+runs/_cache/world_model_ready_h5ad/replogle_stack_all_gene_embeddings.h5ad
+```
+
+Each output has cell/state embeddings in `.obsm["X_stack"]`, one action
+perturbation matrix per selected embedding in `.obsm["X_pert_<embedding>"]`,
+and the canonical unique-perturbation embpy payloads in
+`.uns["embpy"]["perturbations"]`.
+`EMBEDDINGS=all` expands to every usable catalog entry from
+`world_model.configs.run_matrix default-embeddings --target slurm`; entries
+marked `convert` are excluded. Use `DRYRUN=1` to print the `sbatch` commands
+without submitting them. Set `RUN_TRAIN=1` if you also want the script to chain
+`train_embedding.sbatch` after each ready AnnData is created.
+
+To run a smaller subset, pass a space-separated list:
+
+```bash
+DATASET=both EMBEDDINGS="genept esm2_650M minilm_l6_v2" \
+  STACK_CHECKPOINT=/path/to/bc_large.ckpt \
+  STACK_GENELIST=/path/to/basecount_1000per_15000max.pkl \
+  bash src/world_model/world_model/scripts/submit/submit_world_model_ready_adatas.sh
+```
+
 Single dataset, one embedding:
 
 ```bash
