@@ -163,6 +163,48 @@ def load_gene_embedding_table(
     return table, indexer
 
 
+def load_obsm_state_matrix(adata: Any, state_obsm_key: str) -> tuple[np.ndarray, list[str]]:
+    """Return the model state matrix from ``adata.obsm``.
+
+    This is the enforced training input contract: state embeddings must
+    already be attached to the AnnData. The dataloader never derives
+    them from ``adata.X``.
+    """
+    if not state_obsm_key:
+        raise ValueError("data.state_obsm_key is required; training reads states from adata.obsm.")
+    if state_obsm_key not in adata.obsm:
+        raise KeyError(
+            f"state_obsm_key={state_obsm_key!r} not in adata.obsm "
+            f"(available: {list(adata.obsm.keys())})"
+        )
+    x = adata.obsm[state_obsm_key]
+    if hasattr(x, "toarray"):
+        x = x.toarray()
+    x = np.asarray(x, dtype=np.float32)
+    if x.ndim != 2:
+        raise ValueError(f"adata.obsm[{state_obsm_key!r}] must be 2D, got {x.shape!r}.")
+    if x.shape[0] != adata.n_obs:
+        raise ValueError(
+            f"adata.obsm[{state_obsm_key!r}] has {x.shape[0]} rows but AnnData has {adata.n_obs} obs."
+        )
+    if x.shape[1] <= 0:
+        raise ValueError(f"adata.obsm[{state_obsm_key!r}] has zero columns.")
+    if not np.isfinite(x).all():
+        raise ValueError(f"adata.obsm[{state_obsm_key!r}] contains NaN or infinite values.")
+
+    meta_root = adata.uns.get("world_model_state_embeddings", {})
+    names: list[str] | None = None
+    if isinstance(meta_root, dict):
+        meta = meta_root.get(state_obsm_key)
+        if isinstance(meta, dict):
+            raw_names = meta.get("feature_names")
+            if raw_names is not None:
+                names = [str(v) for v in raw_names]
+    if names is None or len(names) != x.shape[1]:
+        names = [f"{state_obsm_key}_{i}" for i in range(int(x.shape[1]))]
+    return np.ascontiguousarray(x, dtype=np.float32), names
+
+
 # ----------------------------------------------------------------------
 # Dataset
 # ----------------------------------------------------------------------
@@ -634,4 +676,5 @@ __all__ = [
     "PerturbationSequenceDataset",
     "SequenceSample",
     "load_gene_embedding_table",
+    "load_obsm_state_matrix",
 ]

@@ -7,5 +7,3 @@ data:
   dataset: "replogle"
   h5ad_path: "data/crispr_datasets/replogle/replogle_2022_k562_essential.h5ad"
   control_label: "control"
-  cell_type_key: "cell_type"
-

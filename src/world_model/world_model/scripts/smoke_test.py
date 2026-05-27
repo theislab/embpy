@@ -63,32 +63,44 @@ def main(argv: list[str] | None = None) -> None:
 
 
 def _smoke_asset_overrides(user_overrides: list[str]) -> list[str]:
-    """Generate tiny h5ad + .emstore assets when the default files are absent."""
+    """Generate a tiny h5ad with state/action obsm assets when defaults are absent."""
     explicit = {item.split("=", 1)[0] for item in user_overrides if "=" in item}
-    if {"data.h5ad_path", "action_embedding.store_path"} & explicit:
+    if {"data.h5ad_path", "data.state_obsm_key", "action_embedding.obsm_key"} & explicit:
         return []
 
     h5ad_path = Path("data/datasets/nadig/NadigOConner2024_jurkat.h5ad")
-    store_path = Path("data/embeddings/gene_embeddings/genept/genept.emstore")
-    if h5ad_path.exists() and store_path.exists():
+    if _has_required_obsm(h5ad_path, state_key="X_state", action_key="X_pert_tiny"):
         return []
 
     asset_dir = Path("runs/world_model/_smoke_assets")
     asset_dir.mkdir(parents=True, exist_ok=True)
     tiny_h5ad = asset_dir / "tiny_smoke.h5ad"
-    tiny_store = asset_dir / "tiny_genept.emstore"
     if not tiny_h5ad.exists():
         _write_tiny_h5ad(tiny_h5ad)
-    if not tiny_store.exists():
-        _write_tiny_store(tiny_store)
     return [
         f"data.h5ad_path={tiny_h5ad}",
-        f"action_embedding.store_path={tiny_store}",
-        "action_embedding.store_key=gene:smoke",
+        "data.state_obsm_key=X_state",
+        "action_embedding.source=anndata_obsm",
+        "action_embedding.obsm_key=X_pert_tiny",
         "data.num_workers=0",
         "data.pin_memory=false",
         "eval.use_cell_eval=false",
     ]
+
+
+def _has_required_obsm(path: Path, *, state_key: str, action_key: str) -> bool:
+    if not path.exists():
+        return False
+    try:
+        import anndata as ad
+
+        adata = ad.read_h5ad(path, backed="r")
+        try:
+            return state_key in adata.obsm and action_key in adata.obsm
+        finally:
+            adata.file.close()
+    except Exception:
+        return False
 
 
 def _write_tiny_h5ad(path: Path) -> None:
@@ -106,26 +118,30 @@ def _write_tiny_h5ad(path: Path) -> None:
         x[rows, offset] += 2.0
     adata = ad.AnnData(X=x, obs={"perturbation": labels})
     adata.var_names = var_names
+    adata.obsm["X_state"] = x[:, :16].astype(np.float32)
+    action_rows = {
+        "non-targeting": np.zeros(8, dtype=np.float32),
+        "GENE_000": np.eye(3, 8, dtype=np.float32)[0],
+        "GENE_001": np.eye(3, 8, dtype=np.float32)[1],
+        "GENE_002": np.eye(3, 8, dtype=np.float32)[2],
+    }
+    adata.obsm["X_pert_tiny"] = np.stack([action_rows[label] for label in labels], axis=0)
+    adata.uns["world_model_state_embeddings"] = {
+        "X_state": {
+            "model_name": "tiny_smoke_state",
+            "feature_names": [f"state_{i}" for i in range(16)],
+        }
+    }
+    adata.uns["world_model_action_embeddings"] = {
+        "X_pert_tiny": {
+            "model_name": "tiny",
+            "source": "synthetic",
+            "obsm_key": "X_pert_tiny",
+            "embedding_dim": 8,
+        }
+    }
     path.parent.mkdir(parents=True, exist_ok=True)
     adata.write_h5ad(path)
-
-
-def _write_tiny_store(path: Path) -> None:
-    import numpy as np
-
-    from embpy.io.result import EmbeddingProvenance, EmbeddingResult
-    from embpy.store import EmbeddingStore
-
-    ids = [f"GENE_{i:03d}" for i in range(3)]
-    matrix = np.eye(3, 8, dtype=np.float32)
-    result = EmbeddingResult(
-        matrix=matrix,
-        entity_ids=tuple(ids),
-        entity_type="gene",
-        id_scheme="symbol",
-        provenance=EmbeddingProvenance(model="smoke"),
-    )
-    EmbeddingStore.from_results(result).write(path)
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -7,9 +7,9 @@ launcher when you want to re-evaluate without re-training.
 
 Usage:
 
-    python -m world_model.scripts.eval \\
-        --config src/world_model/world_model/configs/experiments/single_replogle.yaml \\
-        --checkpoint runs/world_model/single_replogle/single_replogle_final.pt
+        python -m world_model.scripts.eval \\
+            --config src/world_model/world_model/configs/datasets/replogle.yaml \\
+            --checkpoint runs/world_model/single_replogle/single_replogle_final.pt
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> None:
     seed_everything(cfg.seed)
 
     # Pass action_cfg + state_backbone_cfg so the action-embedding source
-    # (store vs bio_embedder) matches the train run. Without these,
+    # matches the train run. Without these,
     # build_dataloaders can instantiate a model with the wrong action
     # dimension and load_state_dict then fails with a shape mismatch.
     artifacts = build_dataloaders(
@@ -61,7 +61,11 @@ def main(argv: list[str] | None = None) -> None:
         seed=cfg.seed,
         output_dir=output_dir,
     )
-    n_genes = len(artifacts.gene_symbols)
+    n_genes = (
+        artifacts.state_backbone_embedding_dim
+        if artifacts.state_backbone_embedding_dim is not None
+        else len(artifacts.gene_symbols)
+    )
 
     model = build_world_model(
         n_genes=n_genes,
@@ -76,6 +80,9 @@ def main(argv: list[str] | None = None) -> None:
         dropout=cfg.dynamics.dropout,
         max_sequence_length=cfg.dynamics.max_sequence_length,
         use_action_token=cfg.dynamics.use_action_token,
+        state_backbone_cfg=cfg.state_backbone,
+        state_backbone_provider=artifacts.state_backbone,
+        state_backbone_embedding_dim=artifacts.state_backbone_embedding_dim,
     )
     payload = load_checkpoint(args.checkpoint, map_location="cpu")
     model.load_state_dict(payload["state_dict"], strict=False)

@@ -468,15 +468,12 @@ def build_world_model(
     Parameters
     ----------
     state_backbone_cfg
-        ``StateBackboneConfig`` from :mod:`configs`. ``None`` (the
-        legacy default) behaves exactly like the pre-Phase-5 path: a
-        local :class:`StateStackEncoder` with the same hyperparameters.
-        When set to ``kind='state' | 'stack'``, the dataloader is
-        expected to have pre-encoded the cells through the foundation
-        model (see :func:`world_model.data.build_dataloaders`); in that
-        case ``state_backbone_provider`` and ``state_backbone_embedding_dim``
-        should be passed in by the caller (the dataloader builds the
-        provider once on rank 0).
+        ``StateBackboneConfig`` from :mod:`configs`. Training tensors
+        are always pre-attached AnnData ``.obsm`` rows. ``kind='local'``
+        uses the normal stack encoder over those rows; ``kind='state'``
+        or ``'stack'`` uses a small foreign-embedding head and requires
+        ``state_backbone_embedding_dim`` unless a provider is explicitly
+        passed for backwards-compatible tests.
     state_backbone_provider
         Provider instance owned by the caller (typically the
         dataloader). Only used when ``state_backbone_cfg.kind`` is
@@ -512,7 +509,7 @@ def build_world_model(
                 # untouched.
                 backbone.freeze()
     else:
-        if state_backbone_provider is None:
+        if state_backbone_provider is None and state_backbone_embedding_dim is None:
             backbone = build_backbone(
                 state_backbone_cfg,
                 n_genes=n_genes,
@@ -523,11 +520,17 @@ def build_world_model(
                 encoder_heads=encoder_heads,
                 dropout=dropout,
             )
-        else:
+        elif state_backbone_provider is not None:
             backbone = state_backbone_provider
         emb_dim = state_backbone_embedding_dim
-        if emb_dim is None:
+        if emb_dim is None and backbone is not None:
             emb_dim = backbone.embedding_dim
+        if emb_dim is None:
+            raise ValueError(
+                "state_backbone.kind in {'state', 'stack'} requires "
+                "state_backbone_embedding_dim when consuming pre-attached "
+                "adata.obsm state embeddings."
+            )
         identity_when_dims_match = bool(state_backbone_cfg is not None and state_backbone_cfg.freeze)
         encoder = ForeignBackboneHead(
             embedding_dim=int(emb_dim),

@@ -1,3 +1,0 @@
-# Compatibility experiment path. Canonical dataset defaults live in configs/datasets/nadig.yaml.
-extends: ../datasets/nadig.yaml
-

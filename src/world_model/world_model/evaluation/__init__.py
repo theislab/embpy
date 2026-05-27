@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from . import ablation, baselines, plots, prep
+from . import baselines, plots, prep
 from .cell_eval_runner import run_cell_eval
 from .metrics import (
     cosine_similarity,
@@ -22,7 +22,6 @@ from .rollouts import imagined_rollout
 
 __all__ = [
     "EvaluationResult",
-    "ablation",
     "baselines",
     "cosine_similarity",
     "deg_overlap_top_k",

@@ -1,3 +1,0 @@
-# Compatibility alias. Prototype config lives in configs/prototypes/.
-extends: ../prototypes/single_replogle_stack_borzoi.yaml
-

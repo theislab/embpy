@@ -1,5 +1,0 @@
-extends: datasets/replogle.yaml
-
-run_name: "replogle_k562_essential"
-output_dir: "runs/world_model/replogle_k562_essential"
-

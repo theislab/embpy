@@ -12,11 +12,12 @@
 #      command for each, then copy/paste the one you want:
 #        bash .../submit_gene_embeddings.sh list
 #
-# legacy table embedding -> migrated once into .emstore, then training uses
-#   the store provider directly.
-# bio_embedder embedding -> a pre-warm job (embed_perturbations) is submitted
-#   first and training is chained after it with afterok, so GPU time is not
-#   wasted recomputing embeddings during epoch 1 (same pattern as submit_all.sh).
+# Every embedding is first attached to an AnnData copy under
+# runs/_cache/action_h5ad/<dataset>_<embedding>.h5ad as
+# .obsm["X_pert_<embedding>"]. Training then reads action_embedding.source =
+# anndata_obsm from that file, so the model consumes exactly the same
+# AnnData-aligned artifact you can inspect in notebooks. The source AnnData
+# must already contain state embeddings in .obsm["${STATE_OBSM_KEY}"].
 #
 #   DATASET=nadig | replogle (default) | both
 #
@@ -49,7 +50,8 @@ CPU_PARTITION="${CPU_PARTITION:-cpu_p}"
 CPU_QOS="${CPU_QOS:-cpu_normal}"
 # Chain run_baselines + compare/report (cell_eval) after each train job.
 WITH_COMPARE="${WITH_COMPARE:-1}"
-mkdir -p logs
+STATE_OBSM_KEY="${STATE_OBSM_KEY:-X_state}"
+mkdir -p logs runs/_cache/action_embeddings runs/_cache/action_h5ad
 
 matrix_value() {
     pixi run -e gpu -- python -m world_model.configs.run_matrix "$@"
@@ -65,7 +67,7 @@ h5ad_for() {
 
 # ---------------------------------------------------------------------------
 #  CATALOG  --  name | kind | target | description
-#    kind=precomputed : target is a single symbol-indexed CSV migrated to .emstore
+#    kind=precomputed : target is a single symbol-indexed CSV/NPZ attached to AnnData
 #    kind=bio         : target is a MODEL_REGISTRY key (computed + cached)
 #    kind=convert     : on disk but NOT in a loadable shape -> one-time
 #                       conversion to a symbol-keyed CSV/NPZ required first
@@ -86,7 +88,7 @@ lookup() {  # $1=name -> echoes "kind|target|desc" or returns 1
 print_catalog() {
     local row n k t d
     echo "Gene / action embeddings for the world model"
-    echo "  precomputed = one-time CSV/NPZ -> .emstore migration | bio = computed+cached | convert = needs prep"
+    echo "  precomputed = CSV/NPZ -> adata.obsm | bio = computed+cached -> adata.obsm | convert = needs prep"
     echo
     printf "  %-24s %-11s %s\n" "NAME" "KIND" "DESCRIPTION"
     for row in "${CATALOG[@]}"; do
@@ -103,10 +105,6 @@ print_catalog() {
     echo
     echo "  # nadig instead / both:    DATASET=nadig EMB=<name> bash $SELF"
     echo "  #                          DATASET=both  EMB=<name> bash $SELF"
-    echo
-    echo "Transfer learning across datasets (pretrain Nadig -> fine-tune Replogle):"
-    echo "  bash src/world_model/world_model/scripts/submit/submit_transfer_borzoi.sh            # Borzoi, 10% Replogle"
-    echo "  FRACTION=0.05 bash src/world_model/world_model/scripts/submit/submit_transfer_borzoi.sh   # vary fine-tune %"
 }
 
 # --- selection ------------------------------------------------------------
@@ -131,11 +129,11 @@ fi
 
 if [[ "$KIND" == "convert" ]]; then
     {
-        echo "ERROR: '$EMB' is on disk but NOT in a shape the precomputed provider can read."
+        echo "ERROR: '$EMB' is on disk but NOT in a shape the AnnData attachment step can read."
         echo "       location: $TARGET"
         echo "       $DESC"
         echo
-        echo "  The precomputed loader (load_gene_embedding_table) accepts only:"
+        echo "  The offline table loader (load_gene_embedding_table) accepts only:"
         echo "    * one symbol-indexed .csv  (gene symbol in column 0, comma-separated)"
         echo "    * one .npz with {symbols, embeddings} arrays"
         echo "  These sources are not that: omics/pops are ENSEMBL-keyed TSV, and the"
@@ -143,7 +141,7 @@ if [[ "$KIND" == "convert" ]]; then
         echo "  (an (n_proteins x dim) matrix per file -- a modelling choice is needed"
         echo "  to reduce them to one vector per gene symbol)."
         echo
-        echo "  Convert once into a symbol-indexed CSV, then add a 'precomputed'"
+        echo "  Convert once into a symbol-indexed CSV/NPZ, then add a 'precomputed'"
         echo "  catalog row pointing at the converted file. Ask me to wire the"
         echo "  converter for the one you want."
     } >&2
@@ -156,15 +154,6 @@ if [[ "$KIND" == "precomputed" ]]; then
     if [[ ! -f "$EMB_PATH" ]]; then
         echo "ERROR: precomputed embedding not found: $EMB_PATH" >&2
         exit 1
-    fi
-    STORE_PATH="${EMB_PATH%.*}.emstore"
-    if [[ ! -d "$STORE_PATH" ]]; then
-        echo "Migrating legacy table -> .emstore:"
-        echo "  source: $EMB_PATH"
-        echo "  dest:   $STORE_PATH"
-        pixi run -e gpu -- python -m embpy.store.migrate \
-            "$EMB_PATH" "$STORE_PATH" \
-            --model "$EMB" --entity-type gene --id-scheme symbol
     fi
 else
     EMB_MODEL="$TARGET"
@@ -190,6 +179,7 @@ echo "Embedding: $EMB  (kind=$KIND) -- $DESC"
 [[ "$KIND" == precomputed ]] && echo "  path:  $EMB_PATH"
 [[ "$KIND" == bio ]]         && echo "  model: $EMB_MODEL (region=full pool=mean organism=human id=symbol)"
 echo "Datasets:  ${DATASETS[*]}"
+echo "State obsm: ${STATE_OBSM_KEY}"
 echo
 
 for ds in "${DATASETS[@]}"; do
@@ -197,30 +187,49 @@ for ds in "${DATASETS[@]}"; do
     h5ad="$(h5ad_for "$ds")"
     run_name="single_${ds}_${EMB}"
     out_dir="runs/world_model/${run_name}"
+    obsm_key="X_pert_${EMB}"
+    action_h5ad="runs/_cache/action_h5ad/${ds}_${EMB}.h5ad"
+    action_npz="runs/_cache/action_embeddings/${ds}_${EMB}.npz"
 
     if [[ "$KIND" == "precomputed" ]]; then
-        echo "[$ds] submitting train (store-migrated table: $EMB, pixi env: $PIXI_ENV) ..."
+        echo "[$ds] submitting AnnData attach (precomputed table: $EMB, pixi env: $PIXI_ENV) ..."
+        attach_jid=$(sbatch --parsable \
+            --job-name="wm-attach-${ds}-${EMB}" \
+            --partition="$CPU_PARTITION" --qos="$CPU_QOS" \
+            --time=02:00:00 --mem=64G --cpus-per-task=4 \
+            -o logs/%x_%j.out -e logs/%x_%j.err \
+            --wrap="set -euo pipefail; cd ${PROJECT_DIR}; \
+                export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
+                pixi run -e ${PIXI_ENV} -- python -m world_model.scripts.embed_perturbations \
+                    --dataset ${ds} --h5ad ${h5ad} --table ${EMB_PATH} \
+                    --output ${action_npz} --output-h5ad ${action_h5ad} \
+                    --obsm-key ${obsm_key}")
+        echo "[$ds]   attach job: $attach_jid  -> ${action_h5ad} obsm[${obsm_key}]"
+        echo "[$ds] chaining train after AnnData attach ..."
         jid=$(sbatch --parsable \
             --job-name="wm-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
+            --dependency=afterok:"${attach_jid}" \
             --export=ALL,EMBPY_PIXI_ENV="${PIXI_ENV}" \
             "$LAUNCHER" "$cfg" \
-            "action_embedding.source=store" \
-            "action_embedding.store_path=${STORE_PATH}" \
-            "action_embedding.store_key=gene:${EMB}" \
+            "data.h5ad_path=${action_h5ad}" \
+            "data.state_obsm_key=${STATE_OBSM_KEY}" \
+            "action_embedding.source=anndata_obsm" \
+            "action_embedding.obsm_key=${obsm_key}" \
+            "action_embedding.model_name=${EMB}" \
             "run_name=${run_name}" \
             "output_dir=${out_dir}")
-        echo "[$ds]   train job: $jid  -> $out_dir"
+        echo "[$ds]   train job: $jid  (after ${attach_jid})  -> $out_dir"
     else
-        echo "[$ds] submitting pre-warm (bio_embedder: $EMB_MODEL, pixi env: $PIXI_ENV) ..."
+        echo "[$ds] submitting AnnData attach (bio_embedder: $EMB_MODEL, pixi env: $PIXI_ENV) ..."
         # Constrain to 80GB GPUs: protein/DNA foundation models (ESM-2 650M/3B,
         # Enformer, Evo2, Caduceus, etc.) blow up on 32GB V100s with OOM. The
         # 80GB A100/H100 nodes have enough headroom for the full token stream.
         # Without explicit -o/-e, sbatch --wrap defaults to slurm-<jid>.out
         # in the cwd (project root). Force into logs/ to match the rest of
         # the pipeline and keep the workspace tidy.
-        prewarm_jid=$(sbatch --parsable \
-            --job-name="wm-prewarm-${ds}-${EMB}" \
+        attach_jid=$(sbatch --parsable \
+            --job-name="wm-attach-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
             --gres=gpu:1 --constraint="a100_80gb|h100_80gb" \
             --time=08:00:00 --mem=64G --cpus-per-task=8 \
@@ -232,17 +241,22 @@ for ds in "${DATASETS[@]}"; do
                 trap 'rm -rf \"\$TMPDIR\"' EXIT; \
                 pixi run -e ${PIXI_ENV} -- python -m world_model.scripts.embed_perturbations \
                     --dataset ${ds} --h5ad ${h5ad} --model ${EMB_MODEL} \
+                    --output ${action_npz} --output-h5ad ${action_h5ad} \
+                    --obsm-key ${obsm_key} \
                     --region full --pooling-strategy mean \
                     --organism human --id-type symbol")
-        echo "[$ds]   pre-warm job: $prewarm_jid"
-        echo "[$ds] chaining train after pre-warm ..."
+        echo "[$ds]   attach job: $attach_jid  -> ${action_h5ad} obsm[${obsm_key}]"
+        echo "[$ds] chaining train after AnnData attach ..."
         jid=$(sbatch --parsable \
             --job-name="wm-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
-            --dependency=afterok:"${prewarm_jid}" \
+            --dependency=afterok:"${attach_jid}" \
             --export=ALL,EMBPY_PIXI_ENV="${PIXI_ENV}" \
             "$LAUNCHER" "$cfg" \
-            "action_embedding.source=bio_embedder" \
+            "data.h5ad_path=${action_h5ad}" \
+            "data.state_obsm_key=${STATE_OBSM_KEY}" \
+            "action_embedding.source=anndata_obsm" \
+            "action_embedding.obsm_key=${obsm_key}" \
             "action_embedding.model_name=${EMB_MODEL}" \
             "action_embedding.organism=human" \
             "action_embedding.id_type=symbol" \
@@ -250,7 +264,7 @@ for ds in "${DATASETS[@]}"; do
             "action_embedding.pooling_strategy=mean" \
             "run_name=${run_name}" \
             "output_dir=${out_dir}")
-        echo "[$ds]   train job: $jid  (after ${prewarm_jid})  -> $out_dir"
+        echo "[$ds]   train job: $jid  (after ${attach_jid})  -> $out_dir"
     fi
 
     if [[ "$WITH_COMPARE" == "1" ]]; then

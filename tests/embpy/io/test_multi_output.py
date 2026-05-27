@@ -27,15 +27,15 @@ def test_multi_table_returns_keyed_frames_and_rejects_single_file(tmp_path):
     assert all(isinstance(v, pd.DataFrame) for v in out.values())
 
     with pytest.raises(ValueError, match=r"multiple embedding results.*single file path"):
-        route_output(results, output="table", path=tmp_path / "all.parquet")
+        route_output(results, output="table", path=tmp_path / "all.npz")
 
 
 def test_multi_table_writes_directory(tmp_path):
     results = [_result("m1"), _result("m2")]
     route_output(results, output="table", path=tmp_path)
-    assert (tmp_path / "X_emb__gene__m1__pool_mean.parquet").exists()
-    assert (tmp_path / "X_emb__gene__m1__pool_mean.parquet.meta.json").exists()
-    assert (tmp_path / "X_emb__gene__m2__pool_mean.parquet").exists()
+    assert (tmp_path / "X_emb__gene__m1__pool_mean.npz").exists()
+    assert (tmp_path / "X_emb__gene__m1__pool_mean.npz.meta.json").exists()
+    assert (tmp_path / "X_emb__gene__m2__pool_mean.npz").exists()
 
 
 def test_multi_anndata_standalone_stores_each_key_outside_x():

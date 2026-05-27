@@ -643,14 +643,14 @@ class BioEmbedder:
         id_type: str | Mapping[str, str] | None = None,
         organism: str | None = None,
         pooling_strategy: str = "mean",
-        output: Literal["anndata", "table"] | None = None,
+        output: Literal["anndata", "table", "payload"] | None = None,
         target: Any = None,
         input_path: str | os.PathLike[str] | None = None,
         output_path: str | os.PathLike[str] | None = None,
-        attach_to: Literal["auto", "obs", "var"] = "auto",
+        attach_to: Literal["auto", "obs", "var", "uns"] = "auto",
         harmonize_dim: int | None = None,
         path: str | os.PathLike[str] | None = None,
-        fmt: Literal["parquet", "csv"] = "parquet",
+        fmt: Literal["csv", "npz", "zarr"] = "npz",
         missing: Literal["error", "nan"] = "error",
         id_column: str | None = None,
         identifier_column: str | None = None,
@@ -661,6 +661,8 @@ class BioEmbedder:
         biotype: str = "protein_coding",
         show_progress: bool = False,
         key: str | None = None,
+        metadata_mode: Literal["minimal", "full"] = "full",
+        include_matrix: bool = True,
         random_state: int = 0,
         **embed_kwargs: Any,
     ):
@@ -673,11 +675,15 @@ class BioEmbedder:
         AnnData or a table. Generated embeddings are never stored in
         AnnData ``.X``; standalone AnnData uses sparse placeholder ``.X``
         and stores matrices in ``.obsm``, ``.varm`` or ``.uns``.
+        ``output="payload"`` returns the entity-aligned embedding payload
+        directly, including canonical ids, model/provenance metadata and
+        the requested embedding matrix.
 
         Defaults are explicit: if ``output`` is omitted, an output path
-        chooses tabular Parquet/CSV, otherwise AnnData is returned. Multiple
-        models or multiple entity types return the same output family with
-        deterministic keys that include entity type and model name.
+        chooses compact NPZ/CSV/Zarr file output, otherwise AnnData is
+        returned. Multiple models or multiple entity types return the
+        same output family with deterministic keys that include entity
+        type and model name.
         """
         from .io.exporters import route_output
         from .io.normalize import normalize_embedding_input
@@ -759,6 +765,8 @@ class BioEmbedder:
             fmt=fmt,
             missing=missing,
             key=key,
+            metadata_mode=metadata_mode,
+            include_matrix=include_matrix,
             random_state=random_state,
         )
 
@@ -2670,8 +2678,8 @@ class BioEmbedder:
             - ``.layers["log_normalized"]`` = processed expression
               (standard pipeline)
             - ``.obsm["{prefix}{cell_model}"]`` = cell embeddings
-            - ``.obsm["{prefix}{pert_model}"]`` = perturbation embeddings
-              (mapped per cell)
+            - ``.uns["embpy"]["perturbations"]["{prefix}{pert_model}"]``
+              = perturbation embeddings, one row per unique perturbation
             - ``.uns["embpy_embeddings"]`` = metadata dict
 
         Examples
@@ -2685,9 +2693,11 @@ class BioEmbedder:
         ... )
         >>> result.obsm["X_scgpt"].shape  # cell embeddings
         (5000, 512)
-        >>> result.obsm["X_esm2_650M"].shape  # perturbation embeddings
-        (5000, 1280)
+        >>> result.uns["embpy"]["perturbations"]["X_esm2_650M"]["matrix"].shape
+        (n_perturbations, 1280)
         """
+        from .io.exporters import to_anndata
+        from .io.result import EmbeddingProvenance, EmbeddingResult
         from .resources.gene_resolver import detect_identifier_type
 
         if copy:
@@ -2819,39 +2829,63 @@ class BioEmbedder:
                         }
                         continue
 
-                    # Map embeddings back to cells
-                    n_cells = adata.n_obs
-                    cell_matrix = np.zeros(
-                        (n_cells, emb_dim),
-                        dtype=np.float32,
-                    )
-                    n_mapped = 0
-                    for i, pert in enumerate(pert_ids):
-                        emb = pert_embs.get(pert)
-                        if emb is not None:
-                            cell_matrix[i] = emb
-                            n_mapped += 1
-
-                    adata.obsm[obsm_key] = cell_matrix
                     n_ok = sum(1 for v in pert_embs.values() if v is not None)
+                    successful_perts = [p for p in unique_perts if pert_embs.get(p) is not None]
+                    entity_matrix = np.stack(
+                        [np.asarray(pert_embs[p], dtype=np.float32).ravel() for p in successful_perts],
+                        axis=0,
+                    )
+                    aliases = {
+                        str(p): {
+                            "perturbation_label": str(p),
+                            "input_id_type": str(id_types.get(p, perturbation_type)),
+                        }
+                        for p in successful_perts
+                    }
+                    result = EmbeddingResult(
+                        matrix=entity_matrix,
+                        entity_ids=tuple(str(p) for p in successful_perts),
+                        entity_type="perturbation",
+                        id_scheme="perturbation_label",
+                        provenance=EmbeddingProvenance.create(
+                            model=model_key,
+                            pooling=pooling_strategy,
+                            extra={
+                                "entity_type": "perturbation",
+                                "input_kind": "anndata_obs_column",
+                                "input_source": "AnnData.obs",
+                                "input_id_column": perturbation_column,
+                                "perturbation_column": perturbation_column,
+                                "perturbation_type": perturbation_type,
+                                "organism": perturbation_organism,
+                                "n_requested_inputs": len(unique_perts),
+                                "n_successfully_embedded_entities": n_ok,
+                                "n_embedding_failures": len(unique_perts) - n_ok,
+                                "n_cells": int(adata.n_obs),
+                            },
+                        ),
+                        aliases=aliases,
+                    )
+                    to_anndata(result, target=adata, attach_to="uns", key=obsm_key)
+
                     metadata[model_key] = {
-                        "obsm_key": obsm_key,
+                        "uns_key": obsm_key,
+                        "storage": "uns",
                         "embedding_dim": emb_dim,
-                        "n_cells": n_cells,
+                        "n_cells": int(adata.n_obs),
                         "n_perturbations_total": len(unique_perts),
                         "n_perturbations_embedded": n_ok,
-                        "n_cells_mapped": n_mapped,
                         "type": "perturbation",
                         "perturbation_column": perturbation_column,
                     }
                     logging.info(
-                        "  -> stored in .obsm['%s'], shape %s (%d/%d perturbations embedded, %d/%d cells mapped)",
+                        "  -> stored in .uns embpy perturbations[%r], shape=(%d, %d) "
+                        "(%d/%d perturbations embedded)",
                         obsm_key,
-                        cell_matrix.shape,
+                        entity_matrix.shape[0],
+                        entity_matrix.shape[1],
                         n_ok,
                         len(unique_perts),
-                        n_mapped,
-                        n_cells,
                     )
 
                 except Exception as e:  # noqa: BLE001

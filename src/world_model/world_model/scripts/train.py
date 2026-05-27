@@ -1,13 +1,13 @@
-r"""End-to-end training entry-point.
+r"""End-to-end single-dataset training entry-point.
 
-Handles both ``mode: single`` (one dataset, train + test split, single
-fit) and ``mode: transfer`` (pretrain on Nadig, fine-tune on a fraction
-of Replogle, evaluate on the rest of Replogle).
+The world model trains within one perturbation dataset at a time. State
+and action embeddings must already be attached to the configured AnnData
+under ``data.state_obsm_key`` and ``action_embedding.obsm_key``.
 
 Usage:
 
     python -m world_model.scripts.train \\
-        --config src/world_model/world_model/configs/experiments/single_replogle.yaml \\
+        --config src/world_model/world_model/configs/datasets/replogle.yaml \\
         encoder.d_model=256 dynamics.n_layers=8
 
 Positional arguments after ``--config`` are treated as dotted CLI
@@ -17,7 +17,6 @@ overrides applied on top of the YAML.
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import logging
 from pathlib import Path
 from typing import Any
@@ -26,8 +25,6 @@ import numpy as np
 import torch
 
 from world_model.configs import (
-    ActionEmbeddingConfig,
-    DataConfig,
     WorldModelConfig,
     apply_cli_overrides,
     load_yaml_config,
@@ -35,7 +32,6 @@ from world_model.configs import (
 )
 from world_model.data import build_dataloaders
 from world_model.data.inspect import dump_sample_contexts
-from world_model.data.splits import subsample_train_perturbations
 from world_model.evaluation import run_evaluation
 from world_model.evaluation.plots import (
     per_perturbation_tables_to_long,
@@ -46,7 +42,7 @@ from world_model.evaluation.plots import (
 )
 from world_model.evaluation.report import write_report
 from world_model.models.world_model import build_world_model
-from world_model.training import WorldModelTrainer, apply_encoder_swap
+from world_model.training import WorldModelTrainer
 from world_model.utils import seed_everything, setup_logging
 from world_model.utils.run_identity import (
     append_run_suffix,
@@ -106,47 +102,6 @@ def _build_model(
     )
 
 
-def _freeze_components(model, *, encoder: bool, dynamics: bool) -> None:
-    if encoder:
-        for p in model.encoder.parameters():
-            p.requires_grad_(False)
-        logger.info("Encoder frozen for fine-tuning.")
-    if dynamics:
-        for p in model.dynamics.parameters():
-            p.requires_grad_(False)
-        logger.info("Dynamics frozen for fine-tuning.")
-
-
-def _pretrain_action_cfg(cfg: WorldModelConfig) -> ActionEmbeddingConfig:
-    """Action-embedding config for the pretrain phase.
-
-    Resolution rule:
-    1. If ``transfer.pretrain_action_encoder`` is set, use it verbatim.
-    2. Else fall back to ``cfg.action_embedding``.
-
-    Legacy ``transfer.pretrain_gene_embedding_path`` values are no longer
-    translated into a CSV provider; callers should migrate those tables into a
-    ``.emstore`` and set ``pretrain_action_encoder.store_path`` when the
-    pretrain phase needs a different action universe.
-    """
-    if cfg.transfer.pretrain_action_encoder is not None:
-        return dataclasses.replace(cfg.transfer.pretrain_action_encoder)
-    return dataclasses.replace(cfg.action_embedding)
-
-
-def _finetune_action_cfg(cfg: WorldModelConfig) -> ActionEmbeddingConfig:
-    """Action-embedding config for the fine-tune phase.
-
-    Defaults to the run's top-level ``action_embedding`` (Phase-1/2
-    behaviour). When ``transfer.finetune_action_encoder`` is set, that
-    block wins -- this is how the leave-one-encoder-out runner asks for
-    Y on the fine-tune side while the run's nominal encoder is X.
-    """
-    if cfg.transfer.finetune_action_encoder is not None:
-        return dataclasses.replace(cfg.transfer.finetune_action_encoder)
-    return dataclasses.replace(cfg.action_embedding)
-
-
 def _run_single(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object]:
     """Single-dataset train. Returns (model, artifacts)."""
     artifacts = build_dataloaders(
@@ -201,173 +156,6 @@ def _run_single(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object
         backbone_provider=artifacts.state_backbone,
     )
     trainer.fit(train_loader=artifacts.train_loader, val_loader=artifacts.val_loader)
-    return model, artifacts
-
-
-def _run_transfer(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object]:
-    """Pretrain on Nadig, fine-tune on a fraction of Replogle."""
-    pretrain_data = DataConfig(
-        dataset=cfg.transfer.pretrain_dataset,
-        h5ad_path=cfg.transfer.pretrain_h5ad_path,
-        gene_embedding_path=cfg.transfer.pretrain_gene_embedding_path,
-        perturbation_key=cfg.data.perturbation_key,
-        control_label=cfg.data.control_label,
-        cell_type_key=None,
-        n_top_genes=cfg.data.n_top_genes,
-        log_normalize=cfg.data.log_normalize,
-        stack_size=cfg.data.stack_size,
-        sequence_length=cfg.data.sequence_length,
-        n_pert=cfg.data.n_pert,
-        batch_size=cfg.data.batch_size,
-        val_fraction=cfg.data.val_fraction,
-        num_workers=cfg.data.num_workers,
-        pin_memory=cfg.data.pin_memory,
-        n_sequences_per_epoch=cfg.data.n_sequences_per_epoch,
-    )
-    pretrain_action_cfg = _pretrain_action_cfg(cfg)
-
-    pretrain_dir = output_dir / "pretrain"
-    pretrain_artifacts = build_dataloaders(
-        pretrain_data,
-        split_cfg=cfg.split,
-        action_cfg=pretrain_action_cfg,
-        state_backbone_cfg=cfg.state_backbone,
-        seed=cfg.seed,
-        output_dir=pretrain_dir,
-    )
-    # Decoder output dim == observation dim. See _run_single for context.
-    n_genes = (
-        pretrain_artifacts.state_backbone_embedding_dim
-        if pretrain_artifacts.state_backbone_embedding_dim is not None
-        else len(pretrain_artifacts.gene_symbols)
-    )
-    pretrain_action_dim = pretrain_artifacts.gene_table.shape[1]
-    model = _build_model(
-        cfg,
-        n_genes,
-        pretrain_artifacts.gene_table,
-        state_backbone_provider=pretrain_artifacts.state_backbone,
-        state_backbone_embedding_dim=pretrain_artifacts.state_backbone_embedding_dim,
-    )
-
-    pretrain_train_cfg = dataclasses.replace(cfg.train, n_epochs=cfg.transfer.pretrain_epochs)
-    pre_trainer = WorldModelTrainer(
-        model=model,
-        optim_cfg=cfg.optim,
-        loss_cfg=cfg.loss,
-        train_cfg=pretrain_train_cfg,
-        output_dir=pretrain_dir,
-        run_name=f"{cfg.run_name}_pretrain",
-        state_backbone_cfg=cfg.state_backbone,
-        backbone_provider=pretrain_artifacts.state_backbone,
-    )
-
-    if cfg.transfer.pretrain_checkpoint:
-        pre_trainer.load_state(cfg.transfer.pretrain_checkpoint, strict=False)
-        logger.info("Skipping pretrain phase; loaded %s", cfg.transfer.pretrain_checkpoint)
-    else:
-        pre_trainer.fit(
-            train_loader=pretrain_artifacts.train_loader,
-            val_loader=pretrain_artifacts.val_loader,
-        )
-        ckpt_path = pretrain_dir / f"{cfg.run_name}_pretrain_final.pt"
-        logger.info("Pretrain done. Checkpoint at %s", ckpt_path)
-
-    finetune_action_cfg = _finetune_action_cfg(cfg)
-    finetune_dir = output_dir / "finetune"
-    artifacts = build_dataloaders(
-        cfg.data,
-        split_cfg=cfg.split,
-        action_cfg=finetune_action_cfg,
-        state_backbone_cfg=cfg.state_backbone,
-        seed=cfg.seed,
-        output_dir=finetune_dir,
-    )
-    finetune_action_dim = artifacts.gene_table.shape[1]
-
-    sub_split = subsample_train_perturbations(
-        artifacts.split,
-        artifacts.full_dataset.perturbation_labels,
-        fraction=cfg.transfer.finetune_fraction,
-        seed=cfg.seed,
-    )
-    artifacts = build_dataloaders(
-        cfg.data,
-        split_cfg=cfg.split,
-        action_cfg=finetune_action_cfg,
-        state_backbone_cfg=cfg.state_backbone,
-        seed=cfg.seed,
-        output_dir=finetune_dir,
-        finetune_perturbations=sub_split.train_perturbations,
-        state_backbone_override=pretrain_artifacts.state_backbone,
-    )
-
-    finetune_n_genes = (
-        artifacts.state_backbone_embedding_dim
-        if artifacts.state_backbone_embedding_dim is not None
-        else len(artifacts.gene_symbols)
-    )
-    if finetune_n_genes != n_genes:
-        logger.warning(
-            "Pretrain decoder_dim (%d) != fine-tune decoder_dim (%d). Rebuilding encoder/decoder.",
-            n_genes,
-            finetune_n_genes,
-        )
-        new_model = _build_model(
-            cfg,
-            finetune_n_genes,
-            artifacts.gene_table,
-            state_backbone_provider=artifacts.state_backbone,
-            state_backbone_embedding_dim=artifacts.state_backbone_embedding_dim,
-        )
-        new_model.dynamics.load_state_dict(model.dynamics.state_dict())
-        if pretrain_action_dim == finetune_action_dim:
-            new_model.action_encoder.load_state_dict(model.action_encoder.state_dict())
-        else:
-            logger.warning(
-                "Action embedding dim changed during rebuild (%d -> %d); skipping action_encoder weight transfer.",
-                pretrain_action_dim,
-                finetune_action_dim,
-            )
-        model = new_model
-
-    apply_encoder_swap(
-        model,
-        pretrain_provider=pretrain_artifacts.provider,
-        finetune_provider=artifacts.provider,
-        pretrain_table=pretrain_artifacts.gene_table,
-        finetune_table=artifacts.gene_table,
-        pretrain_indexer=pretrain_artifacts.indexer,
-        finetune_indexer=artifacts.indexer,
-        strategy=cfg.transfer.swap_strategy,
-        adapter_cfg=cfg.action_adapter,
-        d_model=cfg.encoder.d_model,
-        alignment_epochs=cfg.transfer.alignment_epochs,
-        alignment_lr=cfg.transfer.alignment_lr,
-        device=("cuda" if torch.cuda.is_available() else "cpu"),
-    )
-
-    _freeze_components(
-        model,
-        encoder=cfg.transfer.freeze_encoder_during_finetune,
-        dynamics=cfg.transfer.freeze_dynamics_during_finetune,
-    )
-
-    finetune_train_cfg = dataclasses.replace(cfg.train, n_epochs=cfg.transfer.finetune_epochs)
-    ft_trainer = WorldModelTrainer(
-        model=model,
-        optim_cfg=cfg.optim,
-        loss_cfg=cfg.loss,
-        train_cfg=finetune_train_cfg,
-        output_dir=finetune_dir,
-        run_name=f"{cfg.run_name}_finetune",
-        state_backbone_cfg=cfg.state_backbone,
-        backbone_provider=artifacts.state_backbone,
-    )
-    ft_trainer.fit(
-        train_loader=artifacts.train_loader,
-        val_loader=artifacts.val_loader,
-    )
     return model, artifacts
 
 
@@ -491,7 +279,6 @@ def _key_hyperparams(cfg: WorldModelConfig) -> dict[str, Any]:
         "data.sequence_length": cfg.data.sequence_length,
         "data.stack_size": cfg.data.stack_size,
         "data.batch_size": cfg.data.batch_size,
-        "data.n_top_genes": cfg.data.n_top_genes,
         "data.sequence_bucket_key": getattr(cfg.data, "sequence_bucket_key", None),
         "encoder.kind": cfg.encoder.kind,
         "encoder.d_model": cfg.encoder.d_model,
@@ -820,15 +607,9 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     try:
-        if cfg.mode == "transfer":
-            if not cfg.transfer.enabled:
-                raise ValueError("mode='transfer' but transfer.enabled=False")
-            model, artifacts = _run_transfer(cfg, output_dir)
-        elif cfg.mode == "single":
-            model, artifacts = _run_single(cfg, output_dir)
-        else:
-            raise ValueError(f"Unknown mode {cfg.mode!r}; use 'single' or 'transfer'.")
-
+        if cfg.mode != "single":
+            raise ValueError("Only mode='single' is supported.")
+        model, artifacts = _run_single(cfg, output_dir)
         _run_eval_and_report(cfg, output_dir, model, artifacts)
     except BaseException as exc:
         # Catch BaseException so SLURM-side SIGTERMs (KeyboardInterrupt,

@@ -7,7 +7,7 @@
 # that stitches all of them into a single comparison (world model vs every
 # baseline, across every embedding).
 #
-# Per embedding it just calls submit/submit_gene_embeddings.sh (so the prewarm ->
+# Per embedding it just calls submit/submit_gene_embeddings.sh (so the AnnData attach ->
 # train -> baselines -> compare chain, partitions, and overrides are defined
 # in exactly one place). The terminal compare job id of each embedding is
 # collected and the aggregator is submitted afterany on all of them.

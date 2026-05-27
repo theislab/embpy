@@ -15,11 +15,7 @@ from world_model.data.datasets.base import (
     GeneIndexer,
     PerturbationSequenceDataset,
 )
-from world_model.data.preprocessing import (
-    log_normalize_counts,
-    select_highly_variable_genes,
-    sequence_collate_fn,
-)
+from world_model.data.preprocessing import sequence_collate_fn
 
 N_CELLS = 200
 N_GENES = 64
@@ -36,16 +32,6 @@ def _make_synthetic() -> tuple[np.ndarray, np.ndarray, GeneIndexer]:
     )[:N_CELLS]
     indexer = GeneIndexer.from_symbols(PERTURBATIONS)
     return x, labels, indexer
-
-
-def test_preprocessing_pipeline() -> None:
-    x, _, _ = _make_synthetic()
-    keep = select_highly_variable_genes(x, n_top=16)
-    assert keep.shape == (16,)
-    x = x[:, keep]
-    x = log_normalize_counts(x)
-    assert np.isfinite(x).all()
-    assert (x >= 0).all()
 
 
 def test_indexer_encodes_multi_gene_perturbations() -> None:

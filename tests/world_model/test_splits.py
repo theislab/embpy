@@ -11,7 +11,6 @@ from world_model.data.splits import (
     make_split,
     save_split,
     split_or_load,
-    subsample_train_perturbations,
 )
 
 
@@ -67,11 +66,3 @@ def test_cell_split_is_full_partition():
                       train_fraction=0.7, seed=0)
     union = np.concatenate([spec.train_indices, spec.test_indices])
     assert len(set(union.tolist())) == labels.size
-
-
-def test_subsample_keeps_fraction():
-    labels = _toy_labels(n_perts=10)
-    spec = make_split(labels, control_label="non-targeting", seed=0)
-    sub = subsample_train_perturbations(spec, labels, fraction=0.2, seed=0)
-    assert len(sub.train_perturbations or []) <= len(spec.train_perturbations or [])
-    assert len(sub.train_perturbations or []) >= 1

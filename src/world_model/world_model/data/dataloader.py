@@ -6,8 +6,10 @@ behind a single function keyed off the package's :class:`DataConfig`,
 persisted on disk so the world model and every baseline see
 byte-identical train/test sets.
 
-The action-embedding lookup is materialised eagerly inside
-:meth:`from_h5ad`: ``__getitem__`` only ever hits a numpy array.
+The model input contract is AnnData-only: state embeddings come from
+``adata.obsm[data.state_obsm_key]`` and action embeddings come from
+``adata.obsm[action_embedding.obsm_key]``. Both are materialised eagerly
+inside ``from_h5ad`` so ``__getitem__`` only ever hits numpy arrays.
 """
 
 from __future__ import annotations
@@ -21,25 +23,14 @@ from typing import Any
 import numpy as np
 
 from world_model.configs import ActionEmbeddingConfig, DataConfig, SplitConfig, StateBackboneConfig
+from world_model.data.datasets.anndata import AnnDataSequenceDataset
 from world_model.data.datasets.base import GeneIndexer, PerturbationSequenceDataset
-from world_model.data.datasets.nadig import NadigSequenceDataset
-from world_model.data.datasets.replogle import ReplogleSequenceDataset
 from world_model.data.embeddings import ActionEmbeddingProvider, build_provider
 from world_model.data.preprocessing import sequence_collate_fn
 from world_model.data.splits import SplitArtifact, split_or_load
-from world_model.models.encoders.backbones import (
-    StateBackboneProvider,
-    build_backbone,
-    cache_path_for,
-)
+from world_model.models.encoders.backbones import StateBackboneProvider
 
 logger = logging.getLogger(__name__)
-
-
-_DATASET_REGISTRY: dict[str, Any] = {
-    "replogle": ReplogleSequenceDataset,
-    "nadig": NadigSequenceDataset,
-}
 
 
 @dataclass
@@ -73,8 +64,6 @@ def build_dataloaders(
     state_backbone_cfg: StateBackboneConfig | None = None,
     seed: int = 0,
     output_dir: str | Path | None = None,
-    finetune_perturbations: list[str] | None = None,
-    state_backbone_override: StateBackboneProvider | None = None,
 ) -> DataArtifacts:
     """Build a :class:`DataArtifacts` bundle from the data + split + action configs.
 
@@ -86,39 +75,31 @@ def build_dataloaders(
         Split policy. Defaults to a fresh :class:`SplitConfig` (perturbation
         split, 80/20).
     action_cfg
-        Action-embedding config. Defaults to ``source="store"``; callers must
-        provide ``action_embedding.store_path`` unless they explicitly use the
-        BioEmbedder backend.
+        Action-embedding config. Must use ``source="anndata_obsm"``;
+        precomputed tables and BioEmbedder models should be attached to
+        the AnnData before training.
     seed
         Used for the random sampler RNG; the split's own seed is
         independent so split results are stable across model seeds.
     output_dir
         If set, the split and ``action_embedding_meta.json`` are
         persisted under that directory.
-    finetune_perturbations
-        Optional list of perturbation labels to *intersect* with the
-        train side. Used by the transfer setup to fine-tune on a
-        fraction of the train perturbations.
     """
     from torch.utils.data import DataLoader
 
-    if cfg.dataset not in _DATASET_REGISTRY:
-        raise KeyError(f"Unknown dataset '{cfg.dataset}'. Available: {sorted(_DATASET_REGISTRY)}")
     if split_cfg is None:
         split_cfg = SplitConfig()
     if action_cfg is None:
         action_cfg = ActionEmbeddingConfig()
 
     rng = np.random.default_rng(seed)
-    cls = _DATASET_REGISTRY[cfg.dataset]
     provider = build_provider(action_cfg, data_cfg=cfg)
-    full_dataset, gene_table, indexer, gene_symbols = cls.from_h5ad(
+    full_dataset, gene_table, indexer, gene_symbols = AnnDataSequenceDataset.from_h5ad(
         h5ad_path=cfg.h5ad_path,
         provider=provider,
         perturbation_key=cfg.perturbation_key,
         control_label=cfg.control_label,
-        n_top_genes=cfg.n_top_genes,
-        log_normalize=cfg.log_normalize,
+        state_obsm_key=cfg.state_obsm_key,
         sequence_length=cfg.sequence_length,
         stack_size=cfg.stack_size,
         n_pert=cfg.n_pert,
@@ -129,21 +110,19 @@ def build_dataloaders(
     )
 
     # Capture per-row statuses for downstream metadata. ``provider`` is
-    # used by ``cls.from_h5ad`` to call :meth:`build_table` which now
-    # delegates to :meth:`embed_with_status`; the resolved bookkeeping
-    # is stored on the provider as ``_last_*`` attributes.
+    # used by ``AnnDataSequenceDataset.from_h5ad`` to call
+    # :meth:`build_table` which now delegates to
+    # :meth:`embed_with_status`; the resolved bookkeeping is stored on
+    # the provider as ``_last_*`` attributes.
     n_unresolved_attr = getattr(provider, "_last_unresolved", []) or []
     n_control_attr = getattr(provider, "_last_controls", []) or []
 
-    state_backbone, state_embedding_dim = _maybe_pre_encode_with_backbone(
+    state_backbone, state_embedding_dim = _materialize_state_obsm_metadata(
         full_dataset=full_dataset,
-        h5ad_path=cfg.h5ad_path,
         state_backbone_cfg=state_backbone_cfg,
-        cell_type_key=getattr(cfg, "cell_type_key", None),
-        cell_type_filter=getattr(cfg, "cell_type_filter", None),
-        perturbation_key=cfg.perturbation_key,
+        state_obsm_key=cfg.state_obsm_key,
+        h5ad_path=cfg.h5ad_path,
         output_dir=output_dir,
-        override_provider=state_backbone_override,
     )
 
     if output_dir is not None:
@@ -208,7 +187,7 @@ def build_dataloaders(
     if split_cfg.cache_path is not None:
         cache_path = Path(split_cfg.cache_path)
     elif output_dir is not None:
-        cache_path = Path(output_dir) / "splits" / f"{cfg.dataset}.npz"
+        cache_path = Path(output_dir) / "splits" / f"{_dataset_cache_stem(cfg)}.npz"
 
     spec = split_or_load(
         full_dataset.perturbation_labels,
@@ -220,28 +199,8 @@ def build_dataloaders(
         keep_control_in_test=split_cfg.keep_control_in_test,
     )
 
-    train_indices = spec.train_indices
-    if finetune_perturbations is not None:
-        keep = set(finetune_perturbations)
-        labels = full_dataset.perturbation_labels
-        is_control = labels == cfg.control_label
-        keep_mask = np.array([(lbl in keep) for lbl in labels])
-        train_indices = np.unique(
-            np.concatenate(
-                [
-                    np.flatnonzero(is_control),
-                    np.flatnonzero(keep_mask),
-                ]
-            )
-        )
-        logger.info(
-            "Sub-selecting fine-tune train: %d perts, %d cells",
-            len(keep),
-            train_indices.size,
-        )
-
     train_dataset = full_dataset.subset(
-        cell_indices=train_indices,
+        cell_indices=spec.train_indices,
         n_sequences_per_epoch=cfg.n_sequences_per_epoch,
         rng=np.random.default_rng(seed),
     )
@@ -304,100 +263,53 @@ def build_dataloaders(
     )
 
 
-def _maybe_pre_encode_with_backbone(
+def _dataset_cache_stem(cfg: DataConfig) -> str:
+    """Return a split-cache stem; ``data.dataset`` is just a human label."""
+    if cfg.dataset:
+        return str(cfg.dataset)
+    if cfg.h5ad_path:
+        return Path(cfg.h5ad_path).stem
+    return "dataset"
+
+
+def _materialize_state_obsm_metadata(
     *,
     full_dataset: PerturbationSequenceDataset,
-    h5ad_path: str | Path,
     state_backbone_cfg: StateBackboneConfig | None,
-    cell_type_key: str | None,
-    cell_type_filter: str | None,
-    perturbation_key: str,
+    state_obsm_key: str,
+    h5ad_path: str | Path,
     output_dir: str | Path | None,
-    override_provider: StateBackboneProvider | None,
 ) -> tuple[StateBackboneProvider | None, int | None]:
-    """Pre-encode the dataset's expression matrix through a foundation backbone.
-
-    Only runs for ``kind in {'state', 'stack'}``; the local path is a
-    no-op (the dataset already holds the raw expression matrix and the
-    world model's encoder consumes it directly).
-
-    On a cache hit, the underlying wrapper is never even constructed --
-    only the provider object itself is instantiated, which is cheap
-    enough that rank-0 vs rank-N concerns don't arise.
-    """
-    if state_backbone_cfg is None or state_backbone_cfg.kind == "local":
-        return None, None
-
-    provider = override_provider if override_provider is not None else build_backbone(state_backbone_cfg)
-
-    import anndata as ad
-
-    adata = ad.read_h5ad(h5ad_path)
-    if cell_type_filter is not None and cell_type_key is not None:
-        mask = adata.obs[cell_type_key].astype(str).values == cell_type_filter
-        adata = adata[mask].copy()
-
-    if adata.n_obs != full_dataset.expression.shape[0]:
-        raise RuntimeError(
-            f"State-backbone pre-encode row mismatch: dataset has "
-            f"{full_dataset.expression.shape[0]} cells but the (filtered) "
-            f"AnnData has {adata.n_obs}. The dataset's cell ordering must "
-            f"line up with the AnnData ordering for the embeddings to be "
-            f"meaningful. Make sure DataConfig.cell_type_filter matches "
-            f"the dataset's own filter."
-        )
-
-    embeddings = provider.encode(adata)
-    embeddings = np.ascontiguousarray(np.asarray(embeddings, dtype=np.float32))
-    if embeddings.shape[0] != full_dataset.expression.shape[0]:
-        raise RuntimeError(
-            f"State-backbone returned {embeddings.shape[0]} rows but "
-            f"dataset expects {full_dataset.expression.shape[0]}."
-        )
-
-    # full_dataset.raw_expression keeps the original (N, n_hvg) HVG
-    # matrix because PerturbationSequenceDataset.__init__ aliased it to
-    # the pre-overwrite .expression. Eval reads .raw_expression for the
-    # gene-space truth side; training reads .expression (now embeddings).
-    full_dataset.expression = embeddings
-    full_dataset.n_genes = int(embeddings.shape[1])
-
-    cache_path = ""
-    cache_hit = False
-    if state_backbone_cfg.cache_dir:
-        try:
-            ckpt_hash, ds_hash = provider._cache_key(adata)  # type: ignore[attr-defined]
-            cp = cache_path_for(
-                state_backbone_cfg.cache_dir,
-                backbone=provider.name,
-                ckpt_hash=ckpt_hash,
-                dataset_hash=ds_hash,
-            )
-            cache_path = str(cp)
-            cache_hit = cp.exists()
-        except AttributeError:
-            pass
-
-    meta = provider.metadata(
-        n_cells_encoded=int(embeddings.shape[0]),
-        cache_hit=cache_hit,
-        cache_path=cache_path,
-    )
-    del perturbation_key  # currently unused; reserved for future per-pert caches
+    """Persist metadata for the already-attached state embedding matrix."""
+    kind = getattr(state_backbone_cfg, "kind", "local") if state_backbone_cfg is not None else "local"
+    dim = int(full_dataset.expression.shape[1])
     if output_dir is not None:
-        out_path = Path(output_dir) / "state_backbone_meta.json"
+        meta = {
+            "kind": "anndata_obsm",
+            "state_head_kind": kind,
+            "h5ad_path": str(h5ad_path),
+            "obsm_key": str(state_obsm_key),
+            "embedding_dim": dim,
+            "n_cells_encoded": int(full_dataset.expression.shape[0]),
+        }
+        out_path = Path(output_dir) / "state_embedding_meta.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(asdict(meta), indent=2, default=str))
+        out_path.write_text(json.dumps(meta, indent=2, default=str))
         logger.info(
-            "State-backbone meta -> %s (kind=%s, dim=%d, cache_hit=%s, n_cells=%d)",
+            "State embedding meta -> %s (obsm=%s, head=%s, dim=%d, n_cells=%d)",
             out_path,
-            meta.kind,
-            meta.embedding_dim,
-            meta.cache_hit,
-            meta.n_cells_encoded,
+            state_obsm_key,
+            kind,
+            dim,
+            full_dataset.expression.shape[0],
         )
-
-    return provider, int(embeddings.shape[1])
+    # Non-local heads need this dim so build_world_model can construct a
+    # ForeignBackboneHead without instantiating a heavy STATE/STACK provider.
+    if kind in {"state", "stack"}:
+        return None, dim
+    if output_dir is not None:
+        logger.debug("Local state head will consume adata.obsm[%r] directly.", state_obsm_key)
+    return None, None
 
 
 __all__ = ["DataArtifacts", "build_dataloaders"]

@@ -8,9 +8,9 @@ on the train side, evaluates them on the test side, and writes:
 
 Usage:
 
-    python -m world_model.scripts.run_baselines \\
-        --config src/world_model/world_model/configs/experiments/single_replogle.yaml \\
-        --checkpoint runs/world_model/single_replogle/single_replogle_final.pt
+        python -m world_model.scripts.run_baselines \\
+            --config src/world_model/world_model/configs/datasets/replogle.yaml \\
+            --checkpoint runs/world_model/single_replogle/single_replogle_final.pt
 """
 
 from __future__ import annotations
@@ -56,7 +56,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _build_optional_model(cfg: WorldModelConfig, n_genes: int, gene_table, ckpt_path: str | None):
+def _build_optional_model(
+    cfg: WorldModelConfig,
+    n_genes: int,
+    gene_table,
+    ckpt_path: str | None,
+    *,
+    state_backbone_provider=None,
+    state_backbone_embedding_dim: int | None = None,
+):
     if ckpt_path is None:
         return None
     model = build_world_model(
@@ -72,6 +80,9 @@ def _build_optional_model(cfg: WorldModelConfig, n_genes: int, gene_table, ckpt_
         dropout=cfg.dynamics.dropout,
         max_sequence_length=cfg.dynamics.max_sequence_length,
         use_action_token=cfg.dynamics.use_action_token,
+        state_backbone_cfg=cfg.state_backbone,
+        state_backbone_provider=state_backbone_provider,
+        state_backbone_embedding_dim=state_backbone_embedding_dim,
     )
     payload = load_checkpoint(ckpt_path, map_location="cpu")
     model.load_state_dict(payload["state_dict"], strict=False)
@@ -91,10 +102,8 @@ def main(argv: list[str] | None = None) -> None:
     setup_logging(level=logging.INFO, log_file=output_dir / "baselines.log")
     seed_everything(cfg.seed)
 
-    # Pass action_cfg + state_backbone_cfg so the action-embedding source
-    # (store vs bio_embedder) matches the train run. Without these,
-    # build_dataloaders would use its default action config and can
-    # instantiate a model with the wrong action dimension.
+    # Pass action_cfg + state_backbone_cfg so the AnnData obsm keys and
+    # model dimensions match the train run.
     artifacts = build_dataloaders(
         cfg.data,
         split_cfg=cfg.split,
@@ -106,9 +115,13 @@ def main(argv: list[str] | None = None) -> None:
 
     model = _build_optional_model(
         cfg,
-        len(artifacts.gene_symbols),
+        artifacts.state_backbone_embedding_dim
+        if artifacts.state_backbone_embedding_dim is not None
+        else len(artifacts.gene_symbols),
         artifacts.gene_table,
         args.checkpoint,
+        state_backbone_provider=artifacts.state_backbone,
+        state_backbone_embedding_dim=artifacts.state_backbone_embedding_dim,
     )
     device = (
         "cuda"

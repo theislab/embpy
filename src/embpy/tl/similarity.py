@@ -349,9 +349,8 @@ def nearest_neighbors_table(
 
     This is the tabular counterpart to :func:`embpy.tl.find_nearest_neighbors`,
     which computes and stores a scanpy neighbor graph in AnnData. It accepts a
-    raw matrix plus ids so higher-level semantic layers such as ``adata.embpy``
-    can reuse the same implementation for AnnData-aligned embeddings and
-    external store embeddings.
+    raw matrix plus ids so callers can reuse the same implementation for
+    AnnData-aligned embeddings and external table embeddings.
     """
     X = np.asarray(matrix, dtype=np.float32)
     if X.ndim != 2:

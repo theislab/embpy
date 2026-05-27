@@ -4,24 +4,19 @@ mode: "single"
 data:
   dataset: ""
   h5ad_path: ""
-  gene_embedding_path: ""
+  state_obsm_key: "X_state"
   perturbation_key: "perturbation"
   control_label: "control"
-  cell_type_key: null
-  n_top_genes: 5000
-  log_normalize: true
   stack_size: 4
   sequence_length: 8
   n_pert: 2
   batch_size: 64
-  val_fraction: 0.1
   num_workers: 4
   pin_memory: true
 
 action_embedding:
-  source: "store"
-  store_path: "data/embeddings/gene_embeddings/genept/genept.emstore"
-  store_key: "gene:genept"
+  source: "anndata_obsm"
+  obsm_key: "X_pert"
 
 state_backbone:
   kind: "local"
@@ -78,4 +73,3 @@ eval:
   use_cell_eval: true
   deg_top_k: 50
   save_predictions: true
-

@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from anndata import AnnData
 
-from embpy.io.exporters import to_anndata
+from embpy.io.exporters import materialize_perturbation_obsm, to_anndata
 from embpy.io.result import EmbeddingProvenance, EmbeddingResult
 
 
@@ -81,3 +81,34 @@ def test_custom_key():
     tgt = _make_target(["pertA", "pertB"], ["g1"])
     out = to_anndata(res, target=tgt, key="X_myemb")
     assert "X_myemb" in out.obsm
+
+
+def test_attach_to_uns_stores_entity_aligned_payload():
+    res = _result(["ENSG1", "ENSG2"])
+    tgt = _make_target(["cell1", "cell2"], ["g1"])
+    out = to_anndata(res, target=tgt, attach_to="uns", key="X_pert_toy")
+    payload = out.uns["embpy"]["perturbations"]["X_pert_toy"]
+    assert payload["entity_ids"] == ["ENSG1", "ENSG2"]
+    assert payload["matrix"].shape == (2, 4)
+    assert "X_pert_toy" not in out.obsm
+
+
+def test_materialize_perturbation_obsm_from_uns_aliases():
+    res = EmbeddingResult(
+        matrix=np.array([[1, 2], [3, 4]], dtype=np.float32),
+        entity_ids=("ENSG1", "ENSG2"),
+        entity_type="perturbation",
+        id_scheme="ensembl_gene_id",
+        provenance=EmbeddingProvenance(model="m"),
+        aliases={
+            "ENSG1": {"gene_symbol": "TP53"},
+            "ENSG2": {"gene_symbol": "MYC"},
+        },
+    )
+    tgt = _make_target(["cell1", "cell2", "cell3"], ["g1"])
+    tgt.obs["perturbation"] = ["TP53", "MYC", "TP53"]
+    to_anndata(res, target=tgt, attach_to="uns", key="X_pert_m")
+    materialize_perturbation_obsm(tgt, embedding_key="X_pert_m", perturbation_key="perturbation")
+    assert "X_pert_m" in tgt.obsm
+    np.testing.assert_allclose(tgt.obsm["X_pert_m"], np.array([[1, 2], [3, 4], [1, 2]], dtype=np.float32))
+    assert tgt.uns["world_model_action_embeddings"]["X_pert_m"]["source"] == "embpy_uns"

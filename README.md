@@ -229,28 +229,68 @@ flowchart LR
 
 Canonical IDs are used as primary keys by default: Ensembl gene IDs for genes, canonical SMILES for molecules, UniProt accessions for proteins, and explicit input IDs for raw text/sequence entries. Original symbols, names, and input values are kept as aliases/metadata, not as primary keys.
 
-Outputs are either AnnData or tables. Table output defaults to Parquet and writes a `<file>.meta.json` sidecar. Multiple model/entity outputs use deterministic keys that include entity type and model name; multiple table files require an output directory. AnnData outputs never store generated embeddings in `.X`: gene/protein embeddings go to `.varm`, observation-like embeddings go to `.obsm`, isoform/ragged protein outputs go to `.uns`, and standalone AnnData uses sparse placeholder `.X` only. `whole_genome=True` embeds genome-wide Ensembl genes for an explicit organism using the resolver/resource backend. `harmonize_dim=...` applies per-result PCA before export and records the PCA metadata. Use `show_progress=True` to enable tqdm progress bars.
+Outputs are AnnData, scverse-friendly files, or metadata-rich payloads. File output defaults to compressed NPZ and writes a `<file>.meta.json` sidecar; pass `fmt="csv"` for a readable table or `fmt="zarr"` for a directory with the matrix in Zarr and metadata in attrs. Multiple model/entity outputs use deterministic keys that include entity type and model name; multiple files require an output directory. AnnData outputs never store generated embeddings in `.X`: gene/protein embeddings go to `.varm`, observation-like embeddings go to `.obsm`, perturbation/action embeddings can be stored entity-aligned in `.uns`, and standalone AnnData uses sparse placeholder `.X` only. `whole_genome=True` embeds genome-wide Ensembl genes for an explicit organism using the resolver/resource backend. `harmonize_dim=...` applies per-result PCA before export and records the PCA metadata. Use `show_progress=True` to enable tqdm progress bars.
 
-### EmbeddingStore and `adata.embpy`
+### AnnData and Tables
 
-`EmbeddingStore` is the reusable embedding universe for large biological collections such as genes, proteins, molecules, cytokines, pathways, text descriptions, or sequences. It stores validated canonical embeddings plus typed relations in a `.emstore` directory: entity/relation/index tables are Parquet and matrices are `.npy` files, with optional memory-mapped reads for large libraries.
+Persistent outputs stay simple: AnnData for experiment-aligned matrices,
+Parquet/CSV for reusable embedding tables, and NPZ for lightweight numeric
+artifacts. AnnData remains the experiment container: `.X` and layers hold
+expression/count-like data, `.obs`/`.var` hold experiment metadata, and
+generated embeddings live in `.obsm`, `.varm`, or structured `.uns`
+metadata.
 
-`adata.embpy` is the AnnData-native semantic bridge. AnnData remains the experiment container: `.X` and layers hold expression/count-like data, `.obs`/`.var` hold experiment metadata, and generated embeddings still live only in `.obsm` or `.varm`. The accessor records the embpy registry in `adata.uns["embpy"]`, links external stores, registers embeddings/relations, audits missing IDs, aggregates embeddings by biological groups, runs nearest-neighbor/correlation/model-comparison analyses, wraps existing `embpy.tl`/`embpy.pl` visualization tools, and compiles perturbation/action embeddings for ML.
+For perturbation/action embeddings, the preferred embpy storage is
+entity-aligned `.uns`: one row per unique perturbation, canonical ids, aliases,
+model/provenance metadata, and the embedding matrix together. When a model needs
+one vector per cell, materialize that table into `.obsm` as a derived matrix:
 
 ```python
-from embpy.store import EmbeddingStore
+payload = embedder.embed(
+    ["TP53", "MYC"],
+    entity_type="gene",
+    model="esm2_650M",
+    output="payload",
+)
 
-store = EmbeddingStore.from_results(gene_result)
-adata.embpy.register_store(store)
-adata.embpy.register_embedding("X_cells", cell_matrix, entity_ids=adata.obs_names, entity_type="cell", id_scheme="obs_name")
-adata.embpy.setup_conditions(condition_key="perturbation", control_values=["DMSO"])
-adata.embpy.compile_actions(target_embedding="gene:geneformer", perturbation_key="perturbation")
+adata = embedder.embed(
+    ["TP53", "MYC"],
+    entity_type="gene",
+    model="esm2_650M",
+    target=adata,
+    attach_to="uns",
+    key="X_pert_esm2_650M",
+)
 
-centroids = adata.embpy.aggregate("X_cells", by="perturbation")
-neighbors = adata.embpy.neighbors("X_cells", query=adata.obs_names[0])
-activity = adata.embpy.score_activity("X_cells", perturbation_col="perturbation")
-dataset = adata.embpy.make_torch_dataset(action_key="X_embpy_action")
+from embpy.io import materialize_perturbation_obsm
+
+materialize_perturbation_obsm(
+    adata,
+    embedding_key="X_pert_esm2_650M",
+    perturbation_key="perturbation",
+)
 ```
+
+For perturbation world-model runs, training still consumes generic AnnData:
+perturbation labels in `adata.obs[data.perturbation_key]`, the exact control
+label in `data.control_label`, cell/state embeddings in `adata.obsm["X_state"]`
+(or your chosen `data.state_obsm_key`), and the materialized action matrix in
+`adata.obsm["X_pert_<name>"]`. `data.dataset` is just a run label, not a
+dataset-specific loader.
+
+```bash
+pixi run -e gpu python -m world_model.scripts.embed_perturbations \
+    --dataset replogle \
+    --h5ad data/crispr_datasets/replogle/replogle_2022_k562_essential.h5ad \
+    --model esm2_650M \
+    --output runs/_cache/action_embeddings/replogle_esm2_650M.npz \
+    --output-h5ad runs/_cache/action_h5ad/replogle_esm2_650M.h5ad \
+    --obsm-key X_pert_esm2_650M
+```
+
+Training then consumes `data.state_obsm_key` and
+`action_embedding.source="anndata_obsm"` / `action_embedding.obsm_key` from
+that same AnnData, so all rows are indexed by observation metadata.
 
 - **Batch processing** with SLURM array job scripts for full-genome embedding
 - **scverse integration** -- AnnData-native throughout, compatible with scanpy/scvi-tools/pertpy
@@ -659,41 +699,21 @@ import torch
 torch.backends.mps.is_available()
 ```
 
-To launch the embedding-store/accessor tutorial directly:
-
-```bash
-pixi run -e mps jupyter docs/notebooks/14_embedding_store_and_accessor_tutorial.ipynb --port 8888
-```
-
 To run a local world-model action-embedding sweep on the MacBook GPU:
 
 ```bash
-# quick local profile:
-#   1. Nadig 80/20
-#   2. Replogle 80/20
-#   3. train 100% Nadig -> fine-tune Replogle -> evaluate held-out Replogle
-#   4. train 100% Replogle -> fine-tune Nadig -> evaluate held-out Nadig
-#   5. train 100% Nadig -> zero-shot evaluate Replogle
-#   6. train 100% Replogle -> zero-shot evaluate Nadig
-# across the available MPS-safe action embeddings
+# quick local profile: Nadig/Replogle 80/20 within-dataset runs across
+# the available MPS-safe action embeddings
 pixi run -e mps wm-sweep-mps
 
 # dry-run first: prints the planned commands without importing torch or training
 DRYRUN=1 EMBEDDINGS=minilm_l6_v2 pixi run -e mps wm-sweep-mps
 
-# tiny six-job smoke test before leaving it running
-EMBEDDINGS=minilm_l6_v2 EPOCHS=1 FINETUNE_EPOCHS=1 pixi run -e mps wm-sweep-mps
-
-# single-dataset-only smoke test
-SETUPS=single DATASETS=replogle EMBEDDINGS="esm2_650M minilm_l6_v2" EPOCHS=1 pixi run -e mps wm-sweep-mps
+# single-dataset smoke test
+DATASETS=replogle EMBEDDINGS="esm2_650M minilm_l6_v2" EPOCHS=1 pixi run -e mps wm-sweep-mps
 
 # override local dataset paths without editing the launcher
 NADIG_H5AD=/path/to/nadig.h5ad REPLOGLE_H5AD=/path/to/replogle.h5ad pixi run -e mps wm-sweep-mps
-
-# run only one setup group
-SETUPS=single pixi run -e mps wm-sweep-mps
-SETUPS=finetune pixi run -e mps wm-sweep-mps
-SETUPS=zeroshot pixi run -e mps wm-sweep-mps
 
 # full-size profile
 PROFILE=full pixi run -e mps wm-sweep-mps
@@ -702,8 +722,7 @@ PROFILE=full pixi run -e mps wm-sweep-mps
 The MPS launcher writes runs under `runs/world_model/mps_action_sweep/`.
 It uses the shared world-model run matrix in
 `world_model.configs.run_matrix`, so local MPS sweeps and SLURM submitters use
-the same dataset defaults, action-embedding catalog, and setup names. The
-canonical launcher path is
+the same dataset defaults and action-embedding catalog. The canonical launcher path is
 `src/world_model/world_model/scripts/local/run_embedding_sweep_mps.sh`; the old
 `scripts/run_embedding_sweep_mps.sh` path remains as a compatibility wrapper.
 

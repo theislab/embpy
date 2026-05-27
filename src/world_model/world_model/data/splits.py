@@ -221,52 +221,10 @@ def split_or_load(
     return spec
 
 
-def subsample_train_perturbations(
-    spec: SplitArtifact,
-    perturbation_labels: np.ndarray,
-    *,
-    fraction: float,
-    seed: int,
-    control_label: str = "non-targeting",
-    keep_controls: bool = True,
-) -> SplitArtifact:
-    """Reduce a perturbation-level split's train side to ``fraction`` of its perturbations.
-
-    Used for the transfer setup's "fine-tune on p% of Replogle".
-    """
-    if spec.split_by != "perturbation":
-        raise ValueError("subsample_train_perturbations requires a perturbation-level split")
-    if not 0.0 < fraction <= 1.0:
-        raise ValueError(f"fraction must be in (0, 1], got {fraction}")
-    rng = np.random.default_rng(seed)
-    train_perts = list(spec.train_perturbations or [])
-    if not train_perts:
-        raise ValueError("Split has no train perturbations to subsample.")
-    n_keep = max(1, int(round(fraction * len(train_perts))))
-    keep = sorted(rng.choice(train_perts, size=n_keep, replace=False).tolist())
-
-    keep_set = set(keep)
-    labels = np.asarray(perturbation_labels)
-    keep_mask = np.array([lbl in keep_set for lbl in labels])
-    train_indices = np.flatnonzero(keep_mask)
-    if keep_controls:
-        control_idx = np.flatnonzero(labels == control_label)
-        train_indices = np.unique(np.concatenate([train_indices, control_idx]))
-    return SplitArtifact(
-        split_by="perturbation",
-        train_indices=train_indices,
-        test_indices=spec.test_indices,
-        train_perturbations=keep,
-        test_perturbations=spec.test_perturbations,
-        seed=seed,
-    )
-
-
 __all__ = [
     "SplitArtifact",
     "load_split",
     "make_split",
     "save_split",
     "split_or_load",
-    "subsample_train_perturbations",
 ]

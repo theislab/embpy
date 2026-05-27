@@ -584,8 +584,11 @@ class TestEmbedAdata:
             perturbation_type="symbol",
             preprocessing="none",
         )
-        assert "X_esm2_650M" in result.obsm
-        assert result.obsm["X_esm2_650M"].shape[0] == adata.n_obs
+        assert "X_esm2_650M" not in result.obsm
+        assert "X_esm2_650M" in result.uns["embpy"]["perturbations"]
+        payload = result.uns["embpy"]["perturbations"]["X_esm2_650M"]
+        assert payload["matrix"].shape[0] <= result.obs["perturbation"].nunique()
+        assert payload["entity_type"] == "perturbation"
 
     @patch("embpy.embedder.GeneResolver")
     def test_missing_perturbation_column_raises(self, mock_resolver_cls):
@@ -641,7 +644,8 @@ class TestEmbedAdata:
             n_top_genes=50,
         )
         assert "X_pca" in result.obsm
-        assert "X_esm2_650M" in result.obsm
+        assert "X_esm2_650M" not in result.obsm
+        assert "X_esm2_650M" in result.uns["embpy"]["perturbations"]
         assert "embpy_embeddings" in result.uns
 
     @patch("embpy.embedder.GeneResolver")
@@ -667,8 +671,8 @@ class TestEmbedAdata:
             preprocessing="none",
         )
         meta = result.uns["embpy_embeddings"]["esm2_650M"]
-        assert "obsm_key" in meta
+        assert "uns_key" in meta
         assert "embedding_dim" in meta
         assert "n_perturbations_embedded" in meta
-        assert "n_cells_mapped" in meta
         assert meta["type"] == "perturbation"
+        assert meta["storage"] == "uns"

@@ -5,7 +5,7 @@
 #
 # Usage:
 #   CONFIG=... CKPT=... sbatch src/world_model/world_model/scripts/slurm/run_baselines.sbatch
-# When invoked by submit_all.sh, RUN_DIR is set instead and we infer
+# When invoked by submit_gene_embeddings.sh, RUN_DIR is set instead and we infer
 # CONFIG / CKPT from it.
 # -----------------------------------------------------------------------------
 #SBATCH --job-name=wm-baselines
@@ -35,8 +35,8 @@ if [[ -n "${RUN_DIR:-}" ]]; then
     RUN_DIR=$(pixi run -e "$PIXI_ENV" -- python -c "from world_model.utils.run_identity import resolve_latest_suffixed_run_dir; print(resolve_latest_suffixed_run_dir('${RUN_DIR}'))")
     CONFIG="${CONFIG:-${RUN_DIR}/config.yaml}"
     if [[ -z "${CKPT:-}" ]]; then
-        # Pick the latest *_final.pt or *_finetune_final.pt under RUN_DIR.
-        CKPT=$(ls -1t "${RUN_DIR}"/*_final.pt "${RUN_DIR}"/finetune/*_final.pt 2>/dev/null | head -n 1 || true)
+        # Pick the latest single-dataset final checkpoint under RUN_DIR.
+        CKPT=$(ls -1t "${RUN_DIR}"/*_final.pt 2>/dev/null | head -n 1 || true)
     fi
 fi
 

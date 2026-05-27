@@ -1,4 +1,4 @@
-"""End-to-end test that ``build_dataloaders`` honours the store provider."""
+"""End-to-end test that ``build_dataloaders`` honours AnnData action embeddings."""
 
 from __future__ import annotations
 
@@ -10,8 +10,6 @@ import pytest
 
 anndata = pytest.importorskip("anndata")
 
-from embpy.io.result import EmbeddingProvenance, EmbeddingResult  # noqa: E402
-from embpy.store import EmbeddingStore  # noqa: E402
 from world_model.configs import (  # noqa: E402
     ActionEmbeddingConfig,
     DataConfig,
@@ -29,44 +27,35 @@ def _make_tiny_adata(tmp_path: Path) -> Path:
     obs = {"perturbation": perts}
     adata = anndata.AnnData(X=x, obs=obs, var={"gene_symbols": var_names})
     adata.var.index = var_names
+    adata.obsm["X_state_tiny"] = x[:, :6].astype(np.float32)
+    by_pert = {
+        "non-targeting": np.zeros(4, dtype=np.float32),
+        "GENE_000": np.array([0.0, 1.0, 2.0, 3.0], dtype=np.float32),
+        "GENE_001": np.array([4.0, 5.0, 6.0, 7.0], dtype=np.float32),
+        "GENE_002": np.array([8.0, 9.0, 10.0, 11.0], dtype=np.float32),
+    }
+    adata.obsm["X_pert_tiny"] = np.stack([by_pert[p] for p in perts], axis=0)
     out = tmp_path / "tiny.h5ad"
     adata.write_h5ad(out)
     return out
 
 
-def _make_tiny_store(tmp_path: Path) -> Path:
-    syms = ["GENE_000", "GENE_001", "GENE_002"]
-    emb = np.arange(12, dtype=np.float32).reshape(3, 4)
-    result = EmbeddingResult(
-        matrix=emb,
-        entity_ids=tuple(syms),
-        entity_type="gene",
-        id_scheme="symbol",
-        provenance=EmbeddingProvenance(model="tiny"),
-    )
-    return EmbeddingStore.from_results(result).write(tmp_path / "tiny.emstore")
-
-
-def test_build_dataloaders_with_store_provider_writes_meta(tmp_path: Path):
+def test_build_dataloaders_with_anndata_obsm_provider_writes_meta(tmp_path: Path):
     h5ad = _make_tiny_adata(tmp_path)
-    store_path = _make_tiny_store(tmp_path)
 
     data_cfg = DataConfig(
-        dataset="replogle",
+        dataset="tiny_any_adata",
         h5ad_path=str(h5ad),
-        gene_embedding_path="",
-        n_top_genes=10,
-        log_normalize=True,
+        state_obsm_key="X_state_tiny",
         sequence_length=4,
         stack_size=2,
         n_pert=2,
         batch_size=4,
         num_workers=0,
         n_sequences_per_epoch=16,
-        cell_type_key=None,
     )
     split_cfg = SplitConfig(split_by="perturbation", train_fraction=0.6, seed=0)
-    action_cfg = ActionEmbeddingConfig(source="store", store_path=str(store_path))
+    action_cfg = ActionEmbeddingConfig(source="anndata_obsm", obsm_key="X_pert_tiny")
 
     output_dir = tmp_path / "run"
     artifacts = build_dataloaders(
@@ -86,7 +75,7 @@ def test_build_dataloaders_with_store_provider_writes_meta(tmp_path: Path):
     meta_path = output_dir / "action_embedding_meta.json"
     assert meta_path.exists()
     meta = json.loads(meta_path.read_text())
-    assert meta["source"] == "store"
+    assert meta["source"] == "anndata_obsm"
     assert meta["embedding_dim"] == 4
     assert meta["n_symbols"] == 3
     assert (output_dir / "action_embedding_status.json").exists()

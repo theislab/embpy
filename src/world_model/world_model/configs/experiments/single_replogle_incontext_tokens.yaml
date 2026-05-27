@@ -1,8 +1,0 @@
-extends: single_replogle_incontext.yaml
-
-run_name: "single_replogle_incontext_tokens"
-output_dir: "runs/world_model/single_replogle_incontext_tokens"
-
-dynamics:
-  kind: "incontext_tokens"
-

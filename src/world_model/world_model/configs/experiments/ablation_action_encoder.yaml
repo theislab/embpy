@@ -1,4 +1,0 @@
-# Compatibility alias. Canonical grid:
-#   src/world_model/world_model/configs/grids/ablation_action_encoder.yaml
-extends: ../grids/ablation_action_encoder.yaml
-

@@ -14,7 +14,6 @@ class DatasetSpec:
     config_path: str
     h5ad_path: str
     control_label: str
-    cell_type_key: str | None
 
 
 @dataclass(frozen=True)
@@ -32,17 +31,15 @@ class ActionEmbeddingSpec:
 DATASETS: dict[str, DatasetSpec] = {
     "nadig": DatasetSpec(
         name="nadig",
-        config_path="src/world_model/world_model/configs/experiments/single_nadig.yaml",
+        config_path="src/world_model/world_model/configs/datasets/nadig.yaml",
         h5ad_path="data/crispr_datasets/nadig/NadigOConner2024_jurkat.h5ad",
         control_label="control",
-        cell_type_key=None,
     ),
     "replogle": DatasetSpec(
         name="replogle",
-        config_path="src/world_model/world_model/configs/experiments/single_replogle.yaml",
+        config_path="src/world_model/world_model/configs/datasets/replogle.yaml",
         h5ad_path="data/crispr_datasets/replogle/replogle_2022_k562_essential.h5ad",
         control_label="control",
-        cell_type_key="cell_type",
     ),
 }
 
@@ -204,16 +201,6 @@ DEFAULT_MPS_EMBEDDINGS = (
     "esm2_650M",
     "minilm_l6_v2",
 )
-DEFAULT_SLURM_TRANSFER_EMBEDDINGS = (
-    "borzoi_v0",
-    "enformer_human_rough",
-    "nt_v2_500m",
-    "esm2_650M",
-    "minilm_l6_v2",
-)
-SUPPORTED_SETUPS = ("single", "finetune", "zeroshot")
-
-
 def dataset(name: str) -> DatasetSpec:
     """Return defaults for a named perturb-seq dataset."""
     try:
@@ -234,13 +221,11 @@ def default_embeddings(target: str) -> tuple[str, ...]:
     """Return the default action-embedding keys for a launcher target."""
     if target == "mps":
         return DEFAULT_MPS_EMBEDDINGS
-    if target == "slurm-transfer":
-        return DEFAULT_SLURM_TRANSFER_EMBEDDINGS
     if target == "slurm":
         return tuple(k for k, spec in ACTION_EMBEDDINGS.items() if spec.kind != "convert")
     if target == "all":
         return tuple(ACTION_EMBEDDINGS)
-    raise KeyError(f"Unknown embedding target {target!r}; expected mps, slurm, slurm-transfer, or all.")
+    raise KeyError(f"Unknown embedding target {target!r}; expected mps, slurm, or all.")
 
 
 def _build_parser() -> argparse.ArgumentParser:

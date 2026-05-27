@@ -7,5 +7,3 @@ data:
   dataset: "nadig"
   h5ad_path: "data/crispr_datasets/nadig/NadigOConner2024_jurkat.h5ad"
   control_label: "control"
-  cell_type_key: null
-

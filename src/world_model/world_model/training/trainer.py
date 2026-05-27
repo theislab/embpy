@@ -250,8 +250,7 @@ class WorldModelTrainer:
     def load_state(self, ckpt_path: str | Path, *, strict: bool = False) -> None:
         """Load model weights (and optionally optimizer/scheduler) from a checkpoint.
 
-        Used by the transfer setup to seed fine-tuning with the
-        pretrained weights.
+        Useful for evaluation-only runs or manual checkpoint resumes.
         """
         from world_model.utils.checkpoint import load_checkpoint
 

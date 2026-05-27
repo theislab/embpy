@@ -17,8 +17,7 @@ Why frame stacking carries over to transcriptomics
   short-horizon temporal context without bloating the sequence length.
 * The encoder must remain permutation-aware along the stack dimension
   (replicates have no canonical order). The transformer variant achieves
-  this with a learned per-stack position embedding (which an ablation
-  can disable via ``use_stack_position_embedding=False``).
+  this with a learned per-stack position embedding.
 
 Two implementations are provided:
 
@@ -26,7 +25,7 @@ Two implementations are provided:
   followed by a small transformer encoder + CLS pooling. This is the
   default and the closest analogue of the paper's ResNet trunk.
 * :class:`MLPStateStackEncoder` -- flatten stack and run a plain MLP.
-  Cheap baseline / ablation.
+  Cheap baseline.
 
 Both subclass :class:`StateStackEncoder` and expose the same input/output
 contract:
@@ -169,7 +168,7 @@ class TransformerStateStackEncoder(StateStackEncoder):
 class MLPStateStackEncoder(StateStackEncoder):
     """Flatten-and-MLP baseline encoder.
 
-    Useful as an ablation against :class:`TransformerStateStackEncoder`.
+    Useful as a simple comparison against :class:`TransformerStateStackEncoder`.
     """
 
     def __init__(

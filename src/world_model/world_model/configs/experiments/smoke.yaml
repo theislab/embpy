@@ -9,28 +9,24 @@ mode: "single"
 data:
   dataset: "nadig"
   h5ad_path: "data/datasets/nadig/NadigOConner2024_jurkat.h5ad"
-  gene_embedding_path: "" # deprecated; use action_embedding.store_path
+  state_obsm_key: "X_state"
   perturbation_key: "perturbation"
   control_label: "non-targeting"
-  cell_type_key: null
-  n_top_genes: 256
-  log_normalize: true
   stack_size: 2
   sequence_length: 4
   n_pert: 2
   batch_size: 8
-  val_fraction: 0.1
   num_workers: 0
   pin_memory: false
   n_sequences_per_epoch: 64
 
-# The smoke test uses the store path. scripts/smoke_test.py generates
-# tiny synthetic .h5ad + .emstore assets at runtime if the configured
-# assets are missing, so the smoke target stays self-contained.
+# scripts/smoke_test.py generates tiny synthetic .h5ad assets at
+# runtime if the configured assets are missing, so the smoke target stays
+# self-contained.
 action_embedding:
-  source: "store"
-  store_path: "data/embeddings/gene_embeddings/genept/genept.emstore"
-  store_key: "gene:genept"
+  source: "anndata_obsm"
+  obsm_key: "X_pert_tiny"
+  model_name: "tiny"
 
 # Keep the smoke test dependency-light: the local backbone is the
 # existing StateStackEncoder, no arc-state / arc-stack required.

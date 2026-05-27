@@ -42,6 +42,53 @@ def test_embed_list_of_genes_to_table_uses_canonical_ids(monkeypatch):
     assert out.loc["ENSG00000141510", "gene_symbol"] == "TP53"
 
 
+def test_embed_list_of_genes_to_payload_includes_canonical_ids_and_model(monkeypatch):
+    emb = _bare_embedder()
+
+    def fake_embed_genes_batch(**kwargs):
+        return [
+            np.array([1.0, 2.0], dtype=np.float32),
+            np.array([3.0, 4.0], dtype=np.float32),
+        ]
+
+    monkeypatch.setattr(emb, "embed_genes_batch", fake_embed_genes_batch)
+    out = emb.embed(["TP53", "MYC"], entity_type="gene", model="toy", output="payload")
+
+    assert out["entity_ids"] == ["ENSG00000141510", "ENSG00000136997"]
+    assert out["id_scheme"] == "ensembl_gene_id"
+    assert out["model"]["name"] == "toy"
+    assert out["provenance"]["extra"]["n_requested_inputs"] == 2
+    assert out["matrix"].shape == (2, 2)
+
+
+def test_embed_list_of_genes_attach_to_uns(monkeypatch):
+    from anndata import AnnData
+
+    emb = _bare_embedder()
+
+    def fake_embed_genes_batch(**kwargs):
+        return [
+            np.array([1.0, 2.0], dtype=np.float32),
+            np.array([3.0, 4.0], dtype=np.float32),
+        ]
+
+    monkeypatch.setattr(emb, "embed_genes_batch", fake_embed_genes_batch)
+    target = AnnData(X=np.ones((3, 4), dtype=np.float32))
+    out = emb.embed(
+        ["TP53", "MYC"],
+        entity_type="gene",
+        model="toy",
+        output="anndata",
+        target=target,
+        attach_to="uns",
+        key="X_pert_toy",
+    )
+
+    payload = out.uns["embpy"]["perturbations"]["X_pert_toy"]
+    assert payload["entity_ids"] == ["ENSG00000141510", "ENSG00000136997"]
+    assert "X_pert_toy" not in out.obsm
+
+
 def test_embed_multi_model_to_anndata(monkeypatch):
     emb = _bare_embedder()
 

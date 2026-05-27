@@ -1,5 +1,0 @@
-extends: datasets/nadig.yaml
-
-run_name: "nadig_jurkat"
-output_dir: "runs/world_model/nadig_jurkat"
-

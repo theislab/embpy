@@ -80,12 +80,15 @@ def test_script_classifies_and_filters(monkeypatch, tmp_path: Path) -> None:
     )
 
     output_npz = tmp_path / "out.npz"
+    output_h5ad = tmp_path / "out.h5ad"
     rc = ep.main([
         "--dataset", "replogle",
         "--h5ad", str(h5ad),
         "--model", "stub_v0",
         "--cache-dir", str(tmp_path / "cache"),
         "--output", str(output_npz),
+        "--output-h5ad", str(output_h5ad),
+        "--obsm-key", "X_pert_stub",
     ])
     assert rc == 0
     sidecar = output_npz.with_suffix(output_npz.suffix + ".status.json")
@@ -114,6 +117,11 @@ def test_script_classifies_and_filters(monkeypatch, tmp_path: Path) -> None:
     assert "control" not in syms
     assert "TP53" in syms
     assert "NT5C2" in syms
+
+    attached = anndata.read_h5ad(output_h5ad)
+    assert "X_pert_stub" in attached.obsm
+    assert "X_pert_stub" in attached.uns["embpy"]["perturbations"]
+    assert attached.uns["embpy"]["perturbations"]["X_pert_stub"]["entity_type"] == "perturbation"
 
 
 def test_fail_on_unresolved_returns_nonzero(monkeypatch, tmp_path: Path) -> None:

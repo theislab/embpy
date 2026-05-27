@@ -48,6 +48,15 @@ def test_table_output_returns_dataframe():
     assert out.index.name == "ensembl_gene_id"
 
 
+def test_payload_output_returns_entity_aligned_metadata():
+    out = route_output(_result(), output="payload")
+    assert out["schema_version"] == "embpy.uns_embedding.v1"
+    assert out["entity_ids"] == ["ENSG1", "ENSG2", "ENSG3"]
+    assert out["id_scheme"] == "ensembl_gene_id"
+    assert out["model"]["name"] == "m"
+    assert out["matrix"].shape == (3, 4)
+
+
 def test_table_ignores_target_with_warning(caplog):
     tgt = AnnData(X=np.zeros((3, 2), dtype=np.float32))
     import logging
@@ -64,11 +73,11 @@ def test_harmonize_dim_applied_before_export():
 
 
 def test_bad_output_raises():
-    with pytest.raises(ValueError, match=r"output must be 'anndata' or 'table'"):
+    with pytest.raises(ValueError, match=r"output must be 'anndata', 'table', or 'payload'"):
         route_output(_result(), output="zarr")  # type: ignore[arg-type]
 
 
 def test_table_written_to_path(tmp_path):
-    p = tmp_path / "out.parquet"
+    p = tmp_path / "out.npz"
     route_output(_result(), output="table", path=p)
-    assert p.exists() and (tmp_path / "out.parquet.meta.json").exists()
+    assert p.exists() and (tmp_path / "out.npz.meta.json").exists()

@@ -1,4 +1,4 @@
-"""to_table: index/column conventions + parquet & csv round-trips."""
+"""to_table: index/column conventions + NPZ/Zarr/CSV round-trips."""
 
 from __future__ import annotations
 
@@ -41,26 +41,38 @@ def test_alias_columns_precede_dims_and_carry_values():
     assert df.loc["ENSG3", "gene_symbol"] is None or df.loc["ENSG3", "gene_symbol"] != df.loc["ENSG3", "gene_symbol"]  # None/NaN
 
 
-def test_parquet_roundtrip_with_sidecar(tmp_path):
-    import pandas as pd
-
+def test_npz_roundtrip_with_sidecar(tmp_path):
     res = _result()
-    p = tmp_path / "emb.parquet"
-    to_table(res, path=p, fmt="parquet")
+    p = tmp_path / "emb.npz"
+    to_table(res, path=p)
     assert p.exists()
-    side = tmp_path / "emb.parquet.meta.json"
+    side = tmp_path / "emb.npz.meta.json"
     assert side.exists()
 
-    back = pd.read_parquet(p)
-    assert back.index.name == "ensembl_gene_id"
-    assert list(back.columns) == ["dim_0", "dim_1"]
-    np.testing.assert_allclose(back.to_numpy(), res.matrix)
+    back = np.load(p)
+    np.testing.assert_allclose(back["matrix"], res.matrix)
+    assert list(back["entity_ids"]) == ["ENSG1", "ENSG2", "ENSG3"]
+    assert list(back["dim_names"]) == ["dim_0", "dim_1"]
 
     meta = json.loads(side.read_text())
     assert meta["entity_type"] == "gene"
     assert meta["id_scheme"] == "ensembl_gene_id"
     assert meta["provenance"]["model"] == "m"
     assert meta["n_entities"] == 3 and meta["n_dims"] == 2
+
+
+def test_zarr_roundtrip(tmp_path):
+    import zarr
+
+    res = _result()
+    p = tmp_path / "emb.zarr"
+    to_table(res, path=p)
+    assert (tmp_path / "emb.zarr.meta.json").exists()
+
+    root = zarr.open_group(p, mode="r")
+    np.testing.assert_allclose(root["matrix"][:], res.matrix)
+    assert root.attrs["schema_version"] == "embpy.embedding.zarr.v1"
+    assert root.attrs["entity_ids"] == ["ENSG1", "ENSG2", "ENSG3"]
 
 
 def test_csv_roundtrip(tmp_path):

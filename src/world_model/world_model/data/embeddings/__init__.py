@@ -4,11 +4,9 @@ The world model treats a perturbation as the embedding of the
 perturbed gene(s). This subpackage exposes a small ABC,
 :class:`ActionEmbeddingProvider`, plus three backends:
 
-* :class:`StoreProvider` -- reads gene embeddings from an embpy
-  ``.emstore`` (:class:`embpy.store.EmbeddingStore`). Canonical source
-  after the embedding migration.
-* :class:`PrecomputedProvider` -- wraps a CSV / NPZ on disk (the
-  legacy code path; retired in favour of :class:`StoreProvider`).
+* :class:`AnnDataObsmProvider` -- reads per-cell perturbation embeddings
+  from ``adata.obsm`` and deduplicates them by perturbation label.
+* :class:`PrecomputedProvider` -- wraps a CSV / NPZ on disk.
 * :class:`BioEmbedderProvider` -- delegates to
   :class:`embpy.embedder.BioEmbedder`, with a disk-backed cache.
 
@@ -26,6 +24,7 @@ the source.
 
 from __future__ import annotations
 
+from .anndata_obsm import AnnDataObsmProvider
 from .bio_embedder import BioEmbedderProvider
 from .cache import EmbeddingCacheKey, load_cached, save_cached
 from .precomputed import PrecomputedProvider
@@ -39,17 +38,16 @@ from .sentinel import (
     make_unresolved_vector,
     status_array,
 )
-from .store_provider import StoreProvider
 
 __all__ = [
     "CONTROL_SENTINEL_SEED",
     "ActionEmbeddingProvider",
+    "AnnDataObsmProvider",
     "BioEmbedderProvider",
     "EmbeddingCacheKey",
     "EmbeddingStatus",
     "PrecomputedProvider",
     "ProviderMetadata",
-    "StoreProvider",
     "build_provider",
     "describe_status_counts",
     "load_cached",

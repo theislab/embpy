@@ -1,3 +1,0 @@
-# Compatibility experiment path. Canonical transfer defaults live in configs/bases/transfer.yaml.
-extends: ../bases/transfer.yaml
-

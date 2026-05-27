@@ -9,7 +9,6 @@ from world_model.configs import (
     load_yaml_config,
     validate_world_model_data_sources,
 )
-from world_model.evaluation.ablation import load_adapter_grid, load_grid
 
 
 def test_extends_recursively_merges_and_child_wins(tmp_path: Path) -> None:
@@ -21,9 +20,9 @@ def test_extends_recursively_merges_and_child_wins(tmp_path: Path) -> None:
         "  dataset: replogle\n"
         "  batch_size: 64\n"
         "action_embedding:\n"
-        "  source: store\n"
-        "  store_path: base.emstore\n"
-        "  store_key: gene:base\n"
+        "  source: anndata_obsm\n"
+        "  obsm_key: X_pert_base\n"
+        "  model_name: base\n"
     )
     child.write_text(
         "extends: base.yaml\n"
@@ -31,7 +30,7 @@ def test_extends_recursively_merges_and_child_wins(tmp_path: Path) -> None:
         "data:\n"
         "  batch_size: 8\n"
         "action_embedding:\n"
-        "  store_key: gene:child\n"
+        "  model_name: child\n"
     )
 
     cfg = load_yaml_config(child)
@@ -39,8 +38,8 @@ def test_extends_recursively_merges_and_child_wins(tmp_path: Path) -> None:
     assert cfg.run_name == "child"
     assert cfg.data.dataset == "replogle"
     assert cfg.data.batch_size == 8
-    assert cfg.action_embedding.store_path == "base.emstore"
-    assert cfg.action_embedding.store_key == "gene:child"
+    assert cfg.action_embedding.obsm_key == "X_pert_base"
+    assert cfg.action_embedding.model_name == "child"
 
 
 def test_extends_preserves_unknown_key_validation(tmp_path: Path) -> None:
@@ -59,30 +58,18 @@ def test_missing_parent_config_raises_clear_error(tmp_path: Path) -> None:
         load_yaml_config(child)
 
 
-def test_canonical_and_compatibility_configs_load() -> None:
+def test_dataset_configs_load() -> None:
     root = Path("src/world_model/world_model/configs")
 
-    nadig = load_yaml_config(root / "experiments/single_nadig.yaml")
-    replogle = load_yaml_config(root / "experiments/single_replogle.yaml")
-    transfer = load_yaml_config(root / "experiments/transfer.yaml")
-    borzoi = load_yaml_config(root / "experiments/transfer_nadig_to_replogle_borzoi.yaml")
+    nadig = load_yaml_config(root / "datasets/nadig.yaml")
+    replogle = load_yaml_config(root / "datasets/replogle.yaml")
+    smoke = load_yaml_config(root / "experiments/smoke.yaml")
 
     assert nadig.data.control_label == "control"
     assert "data/crispr_datasets/nadig" in nadig.data.h5ad_path
     assert replogle.data.control_label == "control"
-    assert transfer.data.control_label == "control"
-    assert transfer.transfer.pretrain_dataset == "nadig"
-    assert borzoi.action_embedding.model_name == "borzoi_v0"
-
-
-def test_grid_compatibility_aliases_load() -> None:
-    root = Path("src/world_model/world_model/configs")
-
-    enc = load_grid(root / "experiments/ablation_action_encoder.yaml")
-    adapter = load_adapter_grid(root / "experiments/ablation_action_adapter.yaml")
-
-    assert {spec.key for spec in enc} >= {"borzoi", "esm2_650m", "minilm"}
-    assert {spec.key for spec in adapter} >= {"linear", "mlp_h256", "lora_r4"}
+    assert smoke.mode == "single"
+    assert smoke.action_embedding.obsm_key == "X_pert_tiny"
 
 
 def test_control_label_validation_for_local_h5ad(tmp_path: Path) -> None:
@@ -91,6 +78,8 @@ def test_control_label_validation_for_local_h5ad(tmp_path: Path) -> None:
 
     path = tmp_path / "tiny.h5ad"
     adata = ad.AnnData(X=np.ones((3, 2)), obs={"perturbation": ["control", "GENE1", "GENE2"]})
+    adata.obsm["X_state"] = np.ones((3, 4), dtype=np.float32)
+    adata.obsm["X_pert"] = np.ones((3, 5), dtype=np.float32)
     adata.write_h5ad(path)
 
     cfg = WorldModelConfig()
@@ -101,4 +90,3 @@ def test_control_label_validation_for_local_h5ad(tmp_path: Path) -> None:
     cfg.data.control_label = "non-targeting"
     with pytest.raises(ValueError, match="control label"):
         validate_world_model_data_sources(cfg)
-

@@ -1,9 +1,10 @@
-"""Pure exporters from :class:`EmbeddingResult` to the two output backends.
+"""Pure exporters from :class:`EmbeddingResult` to output backends.
 
 These are free functions, not methods, on purpose: the result object
 stays format-agnostic and every format concern lives here. Each exporter
 takes an :class:`EmbeddingResult` and returns the backend object
-(``pd.DataFrame`` / ``AnnData``), optionally writing to disk.
+(``pd.DataFrame`` / ``AnnData`` / payload ``dict``), optionally writing
+to disk.
 
 Layout of a tabular export (rows = entities, columns = dimensions):
 
@@ -11,8 +12,8 @@ Layout of a tabular export (rows = entities, columns = dimensions):
     columns          [<alias cols>]  -- optional display cross-refs
                      dim_0 ... dim_{d-1}
 
-Provenance never fits cleanly inside parquet/csv, so it is written to a
-``<path>.meta.json`` sidecar next to the data file.
+Provenance never fits cleanly inside flat CSV or NPZ files, so it is
+also written to a ``<path>.meta.json`` sidecar next to the data file.
 """
 
 from __future__ import annotations
@@ -35,16 +36,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-TableFormat = Literal["parquet", "csv"]
-OutputFormat = Literal["anndata", "table"]
+FileFormat = Literal["csv", "npz", "zarr"]
+TableFormat = FileFormat
+OutputFormat = Literal["anndata", "table", "payload"]
+PayloadMetadataMode = Literal["minimal", "full"]
 
-_TABLE_SUFFIX_TO_FMT: dict[str, TableFormat] = {
-    ".parquet": "parquet",
+_FILE_SUFFIX_TO_FMT: dict[str, FileFormat] = {
     ".csv": "csv",
+    ".npz": "npz",
+    ".zarr": "zarr",
 }
 _VAR_ENTITY_TYPES = {"gene", "protein"}
-_OBS_ENTITY_TYPES = {"molecule", "sequence", "text", "cell", "perturbation"}
-_UNS_ENTITY_TYPES = {"protein_isoform"}
+_OBS_ENTITY_TYPES = {"molecule", "sequence", "text", "cell"}
+_UNS_ENTITY_TYPES = {"protein_isoform", "perturbation"}
 
 
 def _alias_schemes(result: EmbeddingResult) -> list[str]:
@@ -85,8 +89,8 @@ def _sidecar_path(path: Path) -> Path:
     return path.with_name(path.name + ".meta.json")
 
 
-def _write_sidecar(path: Path, result: EmbeddingResult, *, key: str | None = None) -> Path:
-    meta = {
+def _metadata_dict(result: EmbeddingResult, *, key: str | None = None) -> dict:
+    return {
         "key": key or _default_key(result),
         "entity_type": result.entity_type,
         "id_scheme": result.id_scheme,
@@ -95,6 +99,10 @@ def _write_sidecar(path: Path, result: EmbeddingResult, *, key: str | None = Non
         "alias_schemes": _alias_schemes(result),
         "provenance": result.provenance.to_dict(),
     }
+
+
+def _write_sidecar(path: Path, result: EmbeddingResult, *, key: str | None = None) -> Path:
+    meta = _metadata_dict(result, key=key)
     side = _sidecar_path(path)
     side.write_text(json.dumps(meta, indent=2))
     return side
@@ -104,21 +112,22 @@ def to_table(
     result: EmbeddingResult,
     *,
     path: str | Path | None = None,
-    fmt: TableFormat = "parquet",
+    fmt: FileFormat = "npz",
 ) -> pd.DataFrame:
-    """Export to a tabular DataFrame, optionally writing it to ``path``.
+    """Export to a DataFrame, optionally writing a scverse-friendly file.
 
     Parameters
     ----------
     result
         The canonical embedding.
     path
-        If given, write the frame to this file and a
-        ``<path>.meta.json`` provenance sidecar. The returned frame is
-        identical whether or not ``path`` is set.
+        If given, write to this file and a ``<path>.meta.json``
+        provenance sidecar. ``.npz`` is the default compact matrix
+        format, ``.csv`` is human-readable, and ``.zarr`` writes a
+        directory with the matrix in a Zarr array and metadata in attrs.
+        The returned frame is identical whether or not ``path`` is set.
     fmt
-        ``"parquet"`` (default; pyarrow is already a dependency) or
-        ``"csv"``.
+        ``"npz"`` (default), ``"csv"``, or ``"zarr"``.
 
     Returns
     -------
@@ -127,23 +136,20 @@ def to_table(
         result.id_scheme``; columns are the optional alias cross-refs
         followed by ``dim_0 ... dim_{n_dims-1}``.
     """
-    fmt = _validate_table_format(fmt)
+    fmt = _validate_file_format(fmt)
 
     frame = _build_frame(result)
 
     if path is None:
         return frame
 
-    out, fmt = _resolve_single_table_path(Path(path), result=result, fmt=fmt)
+    out, fmt = _resolve_single_output_path(Path(path), result=result, fmt=fmt)
     try:
         out.parent.mkdir(parents=True, exist_ok=True)
-        if fmt == "parquet":
-            frame.to_parquet(out, engine="pyarrow")
-        else:
-            frame.to_csv(out)
+        _write_embedding_file(out, result=result, frame=frame, fmt=fmt)
     except Exception as exc:
         raise ValueError(
-            f"file writing: failed to write embedding table to {out}: {type(exc).__name__}: {exc}"
+            f"file writing: failed to write embedding output to {out}: {type(exc).__name__}: {exc}"
         ) from exc
     side = _write_sidecar(out, result)
     logger.info(
@@ -161,7 +167,7 @@ def to_tables(
     results: Sequence[EmbeddingResult],
     *,
     path: str | Path | None = None,
-    fmt: TableFormat = "parquet",
+    fmt: FileFormat = "npz",
 ) -> dict[str, pd.DataFrame] | pd.DataFrame:
     """Export one or more results to tabular outputs.
 
@@ -174,7 +180,7 @@ def to_tables(
     if len(items) == 1:
         return to_table(items[0], path=path, fmt=fmt)
 
-    fmt = _validate_table_format(fmt)
+    fmt = _validate_file_format(fmt)
     keyed = _keyed_results(items)
     frames = {key: _build_frame(result) for key, result in keyed.items()}
     if path is None:
@@ -190,10 +196,7 @@ def to_tables(
         out_dir.mkdir(parents=True, exist_ok=True)
         for key, result in keyed.items():
             out = out_dir / f"{key}.{fmt}"
-            if fmt == "parquet":
-                frames[key].to_parquet(out, engine="pyarrow")
-            else:
-                frames[key].to_csv(out)
+            _write_embedding_file(out, result=result, frame=frames[key], fmt=fmt, key=key)
             _write_sidecar(out, result, key=key)
     except Exception as exc:
         raise ValueError(
@@ -202,26 +205,80 @@ def to_tables(
     return frames
 
 
-def _validate_table_format(fmt: str) -> TableFormat:
-    if fmt not in ("parquet", "csv"):
-        raise ValueError(f"fmt must be 'parquet' or 'csv', got {fmt!r}.")
+def _validate_file_format(fmt: str) -> FileFormat:
+    if fmt not in ("csv", "npz", "zarr"):
+        raise ValueError(f"fmt must be 'csv', 'npz', or 'zarr', got {fmt!r}.")
     return fmt  # type: ignore[return-value]
 
 
-def _resolve_single_table_path(
+def _resolve_single_output_path(
     path: Path,
     *,
     result: EmbeddingResult,
-    fmt: TableFormat,
-) -> tuple[Path, TableFormat]:
+    fmt: FileFormat,
+) -> tuple[Path, FileFormat]:
+    suffix = path.suffix.lower()
+    if suffix in _FILE_SUFFIX_TO_FMT:
+        return path, _FILE_SUFFIX_TO_FMT[suffix]
     if path.exists() and path.is_dir():
         return path / f"{_default_key(result)}.{fmt}", fmt
     if not path.suffix:
         return path / f"{_default_key(result)}.{fmt}", fmt
-    suffix = path.suffix.lower()
-    if suffix not in _TABLE_SUFFIX_TO_FMT:
-        raise ValueError(f"file writing: unsupported output suffix {suffix!r} for {path}. Expected .parquet or .csv.")
-    return path, _TABLE_SUFFIX_TO_FMT[suffix]
+    raise ValueError(f"file writing: unsupported output suffix {suffix!r} for {path}. Expected .csv, .npz, or .zarr.")
+
+
+def _write_embedding_file(
+    path: Path,
+    *,
+    result: EmbeddingResult,
+    frame: pd.DataFrame,
+    fmt: FileFormat,
+    key: str | None = None,
+) -> None:
+    if fmt == "csv":
+        frame.to_csv(path)
+    elif fmt == "npz":
+        _write_npz(path, result, key=key)
+    else:
+        _write_zarr(path, result, key=key)
+
+
+def _write_npz(path: Path, result: EmbeddingResult, *, key: str | None = None) -> None:
+    metadata = _metadata_dict(result, key=key)
+    np.savez_compressed(
+        path,
+        matrix=np.asarray(result.matrix, dtype=np.float32),
+        entity_ids=np.asarray(result.entity_ids, dtype=str),
+        dim_names=np.asarray(result.dim_names, dtype=str),
+        alias_schemes=np.asarray(_alias_schemes(result), dtype=str),
+        aliases_json=np.asarray(json.dumps({k: dict(v) for k, v in (result.aliases or {}).items()})),
+        metadata_json=np.asarray(json.dumps(metadata, default=str)),
+    )
+
+
+def _write_zarr(path: Path, result: EmbeddingResult, *, key: str | None = None) -> None:
+    try:
+        import zarr
+    except ImportError as exc:  # pragma: no cover - zarr is in dev env
+        raise ImportError("zarr is required for fmt='zarr'. Install zarr or use fmt='npz'/'csv'.") from exc
+
+    root = zarr.open_group(str(path), mode="w")
+    root.create_array("matrix", data=np.asarray(result.matrix, dtype=np.float32), chunks="auto")
+    root.attrs.update(
+        _json_safe(
+            {
+                **_metadata_dict(result, key=key),
+                "schema_version": "embpy.embedding.zarr.v1",
+                "entity_ids": list(result.entity_ids),
+                "dim_names": result.dim_names,
+                "aliases": {k: dict(v) for k, v in (result.aliases or {}).items()},
+            }
+        )
+    )
+
+
+def _json_safe(value: object) -> object:
+    return json.loads(json.dumps(value, default=str))
 
 
 def _default_key(result: EmbeddingResult) -> str:
@@ -266,6 +323,100 @@ def _uns_block(result: EmbeddingResult) -> dict:
         "provenance": result.provenance.to_dict(),
         "alias_schemes": _alias_schemes(result),
     }
+
+
+def to_payload(
+    result: EmbeddingResult,
+    *,
+    key: str | None = None,
+    metadata_mode: PayloadMetadataMode = "full",
+    include_matrix: bool = True,
+) -> dict:
+    """Return a JSON/AnnData-``uns`` friendly embedding payload.
+
+    The payload is entity-aligned rather than observation-aligned:
+    ``entity_ids[i]`` is the canonical identifier for ``matrix[i]``.
+    This is the preferred representation for perturbation/action
+    embeddings because a perturbation is not itself an observation.
+    """
+    if metadata_mode not in ("minimal", "full"):
+        raise ValueError(f"metadata_mode must be 'minimal' or 'full', got {metadata_mode!r}.")
+    out_key = key or _default_key(result)
+    provenance = result.provenance.to_dict()
+    payload: dict = {
+        "schema_version": "embpy.uns_embedding.v1",
+        "key": out_key,
+        "storage": "uns",
+        "entity_type": result.entity_type,
+        "id_scheme": result.id_scheme,
+        "entity_ids": list(result.entity_ids),
+        "n_entities": int(result.n_entities),
+        "n_dims": int(result.n_dims),
+        "model": {
+            "name": result.provenance.model,
+            "pooling": result.provenance.pooling,
+            "layer": result.provenance.layer,
+        },
+        "provenance": provenance,
+    }
+    if include_matrix:
+        payload["matrix"] = np.asarray(result.matrix, dtype=np.float32)
+        payload["dim_names"] = result.dim_names
+    if metadata_mode == "full":
+        payload["aliases"] = {k: dict(v) for k, v in (result.aliases or {}).items()}
+        payload["alias_schemes"] = _alias_schemes(result)
+        payload["requested"] = {
+            k: v
+            for k, v in dict(result.provenance.extra).items()
+            if k.startswith("input_") or k.startswith("n_") or k in {"entity_type", "organism"}
+        }
+        payload["model_config"] = {
+            k: v
+            for k, v in dict(result.provenance.extra).items()
+            if k
+            not in {
+                "entity_type",
+                "organism",
+                "input_kind",
+                "input_source",
+                "input_id_column",
+                "input_id_type",
+                "n_requested_inputs",
+                "n_successfully_embedded_entities",
+                "n_embedding_failures",
+                "n_unresolved_identifiers",
+                "duplicate_canonical_ids_dropped",
+                "n_dropped_or_unresolved_entities",
+                "canonical_id_scheme",
+            }
+        }
+    return payload
+
+
+def to_payloads(
+    results: EmbeddingResult | Sequence[EmbeddingResult],
+    *,
+    keys: Sequence[str] | None = None,
+    metadata_mode: PayloadMetadataMode = "full",
+    include_matrix: bool = True,
+) -> dict | dict[str, dict]:
+    """Return one or more entity-aligned embedding payloads."""
+    items = _as_result_list(results)
+    if keys is not None and len(keys) != len(items):
+        raise ValueError(f"output routing: keys length must match results length ({len(keys)} != {len(items)}).")
+    keyed = dict(zip(keys, items, strict=True)) if keys is not None else _keyed_results(items)
+    payloads = {
+        key: to_payload(
+            result,
+            key=key,
+            metadata_mode=metadata_mode,
+            include_matrix=include_matrix,
+        )
+        for key, result in keyed.items()
+    }
+    if len(items) == 1:
+        return next(iter(payloads.values()))
+    return payloads
 
 
 def _standalone_anndata(result: EmbeddingResult) -> AnnData:
@@ -325,6 +476,8 @@ def _standalone_anndata_many(
 def _init_embpy_uns(adata: AnnData, *, placeholder: bool) -> None:
     block = adata.uns.setdefault("embpy", {})
     block.setdefault("embeddings", {})
+    block.setdefault("uns_embeddings", {})
+    block.setdefault("perturbations", {})
     if placeholder:
         block["placeholder_X"] = {
             "is_placeholder": True,
@@ -470,16 +623,14 @@ def _record_embedding_uns(adata: AnnData, result: EmbeddingResult, key: str) -> 
 
 def _store_uns_embedding(adata: AnnData, result: EmbeddingResult, key: str) -> None:
     _init_embpy_uns(adata, placeholder=False)
-    payload = {
-        **_uns_block(result),
-        "entity_ids": list(result.entity_ids),
-        "matrix": np.asarray(result.matrix, dtype=np.float32),
-        "aliases": {k: dict(v) for k, v in (result.aliases or {}).items()},
-    }
+    payload = to_payload(result, key=key, metadata_mode="full", include_matrix=True)
+    collection = "perturbations" if result.entity_type == "perturbation" or key.startswith("X_pert") else "uns_embeddings"
     adata.uns[key] = payload
+    adata.uns["embpy"][collection][key] = payload
     adata.uns["embpy"]["embeddings"][key] = {
         **_uns_block(result),
         "storage": "uns",
+        "uns_collection": collection,
     }
     adata.uns["embpy"][key] = adata.uns["embpy"]["embeddings"][key]
 
@@ -500,7 +651,7 @@ def to_anndata(
     result: EmbeddingResult,
     *,
     target: AnnData | None = None,
-    attach_to: Literal["auto", "obs", "var"] = "auto",
+    attach_to: Literal["auto", "obs", "var", "uns"] = "auto",
     key: str | None = None,
     missing: Literal["error", "nan"] = "error",
     min_overlap: float = 1.0,
@@ -524,7 +675,7 @@ def to_anndata(
         return to_anndata_many([result], keys=[key] if key is not None else None)
 
     out_key = key or _default_key(result)
-    if result.entity_type in _UNS_ENTITY_TYPES:
+    if attach_to == "uns" or result.entity_type in _UNS_ENTITY_TYPES:
         _store_uns_embedding(target, result, out_key)
         return target
 
@@ -551,7 +702,7 @@ def to_anndata_many(
     results: EmbeddingResult | Sequence[EmbeddingResult],
     *,
     target: AnnData | None = None,
-    attach_to: Literal["auto", "obs", "var"] = "auto",
+    attach_to: Literal["auto", "obs", "var", "uns"] = "auto",
     keys: Sequence[str] | None = None,
     missing: Literal["error", "nan"] = "error",
     min_overlap: float = 1.0,
@@ -581,27 +732,32 @@ def route_output(
     *,
     output: OutputFormat = "anndata",
     target: AnnData | None = None,
-    attach_to: Literal["auto", "obs", "var"] = "auto",
+    attach_to: Literal["auto", "obs", "var", "uns"] = "auto",
     harmonize_dim: int | None = None,
     path: str | Path | None = None,
-    fmt: TableFormat = "parquet",
+    fmt: FileFormat = "npz",
     missing: Literal["error", "nan"] = "error",
     key: str | None = None,
+    metadata_mode: PayloadMetadataMode = "full",
+    include_matrix: bool = True,
     min_overlap: float = 1.0,
     random_state: int = 0,
-) -> AnnData | pd.DataFrame | dict[str, pd.DataFrame]:
+) -> AnnData | pd.DataFrame | dict[str, pd.DataFrame] | dict | dict[str, dict]:
     """The single user-facing output contract shared by ``BioEmbedder.embed``.
 
     Optionally harmonizes, then dispatches to the chosen backend with
     loud, specific validation:
 
+    * ``output="payload"`` returns an entity-aligned dict with canonical
+      ids, embeddings, aliases and provenance. This is the simplest
+      representation for perturbation/action embedding tables.
     * ``output="table"`` returns / writes a DataFrame and **ignores**
       ``target`` (warns if one was passed).
     * ``output="anndata"`` builds a standalone AnnData when ``target`` is
       ``None``, else attaches into ``target.obsm``/``.varm``.
     """
-    if output not in ("anndata", "table"):
-        raise ValueError(f"output must be 'anndata' or 'table', got {output!r}.")
+    if output not in ("anndata", "table", "payload"):
+        raise ValueError(f"output must be 'anndata', 'table', or 'payload', got {output!r}.")
 
     results = _as_result_list(result)
     if harmonize_dim is not None:
@@ -619,6 +775,13 @@ def route_output(
         if target is not None:
             logger.warning("output='table' ignores the provided target AnnData; returning/writing a table instead.")
         return to_tables(results, path=path, fmt=fmt)
+    if output == "payload":
+        return to_payloads(
+            results,
+            keys=[key] if key is not None else None,
+            metadata_mode=metadata_mode,
+            include_matrix=include_matrix,
+        )
 
     keys = [key] if key is not None else None
     return to_anndata_many(
@@ -631,4 +794,112 @@ def route_output(
     )
 
 
-__all__ = ["to_table", "to_tables", "to_anndata", "to_anndata_many", "route_output"]
+def materialize_perturbation_obsm(
+    adata: AnnData,
+    *,
+    embedding_key: str,
+    perturbation_key: str = "perturbation",
+    obsm_key: str | None = None,
+    missing: Literal["error", "zero", "nan"] = "error",
+) -> AnnData:
+    """Expand an entity-aligned perturbation embedding in ``.uns`` to ``.obsm``.
+
+    This is an explicit projection step for models that require one
+    action vector per observation. The source-of-truth embedding remains
+    ``adata.uns["embpy"]["perturbations"][embedding_key]`` or
+    ``adata.uns[embedding_key]``.
+    """
+    if perturbation_key not in adata.obs.columns:
+        raise KeyError(f"{perturbation_key!r} not in adata.obs (available: {list(adata.obs.columns)})")
+    if missing not in ("error", "zero", "nan"):
+        raise ValueError(f"missing must be 'error', 'zero', or 'nan', got {missing!r}.")
+
+    payload = _find_uns_payload(adata, embedding_key)
+    matrix = np.asarray(payload.get("matrix"), dtype=np.float32)
+    if matrix.ndim != 2:
+        raise ValueError(f"uns embedding {embedding_key!r} must contain a 2D matrix, got {matrix.shape!r}.")
+    ids = [str(x) for x in payload.get("entity_ids", [])]
+    if len(ids) != matrix.shape[0]:
+        raise ValueError(
+            f"uns embedding {embedding_key!r} has {len(ids)} entity_ids but matrix has {matrix.shape[0]} rows."
+        )
+
+    label_to_row: dict[str, int] = {eid: i for i, eid in enumerate(ids)}
+    aliases = payload.get("aliases", {}) or {}
+    if isinstance(aliases, dict):
+        for eid, mapping in aliases.items():
+            row = label_to_row.get(str(eid))
+            if row is None or not isinstance(mapping, dict):
+                continue
+            for value in mapping.values():
+                if value is not None:
+                    label_to_row.setdefault(str(value), row)
+
+    labels = adata.obs[perturbation_key].astype(str).to_numpy()
+    out_key = obsm_key or embedding_key
+    fill = np.nan if missing == "nan" else 0.0
+    out = np.full((adata.n_obs, matrix.shape[1]), fill, dtype=np.float32)
+    status: list[str] = []
+    missing_labels: list[str] = []
+    for i, label in enumerate(labels):
+        row = label_to_row.get(str(label))
+        if row is None:
+            status.append("missing")
+            missing_labels.append(str(label))
+            continue
+        out[i] = matrix[row]
+        status.append("resolved")
+
+    if missing_labels and missing == "error":
+        preview = list(dict.fromkeys(missing_labels))[:10]
+        raise KeyError(
+            f"{len(missing_labels)} observations have no perturbation embedding in {embedding_key!r}; "
+            f"first missing labels: {preview}. Pass missing='zero' or missing='nan' to fill."
+        )
+
+    adata.obsm[out_key] = out
+    adata.obs[f"{out_key}_status"] = status
+    root = adata.uns.setdefault("world_model_action_embeddings", {})
+    root[out_key] = {
+        "source": "embpy_uns",
+        "uns_key": embedding_key,
+        "obsm_key": out_key,
+        "perturbation_key": perturbation_key,
+        "embedding_dim": int(matrix.shape[1]),
+        "n_entities": int(matrix.shape[0]),
+        "n_obs": int(adata.n_obs),
+        "n_missing_obs": int(sum(s == "missing" for s in status)),
+        "model_name": payload.get("model", {}).get("name") if isinstance(payload.get("model"), dict) else None,
+        "id_scheme": payload.get("id_scheme"),
+    }
+    return adata
+
+
+def _find_uns_payload(adata: AnnData, embedding_key: str) -> dict:
+    embpy = adata.uns.get("embpy", {})
+    if isinstance(embpy, dict):
+        for collection in ("perturbations", "uns_embeddings"):
+            values = embpy.get(collection, {})
+            if isinstance(values, dict) and embedding_key in values:
+                payload = values[embedding_key]
+                if isinstance(payload, dict):
+                    return payload
+    payload = adata.uns.get(embedding_key)
+    if isinstance(payload, dict):
+        return payload
+    raise KeyError(
+        f"Could not find uns embedding {embedding_key!r}. Expected "
+        f"adata.uns['embpy']['perturbations'][{embedding_key!r}] or adata.uns[{embedding_key!r}]."
+    )
+
+
+__all__ = [
+    "materialize_perturbation_obsm",
+    "route_output",
+    "to_anndata",
+    "to_anndata_many",
+    "to_payload",
+    "to_payloads",
+    "to_table",
+    "to_tables",
+]

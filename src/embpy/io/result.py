@@ -5,10 +5,11 @@ once embpy has produced it: a matrix of ``(n_entities, n_dims)`` with
 canonical row identifiers and a fixed ``(entity_type, id_scheme)``.
 
 Design rule (do not break): :class:`EmbeddingResult` is **format
-agnostic**. It knows nothing about AnnData, pandas, parquet or csv.
+agnostic**. It knows nothing about AnnData, pandas, CSV, NPZ, or Zarr.
 Anything that reads or writes a file lives in :mod:`embpy.io.exporters`
 or :mod:`embpy.io.legacy`, never here. If this class grows a method that
-mentions a file format, the layering is wrong -- stop and move it out.
+mentions AnnData, CSV, NPZ, Zarr, or another file format, the layering
+is wrong -- stop and move it out.
 """
 
 from __future__ import annotations
@@ -28,7 +29,8 @@ class EmbeddingProvenance:
     """Everything needed to reproduce / audit one embedding artifact.
 
     Kept deliberately flat and JSON-serialisable so it can be written to
-    a parquet sidecar or an AnnData ``uns`` block without custom codecs.
+    a JSON sidecar, Zarr attrs, or an AnnData ``uns`` block without
+    custom codecs.
     Use :meth:`create` to stamp version / git-sha / timestamp
     automatically; construct directly only in tests where determinism
     matters.

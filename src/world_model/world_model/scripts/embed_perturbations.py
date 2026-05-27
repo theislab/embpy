@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 
@@ -40,6 +41,8 @@ from world_model.data.embeddings import (
     EmbeddingStatus,
     PrecomputedProvider,
     describe_status_counts,
+    make_control_vector,
+    make_unresolved_vector,
     save_cached,
 )
 from world_model.utils import setup_logging
@@ -93,8 +96,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dataset", choices=["replogle", "nadig"], required=True)
     parser.add_argument("--h5ad", type=str, required=True)
     parser.add_argument(
-        "--model", type=str, required=True,
+        "--model", type=str, default=None,
         help="MODEL_REGISTRY key, e.g. esm2_650M, borzoi_v0, minilm_l6_v2.",
+    )
+    parser.add_argument(
+        "--table", type=str, default=None,
+        help="Optional precomputed CSV/NPZ table with gene symbols as rows. "
+             "When set, no BioEmbedder model is run.",
     )
     parser.add_argument("--organism", type=str, default="human")
     parser.add_argument(
@@ -107,6 +115,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--resolver-backend", choices=["api", "local"], default="api",
     )
+    parser.add_argument("--device", type=str, default="auto")
     parser.add_argument(
         "--cache-dir", type=str, default="runs/_cache/action_embeddings",
     )
@@ -114,6 +123,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--output", type=str, default=None,
         help="Optional explicit NPZ path; defaults to "
              "cache_dir/<model>/<region>_<pool>_<organism>.npz.",
+    )
+    parser.add_argument(
+        "--output-h5ad", type=str, default=None,
+        help="Optional AnnData output path. When provided, writes a copy of "
+             "--h5ad with per-cell perturbation embeddings in .obsm.",
+    )
+    parser.add_argument(
+        "--obsm-key", type=str, default=None,
+        help="AnnData .obsm key for --output-h5ad. Defaults to "
+             "X_pert_<model-or-table-stem>.",
     )
     parser.add_argument("--perturbation-key", type=str, default="perturbation")
     parser.add_argument(
@@ -130,7 +149,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--fail-on-unresolved", action="store_true",
         help="Exit non-zero (code 2) if any row is UNRESOLVED. "
-             "Recommended for cluster pre-warm jobs.",
+             "Recommended for cluster AnnData attachment jobs.",
     )
     parser.add_argument(
         "--strict-resolver", action="store_true",
@@ -147,7 +166,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="If a label mixes control + gene components, raise. Off by "
              "default to accept the rare mixed sgRNA library labels.",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if bool(args.model) == bool(args.table):
+        parser.error("Pass exactly one of --model or --table.")
+    if args.output is None and args.output_h5ad is None:
+        parser.error("Pass --output, --output-h5ad, or both.")
+    return args
 
 
 def _load_unique_perturbations(
@@ -169,12 +193,15 @@ def _load_unique_perturbations(
     if not path.exists():
         raise FileNotFoundError(f"AnnData not found: {path}")
     adata = ad.read_h5ad(path, backed="r")
-    if perturbation_key not in adata.obs.columns:
-        raise KeyError(
-            f"{perturbation_key!r} not in adata.obs "
-            f"(got {list(adata.obs.columns)})"
-        )
-    raw = adata.obs[perturbation_key].astype(str).values
+    try:
+        if perturbation_key not in adata.obs.columns:
+            raise KeyError(
+                f"{perturbation_key!r} not in adata.obs "
+                f"(got {list(adata.obs.columns)})"
+            )
+        raw = adata.obs[perturbation_key].astype(str).to_numpy(copy=True)
+    finally:
+        adata.file.close()
     seen: set[str] = set()
     ordered: list[str] = []
     n_control_cells = 0
@@ -188,6 +215,151 @@ def _load_unique_perturbations(
             seen.add(s)
             ordered.append(s)
     return ordered, n_control_cells
+
+
+def _sanitize_key(value: str) -> str:
+    clean = re.sub(r"[^0-9A-Za-z_]+", "_", value).strip("_")
+    return clean or "embedding"
+
+
+def _default_obsm_key(args: argparse.Namespace) -> str:
+    raw = args.model if args.model else Path(str(args.table)).stem
+    return f"X_pert_{_sanitize_key(str(raw))}"
+
+
+def _write_action_h5ad(
+    *,
+    input_h5ad: str | Path,
+    output_h5ad: str | Path,
+    obsm_key: str,
+    perturbation_key: str,
+    perturbation_labels: list[str],
+    embeddings: np.ndarray,
+    statuses: np.ndarray,
+    control_policy: ControlPolicy,
+    control_sentinel_seed: int,
+    model_name: str,
+    source: str,
+    table_path: str | None,
+    status_counts: dict[str, int],
+) -> Path:
+    """Attach per-cell perturbation vectors to a copy of an AnnData file."""
+    import anndata as ad  # noqa: PLC0415
+
+    in_path = Path(input_h5ad)
+    out_path = Path(output_h5ad)
+    if not in_path.exists():
+        raise FileNotFoundError(f"AnnData not found: {in_path}")
+    adata = ad.read_h5ad(in_path)
+    if perturbation_key not in adata.obs.columns:
+        raise KeyError(
+            f"{perturbation_key!r} not in adata.obs "
+            f"(got {list(adata.obs.columns)})"
+        )
+    if embeddings.ndim != 2:
+        raise ValueError(f"embeddings must be 2D, got {embeddings.shape!r}.")
+    dim = int(embeddings.shape[1]) if embeddings.size else 0
+    if dim <= 0:
+        raise ValueError("Cannot attach zero-dimensional perturbation embeddings to AnnData.")
+
+    by_label = {
+        str(label): np.asarray(embeddings[i], dtype=np.float32)
+        for i, label in enumerate(perturbation_labels)
+    }
+    by_status = {
+        str(label): str(statuses[i])
+        for i, label in enumerate(perturbation_labels)
+    }
+    try:
+        from embpy.io import to_anndata
+        from embpy.io.result import EmbeddingProvenance, EmbeddingResult
+
+        aliases = {str(label): {"perturbation_label": str(label)} for label in perturbation_labels}
+        result = EmbeddingResult(
+            matrix=np.asarray(embeddings, dtype=np.float32),
+            entity_ids=tuple(str(label) for label in perturbation_labels),
+            entity_type="perturbation",
+            id_scheme="perturbation_label",
+            provenance=EmbeddingProvenance.create(
+                model=model_name,
+                extra={
+                    "entity_type": "perturbation",
+                    "source": source,
+                    "table_path": table_path,
+                    "input_h5ad": str(in_path),
+                    "perturbation_key": perturbation_key,
+                    "n_requested_inputs": len(perturbation_labels),
+                    "n_successfully_embedded_entities": status_counts.get(EmbeddingStatus.RESOLVED.value, 0),
+                    "n_control": status_counts.get(EmbeddingStatus.CONTROL.value, 0),
+                    "n_unresolved": status_counts.get(EmbeddingStatus.UNRESOLVED.value, 0),
+                },
+            ),
+            aliases=aliases,
+        )
+        to_anndata(result, target=adata, attach_to="uns", key=obsm_key)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not store embpy perturbation payload in .uns: %s", exc)
+
+    control_vec = make_control_vector(dim, seed=control_sentinel_seed)
+    unresolved_vec = make_unresolved_vector(dim)
+
+    labels = adata.obs[perturbation_key].astype(str).to_numpy()
+    cell_matrix = np.zeros((adata.n_obs, dim), dtype=np.float32)
+    cell_status: list[str] = []
+    n_control_cells = 0
+    n_unresolved_cells = 0
+    for i, label in enumerate(labels):
+        classification = control_policy.classify(str(label))
+        if classification.kind == "control":
+            cell_matrix[i] = control_vec
+            cell_status.append(EmbeddingStatus.CONTROL.value)
+            n_control_cells += 1
+            continue
+        vec = by_label.get(str(label))
+        status = by_status.get(str(label), EmbeddingStatus.UNRESOLVED.value)
+        if vec is None:
+            cell_matrix[i] = unresolved_vec
+            cell_status.append(EmbeddingStatus.UNRESOLVED.value)
+            n_unresolved_cells += 1
+        else:
+            cell_matrix[i] = vec
+            cell_status.append(status)
+            if status == EmbeddingStatus.UNRESOLVED.value:
+                n_unresolved_cells += 1
+
+    adata.obsm[obsm_key] = cell_matrix
+    status_col = f"{obsm_key}_status"
+    adata.obs[status_col] = cell_status
+    meta = {
+        "model_name": model_name,
+        "source": source,
+        "table_path": table_path,
+        "input_h5ad": str(in_path),
+        "obsm_key": obsm_key,
+        "status_obs_column": status_col,
+        "perturbation_key": perturbation_key,
+        "embedding_dim": dim,
+        "n_unique_non_control_perturbations": int(len(perturbation_labels)),
+        "n_cells": int(adata.n_obs),
+        "n_control_cells": int(n_control_cells),
+        "n_unresolved_cells": int(n_unresolved_cells),
+        "counts": status_counts,
+        "control_sentinel_seed": int(control_sentinel_seed),
+        "control_policy_patterns": list(control_policy.patterns),
+        "control_extra_labels": list(control_policy.extra_labels),
+    }
+    root = adata.uns.setdefault("world_model_action_embeddings", {})
+    root[obsm_key] = meta
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    adata.write_h5ad(out_path)
+    logger.info(
+        "Wrote AnnData with perturbation embeddings: %s obsm[%r] shape=%s.",
+        out_path,
+        obsm_key,
+        cell_matrix.shape,
+    )
+    return out_path
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -224,17 +396,29 @@ def main(argv: list[str] | None = None) -> int:
             f"First 10: {leaked[:10]}."
         )
 
-    provider = BioEmbedderProvider(
-        model_name=args.model,
-        organism=args.organism,
-        resolver_backend=args.resolver_backend,
-        id_type=args.id_type,
-        region=args.region,
-        pooling_strategy=args.pooling_strategy,
-        cache_dir=args.cache_dir,
-        control_policy=policy,
-        control_sentinel_seed=int(args.control_sentinel_seed),
-    )
+    if args.table is not None:
+        provider = PrecomputedProvider(
+            args.table,
+            control_policy=policy,
+            control_sentinel_seed=int(args.control_sentinel_seed),
+        )
+        model_name = Path(args.table).stem
+        source = "precomputed"
+    else:
+        provider = BioEmbedderProvider(
+            model_name=args.model,
+            organism=args.organism,
+            resolver_backend=args.resolver_backend,
+            id_type=args.id_type,
+            region=args.region,
+            pooling_strategy=args.pooling_strategy,
+            device=args.device,
+            cache_dir=args.cache_dir,
+            control_policy=policy,
+            control_sentinel_seed=int(args.control_sentinel_seed),
+        )
+        model_name = str(args.model)
+        source = "bio_embedder"
 
     embeddings, statuses = provider.embed_with_status(perturbation_labels)
     counts = describe_status_counts(
@@ -252,30 +436,57 @@ def main(argv: list[str] | None = None) -> int:
         counts.get(EmbeddingStatus.UNRESOLVED.value, 0),
     )
 
-    output_path = (
-        Path(args.output) if args.output is not None
-        else Path(args.cache_dir) / provider.cache_key.relative_path()
-    )
-    save_cached(
-        Path(args.cache_dir),
-        provider.cache_key,
-        perturbation_labels,
-        embeddings,
-    )
+    output_path = None
     if args.output is not None:
+        output_path = Path(args.output)
+    elif isinstance(provider, BioEmbedderProvider):
+        output_path = Path(args.cache_dir) / provider.cache_key.relative_path()
+
+    if isinstance(provider, BioEmbedderProvider):
+        save_cached(
+            Path(args.cache_dir),
+            provider.cache_key,
+            perturbation_labels,
+            embeddings,
+        )
+    if args.output is not None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         np.savez(
             output_path,
             symbols=np.asarray(perturbation_labels, dtype=object),
             embeddings=embeddings.astype(np.float32),
             statuses=statuses,
         )
-    logger.info("Wrote embeddings to %s", output_path)
+    if output_path is not None:
+        logger.info("Wrote embeddings to %s", output_path)
+
+    obsm_key = args.obsm_key or _default_obsm_key(args)
+    if args.output_h5ad is not None:
+        _write_action_h5ad(
+            input_h5ad=args.h5ad,
+            output_h5ad=args.output_h5ad,
+            obsm_key=obsm_key,
+            perturbation_key=args.perturbation_key,
+            perturbation_labels=perturbation_labels,
+            embeddings=embeddings,
+            statuses=statuses,
+            control_policy=policy,
+            control_sentinel_seed=int(args.control_sentinel_seed),
+            model_name=model_name,
+            source=source,
+            table_path=args.table,
+            status_counts=counts,
+        )
 
     # Write a structured sidecar JSON next to the NPZ so the user can
     # ``cat`` it without booting Python.
     status_meta = {
-        "model_name": args.model,
+        "model_name": model_name,
+        "source": source,
         "h5ad": str(args.h5ad),
+        "output_h5ad": str(args.output_h5ad) if args.output_h5ad else None,
+        "obsm_key": obsm_key if args.output_h5ad else None,
+        "table": str(args.table) if args.table else None,
         "n_rows": int(len(perturbation_labels)),
         "n_control_cells_filtered_upstream": int(n_control_cells),
         "counts": counts,
@@ -285,7 +496,8 @@ def main(argv: list[str] | None = None) -> int:
         "control_policy_patterns": list(policy.patterns),
         "control_extra_labels": list(policy.extra_labels),
     }
-    sidecar = output_path.with_suffix(output_path.suffix + ".status.json")
+    sidecar_base = output_path if output_path is not None else Path(args.output_h5ad)
+    sidecar = sidecar_base.with_suffix(sidecar_base.suffix + ".status.json")
     sidecar.write_text(json.dumps(status_meta, indent=2, default=str))
     logger.info("Status sidecar -> %s", sidecar)
 
@@ -299,6 +511,8 @@ def main(argv: list[str] | None = None) -> int:
     if resolution_report is not None:
         resolution_sidecar = output_path.with_suffix(
             output_path.suffix + ".resolution.json"
+        ) if output_path is not None else Path(args.output_h5ad).with_suffix(
+            Path(args.output_h5ad).suffix + ".resolution.json"
         )
         resolution_sidecar.write_text(json.dumps(
             resolution_report.to_dict(include_records=True),
@@ -312,21 +526,22 @@ def main(argv: list[str] | None = None) -> int:
             resolution_report.count_by_source(),
         )
 
-    # Round-trip sanity probe (precomputed loader).
-    try:
-        prov = PrecomputedProvider(
-            output_path, control_policy=policy,
-        )
-        head = perturbation_labels[: min(5, len(perturbation_labels))]
-        table, indexer = prov.build_table(head)
-        logger.info(
-            "PrecomputedProvider round-trip OK: table shape=%s, indexer rows=%d",
-            tuple(table.shape), len(indexer),
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.warning(
-            "Round-trip sanity probe failed (%s); cache file is still valid.", e,
-        )
+    # Round-trip sanity probe for explicit NPZ output.
+    if output_path is not None and output_path.exists():
+        try:
+            prov = PrecomputedProvider(
+                output_path, control_policy=policy,
+            )
+            head = perturbation_labels[: min(5, len(perturbation_labels))]
+            table, indexer = prov.build_table(head)
+            logger.info(
+                "PrecomputedProvider round-trip OK: table shape=%s, indexer rows=%d",
+                tuple(table.shape), len(indexer),
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Round-trip sanity probe failed (%s); output file is still valid.", e,
+            )
 
     if args.fail_on_unresolved and counts.get(EmbeddingStatus.UNRESOLVED.value, 0):
         logger.error(
