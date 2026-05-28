@@ -96,8 +96,10 @@ STATE_H5AD_DIR="${STATE_H5AD_DIR:-runs/_cache/state_h5ad}"
 ACTION_NPZ_DIR="${ACTION_NPZ_DIR:-runs/_cache/action_embeddings}"
 READY_H5AD_DIR="${READY_H5AD_DIR:-runs/_cache/world_model_ready_h5ad}"
 TMP_ROOT="${TMP_ROOT:-runs/_tmp}"
+LOG_ROOT="${LOG_ROOT:-logs}"
+LOG_DIR="${LOG_DIR:-${LOG_ROOT}/world_model_ready_adatas}"
 
-mkdir -p logs "$STATE_NPZ_DIR" "$STATE_H5AD_DIR" "$ACTION_NPZ_DIR" "$READY_H5AD_DIR" "$TMP_ROOT"
+mkdir -p "$LOG_DIR" "$STATE_NPZ_DIR" "$STATE_H5AD_DIR" "$ACTION_NPZ_DIR" "$READY_H5AD_DIR" "$TMP_ROOT"
 
 matrix_value() {
     pixi run -e "$MATRIX_PIXI_ENV" -- python -m world_model.configs.run_matrix "$@"
@@ -256,6 +258,7 @@ echo "  datasets:         ${DATASETS[*]}"
 echo "  state embedding:  STACK -> obsm[$STATE_OBSM_KEY]"
 echo "  action embeddings (${#EMBEDDING_KEYS[@]}): ${EMBEDDING_KEYS[*]}"
 echo "  final h5ad dir:   $READY_H5AD_DIR"
+echo "  logs:             $LOG_DIR"
 echo "  reuse state:      $REUSE_STATE"
 echo "  reuse action:     $REUSE_ACTION"
 echo "  dry run:          $DRYRUN"
@@ -304,7 +307,7 @@ for ds in "${DATASETS[@]}"; do
         fi
         stack_sbatch_args+=(
             --time="$STACK_TIME" --mem="$STACK_MEM" --cpus-per-task="$STACK_CPUS"
-            -o logs/%x_%j.out -e logs/%x_%j.err
+            -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err"
             --wrap="$stack_cmd"
         )
         stack_jid=$(submit_sbatch "${stack_sbatch_args[@]}")
@@ -350,7 +353,7 @@ for ds in "${DATASETS[@]}"; do
                 --job-name="wm-act-${ds}-${emb}"
                 --partition="$CPU_PARTITION" --qos="$CPU_QOS"
                 --time="$PRECOMPUTED_ACTION_TIME" --mem="$PRECOMPUTED_ACTION_MEM" --cpus-per-task="$PRECOMPUTED_ACTION_CPUS"
-                -o logs/%x_%j.out -e logs/%x_%j.err
+                -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err"
                 --wrap="$action_cmd"
             )
         else
@@ -382,7 +385,7 @@ for ds in "${DATASETS[@]}"; do
             fi
             action_sbatch_args+=(
                 --time="$ACTION_TIME" --mem="$ACTION_MEM" --cpus-per-task="$ACTION_CPUS"
-                -o logs/%x_%j.out -e logs/%x_%j.err
+                -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err"
                 --wrap="$action_cmd"
             )
         fi
@@ -426,7 +429,7 @@ for ds in "${DATASETS[@]}"; do
         --job-name="wm-ready-${ds}-all"
         --partition="$CPU_PARTITION" --qos="$CPU_QOS"
         --time="$ASSEMBLE_TIME" --mem="$ASSEMBLE_MEM" --cpus-per-task="$ASSEMBLE_CPUS"
-        -o logs/%x_%j.out -e logs/%x_%j.err
+        -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err"
         --wrap="$assemble_cmd"
     )
     if [[ -n "$assemble_dependency" ]]; then
@@ -449,6 +452,7 @@ for ds in "${DATASETS[@]}"; do
                 --partition="$PARTITION" --qos="$QOS" \
                 --gres="$TRAIN_GRES" --constraint="$TRAIN_GPU_CONSTRAINT" \
                 --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" \
+                -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" \
                 --dependency=afterok:"${assemble_jid}" \
                 --export=ALL,EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}" \
                 "$TRAIN_LAUNCHER" "$cfg" \

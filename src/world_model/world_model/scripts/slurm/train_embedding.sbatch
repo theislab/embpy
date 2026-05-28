@@ -17,8 +17,8 @@
 #          --qos=gpu_normal .../train_embedding.sbatch <config> ...
 # -----------------------------------------------------------------------------
 #SBATCH --job-name=wm-emb
-#SBATCH -o logs/%x_%j.out
-#SBATCH -e logs/%x_%j.err
+#SBATCH -o logs/slurm/train_embedding/%x_%j.out
+#SBATCH -e logs/slurm/train_embedding/%x_%j.err
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
@@ -36,7 +36,7 @@ PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
 export TMPDIR="${TMPDIR:-$PROJECT_DIR/runs/_tmp}"
-mkdir -p "$TMPDIR" logs
+mkdir -p "$TMPDIR" logs/slurm/train_embedding
 
 if [[ $# -lt 1 ]]; then
     echo "usage: train_embedding.sbatch <config_path> [key.sub=value ...]" >&2

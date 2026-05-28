@@ -31,7 +31,10 @@ SLURM_DIR="src/world_model/world_model/scripts/slurm"
 DATASET="${DATASET:-replogle}"
 CPU_PARTITION="${CPU_PARTITION:-cpu_p}"
 CPU_QOS="${CPU_QOS:-cpu_normal}"
-mkdir -p logs runs/world_model/_sweep
+LOG_ROOT="${LOG_ROOT:-logs}"
+LOG_DIR="${LOG_DIR:-${LOG_ROOT}/embedding_sweep}"
+GENE_LOG_DIR="${GENE_LOG_DIR:-${LOG_DIR}/gene_embeddings}"
+mkdir -p "$LOG_DIR" "$GENE_LOG_DIR" runs/world_model/_sweep
 
 # Source of truth for "what is usable" = the driver's own catalog. The
 # `list` output prints exactly one `EMB=<name>` line per non-convert entry.
@@ -51,6 +54,7 @@ fi
 echo "Sweep plan"
 echo "  dataset(s):  $DATASET"
 echo "  embeddings:  ${#EMB_LIST[@]}  ->  ${EMB_LIST[*]}"
+echo "  logs:        $LOG_DIR"
 echo
 
 if [[ "${DRYRUN:-0}" == "1" ]]; then
@@ -63,7 +67,7 @@ JID_FILE="$(mktemp runs/world_model/_sweep/jids.XXXXXX)"
 
 for emb in "${EMB_LIST[@]}"; do
     echo "=== $emb ==="
-    SWEEP_JID_FILE="$JID_FILE" DATASET="$DATASET" EMB="$emb" \
+    SWEEP_JID_FILE="$JID_FILE" DATASET="$DATASET" EMB="$emb" LOG_DIR="$GENE_LOG_DIR" \
         bash "$DRIVER" || {
             echo "WARN: submit failed for $emb; continuing." >&2
             continue
@@ -86,7 +90,7 @@ AGG_JID=$(sbatch --parsable \
     --job-name=wm-sweep-aggregate \
     --partition="$CPU_PARTITION" --qos="$CPU_QOS" \
     --cpus-per-task=2 --mem=8G --time=00:30:00 \
-    -o logs/%x_%j.out -e logs/%x_%j.err \
+    -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" \
     --dependency=afterany:"${DEP}" \
     --wrap="set -euo pipefail; cd ${PROJECT_DIR}; \
         export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \

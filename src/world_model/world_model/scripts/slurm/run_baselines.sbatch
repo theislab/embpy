@@ -9,8 +9,8 @@
 # CONFIG / CKPT from it.
 # -----------------------------------------------------------------------------
 #SBATCH --job-name=wm-baselines
-#SBATCH -o logs/%x_%j.out
-#SBATCH -e logs/%x_%j.err
+#SBATCH -o logs/slurm/run_baselines/%x_%j.out
+#SBATCH -e logs/slurm/run_baselines/%x_%j.err
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
@@ -46,7 +46,7 @@ echo "Config: $CONFIG"
 echo "Checkpoint: ${CKPT:-<none>}"
 echo "Pixi env: $PIXI_ENV"
 
-mkdir -p logs
+mkdir -p logs/slurm/run_baselines
 
 if [[ -n "${CKPT:-}" ]]; then
     exec pixi run -e "$PIXI_ENV" -- python -m world_model.scripts.run_baselines \

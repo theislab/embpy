@@ -87,8 +87,10 @@ STATE_NPZ_DIR="${STATE_NPZ_DIR:-runs/_cache/state_embeddings}"
 CROSSMOD_H5AD_DIR="${CROSSMOD_H5AD_DIR:-runs/_cache/cross_modality_incontext_h5ad}"
 TMP_ROOT="${TMP_ROOT:-runs/_tmp}"
 RUN_ROOT="${RUN_ROOT:-runs/world_model/cross_modality_incontext}"
+LOG_ROOT="${LOG_ROOT:-logs}"
+LOG_DIR="${LOG_DIR:-${LOG_ROOT}/cross_modality_incontext}"
 
-mkdir -p logs "$STATE_H5AD_DIR" "$STATE_NPZ_DIR" "$CROSSMOD_H5AD_DIR" "$TMP_ROOT" "$RUN_ROOT"
+mkdir -p "$LOG_DIR" "$STATE_H5AD_DIR" "$STATE_NPZ_DIR" "$CROSSMOD_H5AD_DIR" "$TMP_ROOT" "$RUN_ROOT"
 
 matrix_value() {
     pixi run -e "$MATRIX_PIXI_ENV" -- python -m world_model.configs.run_matrix "$@"
@@ -145,6 +147,7 @@ echo "  support action: obsm[$SUPPORT_OBSM_KEY] (esm2_650M)"
 echo "  query action:   obsm[$QUERY_OBSM_KEY] (subcell_mae_rybg; ${MORPHOLOGY_DATASET}/${MORPHOLOGY_SOURCE})"
 echo "  final h5ads:    $CROSSMOD_H5AD_DIR"
 echo "  run root:       $RUN_ROOT"
+echo "  logs:           $LOG_DIR"
 echo "  dry run:        $DRYRUN"
 echo
 
@@ -179,7 +182,7 @@ for ds in "${DATASETS[@]}"; do
         stack_cmd="set -euo pipefail; cd ${PROJECT_DIR}; export PATH=\"\$HOME/.pixi/bin:\$PATH\"; export PYTHONNOUSERSITE=1; export TMPDIR=\"${PROJECT_DIR}/${TMP_ROOT}/stack-\${SLURM_JOB_ID:-manual}\"; mkdir -p \"\$TMPDIR\"; trap 'rm -rf \"\$TMPDIR\"' EXIT; pixi run -e ${STATE_PIXI_ENV} -- python -m world_model.scripts.encode_cells --kind stack --adata ${source_h5ad} --output ${state_npz} --output-h5ad ${state_h5ad} --obsm-key ${STATE_OBSM_KEY} --device cuda --batch-size ${STACK_BATCH_SIZE} --cache-dir ${STACK_CACHE_DIR} --stack-checkpoint ${STACK_CHECKPOINT} --stack-genelist ${STACK_GENELIST}${stack_gene_col_arg}"
         stack_args=(--job-name="wm-xmod-stack-${ds}" --partition="$PARTITION" --qos="$QOS" --gres=gpu:1)
         if [[ -n "$STACK_GPU_CONSTRAINT" ]]; then stack_args+=(--constraint="$STACK_GPU_CONSTRAINT"); fi
-        stack_args+=(--time="$STACK_TIME" --mem="$STACK_MEM" --cpus-per-task="$STACK_CPUS" -o logs/%x_%j.out -e logs/%x_%j.err --wrap="$stack_cmd")
+        stack_args+=(--time="$STACK_TIME" --mem="$STACK_MEM" --cpus-per-task="$STACK_CPUS" -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" --wrap="$stack_cmd")
         stack_jid=$(submit_sbatch "${stack_args[@]}")
         echo "[$ds] stack job: $stack_jid -> $state_h5ad"
     fi
@@ -191,7 +194,7 @@ for ds in "${DATASETS[@]}"; do
         esm_cmd="set -euo pipefail; cd ${PROJECT_DIR}; export PATH=\"\$HOME/.pixi/bin:\$PATH\"; export PYTHONNOUSERSITE=1; pixi run -e ${ESM_PIXI_ENV} -- python -m world_model.scripts.embed_perturbations --dataset ${ds} --h5ad ${state_h5ad} --model esm2_650M --entity-type gene --output-h5ad ${esm_h5ad} --obsm-key ${SUPPORT_OBSM_KEY} --perturbation-key ${PERTURBATION_KEY} --device cuda --region full --pooling-strategy mean --organism human --id-type symbol${fail_args}"
         esm_args=(--job-name="wm-xmod-esm-${ds}" --partition="$PARTITION" --qos="$QOS" --gres=gpu:1)
         if [[ -n "$ACTION_GPU_CONSTRAINT" ]]; then esm_args+=(--constraint="$ACTION_GPU_CONSTRAINT"); fi
-        esm_args+=(--time="$ESM_TIME" --mem="$ESM_MEM" --cpus-per-task="$ESM_CPUS" -o logs/%x_%j.out -e logs/%x_%j.err --wrap="$esm_cmd")
+        esm_args+=(--time="$ESM_TIME" --mem="$ESM_MEM" --cpus-per-task="$ESM_CPUS" -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" --wrap="$esm_cmd")
         if [[ -n "$stack_jid" ]]; then esm_args=(--dependency=afterok:"$stack_jid" "${esm_args[@]}"); fi
         esm_jid=$(submit_sbatch "${esm_args[@]}")
         echo "[$ds] ESM support-action job: $esm_jid -> $esm_h5ad"
@@ -207,7 +210,7 @@ for ds in "${DATASETS[@]}"; do
         subcell_cmd="set -euo pipefail; cd ${PROJECT_DIR}; export PATH=\"\$HOME/.pixi/bin:\$PATH\"; export PYTHONNOUSERSITE=1; export TMPDIR=\"${PROJECT_DIR}/${TMP_ROOT}/subcell-\${SLURM_JOB_ID:-manual}\"; mkdir -p \"\$TMPDIR\"; trap 'rm -rf \"\$TMPDIR\"' EXIT; pixi run -e ${SUBCELL_PIXI_ENV} -- python -m world_model.scripts.embed_perturbations --dataset ${ds} --h5ad ${esm_h5ad} --model subcell_mae_rybg --entity-type perturbation --output-h5ad ${ready_h5ad} --obsm-key ${QUERY_OBSM_KEY} --perturbation-key ${PERTURBATION_KEY} --device cuda --pooling-strategy attention_pool --morphology-dataset ${MORPHOLOGY_DATASET} --morphology-source ${MORPHOLOGY_SOURCE} --morphology-local-dir ${MORPHOLOGY_LOCAL_DIR}/${ds} --max-images ${MORPHOLOGY_MAX_IMAGES} --aggregation ${MORPHOLOGY_AGGREGATION} --morphology-workers ${MORPHOLOGY_WORKERS}${morph_extra}${fail_args}"
         subcell_args=(--job-name="wm-xmod-subcell-${ds}" --partition="$PARTITION" --qos="$QOS" --gres=gpu:1)
         if [[ -n "$ACTION_GPU_CONSTRAINT" ]]; then subcell_args+=(--constraint="$ACTION_GPU_CONSTRAINT"); fi
-        subcell_args+=(--time="$SUBCELL_TIME" --mem="$SUBCELL_MEM" --cpus-per-task="$SUBCELL_CPUS" -o logs/%x_%j.out -e logs/%x_%j.err --wrap="$subcell_cmd")
+        subcell_args+=(--time="$SUBCELL_TIME" --mem="$SUBCELL_MEM" --cpus-per-task="$SUBCELL_CPUS" -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" --wrap="$subcell_cmd")
         if [[ -n "$esm_jid" ]]; then subcell_args=(--dependency=afterok:"$esm_jid" "${subcell_args[@]}"); fi
         subcell_jid=$(submit_sbatch "${subcell_args[@]}")
         echo "[$ds] SubCell query-action job: $subcell_jid -> $ready_h5ad"
@@ -217,7 +220,7 @@ for ds in "${DATASETS[@]}"; do
         cfg="$(base_cfg_for "$ds")"
         run_name="crossmod_incontext_${ds}_stack_esm2_650M_to_subcell_mae_rybg"
         out_dir="${RUN_ROOT}/${ds}_stack_esm2_650M_to_subcell_mae_rybg"
-        train_args=(--job-name="wm-xmod-train-${ds}" --partition="$PARTITION" --qos="$QOS" --gres="$TRAIN_GRES" --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" --export=ALL,EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}")
+        train_args=(--job-name="wm-xmod-train-${ds}" --partition="$PARTITION" --qos="$QOS" --gres="$TRAIN_GRES" --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" --export=ALL,EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}")
         if [[ -n "$TRAIN_GPU_CONSTRAINT" ]]; then train_args+=(--constraint="$TRAIN_GPU_CONSTRAINT"); fi
         if [[ -n "$subcell_jid" ]]; then train_args=(--dependency=afterok:"$subcell_jid" "${train_args[@]}"); fi
         train_args+=("$TRAIN_LAUNCHER" "$cfg"

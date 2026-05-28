@@ -15,8 +15,8 @@
 # ENVS is a space-separated list of environment names from pixi.toml.
 # -----------------------------------------------------------------------------
 #SBATCH --job-name=pixi-install
-#SBATCH -o logs/%x_%j.out
-#SBATCH -e logs/%x_%j.err
+#SBATCH -o logs/slurm/install_pixi_envs/%x_%j.out
+#SBATCH -e logs/slurm/install_pixi_envs/%x_%j.err
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=16

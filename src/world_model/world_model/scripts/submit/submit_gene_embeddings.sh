@@ -55,7 +55,9 @@ TRAIN_CPUS="${TRAIN_CPUS:-8}"
 # Chain run_baselines + compare/report (cell_eval) after each train job.
 WITH_COMPARE="${WITH_COMPARE:-1}"
 STATE_OBSM_KEY="${STATE_OBSM_KEY:-X_state}"
-mkdir -p logs runs/_cache/action_embeddings runs/_cache/action_h5ad
+LOG_ROOT="${LOG_ROOT:-logs}"
+LOG_DIR="${LOG_DIR:-${LOG_ROOT}/gene_embeddings}"
+mkdir -p "$LOG_DIR" runs/_cache/action_embeddings runs/_cache/action_h5ad
 
 matrix_value() {
     pixi run -e gpu -- python -m world_model.configs.run_matrix "$@"
@@ -184,6 +186,7 @@ echo "Embedding: $EMB  (kind=$KIND) -- $DESC"
 [[ "$KIND" == bio ]]         && echo "  model: $EMB_MODEL (region=full pool=mean organism=human id=symbol)"
 echo "Datasets:  ${DATASETS[*]}"
 echo "State obsm: ${STATE_OBSM_KEY}"
+echo "Logs:      ${LOG_DIR}"
 echo
 
 for ds in "${DATASETS[@]}"; do
@@ -201,7 +204,7 @@ for ds in "${DATASETS[@]}"; do
             --job-name="wm-attach-${ds}-${EMB}" \
             --partition="$CPU_PARTITION" --qos="$CPU_QOS" \
             --time=02:00:00 --mem=64G --cpus-per-task=4 \
-            -o logs/%x_%j.out -e logs/%x_%j.err \
+            -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" \
             --wrap="set -euo pipefail; cd ${PROJECT_DIR}; \
                 export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
                 pixi run -e ${PIXI_ENV} -- python -m world_model.scripts.embed_perturbations \
@@ -215,6 +218,7 @@ for ds in "${DATASETS[@]}"; do
             --partition="$PARTITION" --qos="$QOS" \
             --gres="$TRAIN_GRES" --constraint="$TRAIN_GPU_CONSTRAINT" \
             --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" \
+            -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" \
             --dependency=afterok:"${attach_jid}" \
             --export=ALL,EMBPY_PIXI_ENV="${PIXI_ENV}" \
             "$LAUNCHER" "$cfg" \
@@ -232,14 +236,13 @@ for ds in "${DATASETS[@]}"; do
         # Enformer, Evo2, Caduceus, etc.) blow up on 32GB V100s with OOM. The
         # 80GB A100/H100 nodes have enough headroom for the full token stream.
         # Without explicit -o/-e, sbatch --wrap defaults to slurm-<jid>.out
-        # in the cwd (project root). Force into logs/ to match the rest of
-        # the pipeline and keep the workspace tidy.
+        # in the cwd (project root). Force into the workflow log directory.
         attach_jid=$(sbatch --parsable \
             --job-name="wm-attach-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
             --gres=gpu:1 --constraint="a100_80gb|h100_80gb" \
             --time=08:00:00 --mem=64G --cpus-per-task=8 \
-            -o logs/%x_%j.out -e logs/%x_%j.err \
+            -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" \
             --wrap="set -euo pipefail; cd ${PROJECT_DIR}; \
                 export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
                 export TMPDIR=\"${PROJECT_DIR}/.tmp/job-\$SLURM_JOB_ID\"; \
@@ -258,6 +261,7 @@ for ds in "${DATASETS[@]}"; do
             --partition="$PARTITION" --qos="$QOS" \
             --gres="$TRAIN_GRES" --constraint="$TRAIN_GPU_CONSTRAINT" \
             --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" \
+            -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" \
             --dependency=afterok:"${attach_jid}" \
             --export=ALL,EMBPY_PIXI_ENV="${PIXI_ENV}" \
             "$LAUNCHER" "$cfg" \
@@ -279,12 +283,14 @@ for ds in "${DATASETS[@]}"; do
         base_jid=$(sbatch --parsable \
             --job-name="wm-base-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
+            -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" \
             --dependency=afterok:"${jid}" \
             --export=ALL,RUN_DIR="${out_dir}",EMBPY_PIXI_ENV="${PIXI_ENV}" \
             "${SLURM_DIR}/run_baselines.sbatch")
         cmp_jid=$(sbatch --parsable \
             --job-name="wm-cmp-${ds}-${EMB}" \
             --partition="$CPU_PARTITION" --qos="$CPU_QOS" \
+            -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" \
             --dependency=afterok:"${base_jid}" \
             --export=ALL,RUN_DIR="${out_dir}" \
             "${SLURM_DIR}/compare.sbatch")
