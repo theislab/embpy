@@ -25,6 +25,9 @@
 #   EMBEDDINGS=all                    default: all usable catalog entries
 #   EMB=<one embedding>               backwards-compatible single embedding
 #   DRYRUN=1                          print sbatch commands without submitting
+#   REUSE_EXISTING=1                  reuse existing state/action outputs
+#   REUSE_STATE=1                     reuse existing state .h5ad/.npz only
+#   REUSE_ACTION=1                    reuse existing action .npz files only
 #   RUN_TRAIN=1                       optionally chain train_embedding.sbatch
 # =============================================================================
 
@@ -80,6 +83,9 @@ DRYRUN="${DRYRUN:-0}"
 RUN_TRAIN="${RUN_TRAIN:-0}"
 FAIL_ON_UNRESOLVED="${FAIL_ON_UNRESOLVED:-0}"
 STRICT_RESOLVER="${STRICT_RESOLVER:-0}"
+REUSE_EXISTING="${REUSE_EXISTING:-0}"
+REUSE_STATE="${REUSE_STATE:-$REUSE_EXISTING}"
+REUSE_ACTION="${REUSE_ACTION:-$REUSE_EXISTING}"
 
 STATE_NPZ_DIR="${STATE_NPZ_DIR:-runs/_cache/state_embeddings}"
 STATE_H5AD_DIR="${STATE_H5AD_DIR:-runs/_cache/state_h5ad}"
@@ -246,6 +252,8 @@ echo "  datasets:         ${DATASETS[*]}"
 echo "  state embedding:  STACK -> obsm[$STATE_OBSM_KEY]"
 echo "  action embeddings (${#EMBEDDING_KEYS[@]}): ${EMBEDDING_KEYS[*]}"
 echo "  final h5ad dir:   $READY_H5AD_DIR"
+echo "  reuse state:      $REUSE_STATE"
+echo "  reuse action:     $REUSE_ACTION"
 echo "  dry run:          $DRYRUN"
 echo
 
@@ -259,40 +267,45 @@ for ds in "${DATASETS[@]}"; do
         stack_gene_col_arg=" --stack-gene-name-col ${STACK_GENE_NAME_COL}"
     fi
 
-    stack_cmd="set -euo pipefail; cd ${PROJECT_DIR}; \
-        export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
-        export PYTHONNOUSERSITE=1; \
-        export TMPDIR=\"${PROJECT_DIR}/${TMP_ROOT}/stack-\${SLURM_JOB_ID:-manual}\"; \
-        mkdir -p \"\$TMPDIR\"; \
-        trap 'rm -rf \"\$TMPDIR\"' EXIT; \
-        pixi run -e ${STATE_PIXI_ENV} -- python -m world_model.scripts.encode_cells \
-            --kind stack \
-            --adata ${source_h5ad} \
-            --output ${state_npz} \
-            --output-h5ad ${state_h5ad} \
-            --obsm-key ${STATE_OBSM_KEY} \
-            --device cuda \
-            --batch-size ${STACK_BATCH_SIZE} \
-            --cache-dir ${STACK_CACHE_DIR} \
-            --stack-checkpoint ${STACK_CHECKPOINT} \
-            --stack-genelist ${STACK_GENELIST}${stack_gene_col_arg}"
+    stack_jid=""
+    if [[ "$REUSE_STATE" == "1" && -s "$state_h5ad" ]]; then
+        echo "[$ds] reusing STACK state AnnData: $state_h5ad obsm[$STATE_OBSM_KEY]"
+    else
+        stack_cmd="set -euo pipefail; cd ${PROJECT_DIR}; \
+            export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
+            export PYTHONNOUSERSITE=1; \
+            export TMPDIR=\"${PROJECT_DIR}/${TMP_ROOT}/stack-\${SLURM_JOB_ID:-manual}\"; \
+            mkdir -p \"\$TMPDIR\"; \
+            trap 'rm -rf \"\$TMPDIR\"' EXIT; \
+            pixi run -e ${STATE_PIXI_ENV} -- python -m world_model.scripts.encode_cells \
+                --kind stack \
+                --adata ${source_h5ad} \
+                --output ${state_npz} \
+                --output-h5ad ${state_h5ad} \
+                --obsm-key ${STATE_OBSM_KEY} \
+                --device cuda \
+                --batch-size ${STACK_BATCH_SIZE} \
+                --cache-dir ${STACK_CACHE_DIR} \
+                --stack-checkpoint ${STACK_CHECKPOINT} \
+                --stack-genelist ${STACK_GENELIST}${stack_gene_col_arg}"
 
-    echo "[$ds] submitting STACK state embedding job ..."
-    stack_sbatch_args=(
-        --job-name="wm-stack-${ds}" \
-        --partition="$PARTITION" --qos="$QOS" \
-        --gres=gpu:1
-    )
-    if [[ -n "$STACK_GPU_CONSTRAINT" ]]; then
-        stack_sbatch_args+=(--constraint="$STACK_GPU_CONSTRAINT")
+        echo "[$ds] submitting STACK state embedding job ..."
+        stack_sbatch_args=(
+            --job-name="wm-stack-${ds}" \
+            --partition="$PARTITION" --qos="$QOS" \
+            --gres=gpu:1
+        )
+        if [[ -n "$STACK_GPU_CONSTRAINT" ]]; then
+            stack_sbatch_args+=(--constraint="$STACK_GPU_CONSTRAINT")
+        fi
+        stack_sbatch_args+=(
+            --time="$STACK_TIME" --mem="$STACK_MEM" --cpus-per-task="$STACK_CPUS"
+            -o logs/%x_%j.out -e logs/%x_%j.err
+            --wrap="$stack_cmd"
+        )
+        stack_jid=$(submit_sbatch "${stack_sbatch_args[@]}")
+        echo "[$ds]   STACK job: $stack_jid -> $state_h5ad obsm[$STATE_OBSM_KEY]"
     fi
-    stack_sbatch_args+=(
-        --time="$STACK_TIME" --mem="$STACK_MEM" --cpus-per-task="$STACK_CPUS"
-        -o logs/%x_%j.out -e logs/%x_%j.err
-        --wrap="$stack_cmd"
-    )
-    stack_jid=$(submit_sbatch "${stack_sbatch_args[@]}")
-    echo "[$ds]   STACK job: $stack_jid -> $state_h5ad obsm[$STATE_OBSM_KEY]"
 
     fail_args=""
     if [[ "$FAIL_ON_UNRESOLVED" == "1" ]]; then
@@ -307,6 +320,16 @@ for ds in "${DATASETS[@]}"; do
     for emb in "${EMBEDDING_KEYS[@]}"; do
         IFS='|' read -r kind target desc <<<"$(resolve_embedding "$emb")"
         action_npz="${ACTION_NPZ_DIR}/${ds}_${emb}.npz"
+        assemble_name="$emb"
+        if [[ -n "$ACTION_OBSM_KEY" ]]; then
+            assemble_name="${ACTION_OBSM_KEY#X_pert_}"
+        fi
+
+        if [[ "$REUSE_ACTION" == "1" && -s "$action_npz" ]]; then
+            echo "[$ds][$emb] reusing action NPZ: $action_npz"
+            assemble_embedding_args+=("${assemble_name}=${action_npz}")
+            continue
+        fi
 
         if [[ "$kind" == "precomputed" ]]; then
             action_pixi_env="gpu"
@@ -322,7 +345,6 @@ for ds in "${DATASETS[@]}"; do
             action_sbatch_args=(
                 --job-name="wm-act-${ds}-${emb}"
                 --partition="$CPU_PARTITION" --qos="$CPU_QOS"
-                --dependency=afterok:"${stack_jid}"
                 --time="$PRECOMPUTED_ACTION_TIME" --mem="$PRECOMPUTED_ACTION_MEM" --cpus-per-task="$PRECOMPUTED_ACTION_CPUS"
                 -o logs/%x_%j.out -e logs/%x_%j.err
                 --wrap="$action_cmd"
@@ -349,7 +371,6 @@ for ds in "${DATASETS[@]}"; do
             action_sbatch_args=(
                 --job-name="wm-act-${ds}-${emb}"
                 --partition="$PARTITION" --qos="$QOS"
-                --dependency=afterok:"${stack_jid}"
                 --gres=gpu:1
             )
             if [[ -n "$ACTION_GPU_CONSTRAINT" ]]; then
@@ -361,15 +382,14 @@ for ds in "${DATASETS[@]}"; do
                 --wrap="$action_cmd"
             )
         fi
+        if [[ -n "$stack_jid" ]]; then
+            action_sbatch_args=(--dependency=afterok:"${stack_jid}" "${action_sbatch_args[@]}")
+        fi
 
         echo "[$ds][$emb] submitting action embedding job (${kind}, pixi env: ${action_pixi_env}) ..."
         action_jid=$(submit_sbatch "${action_sbatch_args[@]}")
         echo "[$ds][$emb]   action NPZ job: $action_jid -> $action_npz"
         action_jids+=("$action_jid")
-        assemble_name="$emb"
-        if [[ -n "$ACTION_OBSM_KEY" ]]; then
-            assemble_name="${ACTION_OBSM_KEY#X_pert_}"
-        fi
         assemble_embedding_args+=("${assemble_name}=${action_npz}")
     done
 
@@ -382,7 +402,12 @@ for ds in "${DATASETS[@]}"; do
     if [[ "$FAIL_ON_UNRESOLVED" == "1" ]]; then
         assemble_fail_arg=" --fail-on-unresolved"
     fi
-    action_dependency="$(IFS=:; echo "${action_jids[*]}")"
+    assemble_dependency=""
+    if [[ "${#action_jids[@]}" -gt 0 ]]; then
+        assemble_dependency="$(IFS=:; echo "${action_jids[*]}")"
+    elif [[ -n "$stack_jid" ]]; then
+        assemble_dependency="$stack_jid"
+    fi
     assemble_cmd="set -euo pipefail; cd ${PROJECT_DIR}; \
         export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
         export PYTHONNOUSERSITE=1; \
@@ -396,11 +421,13 @@ for ds in "${DATASETS[@]}"; do
     assemble_sbatch_args=(
         --job-name="wm-ready-${ds}-all"
         --partition="$CPU_PARTITION" --qos="$CPU_QOS"
-        --dependency=afterok:"${action_dependency}"
         --time="$ASSEMBLE_TIME" --mem="$ASSEMBLE_MEM" --cpus-per-task="$ASSEMBLE_CPUS"
         -o logs/%x_%j.out -e logs/%x_%j.err
         --wrap="$assemble_cmd"
     )
+    if [[ -n "$assemble_dependency" ]]; then
+        assemble_sbatch_args=(--dependency=afterok:"${assemble_dependency}" "${assemble_sbatch_args[@]}")
+    fi
     assemble_jid=$(submit_sbatch "${assemble_sbatch_args[@]}")
     echo "[$ds]   ready AnnData job: $assemble_jid -> $ready_h5ad"
     echo "[$ds]   state key: obsm[$STATE_OBSM_KEY]"

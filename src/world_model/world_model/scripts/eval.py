@@ -57,6 +57,7 @@ def main(argv: list[str] | None = None) -> None:
         cfg.data,
         split_cfg=cfg.split,
         action_cfg=cfg.action_embedding,
+        query_action_cfg=cfg.query_action_embedding,
         state_backbone_cfg=cfg.state_backbone,
         seed=cfg.seed,
         output_dir=output_dir,
@@ -70,6 +71,9 @@ def main(argv: list[str] | None = None) -> None:
     model = build_world_model(
         n_genes=n_genes,
         gene_embedding_table=torch.from_numpy(artifacts.gene_table),
+        query_gene_embedding_table=(
+            torch.from_numpy(artifacts.query_gene_table) if artifacts.query_gene_table is not None else None
+        ),
         encoder_kind=cfg.encoder.kind,
         d_model=cfg.encoder.d_model,
         stack_size=cfg.data.stack_size,
@@ -77,7 +81,10 @@ def main(argv: list[str] | None = None) -> None:
         encoder_heads=cfg.encoder.n_heads,
         dynamics_layers=cfg.dynamics.n_layers,
         dynamics_heads=cfg.dynamics.n_heads,
+        dynamics_kind=cfg.dynamics.kind,
+        incontext_support_size=getattr(cfg.data, "incontext_support_size", 16),
         dropout=cfg.dynamics.dropout,
+        action_adapter_cfg=cfg.action_adapter,
         max_sequence_length=cfg.dynamics.max_sequence_length,
         use_action_token=cfg.dynamics.use_action_token,
         state_backbone_cfg=cfg.state_backbone,

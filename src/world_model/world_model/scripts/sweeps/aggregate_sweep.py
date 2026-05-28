@@ -59,16 +59,41 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def _emb_name(run_dir: Path, dataset: str) -> str:
     """``single_<ds>_<emb>[__job..__ts]`` -> ``<emb>``."""
     stem = run_dir.name
-    prefix = f"single_{dataset}_"
-    if stem.startswith(prefix):
-        stem = stem[len(prefix) :]
+    for prefix in (
+        f"single_{dataset}_",
+        f"crossmod_incontext_{dataset}_",
+        f"{dataset}_",
+    ):
+        if stem.startswith(prefix):
+            stem = stem[len(prefix) :]
+            break
     return stem.split("__", 1)[0]
+
+
+def _comparison_csvs(runs_root: Path, dataset: str) -> list[Path]:
+    return sorted(
+        [
+            *runs_root.glob(f"single_{dataset}_*/comparison.csv"),
+            *runs_root.glob(f"crossmod_incontext_{dataset}_*/comparison.csv"),
+            *runs_root.glob(f"cross_modality_incontext/{dataset}_*/comparison.csv"),
+        ]
+    )
+
+
+def _run_dirs(runs_root: Path, dataset: str) -> list[Path]:
+    return sorted(
+        [
+            *[p for p in runs_root.glob(f"single_{dataset}_*") if p.is_dir()],
+            *[p for p in runs_root.glob(f"crossmod_incontext_{dataset}_*") if p.is_dir()],
+            *[p for p in runs_root.glob(f"cross_modality_incontext/{dataset}_*") if p.is_dir()],
+        ]
+    )
 
 
 def _collect(runs_root: Path, datasets: list[str]) -> pd.DataFrame:
     rows: list[pd.DataFrame] = []
     for ds in datasets:
-        for csv in sorted(runs_root.glob(f"single_{ds}_*/comparison.csv")):
+        for csv in _comparison_csvs(runs_root, ds):
             emb = _emb_name(csv.parent, ds)
             try:
                 df = pd.read_csv(csv)
@@ -109,9 +134,7 @@ def _run_seed(run_dir: Path) -> str:
 def _collect_per_perturbation(runs_root: Path, datasets: list[str]) -> pd.DataFrame:
     rows: list[pd.DataFrame] = []
     for ds in datasets:
-        for run_dir in sorted(runs_root.glob(f"single_{ds}_*")):
-            if not run_dir.is_dir():
-                continue
+        for run_dir in _run_dirs(runs_root, ds):
             emb = _emb_name(run_dir, ds)
             seed = _run_seed(run_dir)
             long_path = run_dir / "eval" / "per_perturbation_long.csv"

@@ -25,12 +25,7 @@ def test_extends_recursively_merges_and_child_wins(tmp_path: Path) -> None:
         "  model_name: base\n"
     )
     child.write_text(
-        "extends: base.yaml\n"
-        "run_name: child\n"
-        "data:\n"
-        "  batch_size: 8\n"
-        "action_embedding:\n"
-        "  model_name: child\n"
+        "extends: base.yaml\nrun_name: child\ndata:\n  batch_size: 8\naction_embedding:\n  model_name: child\n"
     )
 
     cfg = load_yaml_config(child)
@@ -90,3 +85,40 @@ def test_control_label_validation_for_local_h5ad(tmp_path: Path) -> None:
     cfg.data.control_label = "non-targeting"
     with pytest.raises(ValueError, match="control label"):
         validate_world_model_data_sources(cfg)
+
+
+def test_query_action_embedding_config_requires_incontext() -> None:
+    cfg = WorldModelConfig()
+    cfg.query_action_embedding.obsm_key = "X_pert_query"
+
+    with pytest.raises(ValueError, match="only valid for in-context"):
+        cfg.validate()
+
+    cfg.data.context_mode = "incontext_set"
+    cfg.dynamics.kind = "incontext_set"
+    cfg.validate()
+
+
+def test_query_action_obsm_validation_for_local_h5ad(tmp_path: Path) -> None:
+    ad = pytest.importorskip("anndata")
+    np = pytest.importorskip("numpy")
+
+    path = tmp_path / "tiny_query.h5ad"
+    adata = ad.AnnData(X=np.ones((3, 2)), obs={"perturbation": ["control", "GENE1", "GENE2"]})
+    adata.obsm["X_state"] = np.ones((3, 4), dtype=np.float32)
+    adata.obsm["X_pert"] = np.ones((3, 5), dtype=np.float32)
+    adata.write_h5ad(path)
+
+    cfg = WorldModelConfig()
+    cfg.data.h5ad_path = str(path)
+    cfg.data.control_label = "control"
+    cfg.data.context_mode = "incontext_set"
+    cfg.dynamics.kind = "incontext_set"
+    cfg.query_action_embedding.obsm_key = "X_pert_query"
+
+    with pytest.raises(ValueError, match="required AnnData obsm"):
+        validate_world_model_data_sources(cfg)
+
+    adata.obsm["X_pert_query"] = np.ones((3, 6), dtype=np.float32)
+    adata.write_h5ad(path)
+    validate_world_model_data_sources(cfg)

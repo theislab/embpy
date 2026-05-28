@@ -884,6 +884,79 @@ class BioEmbedder:
                 )
                 aliases = protein_aliases
                 scheme = SCHEME["protein"]
+        elif entity_type == "perturbation":
+            morph_kwargs = dict(embed_kwargs)
+            morphology_dataset = morph_kwargs.pop(
+                "morphology_dataset",
+                morph_kwargs.pop("dataset", "hpa"),
+            )
+            morphology_source = morph_kwargs.pop(
+                "morphology_source",
+                morph_kwargs.pop("source", "subcell"),
+            )
+            morphology_local_dir = morph_kwargs.pop(
+                "morphology_local_dir",
+                morph_kwargs.pop("local_dir", None),
+            )
+            aggregate = morph_kwargs.pop(
+                "aggregation",
+                morph_kwargs.pop("aggregate", "mean"),
+            )
+            perturbation_type = morph_kwargs.pop("perturbation_type", "genetic")
+            max_images = morph_kwargs.pop("max_images", 5)
+            plate_type = morph_kwargs.pop("plate_type", None)
+            jump_profiles_dir = morph_kwargs.pop("jump_profiles_dir", None)
+            skip_failures = bool(morph_kwargs.pop("skip_failures", True))
+            n_workers_value = morph_kwargs.pop("n_workers", None)
+            if n_workers_value is None:
+                n_workers_value = morph_kwargs.pop("morphology_workers", 8)
+            n_workers = int(n_workers_value)
+            verbose = bool(morph_kwargs.pop("verbose", True))
+            matrix, successful_labels = self.embed_perturbation_morphology_batch(
+                ids,
+                perturbation_type=perturbation_type,
+                dataset=morphology_dataset,
+                source=morphology_source,
+                model=model,
+                pooling_strategy=pooling_strategy,
+                local_dir=morphology_local_dir,
+                aggregate=aggregate,
+                max_images=max_images,
+                plate_type=plate_type,
+                jump_profiles_dir=jump_profiles_dir,
+                verbose=verbose,
+                skip_failures=skip_failures,
+                n_workers=n_workers,
+                **morph_kwargs,
+            )
+            raw = [str(x) for x in successful_labels]
+            alias_cols = {}
+            matrix = np.asarray(matrix, dtype=np.float32)
+            if matrix.ndim != 2:
+                raise ValueError(f"perturbation morphology embeddings must be 2D, got {matrix.shape!r}.")
+            if matrix.shape[0] == 0:
+                raise ValueError(
+                    "embedding generation: no perturbation morphology embeddings were produced. "
+                    "Check the morphology dataset/source, local cache, max_images, and perturbation labels."
+                )
+            canon = raw
+            keep = np.ones((len(canon),), dtype=bool)
+            scheme = "perturbation_label"
+            aliases = {str(label): {"perturbation_label": str(label)} for label in successful_labels}
+            extra.update(
+                {
+                    "morphology_dataset": morphology_dataset,
+                    "morphology_source": morphology_source,
+                    "morphology_local_dir": morphology_local_dir,
+                    "aggregation": aggregate,
+                    "perturbation_type": perturbation_type,
+                    "max_images": max_images,
+                    "plate_type": plate_type,
+                    "jump_profiles_dir": jump_profiles_dir,
+                    "skip_failures": skip_failures,
+                    "n_workers": n_workers,
+                }
+            )
         elif entity_type in ("sequence", "text"):
             raw, matrix = self._embed_raw_inputs(
                 ids,
@@ -903,7 +976,7 @@ class BioEmbedder:
         else:
             raise ValueError(
                 "embedding generation: entity_type must be one of "
-                "'gene', 'molecule', 'protein', 'sequence', or 'text', "
+                "'gene', 'molecule', 'protein', 'sequence', 'text', or 'perturbation', "
                 f"got {entity_type!r}."
             )
 
@@ -972,7 +1045,7 @@ class BioEmbedder:
                 "is a mapping keyed by entity type or whole_genome=True."
             )
         values = self._as_string_list(entity_type, arg_name="entity_type")
-        allowed = {"gene", "molecule", "protein", "sequence", "text"}
+        allowed = {"gene", "molecule", "protein", "sequence", "text", "perturbation"}
         bad = [x for x in values if x not in allowed]
         if bad:
             raise ValueError(
@@ -2879,8 +2952,7 @@ class BioEmbedder:
                         "perturbation_column": perturbation_column,
                     }
                     logging.info(
-                        "  -> stored in .uns embpy perturbations[%r], shape=(%d, %d) "
-                        "(%d/%d perturbations embedded)",
+                        "  -> stored in .uns embpy perturbations[%r], shape=(%d, %d) (%d/%d perturbations embedded)",
                         obsm_key,
                         entity_matrix.shape[0],
                         entity_matrix.shape[1],

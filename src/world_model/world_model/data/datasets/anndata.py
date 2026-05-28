@@ -49,6 +49,7 @@ class AnnDataSequenceDataset(PerturbationSequenceDataset):
         h5ad_path: str | Path,
         *,
         provider: ActionEmbeddingProvider | None = None,
+        query_provider: ActionEmbeddingProvider | None = None,
         perturbation_key: str = "perturbation",
         control_label: str = "non-targeting",
         state_obsm_key: str = "X_state",
@@ -59,7 +60,14 @@ class AnnDataSequenceDataset(PerturbationSequenceDataset):
         bucket_key: str | None = None,
         context_mode: str = "trajectory",
         incontext_support_size: int = 16,
-    ) -> tuple[AnnDataSequenceDataset, np.ndarray, GeneIndexer, list[str]]:
+    ) -> tuple[
+        AnnDataSequenceDataset,
+        np.ndarray,
+        GeneIndexer,
+        list[str],
+        np.ndarray | None,
+        GeneIndexer | None,
+    ]:
         """Build a dataset from an AnnData ``.h5ad`` file.
 
         ``provider`` must be set and should read action embeddings from
@@ -80,11 +88,25 @@ class AnnDataSequenceDataset(PerturbationSequenceDataset):
 
         provider = _resolve_provider(provider)
         gene_table, indexer = provider.build_table(unique_perturbed)
+        query_gene_table: np.ndarray | None = None
+        query_indexer: GeneIndexer | None = None
+        if query_provider is not None:
+            query_gene_table, query_indexer = query_provider.build_table(unique_perturbed)
+            if set(query_indexer.symbol_to_index) != set(indexer.symbol_to_index):
+                missing_support = sorted(set(query_indexer.symbol_to_index) - set(indexer.symbol_to_index))
+                missing_query = sorted(set(indexer.symbol_to_index) - set(query_indexer.symbol_to_index))
+                raise ValueError(
+                    "Query action table perturbation labels are not aligned with "
+                    "the support action table. "
+                    f"Only in query table: {missing_support[:10]}; "
+                    f"only in support table: {missing_query[:10]}."
+                )
 
         dataset = cls(
             expression=x,
             perturbation_labels=labels,
             indexer=indexer,
+            query_indexer=query_indexer,
             sequence_length=sequence_length,
             stack_size=stack_size,
             n_pert=n_pert,
@@ -95,7 +117,7 @@ class AnnDataSequenceDataset(PerturbationSequenceDataset):
             context_mode=context_mode,
             incontext_support_size=incontext_support_size,
         )
-        return dataset, gene_table, indexer, gene_symbols
+        return dataset, gene_table, indexer, gene_symbols, query_gene_table, query_indexer
 
 
 def _extract_bucket_codes(

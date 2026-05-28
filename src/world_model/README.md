@@ -22,6 +22,16 @@ adata.obsm[data.state_obsm_key]        # per-cell state embeddings, default X_st
 adata.obsm[action_embedding.obsm_key]  # per-cell action embeddings, e.g. X_pert_esm2_650M
 ```
 
+In in-context mode only, a second action table can be configured for the
+held-out query triplet:
+
+```text
+adata.obsm[query_action_embedding.obsm_key]  # query action embeddings
+```
+
+If `query_action_embedding.obsm_key` is empty, support and query actions use
+the same table exactly as before.
+
 The dataloader does not derive model inputs from `adata.X`, external NPZ/CSV
 tables, or online BioEmbedder calls. CSV/NPZ tables and BioEmbedder models are
 offline sources used by `world_model.scripts.embed_perturbations` to write an
@@ -70,9 +80,23 @@ pixi run -e gpu python -m world_model.scripts.embed_perturbations \
   --dataset replogle \
   --h5ad data/crispr_datasets/replogle/replogle_2022_k562_essential.h5ad \
   --model esm2_650M \
-  --output runs/_cache/action_embeddings/replogle_esm2_650M.npz \
   --output-h5ad runs/_cache/action_h5ad/replogle_esm2_650M.h5ad \
   --obsm-key X_pert_esm2_650M
+```
+
+Attach SubCell perturbation morphology embeddings through the public
+`BioEmbedder.embed(..., entity_type="perturbation")` path:
+
+```bash
+pixi run -e gpu python -m world_model.scripts.embed_perturbations \
+  --dataset replogle \
+  --h5ad runs/_cache/action_h5ad/replogle_esm2_650M.h5ad \
+  --model subcell_mae_rybg \
+  --entity-type perturbation \
+  --output-h5ad runs/_cache/action_h5ad/replogle_esm2_650M_subcell.h5ad \
+  --obsm-key X_pert_subcell_mae_rybg \
+  --morphology-dataset hpa \
+  --max-images 5
 ```
 
 Attach action embeddings from a symbol-indexed CSV/NPZ table:
@@ -91,6 +115,51 @@ Attach state embeddings with `encode_cells` or any external workflow that writes
 an `(n_obs, d)` matrix to `adata.obsm["X_state"]`.
 
 ## Cluster Commands
+
+Cross-modality in-context run, dry-run first:
+
+```bash
+DRYRUN=1 DATASET=both \
+  bash src/world_model/world_model/scripts/submit/submit_cross_modality_incontext.sh
+```
+
+Submit the full Replogle + Nadig workflow:
+
+```bash
+DATASET=both \
+  STACK_CHECKPOINT=/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/checkpoints/stack/bc_large.ckpt \
+  STACK_GENELIST=/lustre/groups/ml01/workspace/goncalo.pinto/embpy/data/checkpoints/stack/basecount_1000per_15000max.pkl \
+  bash src/world_model/world_model/scripts/submit/submit_cross_modality_incontext.sh
+```
+
+Single dataset:
+
+```bash
+DATASET=replogle bash src/world_model/world_model/scripts/submit/submit_cross_modality_incontext.sh
+DATASET=nadig bash src/world_model/world_model/scripts/submit/submit_cross_modality_incontext.sh
+```
+
+Final AnnData inputs are written to:
+
+```text
+runs/_cache/cross_modality_incontext_h5ad/nadig_stack_esm2_650M_subcell_mae_rybg.h5ad
+runs/_cache/cross_modality_incontext_h5ad/replogle_stack_esm2_650M_subcell_mae_rybg.h5ad
+```
+
+Training outputs and aggregate plots live under:
+
+```text
+runs/world_model/cross_modality_incontext/
+```
+
+The training overrides are:
+
+```text
+data.context_mode=incontext_set
+dynamics.kind=incontext_set
+action_embedding.obsm_key=X_pert_esm2_650M
+query_action_embedding.obsm_key=X_pert_subcell_mae_rybg
+```
 
 Generate STACK state embeddings and action perturbation embeddings first, then
 write final world-model-ready AnnData files:

@@ -40,6 +40,33 @@ class _StubEmbedder:
         return [self._resolved.get(i) for i in identifiers]
 
 
+class _StandardPayloadEmbedder:
+    """Minimal stub for the public BioEmbedder.embed(output='payload') path."""
+
+    def __init__(self, resolved: dict[str, np.ndarray]) -> None:
+        self._resolved = resolved
+        self.embed_calls: list[list[str]] = []
+
+    def embed(
+        self,
+        identifiers: Sequence[str],
+        *,
+        model: str,
+        output: str,
+        **_: object,
+    ) -> dict[str, object]:
+        del model
+        assert output == "payload"
+        ids = list(identifiers)
+        self.embed_calls.append(ids)
+        kept = [symbol for symbol in ids if symbol in self._resolved]
+        return {
+            "matrix": np.stack([self._resolved[symbol] for symbol in kept], axis=0),
+            "entity_ids": [f"ENSG_{symbol}" for symbol in kept],
+            "aliases": {f"ENSG_{symbol}": {"gene_symbol": symbol} for symbol in kept},
+        }
+
+
 def _make_provider(
     tmp_path,
     *,
@@ -55,6 +82,26 @@ def _make_provider(
     return provider
 
 
+def test_provider_uses_public_bioembedder_embed_payload(tmp_path) -> None:
+    provider = BioEmbedderProvider(
+        model_name="stub_v0",
+        cache_dir=str(tmp_path / "cache"),
+        organism="human",
+    )
+    embedder = _StandardPayloadEmbedder({"TP53": np.asarray([1.0, 2.0], dtype=np.float32)})
+    provider._embedder = embedder
+
+    rows, statuses = provider.embed_with_status(["TP53", "UNKNOWN"])
+
+    assert embedder.embed_calls == [["TP53", "UNKNOWN"]]
+    assert statuses.tolist() == [
+        EmbeddingStatus.RESOLVED.value,
+        EmbeddingStatus.UNRESOLVED.value,
+    ]
+    np.testing.assert_allclose(rows[0], [1.0, 2.0])
+    np.testing.assert_allclose(rows[1], [0.0, 0.0])
+
+
 def test_three_status_buckets(tmp_path) -> None:
     dim = 8
     vec_tp53 = np.linspace(0.1, 0.8, dim).astype(np.float32)
@@ -65,14 +112,14 @@ def test_three_status_buckets(tmp_path) -> None:
     )
 
     symbols = [
-        "TP53",                  # RESOLVED
-        "non-targeting",         # CONTROL
-        "NTC",                   # CONTROL (regex variant)
-        "AAVS1_2",               # CONTROL (regex variant)
-        "BRCA_does_not_exist",   # UNRESOLVED
-        "TP53+MYC",              # RESOLVED (combo)
-        "TP53+non-targeting",    # mixed -> RESOLVED row (TP53 only)
-        "NT5C2",                 # REAL gene that starts with NT; UNRESOLVED here
+        "TP53",  # RESOLVED
+        "non-targeting",  # CONTROL
+        "NTC",  # CONTROL (regex variant)
+        "AAVS1_2",  # CONTROL (regex variant)
+        "BRCA_does_not_exist",  # UNRESOLVED
+        "TP53+MYC",  # RESOLVED (combo)
+        "TP53+non-targeting",  # mixed -> RESOLVED row (TP53 only)
+        "NT5C2",  # REAL gene that starts with NT; UNRESOLVED here
     ]
     rows, statuses = provider.embed_with_status(symbols)
     assert rows.shape == (len(symbols), dim)
@@ -114,7 +161,8 @@ def test_control_vector_deterministic_across_calls(tmp_path) -> None:
 
 def test_control_vector_seed_changes_value(tmp_path) -> None:
     provider_a = _make_provider(
-        tmp_path / "a", resolved={"TP53": np.ones(4, dtype=np.float32)},
+        tmp_path / "a",
+        resolved={"TP53": np.ones(4, dtype=np.float32)},
     )
     provider_b = BioEmbedderProvider(
         model_name="stub_v0",
@@ -150,7 +198,8 @@ def test_empty_input_is_handled(tmp_path) -> None:
 
 def test_legacy_embed_emits_deprecation_warning(tmp_path) -> None:
     provider = _make_provider(
-        tmp_path, resolved={"TP53": np.ones(3, dtype=np.float32)},
+        tmp_path,
+        resolved={"TP53": np.ones(3, dtype=np.float32)},
     )
     with pytest.warns(DeprecationWarning):
         rows = provider.embed(["TP53", "non-targeting"])
@@ -161,7 +210,8 @@ def test_legacy_embed_emits_deprecation_warning(tmp_path) -> None:
 
 def test_metadata_reports_per_bucket_counts(tmp_path) -> None:
     provider = _make_provider(
-        tmp_path, resolved={"TP53": np.ones(3, dtype=np.float32)},
+        tmp_path,
+        resolved={"TP53": np.ones(3, dtype=np.float32)},
     )
     provider.embed_with_status(["TP53", "non-targeting", "UNKNOWN_GENE"])
     meta = provider.metadata(n_symbols=3, n_unresolved=1)

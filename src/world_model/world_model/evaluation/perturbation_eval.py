@@ -34,7 +34,7 @@ class EvaluationResult:
 
     name: str
     per_perturbation: Any  # pandas.DataFrame
-    aggregate: Any         # pandas.DataFrame
+    aggregate: Any  # pandas.DataFrame
     real_adata: Any
     pred_adata: Any
 
@@ -130,6 +130,7 @@ def _predict_with_world_model(
     rng = np.random.default_rng(0)
     K = full.stack_size
     indexer = full.indexer
+    query_indexer = getattr(full, "query_indexer", indexer)
     n_pert = full.n_pert
 
     labels = np.asarray(real_adata.obs[perturbation_key].values, dtype=str)
@@ -145,8 +146,7 @@ def _predict_with_world_model(
     for pert in unique:
         if pert == full.control_label:
             continue
-        sampled = rng.choice(control_pool, size=n_samples_per_pert,
-                             replace=control_pool.size < n_samples_per_pert)
+        sampled = rng.choice(control_pool, size=n_samples_per_pert, replace=control_pool.size < n_samples_per_pert)
         per_sample: list[np.ndarray] = []
         for cell_idx in sampled:
             stack_idx = rng.choice(control_pool, size=K, replace=control_pool.size < K)
@@ -215,9 +215,7 @@ def _predict_incontext(
     support_labels_all = sorted(set(train_labels[~control_mask].tolist()))
     if not support_labels_all:
         raise RuntimeError("No train perturbations to build a support set from.")
-    pool_by_label = {
-        p: train_idx[train_labels == p] for p in support_labels_all
-    }
+    pool_by_label = {p: train_idx[train_labels == p] for p in support_labels_all}
 
     rng = np.random.default_rng(0)
     K = full.stack_size
@@ -240,17 +238,15 @@ def _predict_incontext(
             ctrl = per_label.get(full.control_label)
             if ctrl is None or ctrl.size == 0:
                 continue
-            sup = [
-                lbl for lbl in per_label
-                if lbl in train_support_set and lbl != full.control_label
-            ]
+            sup = [lbl for lbl in per_label if lbl in train_support_set and lbl != full.control_label]
             if sup:
                 bucket_control[b] = ctrl
                 bucket_support[b] = sup
 
-    def _action(lbl: str) -> np.ndarray:
+    def _action(lbl: str, *, query: bool = False) -> np.ndarray:
         a = np.zeros((n_pert,), dtype=np.int64)
-        for j, gid in enumerate(indexer.encode(lbl, full.control_label)[:n_pert]):
+        active_indexer = query_indexer if query else indexer
+        for j, gid in enumerate(active_indexer.encode(lbl, full.control_label)[:n_pert]):
             a[j] = gid
         return a
 
@@ -267,10 +263,7 @@ def _predict_incontext(
             continue
         # Buckets where this query perturbation actually occurs and that
         # carry both a control and >=1 train support perturbation.
-        cand_buckets = (
-            [b for b in bucket_support if str(pert) in cbl[b]]
-            if buckets_on else []
-        )
+        cand_buckets = [b for b in bucket_support if str(pert) in cbl[b]] if buckets_on else []
         samples: list[np.ndarray] = []
         for _ in range(n_samples_per_pert):
             if cand_buckets:  # within-bucket (same substrate as the query)
@@ -278,13 +271,11 @@ def _predict_incontext(
                 ctrl_pool = bucket_control[b]
                 sup_pool = [s for s in bucket_support[b] if s != str(pert)] or bucket_support[b]
                 m = min(M, len(sup_pool))
-                sup = list(rng.choice(np.asarray(sup_pool, dtype=object),
-                                      size=m, replace=len(sup_pool) < m))
+                sup = list(rng.choice(np.asarray(sup_pool, dtype=object), size=m, replace=len(sup_pool) < m))
                 support_next = np.stack([_stack(cbl[b][s]) for s in sup])
-            else:             # global fallback
+            else:  # global fallback
                 ctrl_pool = control_pool
-                sup = list(rng.choice(support_labels_all, size=M,
-                                      replace=len(support_labels_all) < M))
+                sup = list(rng.choice(support_labels_all, size=M, replace=len(support_labels_all) < M))
                 support_next = np.stack([_stack(pool_by_label[s]) for s in sup])
             support_obs = np.stack([_stack(ctrl_pool) for _ in sup])
             support_act = np.stack([_action(str(s)) for s in sup])
@@ -293,14 +284,15 @@ def _predict_incontext(
                 "support_next": torch.from_numpy(support_next).unsqueeze(0).to(device),
                 "support_act": torch.from_numpy(support_act).unsqueeze(0).to(device),
                 "query_obs": torch.from_numpy(_stack(ctrl_pool)).unsqueeze(0).to(device),
-                "query_act": torch.from_numpy(_action(str(pert))).unsqueeze(0).to(device),
+                "query_act": torch.from_numpy(_action(str(pert), query=True)).unsqueeze(0).to(device),
             }
             out = model.predict(batch)
             if out["x_hat"] is None:
                 raise RuntimeError("In-context model without decoder cannot predict genes.")
             samples.append(out["x_hat"][0].cpu().numpy())
         per_pert_pred[str(pert)] = np.mean(
-            np.stack(samples, axis=0), axis=0,
+            np.stack(samples, axis=0),
+            axis=0,
         ).astype(np.float32)
 
     out = np.empty((labels.size, n_genes), dtype=np.float32)
@@ -386,12 +378,8 @@ def run_evaluation(
     #     metrics are not biologically interpretable in this regime.
     raw_exp = getattr(full, "raw_expression", full.expression)
     backbone = artifacts.state_backbone
-    embedding_eq_genes = (raw_exp is full.expression) or (
-        raw_exp.shape[1] == full.expression.shape[1]
-    )
-    backbone_supports_decode = bool(
-        backbone is not None and getattr(backbone, "supports_decode", False)
-    )
+    embedding_eq_genes = (raw_exp is full.expression) or (raw_exp.shape[1] == full.expression.shape[1])
+    backbone_supports_decode = bool(backbone is not None and getattr(backbone, "supports_decode", False))
     gene_space_eval = embedding_eq_genes or backbone_supports_decode
 
     if gene_space_eval:
@@ -408,7 +396,8 @@ def run_evaluation(
                     "the intersection. The dropped HVGs are absent from the "
                     "backbone's training gene list.",
                     getattr(backbone, "name", "?"),
-                    len(kept), len(artifacts.gene_symbols),
+                    len(kept),
+                    len(artifacts.gene_symbols),
                 )
             final_gene_names = kept
 
@@ -472,6 +461,7 @@ def run_evaluation(
             dtype=np.float32,
         )
         return {k: decoded[i] for i, k in enumerate(keys)}
+
     if eval_cfg.save_predictions:
         try:
             real_adata.write(eval_dir / "real.h5ad")
@@ -479,15 +469,21 @@ def run_evaluation(
             logger.warning("Could not write real.h5ad (%s).", e)
 
     test_state, test_actions = _build_test_inputs(
-        real_adata, artifacts, perturbation_key=perturbation_key,
+        real_adata,
+        artifacts,
+        perturbation_key=perturbation_key,
     )
 
     train_perts = list(artifacts.split.train_perturbations or [])
     perturbation_to_action_train = _build_perturbation_to_action(
-        artifacts.indexer, artifacts.gene_table, train_perts,
+        artifacts.indexer,
+        artifacts.gene_table,
+        train_perts,
     )
     perturbation_to_action_test = _build_perturbation_to_action(
-        artifacts.indexer, artifacts.gene_table, test_perts,
+        artifacts.indexer,
+        artifacts.gene_table,
+        test_perts,
     )
 
     results: dict[str, EvaluationResult] = {}
@@ -495,15 +491,12 @@ def run_evaluation(
 
     if model is not None:
         logger.info("Evaluating world model on %d test perturbations.", len(test_perts))
-        from ..models.incontext_world_model import InContextWorldModel  # noqa: PLC0415
+        from ..models.incontext_world_model import InContextWorldModel
 
-        predict_fn = (
-            _predict_incontext
-            if isinstance(model, InContextWorldModel)
-            else _predict_with_world_model
-        )
+        predict_fn = _predict_incontext if isinstance(model, InContextWorldModel) else _predict_with_world_model
         wm_per_cell = predict_fn(
-            model, artifacts,
+            model,
+            artifacts,
             real_adata=real_adata,
             perturbation_key=perturbation_key,
             n_samples_per_pert=eval_cfg.n_control_samples_per_pert,
@@ -513,15 +506,19 @@ def run_evaluation(
         wm_preds = _maybe_decode_preds(wm_preds)
         wm_pred_adata = build_pred_anndata(wm_preds, real_adata, perturbation_key=perturbation_key)
         per_pert, agg = run_cell_eval(
-            real_adata, wm_pred_adata,
+            real_adata,
+            wm_pred_adata,
             perturbation_key=perturbation_key,
             control_label=control_label,
             deg_top_k=eval_cfg.deg_top_k,
             use_cell_eval=eval_cfg.use_cell_eval,
         )
         results["world_model"] = EvaluationResult(
-            name="world_model", per_perturbation=per_pert, aggregate=agg,
-            real_adata=real_adata, pred_adata=wm_pred_adata,
+            name="world_model",
+            per_perturbation=per_pert,
+            aggregate=agg,
+            real_adata=real_adata,
+            pred_adata=wm_pred_adata,
         )
         if eval_cfg.save_predictions:
             try:
@@ -551,15 +548,19 @@ def run_evaluation(
         preds_dict = _maybe_decode_preds(preds_dict)
         pred_adata = build_pred_anndata(preds_dict, real_adata, perturbation_key=perturbation_key)
         per_pert, agg = run_cell_eval(
-            real_adata, pred_adata,
+            real_adata,
+            pred_adata,
             perturbation_key=perturbation_key,
             control_label=control_label,
             deg_top_k=eval_cfg.deg_top_k,
             use_cell_eval=eval_cfg.use_cell_eval,
         )
         results[name] = EvaluationResult(
-            name=name, per_perturbation=per_pert, aggregate=agg,
-            real_adata=real_adata, pred_adata=pred_adata,
+            name=name,
+            per_perturbation=per_pert,
+            aggregate=agg,
+            real_adata=real_adata,
+            pred_adata=pred_adata,
         )
         if eval_cfg.save_predictions:
             try:

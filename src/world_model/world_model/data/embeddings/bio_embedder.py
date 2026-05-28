@@ -8,7 +8,10 @@ provider without dragging the dependencies in.
 A disk-backed cache keyed by ``(model, region, pooling, organism)``
 guarantees that re-running a config with the same provider settings
 re-uses cached vectors and only invokes the foundation model on
-genuinely new symbols.
+genuinely new symbols. Cache misses go through the public
+``BioEmbedder.embed(..., output="payload")`` path so the world-model
+precompute jobs exercise the same canonical embpy output contract used
+by library callers.
 
 Status-aware contract (Part A.2):
 
@@ -133,7 +136,8 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
         symbols = list(symbols)
         # Layer 2: fresh aggregate report for this pass.
         self.last_report = ResolutionReport(
-            model_name=self.model_name, organism=self.organism,
+            model_name=self.model_name,
+            organism=self.organism,
         )
         if not symbols:
             empty = np.zeros((0, 0), dtype=np.float32)
@@ -142,12 +146,8 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
         # Step 1: classify every label up-front. Controls and mixed
         # labels are routed away from the embedder.
         classifications = [self.control_policy.classify(s) for s in symbols]
-        control_mask = np.asarray(
-            [c.kind == "control" for c in classifications], dtype=bool
-        )
-        mixed_mask = np.asarray(
-            [c.kind == "mixed" for c in classifications], dtype=bool
-        )
+        control_mask = np.asarray([c.kind == "control" for c in classifications], dtype=bool)
+        mixed_mask = np.asarray([c.kind == "mixed" for c in classifications], dtype=bool)
         # For "mixed" labels, only the gene components reach the embedder;
         # we record but otherwise ignore the control parts. The aggregated
         # row for a mixed label is the per-gene mean computed below.
@@ -170,7 +170,9 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
             cached = load_cached(cache_dir, self.cache_key, unique_genes)
             logger.info(
                 "BioEmbedderProvider cache hit %d/%d unique gene symbols (model=%s)",
-                len(cached), len(unique_genes), self.model_name,
+                len(cached),
+                len(unique_genes),
+                self.model_name,
             )
 
         missing = [g for g in unique_genes if g not in cached]
@@ -180,7 +182,8 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
             if cache_dir is not None and new_vecs:
                 ordered_syms = list(new_vecs.keys())
                 ordered_emb = np.stack(
-                    [new_vecs[s] for s in ordered_syms], axis=0,
+                    [new_vecs[s] for s in ordered_syms],
+                    axis=0,
                 ).astype(np.float32)
                 save_cached(cache_dir, self.cache_key, ordered_syms, ordered_emb)
 
@@ -229,8 +232,7 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
             probe = self._compute(["TP53"])
             if not probe:
                 raise ValueError(
-                    "Cannot determine embedding dimensionality: TP53 probe "
-                    "failed too. The embedder is misconfigured."
+                    "Cannot determine embedding dimensionality: TP53 probe failed too. The embedder is misconfigured."
                 )
             first_resolved = next(iter(probe.values()))
 
@@ -262,8 +264,8 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
                 statuses[i] = EmbeddingStatus.CONTROL
                 control_symbols.append(c.label)
                 logger.warning(
-                    "Label %r has no embeddable components after split; "
-                    "treating as CONTROL.", c.label,
+                    "Label %r has no embeddable components after split; treating as CONTROL.",
+                    c.label,
                 )
                 continue
             # Collect per-gene vectors. Missing components count as
@@ -318,15 +320,19 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
                 "vectors -- treat this as a data-quality bug, not a "
                 "default. Re-run embed_perturbations.py after fixing "
                 "alias drift / Ensembl 4xx errors.",
-                len(unresolved_symbols), len(symbols), self.model_name, preview,
+                len(unresolved_symbols),
+                len(symbols),
+                self.model_name,
+                preview,
             )
             logger.debug("Full UNRESOLVED list: %s", unresolved_symbols)
         if control_symbols:
             logger.info(
-                "BioEmbedderProvider: %d / %d input rows mapped to CONTROL "
-                "sentinel (seed=%d, dim=%d).",
-                len(control_symbols), len(symbols),
-                self.control_sentinel_seed, dim,
+                "BioEmbedderProvider: %d / %d input rows mapped to CONTROL sentinel (seed=%d, dim=%d).",
+                len(control_symbols),
+                len(symbols),
+                self.control_sentinel_seed,
+                dim,
             )
 
         return out, self._status_array(statuses)
@@ -336,9 +342,7 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
         if self.cache_dir is not None:
             cache_path = str(self.cache_dir / self.cache_key.relative_path())
         n_resolved = max(
-            int(n_symbols)
-            - len(self._last_unresolved)
-            - len(self._last_controls),
+            int(n_symbols) - len(self._last_unresolved) - len(self._last_controls),
             0,
         )
         return ProviderMetadata(
@@ -355,9 +359,7 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
                 "resolver_backend": self.resolver_backend,
                 "id_type": self.id_type,
                 "control_policy_patterns": list(self.control_policy.patterns),
-                "control_policy_extra_labels": list(
-                    self.control_policy.extra_labels
-                ),
+                "control_policy_extra_labels": list(self.control_policy.extra_labels),
             },
             n_resolved=n_resolved,
             n_control=len(self._last_controls),
@@ -377,7 +379,7 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
             return self._embedder
         # Lazy import: keeps the precomputed code path free of the
         # BioEmbedder heavy dependency tree.
-        from embpy.embedder import BioEmbedder  # noqa: PLC0415
+        from embpy.embedder import BioEmbedder
 
         self._embedder = BioEmbedder(
             device=self.device,
@@ -392,9 +394,85 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
         if not symbols:
             return {}
         embedder = self._get_embedder()
+        if hasattr(embedder, "embed"):
+            return self._compute_with_standard_embed(embedder, symbols)
+        return self._compute_with_legacy_batch(embedder, symbols)
+
+    def _compute_with_standard_embed(
+        self,
+        embedder: Any,
+        symbols: Sequence[str],
+    ) -> dict[str, np.ndarray]:
+        requested = [str(s) for s in symbols]
+        try:
+            payload = embedder.embed(
+                requested,
+                entity_type="gene",
+                model=self.model_name,
+                id_type=self.id_type,
+                organism=self.organism,
+                pooling_strategy=self.pooling_strategy,
+                output="payload",
+                region=self.region,
+                **self.extra_kwargs,
+            )
+        except ValueError as exc:
+            if "no embeddings were produced" in str(exc):
+                return {}
+            raise
+
+        # Layer 2: merge the per-call sub-report into the provider's
+        # composite. ``BioEmbedder.embed`` calls ``embed_genes_batch``
+        # internally, which assigns ``embedder.last_report``.
+        sub = getattr(embedder, "last_report", None)
+        if sub is not None and self.last_report is not None:
+            self.last_report.merge(sub)
+
+        matrix = np.asarray(payload.get("matrix"), dtype=np.float32)
+        entity_ids = [str(x) for x in payload.get("entity_ids", [])]
+        if matrix.ndim != 2:
+            raise ValueError(f"BioEmbedder.embed payload matrix must be 2D, got {matrix.shape!r}.")
+        if len(entity_ids) != matrix.shape[0]:
+            raise ValueError(
+                f"BioEmbedder.embed payload is malformed: {len(entity_ids)} entity_ids for {matrix.shape[0]} rows."
+            )
+
+        requested_set = set(requested)
+        aliases = payload.get("aliases", {}) or {}
+        out: dict[str, np.ndarray] = {}
+        for i, entity_id in enumerate(entity_ids):
+            row = matrix[i].astype(np.float32, copy=False).reshape(-1)
+            candidates = {str(entity_id)}
+            mapping = aliases.get(entity_id)
+            if isinstance(mapping, dict):
+                for value in mapping.values():
+                    if value is None:
+                        continue
+                    if isinstance(value, (list, tuple, set)):
+                        candidates.update(str(v) for v in value if v is not None)
+                    else:
+                        candidates.add(str(value))
+            for candidate in candidates:
+                if candidate in requested_set:
+                    out[candidate] = row
+
+        # Some test doubles or future embpy outputs may omit aliases while
+        # still preserving one row per requested symbol. In that narrow case
+        # positional recovery is safe because no row was dropped.
+        if len(entity_ids) == len(requested):
+            for symbol, row in zip(requested, matrix, strict=False):
+                out.setdefault(str(symbol), np.asarray(row, dtype=np.float32).reshape(-1))
+        return out
+
+    def _compute_with_legacy_batch(
+        self,
+        embedder: Any,
+        symbols: Sequence[str],
+    ) -> dict[str, np.ndarray]:
+        requested = [str(s) for s in symbols]
         results = embedder.embed_genes_batch(
             model=self.model_name,
-            identifiers=list(symbols),
+            identifiers=requested,
             id_type=self.id_type,
             organism=self.organism,
             pooling_strategy=self.pooling_strategy,
@@ -409,7 +487,7 @@ class BioEmbedderProvider(ActionEmbeddingProvider):
         if sub is not None and self.last_report is not None:
             self.last_report.merge(sub)
         out: dict[str, np.ndarray] = {}
-        for sym, vec in zip(symbols, results, strict=False):
+        for sym, vec in zip(requested, results, strict=False):
             if vec is None:
                 continue
             arr = np.asarray(vec, dtype=np.float32).reshape(-1)

@@ -121,7 +121,7 @@ def load_gene_embedding_table(
     the remaining columns are the embedding entries, plus ``.npz``
     archives with ``"symbols"`` and ``"embeddings"`` arrays.
     """
-    import pandas as pd  # noqa: PLC0415
+    import pandas as pd
 
     path = Path(path)
     if not path.exists():
@@ -158,7 +158,9 @@ def load_gene_embedding_table(
 
     logger.info(
         "Built gene embedding table: %d rows, dim=%d, missing=%d",
-        table.shape[0], embedding_dim, n_missing,
+        table.shape[0],
+        embedding_dim,
+        n_missing,
     )
     return table, indexer
 
@@ -173,10 +175,7 @@ def load_obsm_state_matrix(adata: Any, state_obsm_key: str) -> tuple[np.ndarray,
     if not state_obsm_key:
         raise ValueError("data.state_obsm_key is required; training reads states from adata.obsm.")
     if state_obsm_key not in adata.obsm:
-        raise KeyError(
-            f"state_obsm_key={state_obsm_key!r} not in adata.obsm "
-            f"(available: {list(adata.obsm.keys())})"
-        )
+        raise KeyError(f"state_obsm_key={state_obsm_key!r} not in adata.obsm (available: {list(adata.obsm.keys())})")
     x = adata.obsm[state_obsm_key]
     if hasattr(x, "toarray"):
         x = x.toarray()
@@ -184,9 +183,7 @@ def load_obsm_state_matrix(adata: Any, state_obsm_key: str) -> tuple[np.ndarray,
     if x.ndim != 2:
         raise ValueError(f"adata.obsm[{state_obsm_key!r}] must be 2D, got {x.shape!r}.")
     if x.shape[0] != adata.n_obs:
-        raise ValueError(
-            f"adata.obsm[{state_obsm_key!r}] has {x.shape[0]} rows but AnnData has {adata.n_obs} obs."
-        )
+        raise ValueError(f"adata.obsm[{state_obsm_key!r}] has {x.shape[0]} rows but AnnData has {adata.n_obs} obs.")
     if x.shape[1] <= 0:
         raise ValueError(f"adata.obsm[{state_obsm_key!r}] has zero columns.")
     if not np.isfinite(x).all():
@@ -214,9 +211,9 @@ def load_obsm_state_matrix(adata: Any, state_obsm_key: str) -> tuple[np.ndarray,
 class SequenceSample:
     """Plain container for the tensors produced per sample."""
 
-    obs_stack: Any        # (T, K, G)
-    next_obs_stack: Any   # (T, K, G)
-    action_indices: Any   # (T, n_pert)
+    obs_stack: Any  # (T, K, G)
+    next_obs_stack: Any  # (T, K, G)
+    action_indices: Any  # (T, n_pert)
     next_expression: Any  # (T, G)
     perturbations: list[str]
 
@@ -268,6 +265,7 @@ class PerturbationSequenceDataset:
         expression: np.ndarray,
         perturbation_labels: np.ndarray,
         indexer: GeneIndexer,
+        query_indexer: GeneIndexer | None = None,
         sequence_length: int = 8,
         stack_size: int = 4,
         n_pert: int = 2,
@@ -283,9 +281,7 @@ class PerturbationSequenceDataset:
         if expression.ndim != 2:
             raise ValueError(f"expression must be 2D, got shape {expression.shape}")
         if perturbation_labels.shape[0] != expression.shape[0]:
-            raise ValueError(
-                "expression and perturbation_labels must have matching number of rows"
-            )
+            raise ValueError("expression and perturbation_labels must have matching number of rows")
 
         self.expression = np.ascontiguousarray(expression, dtype=np.float32)
         # Always-gene-space view of the observation matrix. Survives the
@@ -297,6 +293,7 @@ class PerturbationSequenceDataset:
         self.raw_expression = self.expression
         self.perturbation_labels = np.asarray(perturbation_labels)
         self.indexer = indexer
+        self.query_indexer = query_indexer or indexer
         self.sequence_length = int(sequence_length)
         self.stack_size = int(stack_size)
         self.n_pert = int(n_pert)
@@ -397,26 +394,32 @@ class PerturbationSequenceDataset:
         logger.info(
             "PerturbationSequenceDataset: cells_used=%d/%d, genes=%d, perts=%d, controls=%d, "
             "T=%d, K=%d, n_pert=%d, sequences/epoch=%d",
-            int(allowed_mask.sum()), self.expression.shape[0], self.n_genes,
+            int(allowed_mask.sum()),
+            self.expression.shape[0],
+            self.n_genes,
             len(self._sampleable_labels) - 1,
-            self.control_idx.size, self.sequence_length, self.stack_size, self.n_pert,
+            self.control_idx.size,
+            self.sequence_length,
+            self.stack_size,
+            self.n_pert,
             self.n_sequences_per_epoch,
         )
         if self._cell_buckets is not None:
             n_buckets = len(self._sampleable_buckets)
-            sizes = np.array([
-                sum(arr.size for arr in self._cells_by_bucket_label[b].values())
-                for b in self._sampleable_buckets
-            ])
-            label_counts = np.array([
-                len(self._labels_by_bucket[b]) for b in self._sampleable_buckets
-            ])
+            sizes = np.array(
+                [sum(arr.size for arr in self._cells_by_bucket_label[b].values()) for b in self._sampleable_buckets]
+            )
+            label_counts = np.array([len(self._labels_by_bucket[b]) for b in self._sampleable_buckets])
             logger.info(
                 "PerturbationSequenceDataset: bucketing ON -- buckets=%d "
                 "(cells/bucket min/med/max=%d/%d/%d, labels/bucket min/med/max=%d/%d/%d)",
                 n_buckets,
-                int(sizes.min()), int(np.median(sizes)), int(sizes.max()),
-                int(label_counts.min()), int(np.median(label_counts)), int(label_counts.max()),
+                int(sizes.min()),
+                int(np.median(sizes)),
+                int(sizes.max()),
+                int(label_counts.min()),
+                int(np.median(label_counts)),
+                int(label_counts.max()),
             )
 
     # ------------------------------------------------------------------
@@ -427,7 +430,7 @@ class PerturbationSequenceDataset:
         return self.n_sequences_per_epoch
 
     def __getitem__(self, idx: int) -> dict[str, Any]:
-        import torch  # noqa: PLC0415
+        import torch
 
         if self.context_mode == "incontext_set":
             return self._getitem_incontext(idx)
@@ -518,7 +521,7 @@ class PerturbationSequenceDataset:
         * ``perturbations``    list[str]       [*support, query]
         * ``bucket_id``        int
         """
-        import torch  # noqa: PLC0415
+        import torch
 
         K = self.stack_size
         G = self.n_genes
@@ -532,25 +535,16 @@ class PerturbationSequenceDataset:
         if self._cell_buckets is not None:
             bucket_id = int(local.choice(self._sampleable_buckets))
             cells_by_label = self._cells_by_bucket_label[bucket_id]
-            label_pool = [
-                lbl for lbl in self._labels_by_bucket[bucket_id]
-                if lbl != self.control_label
-            ]
+            label_pool = [lbl for lbl in self._labels_by_bucket[bucket_id] if lbl != self.control_label]
         else:
             bucket_id = -1
             cells_by_label = self._cells_by_label
-            label_pool = [
-                lbl for lbl in self._sampleable_labels
-                if lbl != self.control_label
-            ]
+            label_pool = [lbl for lbl in self._sampleable_labels if lbl != self.control_label]
 
         # M support + 1 query distinct perturbations where possible.
         n_draw = M + 1
         replace = len(label_pool) < n_draw
-        chosen = list(
-            local.choice(np.asarray(label_pool, dtype=object),
-                         size=n_draw, replace=replace)
-        )
+        chosen = list(local.choice(np.asarray(label_pool, dtype=object), size=n_draw, replace=replace))
         support_labels = [str(x) for x in chosen[:M]]
         query_label = str(chosen[M])
 
@@ -558,7 +552,9 @@ class PerturbationSequenceDataset:
 
         def _control_stack() -> np.ndarray:
             idx_ = local.choice(
-                control_cells, size=K, replace=control_cells.size < K,
+                control_cells,
+                size=K,
+                replace=control_cells.size < K,
             )
             return self.expression[idx_]
 
@@ -567,11 +563,10 @@ class PerturbationSequenceDataset:
             idx_ = local.choice(cells, size=K, replace=cells.size < K)
             return self.expression[idx_]
 
-        def _action(lbl: str) -> np.ndarray:
+        def _action(lbl: str, *, query: bool = False) -> np.ndarray:
             a = np.zeros((n_pert,), dtype=np.int64)
-            for j, gid in enumerate(
-                self.indexer.encode(lbl, self.control_label)[:n_pert]
-            ):
+            indexer = self.query_indexer if query else self.indexer
+            for j, gid in enumerate(indexer.encode(lbl, self.control_label)[:n_pert]):
                 a[j] = gid
             return a
 
@@ -585,7 +580,7 @@ class PerturbationSequenceDataset:
 
         query_obs = _control_stack()
         query_next = _pert_stack(query_label)
-        query_act = _action(query_label)
+        query_act = _action(query_label, query=True)
 
         return {
             "support_obs": torch.from_numpy(support_obs),
@@ -594,9 +589,7 @@ class PerturbationSequenceDataset:
             "query_obs": torch.from_numpy(query_obs),
             "query_act": torch.from_numpy(query_act),
             "query_next": torch.from_numpy(query_next),
-            "query_next_expression": torch.from_numpy(
-                query_next.mean(axis=0).astype(np.float32)
-            ),
+            "query_next_expression": torch.from_numpy(query_next.mean(axis=0).astype(np.float32)),
             # Alias so WorldModelTrainer's `batch["obs_stack"].size(0)`
             # batch-size accounting keeps working untouched.
             "obs_stack": torch.from_numpy(query_obs),
@@ -625,6 +618,7 @@ class PerturbationSequenceDataset:
             expression=self.expression,
             perturbation_labels=self.perturbation_labels,
             indexer=self.indexer,
+            query_indexer=self.query_indexer,
             sequence_length=self.sequence_length,
             stack_size=self.stack_size,
             n_pert=self.n_pert,

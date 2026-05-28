@@ -32,6 +32,7 @@ class InContextWorldModel(nn.Module):
         *,
         encoder: nn.Module,
         action_encoder: nn.Module,
+        query_action_encoder: nn.Module | None = None,
         dynamics: InContextSetDynamics,
         decoder: nn.Module | None,
         d_model: int,
@@ -41,6 +42,14 @@ class InContextWorldModel(nn.Module):
         super().__init__()
         self.encoder = encoder
         self.action_encoder = action_encoder
+        self.query_action_encoder = query_action_encoder or action_encoder
+        for name, module in (
+            ("action_encoder", self.action_encoder),
+            ("query_action_encoder", self.query_action_encoder),
+        ):
+            module_d_model = getattr(module, "d_model", d_model)
+            if int(module_d_model) != int(d_model):
+                raise ValueError(f"{name} d_model ({module_d_model}) must match dynamics d_model ({d_model}).")
         self.dynamics = dynamics
         self.decoder = decoder
         self.d_model = int(d_model)
@@ -70,6 +79,10 @@ class InContextWorldModel(nn.Module):
         """``(B, n_pert) -> (B, d)``."""
         return self.action_encoder(idx.unsqueeze(1)).squeeze(1)
 
+    def _encode_one_query_action(self, idx: torch.Tensor) -> torch.Tensor:
+        """``(B, n_pert) -> (B, d)`` using the query action table."""
+        return self.query_action_encoder(idx.unsqueeze(1)).squeeze(1)
+
     def decode(self, s: torch.Tensor) -> torch.Tensor:
         if self.decoder is None:
             raise RuntimeError("InContextWorldModel built without a decoder.")
@@ -87,24 +100,24 @@ class InContextWorldModel(nn.Module):
         decoder). ``s_target`` is the encoded real query perturbed
         state (used as the latent regression target).
         """
-        support_s = self._encode_stacks(batch["support_obs"])    # (B,M,d)
-        support_sp = self._encode_stacks(batch["support_next"])   # (B,M,d)
-        support_a = self._encode_actions(batch["support_act"])    # (B,M,d)
-        query_s = self._encode_one_stack(batch["query_obs"])      # (B,d)
-        query_a = self._encode_one_action(batch["query_act"])     # (B,d)
+        support_s = self._encode_stacks(batch["support_obs"])  # (B,M,d)
+        support_sp = self._encode_stacks(batch["support_next"])  # (B,M,d)
+        support_a = self._encode_actions(batch["support_act"])  # (B,M,d)
+        query_s = self._encode_one_stack(batch["query_obs"])  # (B,d)
+        query_a = self._encode_one_query_action(batch["query_act"])  # (B,d)
 
         s_hat = self.dynamics(
-            support_s, support_a, support_sp, query_s, query_a,
+            support_s,
+            support_a,
+            support_sp,
+            query_s,
+            query_a,
         )  # (B,d)
         # The target is only present at train/val time. At inference
         # ``query_next`` is deliberately absent (the answer is what we
         # predict) -- encode it only when given, so .predict() works for
         # both loss computation and held-out inference.
-        s_target = (
-            self._encode_one_stack(batch["query_next"])
-            if "query_next" in batch
-            else None
-        )
+        s_target = self._encode_one_stack(batch["query_next"]) if "query_next" in batch else None
 
         x_hat = self.decode(s_hat) if self.decoder is not None else None
         return {"s_hat": s_hat, "s_target": s_target, "x_hat": x_hat}
@@ -121,7 +134,7 @@ class InContextWorldModel(nn.Module):
         decoder_mse_weight: float = 0.5,
         info_nce_weight: float = 0.0,
         info_nce_temperature: float = 0.1,
-        info_nce_mask_same_pert: bool = True,  # noqa: ARG002 (kept for parity)
+        info_nce_mask_same_pert: bool = True,
         action_counterfactual_weight: float = 0.0,
         action_counterfactual_temperature: float = 0.1,
     ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
@@ -135,11 +148,7 @@ class InContextWorldModel(nn.Module):
         components["latent_mse"] = loss_lat
         total = latent_mse_weight * loss_lat
 
-        if (
-            self.decoder is not None
-            and "query_next_expression" in batch
-            and decoder_mse_weight > 0.0
-        ):
+        if self.decoder is not None and "query_next_expression" in batch and decoder_mse_weight > 0.0:
             tgt = batch["query_next_expression"]
             loss_dec = nn.functional.mse_loss(out["x_hat"], tgt)
             components["decoder_mse"] = loss_dec
@@ -157,9 +166,7 @@ class InContextWorldModel(nn.Module):
             total = total + info_nce_weight * loss_nce
             with torch.no_grad():
                 sim = p @ t.T
-                eye = torch.eye(
-                    sim.size(0), dtype=torch.bool, device=sim.device
-                )
+                eye = torch.eye(sim.size(0), dtype=torch.bool, device=sim.device)
                 components["pos_sim"] = sim[eye].mean()
                 components["neg_sim"] = sim[~eye].mean()
                 components["s_hat_dim_var"] = s_hat.var(dim=0).mean()
@@ -174,9 +181,13 @@ class InContextWorldModel(nn.Module):
             support_sp = self._encode_stacks(batch["support_next"])
             support_a = self._encode_actions(batch["support_act"])
             query_s = self._encode_one_stack(batch["query_obs"])
-            cf_a = self._encode_one_action(batch["query_act"][perm])
+            cf_a = self._encode_one_query_action(batch["query_act"][perm])
             s_hat_cf = self.dynamics(
-                support_s, support_a, support_sp, query_s, cf_a,
+                support_s,
+                support_a,
+                support_sp,
+                query_s,
+                cf_a,
             )
             tau = max(action_counterfactual_temperature, 1e-8)
             p = nn.functional.normalize(s_hat, dim=-1)
@@ -185,9 +196,7 @@ class InContextWorldModel(nn.Module):
             sim_real = (p * tn).sum(-1) / tau
             sim_cf = (cf * tn).sum(-1) / tau
             cf_logits = torch.stack([sim_real, sim_cf], dim=-1)
-            cf_labels = torch.zeros(
-                cf_logits.size(0), dtype=torch.long, device=cf_logits.device
-            )
+            cf_labels = torch.zeros(cf_logits.size(0), dtype=torch.long, device=cf_logits.device)
             loss_cf = nn.functional.cross_entropy(cf_logits, cf_labels)
             components["action_counterfactual"] = loss_cf
             total = total + action_counterfactual_weight * loss_cf

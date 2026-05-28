@@ -77,12 +77,14 @@ def _build_model(
     n_genes: int,
     gene_table: np.ndarray,
     *,
+    query_gene_table: np.ndarray | None = None,
     state_backbone_provider: Any = None,
     state_backbone_embedding_dim: int | None = None,
 ):
     return build_world_model(
         n_genes=n_genes,
         gene_embedding_table=torch.from_numpy(gene_table),
+        query_gene_embedding_table=(torch.from_numpy(query_gene_table) if query_gene_table is not None else None),
         encoder_kind=cfg.encoder.kind,
         d_model=cfg.encoder.d_model,
         stack_size=cfg.data.stack_size,
@@ -108,6 +110,7 @@ def _run_single(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object
         cfg.data,
         split_cfg=cfg.split,
         action_cfg=cfg.action_embedding,
+        query_action_cfg=cfg.query_action_embedding,
         state_backbone_cfg=cfg.state_backbone,
         seed=cfg.seed,
         output_dir=output_dir,
@@ -134,13 +137,18 @@ def _run_single(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object
         cfg,
         n_genes,
         artifacts.gene_table,
+        query_gene_table=artifacts.query_gene_table,
         state_backbone_provider=artifacts.state_backbone,
         state_backbone_embedding_dim=artifacts.state_backbone_embedding_dim,
     )
+    query_action_dim = (
+        artifacts.query_gene_table.shape[1] if artifacts.query_gene_table is not None else artifacts.gene_table.shape[1]
+    )
     logger.info(
-        "Model: %d trainable params (action_dim=%d, decoder_dim=%d, hvgs=%d)",
+        "Model: %d trainable params (support_action_dim=%d, query_action_dim=%d, decoder_dim=%d, hvgs=%d)",
         model.num_parameters(),
         artifacts.gene_table.shape[1],
+        query_action_dim,
         n_genes,
         len(artifacts.gene_symbols),
     )
@@ -296,6 +304,9 @@ def _key_hyperparams(cfg: WorldModelConfig) -> dict[str, Any]:
         "state_backbone.kind": cfg.state_backbone.kind,
         "action_embedding.source": cfg.action_embedding.source,
         "action_embedding.model_name": cfg.action_embedding.model_name,
+        "action_embedding.obsm_key": cfg.action_embedding.obsm_key,
+        "query_action_embedding.obsm_key": cfg.query_action_embedding.obsm_key,
+        "query_action_embedding.model_name": cfg.query_action_embedding.model_name,
         "train.n_epochs": cfg.train.n_epochs,
     }
 

@@ -81,3 +81,35 @@ def test_table_written_to_path(tmp_path):
     p = tmp_path / "out.npz"
     route_output(_result(), output="table", path=p)
     assert p.exists() and (tmp_path / "out.npz.meta.json").exists()
+
+
+def test_bioembedder_embed_supports_perturbation_morphology_payload(monkeypatch):
+    from embpy.embedder import BioEmbedder
+
+    def _fake_batch(self, perturbations, **kwargs):
+        assert kwargs["dataset"] == "hpa"
+        assert kwargs["source"] == "subcell"
+        return np.ones((1, 3), dtype=np.float32), [perturbations[0]]
+
+    monkeypatch.setattr(
+        BioEmbedder,
+        "embed_perturbation_morphology_batch",
+        _fake_batch,
+    )
+
+    out = BioEmbedder(device="cpu").embed(
+        ["TP53", "MISSING"],
+        entity_type="perturbation",
+        model="subcell_mae_rybg",
+        output="payload",
+        morphology_dataset="hpa",
+        morphology_source="subcell",
+        max_images=1,
+        verbose=False,
+    )
+
+    assert out["entity_type"] == "perturbation"
+    assert out["id_scheme"] == "perturbation_label"
+    assert out["entity_ids"] == ["TP53"]
+    assert out["matrix"].shape == (1, 3)
+    assert out["model_config"]["morphology_dataset"] == "hpa"

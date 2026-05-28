@@ -406,6 +406,7 @@ class WorldModelConfig:
     split: SplitConfig = field(default_factory=SplitConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
     action_embedding: ActionEmbeddingConfig = field(default_factory=ActionEmbeddingConfig)
+    query_action_embedding: ActionEmbeddingConfig = field(default_factory=lambda: ActionEmbeddingConfig(obsm_key=""))
     action_adapter: ActionAdapterConfig = field(default_factory=ActionAdapterConfig)
     state_backbone: StateBackboneConfig = field(default_factory=StateBackboneConfig)
 
@@ -431,6 +432,22 @@ class WorldModelConfig:
             )
         if not self.action_embedding.obsm_key:
             raise ValueError("action_embedding.obsm_key is required; training reads actions from adata.obsm.")
+        query_enabled = bool(self.query_action_embedding.obsm_key)
+        if query_enabled:
+            incontext_data = self.data.context_mode == "incontext_set"
+            incontext_dynamics = self.dynamics.kind in {"incontext_set", "incontext_tokens"}
+            if not (incontext_data and incontext_dynamics):
+                raise ValueError(
+                    "query_action_embedding is only valid for in-context training. "
+                    "Set data.context_mode='incontext_set' and dynamics.kind to "
+                    "'incontext_set' or 'incontext_tokens', or remove "
+                    "query_action_embedding.obsm_key."
+                )
+            if self.query_action_embedding.source != "anndata_obsm":
+                raise ValueError(
+                    "query_action_embedding.source must be 'anndata_obsm'. "
+                    "Generate or attach query/action embeddings to AnnData first."
+                )
         if self.mode != "single":
             raise ValueError("Only mode='single' is supported.")
         sb = self.state_backbone
@@ -532,6 +549,7 @@ def validate_world_model_data_sources(cfg: WorldModelConfig) -> None:
         control_label=cfg.data.control_label,
         state_obsm_key=cfg.data.state_obsm_key,
         action_obsm_key=cfg.action_embedding.obsm_key,
+        query_action_obsm_key=(cfg.query_action_embedding.obsm_key if cfg.query_action_embedding.obsm_key else None),
         stage="training data",
     )
 
@@ -543,6 +561,7 @@ def _validate_h5ad_contract(
     control_label: str,
     state_obsm_key: str,
     action_obsm_key: str,
+    query_action_obsm_key: str | None = None,
     stage: str,
 ) -> None:
     if not h5ad_path:
@@ -554,8 +573,7 @@ def _validate_h5ad_contract(
         import anndata as ad  # type: ignore[import-not-found]
     except ImportError as exc:  # pragma: no cover - dependency guard
         raise ImportError(
-            "world-model config validation: anndata is required to inspect "
-            f"local H5AD files for {stage}."
+            f"world-model config validation: anndata is required to inspect local H5AD files for {stage}."
         ) from exc
     try:
         adata = ad.read_h5ad(path, backed="r")
@@ -582,9 +600,7 @@ def _validate_h5ad_contract(
                 "Set data.control_label to the exact control string used by the dataset."
             )
         missing_obsm = [
-            key
-            for key in (state_obsm_key, action_obsm_key)
-            if key and key not in adata.obsm
+            key for key in (state_obsm_key, action_obsm_key, query_action_obsm_key) if key and key not in adata.obsm
         ]
         if missing_obsm:
             raise ValueError(

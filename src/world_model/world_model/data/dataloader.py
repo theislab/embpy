@@ -52,6 +52,9 @@ class DataArtifacts:
     gene_symbols: list[str]
     split: SplitArtifact
     provider: ActionEmbeddingProvider
+    query_gene_table: np.ndarray | None = None
+    query_indexer: GeneIndexer | None = None
+    query_provider: ActionEmbeddingProvider | None = None
     state_backbone: StateBackboneProvider | None = None
     state_backbone_embedding_dim: int | None = None
 
@@ -61,6 +64,7 @@ def build_dataloaders(
     *,
     split_cfg: SplitConfig | None = None,
     action_cfg: ActionEmbeddingConfig | None = None,
+    query_action_cfg: ActionEmbeddingConfig | None = None,
     state_backbone_cfg: StateBackboneConfig | None = None,
     seed: int = 0,
     output_dir: str | Path | None = None,
@@ -94,9 +98,19 @@ def build_dataloaders(
 
     rng = np.random.default_rng(seed)
     provider = build_provider(action_cfg, data_cfg=cfg)
-    full_dataset, gene_table, indexer, gene_symbols = AnnDataSequenceDataset.from_h5ad(
+    query_provider: ActionEmbeddingProvider | None = None
+    if query_action_cfg is not None and getattr(query_action_cfg, "obsm_key", ""):
+        if getattr(cfg, "context_mode", "trajectory") != "incontext_set":
+            raise ValueError(
+                "query_action_embedding was configured, but data.context_mode is "
+                f"{getattr(cfg, 'context_mode', None)!r}. Query action embeddings "
+                "are only meaningful with data.context_mode='incontext_set'."
+            )
+        query_provider = build_provider(query_action_cfg, data_cfg=cfg)
+    full_dataset, gene_table, indexer, gene_symbols, query_gene_table, query_indexer = AnnDataSequenceDataset.from_h5ad(
         h5ad_path=cfg.h5ad_path,
         provider=provider,
+        query_provider=query_provider,
         perturbation_key=cfg.perturbation_key,
         control_label=cfg.control_label,
         state_obsm_key=cfg.state_obsm_key,
@@ -164,6 +178,44 @@ def build_dataloaders(
             meta.n_unresolved,
             meta.n_symbols,
         )
+        if query_provider is not None and query_gene_table is not None:
+            q_n_unresolved = (
+                int(np.sum(np.all(query_gene_table[1:] == 0, axis=1))) if query_gene_table.shape[0] > 1 else 0
+            )
+            q_meta = query_provider.metadata(
+                n_symbols=max(query_gene_table.shape[0] - 1, 0),
+                n_unresolved=q_n_unresolved,
+            )
+            q_meta_path = Path(output_dir) / "query_action_embedding_meta.json"
+            q_meta_path.write_text(json.dumps(asdict(q_meta), indent=2, default=str))
+            q_status_path = Path(output_dir) / "query_action_embedding_status.json"
+            q_status_path.write_text(
+                json.dumps(
+                    {
+                        "n_resolved": int(q_meta.n_resolved),
+                        "n_control": int(q_meta.n_control),
+                        "n_unresolved": int(q_meta.n_unresolved),
+                        "n_mixed": int(q_meta.n_mixed),
+                        "unresolved_symbols": list(q_meta.unresolved_symbols),
+                        "control_symbols": list(q_meta.control_symbols),
+                        "mixed_symbols": list(q_meta.mixed_symbols),
+                        "control_sentinel_seed": q_meta.control_sentinel_seed,
+                    },
+                    indent=2,
+                    default=str,
+                )
+            )
+            logger.info(
+                "Query action embedding meta -> %s and %s (source=%s, dim=%d, resolved=%d, control=%d, unresolved=%d/%d)",
+                q_meta_path,
+                q_status_path,
+                q_meta.source,
+                q_meta.embedding_dim,
+                q_meta.n_resolved,
+                q_meta.n_control,
+                q_meta.n_unresolved,
+                q_meta.n_symbols,
+            )
 
     if getattr(action_cfg, "fail_on_unresolved", False) and len(n_unresolved_attr) > 0:
         preview = list(n_unresolved_attr)[:10]
@@ -175,6 +227,17 @@ def build_dataloaders(
             f"GeneResolver.resolve_symbol) or set "
             f"action_embedding.fail_on_unresolved=False to permit zero "
             f"rows for the unresolved genes."
+        )
+    if (
+        query_action_cfg is not None
+        and query_provider is not None
+        and getattr(query_action_cfg, "fail_on_unresolved", False)
+        and len(getattr(query_provider, "_last_unresolved", []) or []) > 0
+    ):
+        q_unresolved = list(getattr(query_provider, "_last_unresolved", []) or [])
+        raise RuntimeError(
+            "query_action_embedding.fail_on_unresolved=True and the provider "
+            f"could not embed {len(q_unresolved)} symbols (first 10: {q_unresolved[:10]})."
         )
     if n_control_attr:
         logger.info(
@@ -258,6 +321,9 @@ def build_dataloaders(
         gene_symbols=gene_symbols,
         split=spec,
         provider=provider,
+        query_gene_table=query_gene_table,
+        query_indexer=query_indexer,
+        query_provider=query_provider,
         state_backbone=state_backbone,
         state_backbone_embedding_dim=state_embedding_dim,
     )

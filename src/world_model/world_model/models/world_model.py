@@ -443,6 +443,7 @@ def build_world_model(
     *,
     n_genes: int,
     gene_embedding_table: torch.Tensor,
+    query_gene_embedding_table: torch.Tensor | None = None,
     encoder_kind: str = "transformer",
     d_model: int = 256,
     stack_size: int = 4,
@@ -546,6 +547,21 @@ def build_world_model(
         freeze_embeddings=True,
         adapter_cfg=action_adapter_cfg,
     )
+    query_action_encoder: GeneEmbeddingAction | None = None
+    if query_gene_embedding_table is not None:
+        if dynamics_kind not in ("incontext_set", "incontext_tokens"):
+            raise ValueError(
+                "query_gene_embedding_table was provided for a non-in-context "
+                f"dynamics_kind={dynamics_kind!r}. Use dynamics_kind='incontext_set' "
+                "or remove the query action embedding table."
+            )
+        query_action_encoder = GeneEmbeddingAction(
+            gene_embedding_table=query_gene_embedding_table,
+            d_model=d_model,
+            pool="mean",
+            freeze_embeddings=True,
+            adapter_cfg=action_adapter_cfg,
+        )
     decoder = (
         ExpressionDecoder(
             d_model=d_model,
@@ -589,6 +605,7 @@ def build_world_model(
         return InContextWorldModel(
             encoder=encoder,
             action_encoder=action_encoder,
+            query_action_encoder=query_action_encoder,
             dynamics=dynamics,
             decoder=decoder,
             d_model=d_model,
