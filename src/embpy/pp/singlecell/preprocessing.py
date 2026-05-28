@@ -26,22 +26,20 @@ logger = logging.getLogger(__name__)
 def _require_scanpy():  # type: ignore[no-untyped-def]
     try:
         import scanpy as sc  # type: ignore[import-untyped]
+
         return sc
     except ImportError as exc:
-        raise ImportError(
-            "scanpy is required for single-cell preprocessing. "
-            "Install with: pip install scanpy"
-        ) from exc
+        raise ImportError("scanpy is required for single-cell preprocessing. Install with: pip install scanpy") from exc
 
 
 def _require_rapids():  # type: ignore[no-untyped-def]
     try:
         import rapids_singlecell as rsc  # type: ignore[import-untyped]
+
         return rsc
     except ImportError as exc:
         raise ImportError(
-            "rapids_singlecell is required for GPU preprocessing. "
-            "Install with: pip install rapids-singlecell"
+            "rapids_singlecell is required for GPU preprocessing. Install with: pip install rapids-singlecell"
         ) from exc
 
 
@@ -59,6 +57,7 @@ def preprocess_counts(
     # HVG selection
     n_top_genes: int = 2000,
     select_hvg: bool = True,
+    hvg_flavor: Literal["auto", "seurat", "seurat_v3", "cell_ranger"] = "auto",
     # Scaling
     scale: bool = False,
     max_value: float | None = 10.0,
@@ -90,7 +89,11 @@ def preprocess_counts(
     n_top_genes
         Number of highly variable genes to select.
     select_hvg
-        Whether to filter to HVGs (only marks them if ``False``).
+        Whether to compute and mark highly variable genes.
+    hvg_flavor
+        Highly-variable-gene method passed to scanpy/rapids. ``"auto"``
+        uses ``"seurat"`` after log transformation and ``"seurat_v3"``
+        when operating on unlogged normalized counts.
     scale
         Whether to scale to unit variance.
     max_value
@@ -137,13 +140,19 @@ def preprocess_counts(
     if max_pct_mito is not None:
         adata.var["mt"] = adata.var_names.str.upper().str.startswith("MT-")
         sc.pp.calculate_qc_metrics(
-            adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True,
+            adata,
+            qc_vars=["mt"],
+            percent_top=None,
+            log1p=False,
+            inplace=True,
         )
         before = adata.n_obs
         adata = adata[adata.obs["pct_counts_mt"] < max_pct_mito].copy()
         logger.info(
             "Mito filter: %d -> %d cells (threshold=%.1f%%)",
-            before, adata.n_obs, max_pct_mito,
+            before,
+            adata.n_obs,
+            max_pct_mito,
         )
         if "counts" not in adata.layers:
             if sp.issparse(adata.X):
@@ -170,13 +179,19 @@ def preprocess_counts(
         adata.layers["log_normalized"] = np.array(adata.X, copy=True)
 
     # HVG
-    if select_hvg or n_top_genes:
+    if select_hvg and n_top_genes:
+        resolved_hvg_flavor = ("seurat_v3" if not log_transform else "seurat") if hvg_flavor == "auto" else hvg_flavor
         pp.highly_variable_genes(
-            adata, n_top_genes=n_top_genes,
-            flavor="seurat_v3" if not log_transform else "seurat",
+            adata,
+            n_top_genes=n_top_genes,
+            flavor=resolved_hvg_flavor,
         )
         n_hvg = adata.var["highly_variable"].sum()
-        logger.info("Identified %d highly variable genes", n_hvg)
+        logger.info(
+            "Identified %d highly variable genes (flavor=%s)",
+            n_hvg,
+            resolved_hvg_flavor,
+        )
 
     # Scale
     if scale:
@@ -187,8 +202,9 @@ def preprocess_counts(
     adata.X = adata.layers["counts"].copy()
 
     logger.info(
-        "Pipeline 'standard' (backend=%s): %d cells x %d genes, "
-        "log_normalized in .layers, raw counts in .X",
-        backend, adata.n_obs, adata.n_vars,
+        "Pipeline 'standard' (backend=%s): %d cells x %d genes, log_normalized in .layers, raw counts in .X",
+        backend,
+        adata.n_obs,
+        adata.n_vars,
     )
     return adata

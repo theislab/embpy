@@ -41,6 +41,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+SCPreprocessingMode = Literal["auto", "raw", "standard", "none"]
+SCResolvedPreprocessing = Literal["raw", "standard", "none"]
+SCInputLayer = Literal["X", "counts", "log_normalized"]
+
 
 def _require_helical():  # type: ignore[no-untyped-def]
     """Lazily import helical, raising a clear error if not installed."""
@@ -50,8 +54,7 @@ def _require_helical():  # type: ignore[no-untyped-def]
         return helical
     except ImportError as exc:
         raise ImportError(
-            "The 'helical' package is required for single-cell foundation "
-            "models. Install with: pip install helical"
+            "The 'helical' package is required for single-cell foundation models. Install with: pip install helical"
         ) from exc
 
 
@@ -80,16 +83,14 @@ def _install_flash_attn_shim() -> None:
         import flash_attn  # type: ignore[import-not-found]
 
         # Real flash_attn present -- only shim if bert_padding is broken.
-        if hasattr(flash_attn, "bert_padding") and hasattr(
-            flash_attn.bert_padding, "unpad_input"
-        ):
+        if hasattr(flash_attn, "bert_padding") and hasattr(flash_attn.bert_padding, "unpad_input"):
             return
     except ImportError:
         pass
 
     import torch
 
-    def unpad_input(hidden_states: "torch.Tensor", attention_mask: "torch.Tensor"):
+    def unpad_input(hidden_states: torch.Tensor, attention_mask: torch.Tensor):
         """Flatten padded (batch, seqlen, ...) tensors down to non-pad tokens.
 
         Mirrors ``flash_attn.bert_padding.unpad_input``. Returns
@@ -98,20 +99,18 @@ def _install_flash_attn_shim() -> None:
         seqlens_in_batch = attention_mask.sum(dim=-1, dtype=torch.int32)
         indices = torch.nonzero(attention_mask.flatten(), as_tuple=False).flatten()
         max_seqlen_in_batch = int(seqlens_in_batch.max().item()) if seqlens_in_batch.numel() else 0
-        cu_seqlens = torch.nn.functional.pad(
-            torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0)
-        )
+        cu_seqlens = torch.nn.functional.pad(torch.cumsum(seqlens_in_batch, dim=0, dtype=torch.int32), (1, 0))
         flat = hidden_states.reshape(-1, *hidden_states.shape[2:])
         flat_unpad = flat.index_select(0, indices)
         return flat_unpad, indices, cu_seqlens, max_seqlen_in_batch
 
-    def pad_input(hidden_states: "torch.Tensor", indices: "torch.Tensor", batch: int, seqlen: int):
+    def pad_input(hidden_states: torch.Tensor, indices: torch.Tensor, batch: int, seqlen: int):
         """Inverse of ``unpad_input``. Mirrors ``flash_attn.bert_padding.pad_input``."""
         output = hidden_states.new_zeros((batch * seqlen, *hidden_states.shape[1:]))
         output.index_copy_(0, indices, hidden_states)
         return output.reshape(batch, seqlen, *hidden_states.shape[1:])
 
-    def index_first_axis(hidden_states: "torch.Tensor", indices: "torch.Tensor"):
+    def index_first_axis(hidden_states: torch.Tensor, indices: torch.Tensor):
         """Mirrors ``flash_attn.bert_padding.index_first_axis``."""
         return hidden_states.index_select(0, indices)
 
@@ -172,6 +171,18 @@ class SCModelCard:
         ``True`` when the wrapper implements :meth:`SingleCellWrapper.generate_cells`
         (i.e. the model can synthesise whole cell profiles, typically
         conditioned on a base context). Currently: Stack.
+    default_preprocessing
+        Preprocessing mode selected by ``BioEmbedder.embed(...,
+        entity_type="cell", preprocessing="auto")`` for this model.
+    input_layer
+        AnnData matrix consumed by the wrapper after preprocessing.
+        ``"X"`` means raw counts in ``.X``; ``"counts"`` means
+        ``.layers["counts"]``; ``"log_normalized"`` means
+        ``.layers["log_normalized"]``.
+    uses_hvg
+        Whether the wrapper can use ``adata.var["highly_variable"]`` when
+        available. This is metadata for planning and provenance; user
+        options such as ``pca_use_hvg=False`` still control runtime use.
     """
 
     key: str
@@ -184,6 +195,9 @@ class SCModelCard:
     vocab_type: Literal["symbol", "ensembl_id", "either", "any"] = "symbol"
     supports_decode: bool = False
     supports_generation: bool = False
+    default_preprocessing: SCResolvedPreprocessing = "raw"
+    input_layer: SCInputLayer = "X"
+    uses_hvg: bool = False
 
 
 _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
@@ -377,6 +391,9 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
         vocab_type="any",
         description="PCA on the expression matrix (classical baseline).",
         supports_decode=True,
+        default_preprocessing="standard",
+        input_layer="log_normalized",
+        uses_hvg=True,
     ),
     # --- scvi-tools ---
     "scvi": SCModelCard(
@@ -386,6 +403,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
         description="scVI variational autoencoder (scvi-tools).",
         default_model_name="SCVI",
         supports_decode=True,
+        input_layer="counts",
     ),
     "scanvi": SCModelCard(
         key="scanvi",
@@ -394,6 +412,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
         description="scANVI semi-supervised VAE (scvi-tools).",
         default_model_name="SCANVI",
         supports_decode=True,
+        input_layer="counts",
     ),
     "totalvi": SCModelCard(
         key="totalvi",
@@ -402,6 +421,7 @@ _SC_MODEL_REGISTRY: dict[str, SCModelCard] = {
         description="totalVI joint RNA+protein VAE (scvi-tools).",
         default_model_name="TOTALVI",
         supports_decode=True,
+        input_layer="counts",
     ),
 }
 
@@ -839,12 +859,12 @@ class StateEmbeddingWrapper(SingleCellWrapper):
             from state.emb import Inference  # type: ignore[import-not-found]
         except ImportError as exc:
             raise ImportError(
-                "The 'arc-state' package is required for STATE embeddings. "
-                "Install with: pip install arc-state"
+                "The 'arc-state' package is required for STATE embeddings. Install with: pip install arc-state"
             ) from exc
 
         import glob
         import os
+
         import torch
         from omegaconf import OmegaConf  # type: ignore[import-not-found]
 
@@ -853,7 +873,9 @@ class StateEmbeddingWrapper(SingleCellWrapper):
         protein_embeds = None
         if self._protein_embeddings_path:
             protein_embeds = torch.load(
-                self._protein_embeddings_path, weights_only=False, map_location="cpu",
+                self._protein_embeddings_path,
+                weights_only=False,
+                map_location="cpu",
             )
         elif self._model_folder:
             pe_path = os.path.join(self._model_folder, "protein_embeddings.pt")
@@ -867,14 +889,10 @@ class StateEmbeddingWrapper(SingleCellWrapper):
         if checkpoint is None and self._model_folder:
             ckpts = sorted(glob.glob(os.path.join(self._model_folder, "*.ckpt")))
             if not ckpts:
-                raise FileNotFoundError(
-                    f"No .ckpt files found in {self._model_folder}"
-                )
+                raise FileNotFoundError(f"No .ckpt files found in {self._model_folder}")
             checkpoint = ckpts[-1]
         if checkpoint is None:
-            raise ValueError(
-                "Either checkpoint or model_folder must be provided."
-            )
+            raise ValueError("Either checkpoint or model_folder must be provided.")
 
         self._inferer.load_model(checkpoint)
         self._model = self._inferer.model
@@ -883,8 +901,8 @@ class StateEmbeddingWrapper(SingleCellWrapper):
     def embed_cells(self, adata: Any) -> np.ndarray:  # noqa: D102
         if self._inferer is None:
             raise RuntimeError("Model not loaded. Call load() first.")
-        import tempfile
         import os
+        import tempfile
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp_path = os.path.join(tmpdir, "input.h5ad")
@@ -896,7 +914,7 @@ class StateEmbeddingWrapper(SingleCellWrapper):
             )
         return np.asarray(embeddings, dtype=np.float32)
 
-    def decode_cells(  # noqa: D102
+    def decode_cells(
         self,
         latent: np.ndarray,
         *,
@@ -1048,8 +1066,7 @@ class StackWrapper(SingleCellWrapper):
             from stack.cli.embedding import _ensure_deps, _load_model, _resolve_device  # type: ignore[import-not-found]
         except ImportError as exc:
             raise ImportError(
-                "The 'arc-stack' package is required for Stack embeddings. "
-                "Install with: pip install arc-stack"
+                "The 'arc-stack' package is required for Stack embeddings. Install with: pip install arc-stack"
             ) from exc
 
         if self._checkpoint is None:
@@ -1093,24 +1110,17 @@ class StackWrapper(SingleCellWrapper):
         try:
             from stack.cli.embedding import extract_embeddings  # type: ignore[import-not-found]
         except ImportError as exc:
-            raise ImportError(
-                "The 'arc-stack' package is required. "
-                "Install with: pip install arc-stack"
-            ) from exc
+            raise ImportError("The 'arc-stack' package is required. Install with: pip install arc-stack") from exc
 
-        import tempfile
         import os
+        import tempfile
 
         # Capture-and-restore so we never silently mutate the caller's
         # AnnData. We only touch the obs frame, not X / var / layers, so
         # the operation is O(n_obs) in time and memory regardless of the
         # underlying matrix size.
         original_organism = None
-        had_organism_col = (
-            hasattr(adata, "obs")
-            and hasattr(adata.obs, "columns")
-            and "organism" in adata.obs.columns
-        )
+        had_organism_col = hasattr(adata, "obs") and hasattr(adata.obs, "columns") and "organism" in adata.obs.columns
         if had_organism_col:
             original_organism = adata.obs["organism"].copy()
             raw = adata.obs["organism"].astype(str)
@@ -1167,7 +1177,7 @@ class StackWrapper(SingleCellWrapper):
 
         return np.asarray(embeddings, dtype=np.float32)
 
-    def generate_cells(  # noqa: D102
+    def generate_cells(
         self,
         base_adata: Any,
         test_adata: Any,
@@ -1223,8 +1233,7 @@ class StackWrapper(SingleCellWrapper):
         del kwargs  # unused
         if self._checkpoint is None or self._genelist is None:
             raise ValueError(
-                "StackWrapper.generate_cells requires both 'checkpoint' "
-                "and 'genelist' to be set at construction time."
+                "StackWrapper.generate_cells requires both 'checkpoint' and 'genelist' to be set at construction time."
             )
         try:
             from stack.cli.generation import generate  # type: ignore[import-not-found]
@@ -1234,8 +1243,8 @@ class StackWrapper(SingleCellWrapper):
                 "generation. Install with: pip install arc-stack"
             ) from exc
 
-        import tempfile
         import os
+        import tempfile
 
         # generate() wants file paths, so persist the in-memory AnnDatas
         # to a temp dir and hand it the paths. This also matches the
@@ -1250,7 +1259,7 @@ class StackWrapper(SingleCellWrapper):
             if split_column is None:
                 # Single-donor shortcut: inject a placeholder split.
                 import anndata as ad
-                import pandas as pd
+
                 placeholder = ad.read_h5ad(base_path)
                 placeholder.obs["__embpy_split__"] = "ALL"
                 placeholder.write_h5ad(base_path)
@@ -1330,8 +1339,8 @@ class PCAEmbedding(SingleCellWrapper):
 
         wrapper = PCAEmbedding(n_components=50, backend="cpu")
         wrapper.load()
-        embs = wrapper.embed_cells(adata)        # (n_cells, 50)
-        recon = wrapper.decode_cells(embs)       # (n_cells, n_genes)
+        embs = wrapper.embed_cells(adata)  # (n_cells, 50)
+        recon = wrapper.decode_cells(embs)  # (n_cells, n_genes)
     """
 
     supports_decode: bool = True
@@ -1390,6 +1399,7 @@ class PCAEmbedding(SingleCellWrapper):
             try:
                 from cuml.decomposition import PCA as cuPCA  # type: ignore[import-untyped]
                 from cuml.preprocessing import StandardScaler as cuScaler  # type: ignore[import-untyped]
+
                 scaler = cuScaler() if self.scale else None
                 if scaler is not None:
                     X = scaler.fit_transform(X)
@@ -1400,16 +1410,15 @@ class PCAEmbedding(SingleCellWrapper):
                 self._pca = pca
                 self._scaler = scaler
             except ImportError:
-                import rapids_singlecell as rsc  # type: ignore[import-untyped]
                 import anndata as ad
+                import rapids_singlecell as rsc  # type: ignore[import-untyped]
+
                 adata_tmp = ad.AnnData(X=X.astype(np.float32))
                 if self.scale:
                     rsc.pp.scale(adata_tmp)
                 rsc.pp.pca(adata_tmp, n_comps=n_comp)
                 result = np.asarray(adata_tmp.obsm["X_pca"], dtype=np.float32)
-                var_explained = float(
-                    adata_tmp.uns["pca"]["variance_ratio"].sum()
-                ) * 100
+                var_explained = float(adata_tmp.uns["pca"]["variance_ratio"].sum()) * 100
                 # rapids_singlecell path does not expose a reusable fitted
                 # PCA object, so decode_cells is not available here.
                 self._pca = None
@@ -1417,6 +1426,7 @@ class PCAEmbedding(SingleCellWrapper):
         else:
             from sklearn.decomposition import PCA
             from sklearn.preprocessing import StandardScaler
+
             scaler = StandardScaler() if self.scale else None
             if scaler is not None:
                 X = scaler.fit_transform(X)
@@ -1428,8 +1438,10 @@ class PCAEmbedding(SingleCellWrapper):
 
         logger.info(
             "PCA (backend=%s): %d -> %d components (%.1f%% variance explained)",
-            self.backend, X.shape[1] if hasattr(X, "shape") else 0,
-            n_comp, var_explained,
+            self.backend,
+            X.shape[1] if hasattr(X, "shape") else 0,
+            n_comp,
+            var_explained,
         )
         return result
 
@@ -1457,9 +1469,7 @@ class PCAEmbedding(SingleCellWrapper):
         X_hvg = np.asarray(X_hvg, dtype=np.float32)
 
         if self._hvg_mask is not None and self._n_genes_full is not None:
-            full = np.zeros(
-                (latent.shape[0], self._n_genes_full), dtype=np.float32
-            )
+            full = np.zeros((latent.shape[0], self._n_genes_full), dtype=np.float32)
             full[:, self._hvg_mask] = X_hvg
             return full
         return X_hvg
@@ -1513,8 +1523,8 @@ class ScVIToolsWrapper(SingleCellWrapper):
 
         wrapper = ScVIToolsWrapper(model_class="SCVI", n_latent=30)
         wrapper.load("cuda")
-        z = wrapper.embed_cells(adata)            # (n_cells, 30)
-        expr = wrapper.decode_cells(z)            # (n_cells, n_genes)
+        z = wrapper.embed_cells(adata)  # (n_cells, 30)
+        expr = wrapper.decode_cells(z)  # (n_cells, n_genes)
     """
 
     supports_decode: bool = True
@@ -1559,8 +1569,7 @@ class ScVIToolsWrapper(SingleCellWrapper):
             import scvi  # type: ignore[import-untyped]
         except ImportError as exc:
             raise ImportError(
-                "scvi-tools is required for ScVIToolsWrapper. "
-                "Install with: pip install scvi-tools"
+                "scvi-tools is required for ScVIToolsWrapper. Install with: pip install scvi-tools"
             ) from exc
 
         model_map = {
@@ -1569,10 +1578,7 @@ class ScVIToolsWrapper(SingleCellWrapper):
             "TOTALVI": scvi.model.TOTALVI,
         }
         if self.model_class_name not in model_map:
-            raise ValueError(
-                f"Unknown scvi-tools model '{self.model_class_name}'. "
-                f"Available: {list(model_map.keys())}"
-            )
+            raise ValueError(f"Unknown scvi-tools model '{self.model_class_name}'. Available: {list(model_map.keys())}")
         return model_map[self.model_class_name]
 
     def embed_cells(self, adata: Any) -> np.ndarray:  # noqa: D102
@@ -1601,16 +1607,11 @@ class ScVIToolsWrapper(SingleCellWrapper):
             if self.labels_key and self.labels_key in adata_work.obs.columns:
                 setup_kwargs["labels_key"] = self.labels_key
             else:
-                raise ValueError(
-                    "scANVI requires labels_key pointing to a cell-type "
-                    "column in adata.obs"
-                )
+                raise ValueError("scANVI requires labels_key pointing to a cell-type column in adata.obs")
 
         if self.model_class_name == "TOTALVI":
             if self.protein_expression_obsm_key:
-                setup_kwargs["protein_expression_obsm_key"] = (
-                    self.protein_expression_obsm_key
-                )
+                setup_kwargs["protein_expression_obsm_key"] = self.protein_expression_obsm_key
 
         model_cls.setup_anndata(adata_work, **setup_kwargs)
 
@@ -1646,7 +1647,8 @@ class ScVIToolsWrapper(SingleCellWrapper):
         latent = model.get_latent_representation()
         logger.info(
             "%s: trained %d epochs, latent shape %s",
-            self.model_class_name, model.history_["elbo_train"].shape[0],
+            self.model_class_name,
+            model.history_["elbo_train"].shape[0],
             latent.shape,
         )
         # Cache so decode_cells can reuse the trained generative module.
@@ -1654,7 +1656,7 @@ class ScVIToolsWrapper(SingleCellWrapper):
         self._trained_adata = adata_work
         return np.asarray(latent, dtype=np.float32)
 
-    def decode_cells(  # noqa: D102
+    def decode_cells(
         self,
         latent: np.ndarray,
         *,
@@ -1717,28 +1719,39 @@ class ScVIToolsWrapper(SingleCellWrapper):
 
         if library_size is None:
             lib = torch.full(
-                (n, 1), float(np.log(1e4)), device=device, dtype=torch.float32,
+                (n, 1),
+                float(np.log(1e4)),
+                device=device,
+                dtype=torch.float32,
             )
         elif np.ndim(library_size) == 0:
             lib = torch.full(
-                (n, 1), float(library_size), device=device, dtype=torch.float32,
+                (n, 1),
+                float(library_size),
+                device=device,
+                dtype=torch.float32,
             )
         else:
             lib = torch.as_tensor(
                 np.asarray(library_size).reshape(n, 1),
-                device=device, dtype=torch.float32,
+                device=device,
+                dtype=torch.float32,
             )
 
         if batch_index is None:
             bidx = torch.zeros((n, 1), device=device, dtype=torch.long)
         elif np.ndim(batch_index) == 0:
             bidx = torch.full(
-                (n, 1), int(batch_index), device=device, dtype=torch.long,
+                (n, 1),
+                int(batch_index),
+                device=device,
+                dtype=torch.long,
             )
         else:
             bidx = torch.as_tensor(
                 np.asarray(batch_index).reshape(n, 1),
-                device=device, dtype=torch.long,
+                device=device,
+                dtype=torch.long,
             )
 
         gen_kwargs: dict[str, Any] = {
@@ -1753,12 +1766,16 @@ class ScVIToolsWrapper(SingleCellWrapper):
                 yidx = torch.zeros((n, 1), device=device, dtype=torch.long)
             elif np.ndim(labels) == 0:
                 yidx = torch.full(
-                    (n, 1), int(labels), device=device, dtype=torch.long,
+                    (n, 1),
+                    int(labels),
+                    device=device,
+                    dtype=torch.long,
                 )
             else:
                 yidx = torch.as_tensor(
                     np.asarray(labels).reshape(n, 1),
-                    device=device, dtype=torch.long,
+                    device=device,
+                    dtype=torch.long,
                 )
             gen_kwargs["y"] = yidx
 
@@ -1832,11 +1849,57 @@ def singlecell_info(key: str) -> SCModelCard:
         Model key (e.g. ``"scgpt"``, ``"geneformer_v2_12L"``).
     """
     if key not in _SC_MODEL_REGISTRY:
-        raise ValueError(
-            f"Unknown single-cell model {key!r}. "
-            f"Available: {list_singlecell_models()}"
-        )
+        raise ValueError(f"Unknown single-cell model {key!r}. Available: {list_singlecell_models()}")
     return _SC_MODEL_REGISTRY[key]
+
+
+def resolve_singlecell_preprocessing(
+    models: Sequence[str],
+    requested: SCPreprocessingMode = "auto",
+) -> tuple[SCResolvedPreprocessing, dict[str, Any]]:
+    """Resolve the preprocessing mode for one or more cell models.
+
+    The rule is intentionally conservative: models that need a processed
+    expression layer, currently PCA, lift the whole call to ``"standard"``.
+    Raw-count models can still consume that output because preprocessing
+    preserves raw counts in ``.X`` and ``.layers["counts"]``.
+    """
+    if requested not in {"auto", "raw", "standard", "none"}:
+        raise ValueError(f"preprocessing must be one of 'auto', 'raw', 'standard', or 'none', got {requested!r}.")
+
+    cards = [singlecell_info(model) for model in models]
+    requirements = {
+        card.key: {
+            "default_preprocessing": card.default_preprocessing,
+            "input_layer": card.input_layer,
+            "uses_hvg": card.uses_hvg,
+            "vocab_type": card.vocab_type,
+        }
+        for card in cards
+    }
+
+    if requested == "auto":
+        if any(card.default_preprocessing == "standard" for card in cards):
+            resolved: SCResolvedPreprocessing = "standard"
+            reason = (
+                "At least one requested model consumes processed expression "
+                "(for example PCA uses .layers['log_normalized'] and optional "
+                "HVGs). Raw-count models remain safe because .X and "
+                ".layers['counts'] are preserved."
+            )
+        else:
+            resolved = "raw"
+            reason = "All requested models consume raw counts, so only QC/counts-layer preparation is run."
+    else:
+        resolved = requested
+        reason = "User supplied an explicit preprocessing mode."
+
+    return resolved, {
+        "requested": requested,
+        "resolved": resolved,
+        "reason": reason,
+        "model_requirements": requirements,
+    }
 
 
 def get_singlecell_wrapper(

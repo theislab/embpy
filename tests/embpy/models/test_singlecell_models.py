@@ -8,22 +8,22 @@ import numpy as np
 import pytest
 
 from embpy.models.singlecell_models import (
-    SCModelCard,
-    ScGPTWrapper,
-    GeneformerWrapper,
-    UCEWrapper,
-    TranscriptFormerWrapper,
-    TahoeWrapper,
-    Cell2SentenceWrapper,
-    StateEmbeddingWrapper,
-    StackWrapper,
-    SingleCellWrapper,
     _SC_MODEL_REGISTRY,
+    Cell2SentenceWrapper,
+    GeneformerWrapper,
+    ScGPTWrapper,
+    SCModelCard,
+    SingleCellWrapper,
+    StackWrapper,
+    StateEmbeddingWrapper,
+    TahoeWrapper,
+    TranscriptFormerWrapper,
+    UCEWrapper,
     get_singlecell_wrapper,
     list_singlecell_models,
+    resolve_singlecell_preprocessing,
     singlecell_info,
 )
-
 
 # =====================================================================
 # Helpers
@@ -46,9 +46,7 @@ def _make_mock_helical_model(emb_dim: int = _FAKE_EMB_DIM):
     model = MagicMock()
     fake_dataset = MagicMock()
     model.process_data.return_value = fake_dataset
-    model.get_embeddings.return_value = np.random.randn(_N_CELLS, emb_dim).astype(
-        np.float32
-    )
+    model.get_embeddings.return_value = np.random.randn(_N_CELLS, emb_dim).astype(np.float32)
     return model
 
 
@@ -89,6 +87,25 @@ class TestRegistry:
             assert card.wrapper_class_name in _WRAPPER_MAP, (
                 f"Card {key} references unknown wrapper {card.wrapper_class_name}"
             )
+
+    def test_preprocessing_policy_metadata(self) -> None:
+        pca = singlecell_info("pca")
+        scgpt = singlecell_info("scgpt")
+
+        assert pca.default_preprocessing == "standard"
+        assert pca.input_layer == "log_normalized"
+        assert pca.uses_hvg is True
+        assert scgpt.default_preprocessing == "raw"
+        assert scgpt.input_layer == "X"
+
+    def test_resolve_singlecell_preprocessing_auto(self) -> None:
+        raw_mode, raw_plan = resolve_singlecell_preprocessing(["scgpt"], "auto")
+        mixed_mode, mixed_plan = resolve_singlecell_preprocessing(["scgpt", "pca"], "auto")
+
+        assert raw_mode == "raw"
+        assert mixed_mode == "standard"
+        assert raw_plan["model_requirements"]["scgpt"]["input_layer"] == "X"
+        assert mixed_plan["model_requirements"]["pca"]["uses_hvg"] is True
 
 
 # =====================================================================
@@ -164,9 +181,7 @@ class TestScGPT:
     def test_load_and_embed(self, mock_helical: MagicMock) -> None:
         mock_model = _make_mock_helical_model()
 
-        with patch(
-            "embpy.models.singlecell_models.ScGPTWrapper.load"
-        ) as mock_load:
+        with patch("embpy.models.singlecell_models.ScGPTWrapper.load"):
             wrapper = ScGPTWrapper(batch_size=5)
             wrapper._model = mock_model
             wrapper.device = "cpu"
@@ -321,7 +336,6 @@ class TestRequireHelical:
 class TestPCAEmbedding:
     def _make_adata_with_layers(self):
         """AnnData with counts and log_normalized layers."""
-        import scipy.sparse as sp
         from anndata import AnnData as AD
 
         rng = np.random.default_rng(42)
@@ -503,10 +517,7 @@ class TestStateEmbeddingWrapper:
 
     def test_load_no_checkpoint_raises(self) -> None:
         wrapper = StateEmbeddingWrapper()
-        mock_inference_cls = MagicMock()
-        with patch(
-            "embpy.models.singlecell_models.StateEmbeddingWrapper.load"
-        ) as mock_load:
+        with patch("embpy.models.singlecell_models.StateEmbeddingWrapper.load") as mock_load:
             mock_load.side_effect = ValueError("Either checkpoint or model_folder")
             with pytest.raises(ValueError, match="checkpoint or model_folder"):
                 wrapper.load("cpu")
@@ -522,9 +533,6 @@ class TestStateEmbeddingWrapper:
 
         adata = _make_fake_adata()
         adata.write_h5ad = MagicMock()
-
-        import tempfile
-        import os
 
         with patch("tempfile.TemporaryDirectory") as mock_tmpdir:
             mock_tmpdir.return_value.__enter__ = MagicMock(return_value="/tmp/fake")
@@ -661,9 +669,7 @@ class TestCapabilityFlags:
         for key in ("pca", "scvi", "scanvi", "totalvi", "state"):
             card = singlecell_info(key)
             assert card.supports_decode is True, f"{key} should advertise decode"
-            assert card.supports_generation is False, (
-                f"{key} should NOT advertise generation"
-            )
+            assert card.supports_generation is False, f"{key} should NOT advertise generation"
 
     def test_card_flags_stack(self) -> None:
         card = singlecell_info("stack")
@@ -682,9 +688,7 @@ class TestCapabilityFlags:
         ):
             card = singlecell_info(key)
             assert card.supports_decode is False, f"{key} should NOT decode"
-            assert card.supports_generation is False, (
-                f"{key} should NOT generate"
-            )
+            assert card.supports_generation is False, f"{key} should NOT generate"
 
     def test_card_and_wrapper_flags_agree(self) -> None:
         """SCModelCard flags should match wrapper class flags for every
@@ -726,7 +730,8 @@ class TestBaseStubs:
         wrapper = UCEWrapper()
         with pytest.raises(NotImplementedError, match="generate_cells"):
             wrapper.generate_cells(
-                _make_fake_adata(), _make_fake_adata(),
+                _make_fake_adata(),
+                _make_fake_adata(),
             )
 
     def test_pca_does_not_generate(self) -> None:
@@ -738,7 +743,8 @@ class TestBaseStubs:
         wrapper = PCAEmbedding()
         with pytest.raises(NotImplementedError, match="generate_cells"):
             wrapper.generate_cells(
-                _make_fake_adata(), _make_fake_adata(),
+                _make_fake_adata(),
+                _make_fake_adata(),
             )
 
     def test_stack_does_not_decode(self) -> None:
@@ -835,7 +841,10 @@ class TestPCADecode:
 
         recon_a = wrapper.decode_cells(z)
         recon_b = wrapper.decode_cells(
-            z, gene_names=["ignored"] * 30, adata=None, extra="ignored",
+            z,
+            gene_names=["ignored"] * 30,
+            adata=None,
+            extra="ignored",
         )
         np.testing.assert_allclose(recon_a, recon_b)
 
@@ -847,7 +856,10 @@ class TestPCADecode:
 
         adata = self._make_adata(n_genes=10)
         wrapper = PCAEmbedding(
-            n_components=10, use_hvg=False, scale=False, backend="cpu",
+            n_components=10,
+            use_hvg=False,
+            scale=False,
+            backend="cpu",
         )
         wrapper.load()
         z = wrapper.embed_cells(adata)
@@ -896,9 +908,13 @@ class TestScVIDecode:
         wrapper._trained_model = fake_model
         wrapper._trained_adata = MagicMock()
 
-        latent = np.random.default_rng(0).standard_normal(
-            (n_cells, n_latent),
-        ).astype(np.float32)
+        latent = (
+            np.random.default_rng(0)
+            .standard_normal(
+                (n_cells, n_latent),
+            )
+            .astype(np.float32)
+        )
         out = wrapper.decode_cells(latent)
 
         assert out.shape == (n_cells, n_genes)
@@ -1023,16 +1039,19 @@ class TestStateDecode:
             assert list(genes) == gene_names
             assert emb_key in adata.obsm
             assert adata.obsm[emb_key].shape == (n_cells, emb_dim)
-            for b in fake_batches:
-                yield b
+            yield from fake_batches
 
         mock_inferer = MagicMock()
         mock_inferer.decode_from_adata = fake_decode
         wrapper._inferer = mock_inferer
 
-        z = np.random.default_rng(0).standard_normal(
-            (n_cells, emb_dim),
-        ).astype(np.float32)
+        z = (
+            np.random.default_rng(0)
+            .standard_normal(
+                (n_cells, emb_dim),
+            )
+            .astype(np.float32)
+        )
         out = wrapper.decode_cells(z, gene_names=gene_names)
 
         assert out.shape == (n_cells, n_genes)
@@ -1109,19 +1128,21 @@ class TestStackGenerate:
         ):
             with pytest.raises(ImportError, match="arc-stack"):
                 wrapper.generate_cells(
-                    _make_fake_adata(), _make_fake_adata(),
+                    _make_fake_adata(),
+                    _make_fake_adata(),
                 )
 
     def test_generate_routes_through_generate(self) -> None:
         """Mock stack.cli.generation.generate and check the wrapper
         concatenates the per-split predictions into a single array.
         """
-        import sys
         import types
+
         from anndata import AnnData as AD
 
         wrapper = StackWrapper(
-            checkpoint="/fake.ckpt", genelist="/fake.pkl",
+            checkpoint="/fake.ckpt",
+            genelist="/fake.pkl",
         )
         wrapper.device = "cpu"
 
@@ -1150,7 +1171,8 @@ class TestStackGenerate:
             },
         ):
             out = wrapper.generate_cells(
-                base, test,
+                base,
+                test,
                 split_column="donor",
                 split_values=["donor_A"],
             )
@@ -1169,10 +1191,12 @@ class TestStackGenerate:
         split column on the base adata and calls generate() with it.
         """
         import types
+
         from anndata import AnnData as AD
 
         wrapper = StackWrapper(
-            checkpoint="/fake.ckpt", genelist="/fake.pkl",
+            checkpoint="/fake.ckpt",
+            genelist="/fake.pkl",
         )
 
         n_test, n_genes = 3, 5
@@ -1307,18 +1331,23 @@ class TestBioEmbedderDecode:
             copy=True,
         )
         e.decode_cells(
-            adata=out_adata, model="pca", write_layer="X_pca_decoded",
+            adata=out_adata,
+            model="pca",
+            write_layer="X_pca_decoded",
         )
         assert "X_pca_decoded" in out_adata.layers
         assert out_adata.layers["X_pca_decoded"].shape == (
-            out_adata.n_obs, out_adata.n_vars,
+            out_adata.n_obs,
+            out_adata.n_vars,
         )
 
     def test_generate_non_generator_model_raises(self) -> None:
         e = self._fresh_embedder()
         with pytest.raises(ValueError, match="does not expose"):
             e.generate_cells(
-                _make_fake_adata(), _make_fake_adata(), model="pca",
+                _make_fake_adata(),
+                _make_fake_adata(),
+                model="pca",
             )
 
     def test_generate_without_wrapper_raises(self) -> None:
@@ -1328,7 +1357,9 @@ class TestBioEmbedderDecode:
         e = self._fresh_embedder()
         with pytest.raises(RuntimeError, match="wrapper"):
             e.generate_cells(
-                _make_fake_adata(), _make_fake_adata(), model="stack",
+                _make_fake_adata(),
+                _make_fake_adata(),
+                model="stack",
             )
 
     def test_generate_uses_user_wrapper(self) -> None:

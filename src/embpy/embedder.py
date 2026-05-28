@@ -2386,15 +2386,63 @@ class BioEmbedder:
 
         return results
 
+    @staticmethod
+    def _singlecell_preprocessing_warnings(
+        adata: Any,
+        *,
+        models: Sequence[str],
+        resolved_preprocessing: str,
+        pca_use_hvg: bool,
+    ) -> dict[str, list[str]]:
+        """Return actionable warnings about model/input preprocessing fit."""
+        from .models.singlecell_models import singlecell_info
+
+        warnings_by_model: dict[str, list[str]] = {}
+        for model_key in models:
+            card = singlecell_info(model_key)
+            warnings: list[str] = []
+            if card.input_layer == "log_normalized" and "log_normalized" not in adata.layers:
+                warnings.append(
+                    "Model consumes .layers['log_normalized'], but that layer "
+                    "is absent. Run with preprocessing='auto' or "
+                    "preprocessing='standard', or provide that layer yourself."
+                )
+            if card.input_layer == "counts" and "counts" not in adata.layers:
+                warnings.append(
+                    "Model is configured to consume raw counts from "
+                    ".layers['counts'], but that layer is absent. The wrapper "
+                    "may fall back to .X; use preprocessing='auto' or "
+                    "preprocessing='raw' to materialize the counts layer."
+                )
+            if card.uses_hvg and pca_use_hvg and "highly_variable" not in adata.var.columns:
+                warnings.append(
+                    "Model can restrict to highly-variable genes, but "
+                    "adata.var['highly_variable'] is absent. Use "
+                    "preprocessing='auto'/'standard' with select_hvg=True, "
+                    "or pass pca_use_hvg=False to use all genes."
+                )
+            if warnings:
+                warnings_by_model[model_key] = warnings
+                for message in warnings:
+                    logging.warning(
+                        "Single-cell preprocessing warning for %s (resolved=%s): %s",
+                        model_key,
+                        resolved_preprocessing,
+                        message,
+                    )
+        return warnings_by_model
+
     def embed_cells(
         self,
         adata,  # anndata.AnnData
         models: list[str] | str = "scgpt",
-        preprocessing: Literal["raw", "standard", "none"] = "standard",
+        preprocessing: Literal["auto", "raw", "standard", "none"] = "auto",
         *,
         # Preprocessing params (forwarded to preprocess_counts)
         target_sum: float | None = 1e4,
         n_top_genes: int = 2000,
+        select_hvg: bool = True,
+        hvg_flavor: Literal["auto", "seurat", "seurat_v3", "cell_ranger"] = "auto",
         log_transform: bool = True,
         scale: bool = False,
         max_value: float | None = 10.0,
@@ -2435,7 +2483,11 @@ class BioEmbedder:
             any key from :func:`~embpy.models.singlecell_models.list_singlecell_models`,
             e.g. ``"scgpt"``, ``"geneformer_v2_12L"``, ``"pca"``,
             ``"scvi"``, ``"scanvi"``, ``"totalvi"``.
-        preprocessing : {"raw", "standard", "none"}
+        preprocessing : {"auto", "raw", "standard", "none"}
+            ``"auto"`` chooses a model-aware default from the single-cell
+            registry: raw-count models get QC/counts-layer preparation, while
+            models that consume processed expression (for example PCA) get the
+            standard pipeline.
             ``"standard"`` runs log-normalize + HVG.
             ``"raw"`` applies only QC filtering.
             ``"none"`` skips preprocessing entirely.
@@ -2443,6 +2495,11 @@ class BioEmbedder:
             Target total counts for normalization (standard pipeline).
         n_top_genes
             Number of highly variable genes (standard pipeline).
+        select_hvg
+            Whether to compute highly variable genes in the standard pipeline.
+        hvg_flavor
+            Highly-variable-gene method. ``"auto"`` chooses a scanpy flavor
+            compatible with ``log_transform``.
         log_transform
             Whether to log1p-transform (standard pipeline).
         scale
@@ -2497,6 +2554,8 @@ class BioEmbedder:
             PCAEmbedding,
             ScVIToolsWrapper,
             list_singlecell_models,
+            resolve_singlecell_preprocessing,
+            singlecell_info,
         )
         from .pp.sc_preprocessing import preprocess_counts
 
@@ -2508,29 +2567,70 @@ class BioEmbedder:
             if m not in available:
                 raise ValueError(f"Unknown single-cell model '{m}'. Available: {available}")
 
+        resolved_preprocessing, preprocessing_plan = resolve_singlecell_preprocessing(
+            models,
+            preprocessing,
+        )
+
         if copy:
             adata = adata.copy()
 
         # ---- Preprocessing -----------------------------------------------
-        if preprocessing != "none":
+        preprocessing_options = {
+            "target_sum": target_sum,
+            "n_top_genes": n_top_genes,
+            "select_hvg": select_hvg,
+            "hvg_flavor": hvg_flavor,
+            "log_transform": log_transform,
+            "scale": scale,
+            "max_value": max_value,
+            "min_genes": min_genes,
+            "min_cells": min_cells,
+            "max_pct_mito": max_pct_mito,
+            "backend": backend,
+        }
+        if resolved_preprocessing != "none":
             adata = preprocess_counts(
                 adata,
-                pipeline=preprocessing,
+                pipeline=resolved_preprocessing,
                 min_genes=min_genes,
                 min_cells=min_cells,
                 max_pct_mito=max_pct_mito,
                 target_sum=target_sum,
                 n_top_genes=n_top_genes,
+                select_hvg=select_hvg,
+                hvg_flavor=hvg_flavor,
                 log_transform=log_transform,
                 scale=scale,
                 max_value=max_value,
                 copy=False,
                 backend=backend,
             )
+        else:
+            logging.warning(
+                "Skipping single-cell preprocessing because preprocessing='none'. "
+                "Models that expect .layers['log_normalized'], .layers['counts'], "
+                "or adata.var['highly_variable'] may fall back to .X or run "
+                "without HVG restriction."
+            )
+
+        preprocessing_warnings = self._singlecell_preprocessing_warnings(
+            adata,
+            models=models,
+            resolved_preprocessing=resolved_preprocessing,
+            pca_use_hvg=pca_use_hvg,
+        )
+        preprocessing_metadata: dict[str, Any] = {
+            **preprocessing_plan,
+            "options": preprocessing_options,
+            "warnings": preprocessing_warnings,
+        }
 
         # ---- Embed with each model ---------------------------------------
         device_str = str(self.device)
-        metadata: dict[str, dict[str, Any]] = {}
+        metadata: dict[str, dict[str, Any]] = {
+            "__preprocessing__": preprocessing_metadata,
+        }
 
         for model_key in models:
             obsm_key = f"{obsm_prefix}{model_key}"
@@ -2602,11 +2702,19 @@ class BioEmbedder:
                     embs = wrapper.embed_cells(adata_for_model)
 
                 adata.obsm[obsm_key] = embs
+                card = singlecell_info(model_key)
                 metadata[model_key] = {
                     "obsm_key": obsm_key,
                     "embedding_dim": embs.shape[1],
                     "n_cells": embs.shape[0],
                     "wrapper_class": type(wrapper).__name__,
+                    "preprocessing": preprocessing_metadata,
+                    "model_requirements": {
+                        "default_preprocessing": card.default_preprocessing,
+                        "input_layer": card.input_layer,
+                        "uses_hvg": card.uses_hvg,
+                        "vocab_type": card.vocab_type,
+                    },
                 }
                 logging.info(
                     "  -> stored in .obsm['%s'], shape %s",
@@ -2616,7 +2724,10 @@ class BioEmbedder:
 
             except Exception as e:  # noqa: BLE001
                 logging.error("Failed to embed with '%s': %s", model_key, e)
-                metadata[model_key] = {"error": str(e)}
+                metadata[model_key] = {
+                    "error": str(e),
+                    "preprocessing": preprocessing_metadata,
+                }
 
         adata.uns["embpy_cell_embeddings"] = metadata
         logging.info(
@@ -2795,9 +2906,11 @@ class BioEmbedder:
         *,
         # --- Cell-level embeddings (from expression) ---
         cell_models: list[str] | str | None = None,
-        preprocessing: Literal["raw", "standard", "none"] = "standard",
+        preprocessing: Literal["auto", "raw", "standard", "none"] = "auto",
         target_sum: float | None = 1e4,
         n_top_genes: int = 2000,
+        select_hvg: bool = True,
+        hvg_flavor: Literal["auto", "seurat", "seurat_v3", "cell_ranger"] = "auto",
         log_transform: bool = True,
         scale: bool = False,
         max_value: float | None = 10.0,
@@ -2851,9 +2964,15 @@ class BioEmbedder:
             ``None`` skips cell embedding.
         preprocessing
             Preprocessing pipeline for cell models.
-        target_sum, n_top_genes, log_transform, scale, max_value,
+        target_sum, n_top_genes, log_transform, scale, max_value
+            Normalization and scaling options forwarded to
+            :func:`~embpy.pp.preprocess_counts`.
+        select_hvg, hvg_flavor
+            Highly-variable-gene options forwarded to
+            :func:`~embpy.pp.preprocess_counts`.
         min_genes, min_cells, max_pct_mito
-            Forwarded to :func:`~embpy.pp.preprocess_counts`.
+            QC filtering options forwarded to
+            :func:`~embpy.pp.preprocess_counts`.
         n_pca_components, pca_use_hvg
             PCA-specific parameters.
         n_latent, n_layers_scvi, n_hidden_scvi, max_epochs,
@@ -2930,6 +3049,8 @@ class BioEmbedder:
                 preprocessing=preprocessing,
                 target_sum=target_sum,
                 n_top_genes=n_top_genes,
+                select_hvg=select_hvg,
+                hvg_flavor=hvg_flavor,
                 log_transform=log_transform,
                 scale=scale,
                 max_value=max_value,

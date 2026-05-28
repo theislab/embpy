@@ -528,6 +528,87 @@ class TestEmbedCells:
         assert "pca" in result.uns["embpy_cell_embeddings"]
 
     @patch("embpy.embedder.GeneResolver")
+    def test_embed_cells_auto_preprocessing_for_pca(self, mock_resolver_cls, monkeypatch):
+        from embpy.embedder import BioEmbedder
+
+        calls = []
+
+        def fake_preprocess_counts(adata, *, pipeline, **kwargs):
+            calls.append((pipeline, kwargs))
+            adata.layers["counts"] = adata.X.copy()
+            adata.layers["log_normalized"] = np.asarray(adata.X, dtype=np.float32)
+            hvg = np.zeros(adata.n_vars, dtype=bool)
+            hvg[:20] = True
+            adata.var["highly_variable"] = hvg
+            return adata
+
+        monkeypatch.setattr(
+            "embpy.pp.sc_preprocessing.preprocess_counts",
+            fake_preprocess_counts,
+        )
+
+        embedder = BioEmbedder(device="cpu")
+        adata = self._make_adata()
+        result = embedder.embed_cells(
+            adata,
+            models=["pca"],
+            preprocessing="auto",
+            n_pca_components=5,
+            n_top_genes=20,
+        )
+
+        assert calls[0][0] == "standard"
+        assert calls[0][1]["select_hvg"] is True
+        assert "X_pca" in result.obsm
+        assert result.uns["embpy_cell_embeddings"]["__preprocessing__"]["resolved"] == "standard"
+        assert result.uns["embpy_cell_embeddings"]["pca"]["model_requirements"]["uses_hvg"] is True
+
+    @patch("embpy.embedder.GeneResolver")
+    def test_embed_cells_auto_preprocessing_for_raw_count_model(
+        self,
+        mock_resolver_cls,
+        monkeypatch,
+    ):
+        from embpy.embedder import BioEmbedder
+
+        calls = []
+
+        def fake_preprocess_counts(adata, *, pipeline, **kwargs):
+            calls.append((pipeline, kwargs))
+            adata.layers["counts"] = adata.X.copy()
+            return adata
+
+        class FakeSingleCellWrapper:
+            def embed_cells(self, adata):
+                return np.ones((adata.n_obs, 7), dtype=np.float32)
+
+        monkeypatch.setattr(
+            "embpy.pp.sc_preprocessing.preprocess_counts",
+            fake_preprocess_counts,
+        )
+
+        embedder = BioEmbedder(device="cpu")
+        monkeypatch.setattr(
+            embedder,
+            "_get_or_load_singlecell_wrapper",
+            lambda *args, **kwargs: FakeSingleCellWrapper(),
+        )
+        adata = self._make_adata()
+        result = embedder.embed_cells(
+            adata,
+            models=["scgpt"],
+            preprocessing="auto",
+            select_hvg=False,
+            hvg_flavor="cell_ranger",
+        )
+
+        assert calls[0][0] == "raw"
+        assert calls[0][1]["select_hvg"] is False
+        assert calls[0][1]["hvg_flavor"] == "cell_ranger"
+        assert result.obsm["X_scgpt"].shape == (adata.n_obs, 7)
+        assert result.uns["embpy_cell_embeddings"]["__preprocessing__"]["resolved"] == "raw"
+
+    @patch("embpy.embedder.GeneResolver")
     def test_embed_cells_copy(self, mock_resolver_cls):
         from embpy.embedder import BioEmbedder
 

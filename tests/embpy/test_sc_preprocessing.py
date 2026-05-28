@@ -138,6 +138,16 @@ class TestPreprocessStandard:
         n_hvg = result.var["highly_variable"].sum()
         assert n_hvg > 0
 
+    def test_standard_can_skip_hvg(self, adata_sparse):
+        from embpy.pp.sc_preprocessing import preprocess_counts
+
+        result = preprocess_counts(
+            adata_sparse,
+            pipeline="standard",
+            select_hvg=False,
+        )
+        assert "highly_variable" not in result.var.columns
+
     def test_standard_log_normalized_differs_from_raw(self, adata_sparse):
         from embpy.pp.sc_preprocessing import preprocess_counts
 
