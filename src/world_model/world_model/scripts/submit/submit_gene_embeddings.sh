@@ -48,6 +48,10 @@ PARTITION="${PARTITION:-gpu_p}"
 QOS="${QOS:-gpu_normal}"
 CPU_PARTITION="${CPU_PARTITION:-cpu_p}"
 CPU_QOS="${CPU_QOS:-cpu_normal}"
+TRAIN_GPU_CONSTRAINT="${TRAIN_GPU_CONSTRAINT:-h100_80gb}"
+TRAIN_GRES="${TRAIN_GRES:-gpu:h100:1}"
+TRAIN_MEM="${TRAIN_MEM:-128G}"
+TRAIN_CPUS="${TRAIN_CPUS:-8}"
 # Chain run_baselines + compare/report (cell_eval) after each train job.
 WITH_COMPARE="${WITH_COMPARE:-1}"
 STATE_OBSM_KEY="${STATE_OBSM_KEY:-X_state}"
@@ -209,6 +213,8 @@ for ds in "${DATASETS[@]}"; do
         jid=$(sbatch --parsable \
             --job-name="wm-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
+            --gres="$TRAIN_GRES" --constraint="$TRAIN_GPU_CONSTRAINT" \
+            --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" \
             --dependency=afterok:"${attach_jid}" \
             --export=ALL,EMBPY_PIXI_ENV="${PIXI_ENV}" \
             "$LAUNCHER" "$cfg" \
@@ -250,6 +256,8 @@ for ds in "${DATASETS[@]}"; do
         jid=$(sbatch --parsable \
             --job-name="wm-${ds}-${EMB}" \
             --partition="$PARTITION" --qos="$QOS" \
+            --gres="$TRAIN_GRES" --constraint="$TRAIN_GPU_CONSTRAINT" \
+            --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" \
             --dependency=afterok:"${attach_jid}" \
             --export=ALL,EMBPY_PIXI_ENV="${PIXI_ENV}" \
             "$LAUNCHER" "$cfg" \

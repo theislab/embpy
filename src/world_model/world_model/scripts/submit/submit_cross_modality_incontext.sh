@@ -53,7 +53,10 @@ PARTITION="${PARTITION:-gpu_p}"
 QOS="${QOS:-gpu_normal}"
 STACK_GPU_CONSTRAINT="${STACK_GPU_CONSTRAINT:-}"
 ACTION_GPU_CONSTRAINT="${ACTION_GPU_CONSTRAINT:-a100_80gb|h100_80gb}"
-TRAIN_GPU_CONSTRAINT="${TRAIN_GPU_CONSTRAINT:-}"
+TRAIN_GPU_CONSTRAINT="${TRAIN_GPU_CONSTRAINT:-h100_80gb}"
+TRAIN_GRES="${TRAIN_GRES:-gpu:h100:1}"
+TRAIN_MEM="${TRAIN_MEM:-128G}"
+TRAIN_CPUS="${TRAIN_CPUS:-8}"
 
 STACK_TIME="${STACK_TIME:-24:00:00}"
 STACK_MEM="${STACK_MEM:-128G}"
@@ -214,7 +217,7 @@ for ds in "${DATASETS[@]}"; do
         cfg="$(base_cfg_for "$ds")"
         run_name="crossmod_incontext_${ds}_stack_esm2_650M_to_subcell_mae_rybg"
         out_dir="${RUN_ROOT}/${ds}_stack_esm2_650M_to_subcell_mae_rybg"
-        train_args=(--job-name="wm-xmod-train-${ds}" --partition="$PARTITION" --qos="$QOS" --export=ALL,EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}")
+        train_args=(--job-name="wm-xmod-train-${ds}" --partition="$PARTITION" --qos="$QOS" --gres="$TRAIN_GRES" --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" --export=ALL,EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}")
         if [[ -n "$TRAIN_GPU_CONSTRAINT" ]]; then train_args+=(--constraint="$TRAIN_GPU_CONSTRAINT"); fi
         if [[ -n "$subcell_jid" ]]; then train_args=(--dependency=afterok:"$subcell_jid" "${train_args[@]}"); fi
         train_args+=("$TRAIN_LAUNCHER" "$cfg"

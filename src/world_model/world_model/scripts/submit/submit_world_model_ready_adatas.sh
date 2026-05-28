@@ -79,6 +79,10 @@ MATRIX_PIXI_ENV="${MATRIX_PIXI_ENV:-gpu}"
 STATE_PIXI_ENV="${STATE_PIXI_ENV:-arc-gpu}"
 ASSEMBLE_PIXI_ENV="${ASSEMBLE_PIXI_ENV:-gpu}"
 TRAIN_PIXI_ENV="${TRAIN_PIXI_ENV:-gpu}"
+TRAIN_GPU_CONSTRAINT="${TRAIN_GPU_CONSTRAINT:-h100_80gb}"
+TRAIN_GRES="${TRAIN_GRES:-gpu:h100:1}"
+TRAIN_MEM="${TRAIN_MEM:-128G}"
+TRAIN_CPUS="${TRAIN_CPUS:-8}"
 DRYRUN="${DRYRUN:-0}"
 RUN_TRAIN="${RUN_TRAIN:-0}"
 FAIL_ON_UNRESOLVED="${FAIL_ON_UNRESOLVED:-0}"
@@ -443,6 +447,8 @@ for ds in "${DATASETS[@]}"; do
             train_jid=$(submit_sbatch \
                 --job-name="wm-${ds}-${emb}" \
                 --partition="$PARTITION" --qos="$QOS" \
+                --gres="$TRAIN_GRES" --constraint="$TRAIN_GPU_CONSTRAINT" \
+                --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" \
                 --dependency=afterok:"${assemble_jid}" \
                 --export=ALL,EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}" \
                 "$TRAIN_LAUNCHER" "$cfg" \
