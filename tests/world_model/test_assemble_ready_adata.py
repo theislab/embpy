@@ -65,4 +65,4 @@ def test_assemble_ready_adata_attaches_multiple_action_embeddings(tmp_path):
     assert out.obs["X_pert_genept_status"].tolist() == ["CONTROL", "RESOLVED", "RESOLVED"]
     assert out.obs["X_pert_minilm_status"].tolist() == ["CONTROL", "RESOLVED", "UNRESOLVED"]
     assert "X_pert_genept" in out.uns["world_model_action_embeddings"]
-    assert "X_pert_genept" in out.uns["embpy"]["perturbations"]
+    assert "X_pert_genept" in out.uns["perturbations"]

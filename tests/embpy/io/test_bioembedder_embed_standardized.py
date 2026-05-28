@@ -84,7 +84,7 @@ def test_embed_list_of_genes_attach_to_uns(monkeypatch):
         key="X_pert_toy",
     )
 
-    payload = out.uns["embpy"]["perturbations"]["X_pert_toy"]
+    payload = out.uns["perturbations"]["X_pert_toy"]
     assert payload["entity_ids"] == ["ENSG00000141510", "ENSG00000136997"]
     assert "X_pert_toy" not in out.obsm
 
@@ -105,7 +105,7 @@ def test_embed_multi_model_to_anndata(monkeypatch):
     assert set(out.varm.keys()) == {"X_emb__gene__m1__pool_mean", "X_emb__gene__m2__pool_mean"}
     assert list(out.var_names) == ["ENSG00000141510", "ENSG00000136997"]
     assert out.X.nnz == 0
-    meta = out.uns["embpy"]["embeddings"]["X_emb__gene__m1__pool_mean"]["provenance"]["extra"]
+    meta = out.uns["embeddings"]["X_emb__gene__m1__pool_mean"]["provenance"]["extra"]
     assert meta["n_requested_inputs"] == 2
     assert meta["duplicate_canonical_ids_dropped"] == 0
 

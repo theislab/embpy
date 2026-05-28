@@ -127,8 +127,8 @@ def test_script_classifies_and_filters(monkeypatch, tmp_path: Path) -> None:
 
     attached = anndata.read_h5ad(output_h5ad)
     assert "X_pert_stub" in attached.obsm
-    assert "X_pert_stub" in attached.uns["embpy"]["perturbations"]
-    assert attached.uns["embpy"]["perturbations"]["X_pert_stub"]["entity_type"] == "perturbation"
+    assert "X_pert_stub" in attached.uns["perturbations"]
+    assert attached.uns["perturbations"]["X_pert_stub"]["entity_type"] == "perturbation"
 
 
 def test_fail_on_unresolved_returns_nonzero(monkeypatch, tmp_path: Path) -> None:
@@ -219,6 +219,6 @@ def test_script_uses_public_embed_for_perturbation_morphology(monkeypatch, tmp_p
     attached = anndata.read_h5ad(out)
     assert "X_pert_subcell_mae_rybg" in attached.obsm
     assert attached.obsm["X_pert_subcell_mae_rybg"].shape == (3, 5)
-    assert "X_pert_subcell_mae_rybg" in attached.uns["embpy"]["perturbations"]
+    assert "X_pert_subcell_mae_rybg" in attached.uns["perturbations"]
     statuses = attached.obs["X_pert_subcell_mae_rybg_status"].astype(str).tolist()
     assert statuses == ["CONTROL", "RESOLVED", "UNRESOLVED"]

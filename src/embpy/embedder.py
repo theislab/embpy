@@ -2752,7 +2752,7 @@ class BioEmbedder:
             - ``.layers["log_normalized"]`` = processed expression
               (standard pipeline)
             - ``.obsm["{prefix}{cell_model}"]`` = cell embeddings
-            - ``.uns["embpy"]["perturbations"]["{prefix}{pert_model}"]``
+            - ``.uns["perturbations"]["{prefix}{pert_model}"]``
               = perturbation embeddings, one row per unique perturbation
             - ``.uns["embpy_embeddings"]`` = metadata dict
 
@@ -2767,7 +2767,7 @@ class BioEmbedder:
         ... )
         >>> result.obsm["X_scgpt"].shape  # cell embeddings
         (5000, 512)
-        >>> result.uns["embpy"]["perturbations"]["X_esm2_650M"]["matrix"].shape
+        >>> result.uns["perturbations"]["X_esm2_650M"]["matrix"].shape
         (n_perturbations, 1280)
         """
         from .io.exporters import to_anndata
@@ -2953,7 +2953,7 @@ class BioEmbedder:
                         "perturbation_column": perturbation_column,
                     }
                     logging.info(
-                        "  -> stored in .uns embpy perturbations[%r], shape=(%d, %d) (%d/%d perturbations embedded)",
+                        "  -> stored in .uns perturbations[%r], shape=(%d, %d) (%d/%d perturbations embedded)",
                         obsm_key,
                         entity_matrix.shape[0],
                         entity_matrix.shape[1],

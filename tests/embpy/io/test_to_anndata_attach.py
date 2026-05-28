@@ -87,9 +87,10 @@ def test_attach_to_uns_stores_entity_aligned_payload():
     res = _result(["ENSG1", "ENSG2"])
     tgt = _make_target(["cell1", "cell2"], ["g1"])
     out = to_anndata(res, target=tgt, attach_to="uns", key="X_pert_toy")
-    payload = out.uns["embpy"]["perturbations"]["X_pert_toy"]
+    payload = out.uns["perturbations"]["X_pert_toy"]
     assert payload["entity_ids"] == ["ENSG1", "ENSG2"]
     assert payload["matrix"].shape == (2, 4)
+    assert "embpy" not in out.uns
     assert "X_pert_toy" not in out.obsm
 
 
@@ -112,3 +113,22 @@ def test_materialize_perturbation_obsm_from_uns_aliases():
     assert "X_pert_m" in tgt.obsm
     np.testing.assert_allclose(tgt.obsm["X_pert_m"], np.array([[1, 2], [3, 4], [1, 2]], dtype=np.float32))
     assert tgt.uns["world_model_action_embeddings"]["X_pert_m"]["source"] == "embpy_uns"
+
+
+def test_materialize_perturbation_obsm_reads_legacy_embpy_namespace():
+    tgt = _make_target(["cell1"], ["g1"])
+    tgt.obs["perturbation"] = ["TP53"]
+    tgt.uns["embpy"] = {
+        "perturbations": {
+            "X_pert_old": {
+                "matrix": np.array([[1, 2]], dtype=np.float32),
+                "entity_ids": ["ENSG1"],
+                "aliases": {"ENSG1": {"gene_symbol": "TP53"}},
+                "id_scheme": "ensembl_gene_id",
+            }
+        }
+    }
+
+    materialize_perturbation_obsm(tgt, embedding_key="X_pert_old", perturbation_key="perturbation")
+
+    np.testing.assert_allclose(tgt.obsm["X_pert_old"], np.array([[1, 2]], dtype=np.float32))

@@ -34,11 +34,12 @@ def test_gene_entities_are_vars_and_x_is_placeholder():
 
 def test_uns_carries_provenance_and_scheme():
     adata = to_anndata(_result())
-    blk = adata.uns["embpy"]
+    blk = adata.uns
     assert blk["entity_type"] == "gene"
     assert blk["id_scheme"] == "ensembl_gene_id"
     assert blk["provenance"]["model"] == "m"
     assert blk["placeholder_X"]["is_placeholder"] is True
+    assert "embpy" not in adata.uns
 
 
 def test_gene_aliases_go_into_var_not_index():
@@ -51,4 +52,4 @@ def test_gene_aliases_go_into_var_not_index():
 def test_custom_key_standalone():
     adata = to_anndata(_result(), key="X_custom")
     assert "X_custom" in adata.varm
-    assert "X_custom" in adata.uns["embpy"]["embeddings"]
+    assert "X_custom" in adata.uns["embeddings"]

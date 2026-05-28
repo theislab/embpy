@@ -455,7 +455,7 @@ def _standalone_anndata_many(
     obs = pd.DataFrame(index=pd.Index(obs_ids, name=obs_name))
     var = pd.DataFrame(index=pd.Index(var_ids, name=var_name))
     adata = AnnData(X=csr_matrix((len(obs_ids), len(var_ids)), dtype=np.float32), obs=obs, var=var)
-    _init_embpy_uns(adata, placeholder=True)
+    _init_embedding_uns(adata, placeholder=True)
 
     keyed = dict(zip(keys, items, strict=True)) if keys is not None else _keyed_results(items)
     for key, result in keyed.items():
@@ -463,7 +463,7 @@ def _standalone_anndata_many(
 
     if len(items) == 1:
         result = items[0]
-        adata.uns["embpy"].update(_uns_block(result))
+        adata.uns.update(_uns_block(result))
     logger.info(
         "Built standalone AnnData (%d obs x %d vars) carrying %d embedding result(s).",
         adata.n_obs,
@@ -473,13 +473,12 @@ def _standalone_anndata_many(
     return adata
 
 
-def _init_embpy_uns(adata: AnnData, *, placeholder: bool) -> None:
-    block = adata.uns.setdefault("embpy", {})
-    block.setdefault("embeddings", {})
-    block.setdefault("uns_embeddings", {})
-    block.setdefault("perturbations", {})
+def _init_embedding_uns(adata: AnnData, *, placeholder: bool) -> None:
+    adata.uns.setdefault("embeddings", {})
+    adata.uns.setdefault("uns_embeddings", {})
+    adata.uns.setdefault("perturbations", {})
     if placeholder:
-        block["placeholder_X"] = {
+        adata.uns["placeholder_X"] = {
             "is_placeholder": True,
             "reason": (
                 "Standalone AnnData created by embpy to carry embeddings; "
@@ -615,24 +614,25 @@ def _add_alias_columns(frame: pd.DataFrame, result: EmbeddingResult) -> None:
 
 
 def _record_embedding_uns(adata: AnnData, result: EmbeddingResult, key: str) -> None:
-    _init_embpy_uns(adata, placeholder=False)
+    _init_embedding_uns(adata, placeholder=False)
     block = _uns_block(result)
-    adata.uns["embpy"]["embeddings"][key] = block
-    adata.uns["embpy"][key] = block
+    adata.uns["embeddings"][key] = block
+    adata.uns[key] = block
 
 
 def _store_uns_embedding(adata: AnnData, result: EmbeddingResult, key: str) -> None:
-    _init_embpy_uns(adata, placeholder=False)
+    _init_embedding_uns(adata, placeholder=False)
     payload = to_payload(result, key=key, metadata_mode="full", include_matrix=True)
-    collection = "perturbations" if result.entity_type == "perturbation" or key.startswith("X_pert") else "uns_embeddings"
+    collection = (
+        "perturbations" if result.entity_type == "perturbation" or key.startswith("X_pert") else "uns_embeddings"
+    )
     adata.uns[key] = payload
-    adata.uns["embpy"][collection][key] = payload
-    adata.uns["embpy"]["embeddings"][key] = {
+    adata.uns[collection][key] = payload
+    adata.uns["embeddings"][key] = {
         **_uns_block(result),
         "storage": "uns",
         "uns_collection": collection,
     }
-    adata.uns["embpy"][key] = adata.uns["embpy"]["embeddings"][key]
 
 
 def _as_result_list(results: EmbeddingResult | Sequence[EmbeddingResult]) -> list[EmbeddingResult]:
@@ -806,8 +806,7 @@ def materialize_perturbation_obsm(
 
     This is an explicit projection step for models that require one
     action vector per observation. The source-of-truth embedding remains
-    ``adata.uns["embpy"]["perturbations"][embedding_key]`` or
-    ``adata.uns[embedding_key]``.
+    ``adata.uns["perturbations"][embedding_key]`` or ``adata.uns[embedding_key]``.
     """
     if perturbation_key not in adata.obs.columns:
         raise KeyError(f"{perturbation_key!r} not in adata.obs (available: {list(adata.obs.columns)})")
@@ -876,6 +875,13 @@ def materialize_perturbation_obsm(
 
 
 def _find_uns_payload(adata: AnnData, embedding_key: str) -> dict:
+    for collection in ("perturbations", "uns_embeddings"):
+        values = adata.uns.get(collection, {})
+        if isinstance(values, dict) and embedding_key in values:
+            payload = values[embedding_key]
+            if isinstance(payload, dict):
+                return payload
+
     embpy = adata.uns.get("embpy", {})
     if isinstance(embpy, dict):
         for collection in ("perturbations", "uns_embeddings"):
@@ -889,7 +895,9 @@ def _find_uns_payload(adata: AnnData, embedding_key: str) -> dict:
         return payload
     raise KeyError(
         f"Could not find uns embedding {embedding_key!r}. Expected "
-        f"adata.uns['embpy']['perturbations'][{embedding_key!r}] or adata.uns[{embedding_key!r}]."
+        f"adata.uns['perturbations'][{embedding_key!r}], "
+        f"adata.uns['embpy']['perturbations'][{embedding_key!r}] for legacy files, "
+        f"or adata.uns[{embedding_key!r}]."
     )
 
 

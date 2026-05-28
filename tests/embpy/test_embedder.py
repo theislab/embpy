@@ -585,8 +585,8 @@ class TestEmbedAdata:
             preprocessing="none",
         )
         assert "X_esm2_650M" not in result.obsm
-        assert "X_esm2_650M" in result.uns["embpy"]["perturbations"]
-        payload = result.uns["embpy"]["perturbations"]["X_esm2_650M"]
+        assert "X_esm2_650M" in result.uns["perturbations"]
+        payload = result.uns["perturbations"]["X_esm2_650M"]
         assert payload["matrix"].shape[0] <= result.obs["perturbation"].nunique()
         assert payload["entity_type"] == "perturbation"
 
@@ -645,7 +645,7 @@ class TestEmbedAdata:
         )
         assert "X_pca" in result.obsm
         assert "X_esm2_650M" not in result.obsm
-        assert "X_esm2_650M" in result.uns["embpy"]["perturbations"]
+        assert "X_esm2_650M" in result.uns["perturbations"]
         assert "embpy_embeddings" in result.uns
 
     @patch("embpy.embedder.GeneResolver")
