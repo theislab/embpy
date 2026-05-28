@@ -6,6 +6,7 @@ import pathlib
 import re
 import traceback
 from collections.abc import Mapping, Sequence
+from hashlib import sha1
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -3314,6 +3315,13 @@ class BioEmbedder:
 
         n_total = len(perturbations)
         t0 = time.time()
+        hpa_catalog = None
+        if dataset == "hpa":
+            hpa_catalog = self._build_hpa_batch_catalog(
+                perturbations,
+                local_dir=local_dir,
+                verbose=verbose,
+            )
 
         # ── Stage 1: resolve images for ALL perturbations in parallel ──
         if verbose:
@@ -3341,6 +3349,7 @@ class BioEmbedder:
                         local_dir,
                         max_images,
                         ctx,
+                        hpa_catalog=hpa_catalog,
                     )
                 else:
                     raise ValueError(f"Unknown dataset: {dataset!r}")
@@ -3496,6 +3505,77 @@ class BioEmbedder:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _hpa_shared_cache_root(local_dir: str | None) -> pathlib.Path | None:
+        """Return a persistent shared HPA cache root when one is configured."""
+        if os.environ.get("EMBPY_HPA_CACHE_DIR"):
+            return pathlib.Path(os.environ["EMBPY_HPA_CACHE_DIR"])
+        if local_dir is None:
+            return None
+        local_path = pathlib.Path(local_dir)
+        if local_path.name in {"_hpa", "hpa"}:
+            return local_path
+        return local_path.parent / "_hpa"
+
+    @staticmethod
+    def _build_hpa_batch_catalog(
+        perturbations: Sequence[str],
+        *,
+        local_dir: str | None,
+        verbose: bool,
+    ):
+        """Build or load one HPA XML catalog slice for a batch of genes."""
+        genes = sorted({str(p).strip().upper() for p in perturbations if str(p).strip()})
+        if not genes:
+            return None
+
+        cache_root = BioEmbedder._hpa_shared_cache_root(local_dir)
+        xml_source = None
+        cache_path = None
+        if cache_root is not None:
+            cache_root.mkdir(parents=True, exist_ok=True)
+            digest = sha1("\n".join(genes).encode("utf-8")).hexdigest()[:16]
+            xml_source = cache_root / "proteinatlas.xml.gz"
+            cache_path = cache_root / f"subcellular_catalog_{digest}.csv"
+
+        from .resources.hpa_images import build_hpa_subcellular_catalog
+
+        if verbose:
+            cache_msg = f" (cache: {cache_path})" if cache_path is not None else ""
+            print(f"[embpy] Building/loading one HPA XML catalog for {len(genes)} genes{cache_msg}...")
+        try:
+            return build_hpa_subcellular_catalog(
+                xml_source=xml_source,
+                cache_path=cache_path,
+                genes=genes,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if verbose:
+                print(
+                    f"[embpy] WARNING: failed to build shared HPA XML catalog; falling back to per-gene lookup ({exc})"
+                )
+            return None
+
+    @staticmethod
+    def _hpa_catalog_rows_to_antibodies(catalog, perturbation: str) -> list[dict[str, Any]]:
+        """Convert pre-filtered HPA catalog rows into fetchable image records."""
+        if catalog is None or len(catalog) == 0:
+            return []
+        gene_upper = str(perturbation).upper()
+        rows = catalog[catalog["gene"].astype(str).str.upper() == gene_upper]
+        antibodies: list[dict[str, Any]] = []
+        for _, row in rows.iterrows():
+            antibodies.append(
+                {
+                    "id": row["antibody"],
+                    "_plate": row["plate"],
+                    "_position": row["position"],
+                    "_sample": row["sample"],
+                    "_url_prefix": row.get("image_url_prefix", ""),
+                }
+            )
+        return antibodies
+
+    @staticmethod
     def _resolve_jump_images(
         perturbation: str,
         perturbation_type: str,
@@ -3577,6 +3657,7 @@ class BioEmbedder:
         local_dir: str | None,
         max_images: int | None,
         resolution_ctx: _ResolutionContext | None = None,
+        hpa_catalog=None,
     ) -> list[np.ndarray]:
         """Resolve an HPA gene to SubCell-ready image arrays.
 
@@ -3629,34 +3710,29 @@ class BioEmbedder:
                         return images
 
         # ── Fetch from CDN ──────────────────────────────────────────
-        if resolution_ctx:
-            resolution_ctx.add_step("HPA API lookup")
-
-        antibodies, gene_source = get_hpa_antibodies_quiet(perturbation)
+        gene_source = None
+        if hpa_catalog is not None:
+            if resolution_ctx:
+                resolution_ctx.add_step("HPA shared XML catalog")
+            antibodies = BioEmbedder._hpa_catalog_rows_to_antibodies(hpa_catalog, perturbation)
+            if antibodies:
+                gene_source = "HPA shared XML catalog"
+            else:
+                return []
+        else:
+            if resolution_ctx:
+                resolution_ctx.add_step("HPA API lookup")
+            antibodies, gene_source = get_hpa_antibodies_quiet(perturbation)
         if not antibodies:
             if resolution_ctx:
-                resolution_ctx.add_step("HPA XML catalog fallback")
+                resolution_ctx.add_step("HPA per-gene XML catalog fallback")
             try:
                 from .resources.hpa_images import build_hpa_subcellular_catalog
 
                 catalog = build_hpa_subcellular_catalog(genes=[perturbation])
                 if len(catalog) == 0:
                     return []
-                antibodies = []
-                for _, row in catalog.iterrows():
-                    antibodies.append(
-                        {
-                            "id": row["antibody"],
-                            "_plate": row["plate"],
-                            "_position": row["position"],
-                            "_sample": row["sample"],
-                            # Preserve full URL prefix from the XML so we
-                            # can keep cell-line subdirectories like /U-251/
-                            # that the antibody/plate/position/sample alone
-                            # would not encode.
-                            "_url_prefix": row.get("image_url_prefix", ""),
-                        }
-                    )
+                antibodies = BioEmbedder._hpa_catalog_rows_to_antibodies(catalog, perturbation)
                 gene_source = "HPA XML catalog"
             except Exception:  # noqa: BLE001
                 return []

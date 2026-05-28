@@ -24,8 +24,9 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     import numpy as np
@@ -149,10 +150,7 @@ def load_hpa_if_image(
                     path = cand
                     break
         if path is None:
-            raise ValueError(
-                f"No path for channel '{ch}': provide either 'prefix' "
-                "or the per-channel keyword argument"
-            )
+            raise ValueError(f"No path for channel '{ch}': provide either 'prefix' or the per-channel keyword argument")
         img = Image.open(path)
         if img.mode != "L":
             img = img.convert("L")
@@ -167,6 +165,7 @@ def load_hpa_if_image(
 
 def _ensure_xml(xml_source: str | Path | None) -> Path:
     """Return a local path to the proteinatlas XML, downloading if needed."""
+    import os
     import tempfile
 
     import requests
@@ -175,18 +174,32 @@ def _ensure_xml(xml_source: str | Path | None) -> Path:
         p = Path(xml_source)
         if p.exists():
             return p
-
-    cached = Path(tempfile.gettempdir()) / "proteinatlas.xml.gz"
-    if cached.exists():
-        logger.info("Reusing cached XML at %s", cached)
-        return cached
+        cached = p
+    elif os.environ.get("EMBPY_HPA_XML"):
+        cached = Path(os.environ["EMBPY_HPA_XML"])
+        if cached.exists():
+            logger.info("Reusing cached XML at %s", cached)
+            return cached
+    elif os.environ.get("EMBPY_HPA_CACHE_DIR"):
+        cached = Path(os.environ["EMBPY_HPA_CACHE_DIR"]) / "proteinatlas.xml.gz"
+        if cached.exists():
+            logger.info("Reusing cached XML at %s", cached)
+            return cached
+    else:
+        cached = Path(tempfile.gettempdir()) / "proteinatlas.xml.gz"
+        if cached.exists():
+            logger.info("Reusing cached XML at %s", cached)
+            return cached
 
     logger.info("Downloading proteinatlas.xml.gz (~5 GB) ...")
+    cached.parent.mkdir(parents=True, exist_ok=True)
+    tmp = cached.with_name(f"{cached.name}.{os.getpid()}.tmp")
     resp = requests.get(_PROTEINATLAS_XML_URL, stream=True)
     resp.raise_for_status()
-    with open(cached, "wb") as f:
+    with open(tmp, "wb") as f:
         for chunk in resp.iter_content(1 << 20):
             f.write(chunk)
+    tmp.replace(cached)
     logger.info("XML saved to %s", cached)
     return cached
 
@@ -239,9 +252,7 @@ def _parse_subcellular_entries(
                         "plate": parts[0],
                         "position": parts[1],
                         "sample": parts[2],
-                        "cell_line": "_".join(parts[3:]).split(".")[0]
-                        if len(parts) > 3
-                        else "",
+                        "cell_line": "_".join(parts[3:]).split(".")[0] if len(parts) > 3 else "",
                         "image_url_prefix": img_url.text.rsplit("_", 1)[0],
                     }
                     if cell_line and row["cell_line"].upper() != cell_line.upper():
@@ -347,9 +358,7 @@ def download_hpa_subcellular_images(
             url = (
                 f"{prefix}_{ch}.jpg"
                 if prefix
-                else (
-                    f"{HPA_IMAGE_BASE}/{strip_antibody_id(ab)}/{plate}_{pos}_{sample}_{ch}.jpg"
-                )
+                else (f"{HPA_IMAGE_BASE}/{strip_antibody_id(ab)}/{plate}_{pos}_{sample}_{ch}.jpg")
             )
             tasks.append((url, dest))
 
@@ -367,7 +376,7 @@ def download_hpa_subcellular_images(
             resp.raise_for_status()
             dest.write_bytes(resp.content)
             return (url, dest)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return (url, None)
 
     results = []
@@ -419,7 +428,7 @@ def get_hpa_antibodies(gene_or_ensembl: str) -> list[dict]:
         resp = requests.get(url)
         resp.raise_for_status()
         data = resp.json()
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.warning("Failed to fetch HPA data for %s", ensembl_id)
         return []
 
@@ -461,7 +470,7 @@ def get_hpa_antibodies_quiet(gene_or_ensembl: str) -> tuple[list[dict], str | No
         resp = requests.get(url)
         resp.raise_for_status()
         data = resp.json()
-    except Exception:
+    except Exception:  # noqa: BLE001
         return [], None
 
     if isinstance(data, list) and data:
@@ -484,7 +493,7 @@ def _resolve_ensembl_id(gene_or_ensembl: str) -> str | None:
         ensembl_id = resolver.symbol_to_ensembl(gene_or_ensembl)
         if ensembl_id:
             return ensembl_id
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.debug("GeneResolver fallback failed for %r", gene_or_ensembl)
 
     # Fallback: direct mygene package
@@ -504,7 +513,7 @@ def _resolve_ensembl_id(gene_or_ensembl: str) -> str | None:
             if isinstance(ensembl, list):
                 ensembl = ensembl[0]
             return ensembl.get("gene")
-    except Exception:
+    except Exception:  # noqa: BLE001
         logger.warning("mygene lookup failed for %r", gene_or_ensembl)
     return None
 
@@ -530,7 +539,7 @@ def _resolve_ensembl_id_quiet(gene_or_ensembl: str) -> tuple[str | None, str | N
         ensembl_id = resolver.symbol_to_ensembl(gene_or_ensembl)
         if ensembl_id:
             return ensembl_id, "GeneResolver"
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     # Fallback: direct mygene package
@@ -552,7 +561,7 @@ def _resolve_ensembl_id_quiet(gene_or_ensembl: str) -> tuple[str | None, str | N
             eid = ensembl.get("gene")
             if eid:
                 return eid, "mygene"
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return None, None
