@@ -707,6 +707,28 @@ class BioEmbedder:
 
         entity_types = self._resolve_entity_types(entity_type, data, whole_genome)
         models = self._as_string_list(model, arg_name="model")
+        if "cell" in entity_types:
+            if entity_types != ["cell"]:
+                raise ValueError(
+                    "input normalization: entity_type='cell' cannot be mixed "
+                    "with other entity types in one BioEmbedder.embed(...) call. "
+                    "Run cell embeddings and feature/entity embeddings as "
+                    "separate calls so their AnnData alignment stays explicit."
+                )
+            return self._embed_cells_standardized(
+                data,
+                models=models,
+                output=output or "anndata",
+                target=target,
+                path=out_path,
+                fmt=fmt,
+                missing=missing,
+                key=key,
+                metadata_mode=metadata_mode,
+                include_matrix=include_matrix,
+                **embed_kwargs,
+            )
+
         normalized_by_entity = {}
         for et in entity_types:
             if whole_genome:
@@ -769,6 +791,125 @@ class BioEmbedder:
             metadata_mode=metadata_mode,
             include_matrix=include_matrix,
             random_state=random_state,
+        )
+
+    def _embed_cells_standardized(
+        self,
+        data: Any,
+        *,
+        models: Sequence[str],
+        output: Literal["anndata", "table", "payload"],
+        target: Any = None,
+        path: str | os.PathLike[str] | None = None,
+        fmt: Literal["csv", "npz", "zarr"] = "npz",
+        missing: Literal["error", "nan"] = "error",
+        key: str | None = None,
+        metadata_mode: Literal["minimal", "full"] = "full",
+        include_matrix: bool = True,
+        **cell_kwargs: Any,
+    ):
+        """Route single-cell embeddings through ``BioEmbedder.embed``.
+
+        ``embed_cells`` remains the implementation backend, but this method
+        converts each produced ``.obsm`` matrix into the same standardized
+        ``EmbeddingResult``/exporter path used by the rest of
+        ``BioEmbedder.embed``. That keeps tutorials and public workflows on
+        one entry point while preserving existing single-cell behavior.
+        """
+        from .io.exporters import to_anndata_many, to_payloads, to_tables
+        from .io.result import EmbeddingProvenance, EmbeddingResult
+
+        if output not in ("anndata", "table", "payload"):
+            raise ValueError(f"output must be 'anndata', 'table', or 'payload', got {output!r}.")
+        if not self._is_anndata_like(data):
+            raise ValueError("input normalization: entity_type='cell' expects an AnnData object as identifiers/target.")
+        if key is not None and len(models) > 1:
+            raise ValueError(
+                "output routing: a single key cannot name multiple cell "
+                "embedding results. Omit key or request one model."
+            )
+
+        obsm_prefix = str(cell_kwargs.get("obsm_prefix", "X_"))
+        adata_out = self.embed_cells(
+            data,
+            models=list(models),
+            **cell_kwargs,
+        )
+        ids = tuple(str(x) for x in adata_out.obs_names)
+
+        results = []
+        keys = []
+        cell_meta = adata_out.uns.get("embpy_cell_embeddings", {})
+        for model_name in models:
+            default_key = f"{obsm_prefix}{model_name}"
+            out_key = key or default_key
+            if default_key not in adata_out.obsm:
+                details = cell_meta.get(model_name, {}) if isinstance(cell_meta, dict) else {}
+                message = details.get("error") if isinstance(details, dict) else None
+                raise RuntimeError(
+                    f"embedding generation: cell model {model_name!r} did not "
+                    f"produce adata.obsm[{default_key!r}]." + (f" Backend error: {message}" if message else "")
+                )
+            matrix = np.asarray(adata_out.obsm[default_key], dtype=np.float32)
+            if matrix.ndim != 2 or matrix.shape[0] != adata_out.n_obs:
+                raise ValueError(
+                    f"embedding generation: adata.obsm[{default_key!r}] must "
+                    f"have shape (n_obs, n_dims), got {matrix.shape!r} for "
+                    f"n_obs={adata_out.n_obs}."
+                )
+            extra: dict[str, Any] = {
+                "entity_type": "cell",
+                "organism": self.organism,
+                "input_kind": "anndata",
+                "input_source": None,
+                "input_id_column": "obs_names",
+                "input_id_type": "obs_names",
+                "n_requested_inputs": int(adata_out.n_obs),
+                "n_successfully_embedded_entities": int(adata_out.n_obs),
+                "n_embedding_failures": 0,
+                "n_unresolved_identifiers": 0,
+                "duplicate_canonical_ids_dropped": 0,
+                "n_dropped_or_unresolved_entities": 0,
+                "canonical_id_scheme": "obs_names",
+            }
+            if isinstance(cell_meta, dict) and isinstance(cell_meta.get(model_name), dict):
+                extra["cell_embedding"] = dict(cell_meta[model_name])
+            prov = EmbeddingProvenance.create(
+                model=str(model_name),
+                pooling=None,
+                layer=None,
+                extra=extra,
+            )
+            results.append(
+                EmbeddingResult(
+                    matrix=matrix,
+                    entity_ids=ids,
+                    entity_type="cell",
+                    id_scheme="obs_names",
+                    provenance=prov,
+                )
+            )
+            keys.append(out_key)
+
+        if output == "payload":
+            return to_payloads(
+                results,
+                keys=keys,
+                metadata_mode=metadata_mode,
+                include_matrix=include_matrix,
+            )
+        if output == "table":
+            return to_tables(results, path=path, fmt=fmt)
+        if path is not None:
+            logging.warning(
+                "output='anndata' ignores path/output_path; call `.write_h5ad(...)` on the returned AnnData."
+            )
+        return to_anndata_many(
+            results,
+            target=adata_out,
+            attach_to="obs",
+            keys=keys,
+            missing=missing,
         )
 
     def _embed_to_result(
@@ -1046,7 +1187,7 @@ class BioEmbedder:
                 "is a mapping keyed by entity type or whole_genome=True."
             )
         values = self._as_string_list(entity_type, arg_name="entity_type")
-        allowed = {"gene", "molecule", "protein", "sequence", "text", "perturbation"}
+        allowed = {"gene", "molecule", "protein", "sequence", "text", "perturbation", "cell"}
         bad = [x for x in values if x not in allowed]
         if bad:
             raise ValueError(
