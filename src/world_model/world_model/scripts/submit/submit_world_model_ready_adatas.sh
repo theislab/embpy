@@ -35,9 +35,22 @@ set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-/lustre/groups/ml01/workspace/goncalo.pinto/embpy}"
 cd "$PROJECT_DIR"
+PROJECT_DIR="${PROJECT_DIR%/}"
+export PROJECT_DIR
 export PATH="$HOME/.pixi/bin:$PATH"
 export PYTHONNOUSERSITE=1
 unset SBATCH_GET_USER_ENV SBATCH_EXPORT SLURM_EXPORT_ENV
+
+project_path() {
+    local path="$1"
+    if [[ -z "$path" ]]; then
+        printf "%s\n" "$PROJECT_DIR"
+    elif [[ "$path" = /* ]]; then
+        printf "%s\n" "$path"
+    else
+        printf "%s/%s\n" "$PROJECT_DIR" "$path"
+    fi
+}
 
 SELF="src/world_model/world_model/scripts/submit/submit_world_model_ready_adatas.sh"
 SLURM_DIR="src/world_model/world_model/scripts/slurm"
@@ -243,11 +256,13 @@ fi
 
 SUBMIT_STAMP="${SUBMIT_STAMP:-$(date '+%Y%m%d_%H%M%S')}"
 SUBMITTED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
-if [[ "$TMP_ROOT" = /* ]]; then
-    TMP_BASE="$TMP_ROOT"
-else
-    TMP_BASE="${PROJECT_DIR}/${TMP_ROOT}"
-fi
+STACK_CACHE_DIR="$(project_path "$STACK_CACHE_DIR")"
+STATE_NPZ_DIR="$(project_path "$STATE_NPZ_DIR")"
+STATE_H5AD_DIR="$(project_path "$STATE_H5AD_DIR")"
+ACTION_NPZ_DIR="$(project_path "$ACTION_NPZ_DIR")"
+READY_H5AD_DIR="$(project_path "$READY_H5AD_DIR")"
+LOG_ROOT="$(project_path "$LOG_ROOT")"
+TMP_BASE="$(project_path "$TMP_ROOT")"
 export TMPDIR="${TMPDIR:-${TMP_BASE}/submit-${SUBMIT_STAMP}}"
 if [[ -z "${ACTION_SET_LABEL:-}" ]]; then
     if [[ "$EMBEDDINGS" == "all" || "$EMBEDDINGS" == "default" ]]; then
@@ -261,8 +276,12 @@ CELL_EMBEDDING_LABEL="${CELL_EMBEDDING_LABEL:-${STATE_KIND}}"
 WORKFLOW_LABEL="${WORKFLOW_LABEL:-${CELL_EMBEDDING_LABEL}_with_${ACTION_SET_LABEL}}"
 RUN_ROOT_BASE="${RUN_ROOT_BASE:-runs/World_Model}"
 LOG_BASE="${LOG_BASE:-${LOG_ROOT}/World_Model}"
+RUN_ROOT_BASE="$(project_path "$RUN_ROOT_BASE")"
+LOG_BASE="$(project_path "$LOG_BASE")"
 SUBMIT_LOG_DIR="${SUBMIT_LOG_DIR:-${LOG_BASE}/submissions/${WORKFLOW_LABEL}/${SUBMIT_STAMP}}"
 SUBMIT_LOG="${SUBMIT_LOG:-${SUBMIT_LOG_DIR}/submit_world_model_ready_adatas_${ACTION_SET_LABEL}_${SUBMIT_STAMP}.log}"
+SUBMIT_LOG_DIR="$(project_path "$SUBMIT_LOG_DIR")"
+SUBMIT_LOG="$(project_path "$SUBMIT_LOG")"
 
 mkdir -p "$SUBMIT_LOG_DIR" "$STATE_NPZ_DIR" "$STATE_H5AD_DIR" "$ACTION_NPZ_DIR" "$READY_H5AD_DIR" "$TMP_BASE" "$TMPDIR"
 
@@ -277,6 +296,9 @@ if [[ -z "$STACK_CHECKPOINT" || -z "$STACK_GENELIST" ]]; then
     echo "  EMB=$EMB STACK_CHECKPOINT=/path/to/bc_large.ckpt STACK_GENELIST=/path/to/basecount_1000per_15000max.pkl bash $SELF" >&2
     exit 2
 fi
+
+STACK_CHECKPOINT="$(project_path "$STACK_CHECKPOINT")"
+STACK_GENELIST="$(project_path "$STACK_GENELIST")"
 
 if [[ "$DRYRUN" != "1" ]]; then
     [[ -f "$STACK_CHECKPOINT" ]] || { echo "ERROR: STACK_CHECKPOINT not found: $STACK_CHECKPOINT" >&2; exit 1; }
@@ -324,6 +346,8 @@ SUBMISSION_INFO_OVERRIDE="${SUBMISSION_INFO:-}"
 for ds in "${DATASETS[@]}"; do
     dataset_run_root="${RUN_ROOT:-${RUN_ROOT_BASE}/${WORKFLOW_LABEL}/${ds}/${SUBMIT_STAMP}}"
     dataset_log_dir="${LOG_DIR:-${LOG_BASE}/${WORKFLOW_LABEL}/${ds}/${SUBMIT_STAMP}}"
+    dataset_run_root="$(project_path "$dataset_run_root")"
+    dataset_log_dir="$(project_path "$dataset_log_dir")"
     MANIFEST="${MANIFEST_OVERRIDE:-${dataset_log_dir}/manifest.tsv}"
     SUBMISSION_INFO="${SUBMISSION_INFO_OVERRIDE:-${dataset_log_dir}/submission.txt}"
     mkdir -p "$dataset_run_root" "$dataset_log_dir"
@@ -346,7 +370,7 @@ run_train=${RUN_TRAIN}
 EOF
     printf "submitted_at\tdataset\tphase\tembedding\tjob_id\tdependency\toutput_path\tstdout\tstderr\n" >"$MANIFEST"
 
-    source_h5ad="$(h5ad_for "$ds")"
+    source_h5ad="$(project_path "$(h5ad_for "$ds")")"
     state_npz="${STATE_NPZ_DIR}/${ds}_${STATE_KIND}.npz"
     state_h5ad="${STATE_H5AD_DIR}/${ds}_${STATE_KIND}.h5ad"
 
@@ -544,7 +568,7 @@ EOF
         "$(job_stdout "$dataset_log_dir" "wm-ready-${ds}-all" "$assemble_jid")" "$(job_stderr "$dataset_log_dir" "wm-ready-${ds}-all" "$assemble_jid")"
 
     if [[ "$RUN_TRAIN" == "1" ]]; then
-        cfg="$(base_cfg_for "$ds")"
+        cfg="$(project_path "$(base_cfg_for "$ds")")"
         for emb in "${EMBEDDING_KEYS[@]}"; do
             action_log_dir="$dataset_log_dir"
             action_obsm_key="${ACTION_OBSM_KEY:-X_pert_${emb}}"

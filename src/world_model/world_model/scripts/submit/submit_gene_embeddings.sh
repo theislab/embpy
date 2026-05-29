@@ -34,7 +34,20 @@ set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-/lustre/groups/ml01/workspace/goncalo.pinto/embpy}"
 cd "$PROJECT_DIR"
+PROJECT_DIR="${PROJECT_DIR%/}"
+export PROJECT_DIR
 unset SBATCH_GET_USER_ENV SBATCH_EXPORT SLURM_EXPORT_ENV
+
+project_path() {
+    local path="$1"
+    if [[ -z "$path" ]]; then
+        printf "%s\n" "$PROJECT_DIR"
+    elif [[ "$path" = /* ]]; then
+        printf "%s\n" "$path"
+    else
+        printf "%s/%s\n" "$PROJECT_DIR" "$path"
+    fi
+}
 
 # train.py appends a per-job suffix to output_dir. Chained baseline/compare
 # jobs receive the logical output_dir and resolve the newest suffixed run dir
@@ -155,7 +168,7 @@ fi
 
 EMB_PATH=""; EMB_MODEL=""
 if [[ "$KIND" == "precomputed" ]]; then
-    EMB_PATH="$TARGET"
+    EMB_PATH="$(project_path "$TARGET")"
     if [[ ! -f "$EMB_PATH" ]]; then
         echo "ERROR: precomputed embedding not found: $EMB_PATH" >&2
         exit 1
@@ -183,21 +196,24 @@ esac
 SUBMIT_STAMP="${SUBMIT_STAMP:-$(date '+%Y%m%d_%H%M%S')}"
 SUBMITTED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
 TMP_ROOT="${TMP_ROOT:-runs/_tmp}"
-if [[ "$TMP_ROOT" = /* ]]; then
-    TMP_BASE="$TMP_ROOT"
-else
-    TMP_BASE="${PROJECT_DIR}/${TMP_ROOT}"
-fi
+LOG_ROOT="$(project_path "$LOG_ROOT")"
+TMP_BASE="$(project_path "$TMP_ROOT")"
 export TMPDIR="${TMPDIR:-${TMP_BASE}/submit-${SUBMIT_STAMP}}"
 CELL_EMBEDDING_LABEL="${CELL_EMBEDDING_LABEL:-${STATE_OBSM_KEY#X_}}"
 ACTION_LABEL="${ACTION_LABEL:-${EMB}}"
 WORKFLOW_LABEL="${WORKFLOW_LABEL:-${CELL_EMBEDDING_LABEL}_with_${ACTION_LABEL}}"
 RUN_ROOT_BASE="${RUN_ROOT_BASE:-runs/World_Model}"
 LOG_BASE="${LOG_BASE:-${LOG_ROOT}/World_Model}"
+RUN_ROOT_BASE="$(project_path "$RUN_ROOT_BASE")"
+LOG_BASE="$(project_path "$LOG_BASE")"
 SUBMIT_LOG_DIR="${SUBMIT_LOG_DIR:-${LOG_BASE}/submissions/${WORKFLOW_LABEL}/${SUBMIT_STAMP}}"
 SUBMIT_LOG="${SUBMIT_LOG:-${SUBMIT_LOG_DIR}/submit_gene_embeddings_${ACTION_LABEL}_${SUBMIT_STAMP}.log}"
+SUBMIT_LOG_DIR="$(project_path "$SUBMIT_LOG_DIR")"
+SUBMIT_LOG="$(project_path "$SUBMIT_LOG")"
 
-mkdir -p "$SUBMIT_LOG_DIR" runs/_cache/action_embeddings runs/_cache/action_h5ad "$TMP_BASE" "$TMPDIR"
+ACTION_NPZ_DIR="$(project_path "runs/_cache/action_embeddings")"
+ACTION_H5AD_DIR="$(project_path "runs/_cache/action_h5ad")"
+mkdir -p "$SUBMIT_LOG_DIR" "$ACTION_NPZ_DIR" "$ACTION_H5AD_DIR" "$TMP_BASE" "$TMPDIR"
 
 if [[ "${TEE_SUBMIT_LOG:-1}" == "1" ]]; then
     exec > >(tee -a "$SUBMIT_LOG") 2>&1
@@ -247,6 +263,8 @@ SUBMISSION_INFO_OVERRIDE="${SUBMISSION_INFO:-}"
 for ds in "${DATASETS[@]}"; do
     dataset_run_root="${RUN_ROOT:-${RUN_ROOT_BASE}/${WORKFLOW_LABEL}/${ds}/${SUBMIT_STAMP}}"
     dataset_log_dir="${LOG_DIR:-${LOG_BASE}/${WORKFLOW_LABEL}/${ds}/${SUBMIT_STAMP}}"
+    dataset_run_root="$(project_path "$dataset_run_root")"
+    dataset_log_dir="$(project_path "$dataset_log_dir")"
     MANIFEST="${MANIFEST_OVERRIDE:-${dataset_log_dir}/manifest.tsv}"
     SUBMISSION_INFO="${SUBMISSION_INFO_OVERRIDE:-${dataset_log_dir}/submission.txt}"
     mkdir -p "$dataset_run_root" "$dataset_log_dir"
@@ -268,13 +286,13 @@ with_compare=${WITH_COMPARE}
 EOF
     printf "submitted_at\tdataset\tphase\tembedding\tjob_id\tdependency\toutput_path\tstdout\tstderr\n" >"$MANIFEST"
 
-    cfg="$(base_cfg_for "$ds")"
-    h5ad="$(h5ad_for "$ds")"
+    cfg="$(project_path "$(base_cfg_for "$ds")")"
+    h5ad="$(project_path "$(h5ad_for "$ds")")"
     run_name="single_${ds}_${EMB}"
     out_dir="${dataset_run_root}/${run_name}"
     obsm_key="X_pert_${EMB}"
-    action_h5ad="runs/_cache/action_h5ad/${ds}_${EMB}.h5ad"
-    action_npz="runs/_cache/action_embeddings/${ds}_${EMB}.npz"
+    action_h5ad="${ACTION_H5AD_DIR}/${ds}_${EMB}.h5ad"
+    action_npz="${ACTION_NPZ_DIR}/${ds}_${EMB}.npz"
 
     if [[ "$KIND" == "precomputed" ]]; then
         echo "[$ds] submitting AnnData attach (precomputed table: $EMB, pixi env: $PIXI_ENV) ..."

@@ -25,8 +25,21 @@ set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-/lustre/groups/ml01/workspace/goncalo.pinto/embpy}"
 cd "$PROJECT_DIR"
+PROJECT_DIR="${PROJECT_DIR%/}"
+export PROJECT_DIR
 export PATH="$HOME/.pixi/bin:$PATH"
 unset SBATCH_GET_USER_ENV SBATCH_EXPORT SLURM_EXPORT_ENV
+
+project_path() {
+    local path="$1"
+    if [[ -z "$path" ]]; then
+        printf "%s\n" "$PROJECT_DIR"
+    elif [[ "$path" = /* ]]; then
+        printf "%s\n" "$path"
+    else
+        printf "%s/%s\n" "$PROJECT_DIR" "$path"
+    fi
+}
 
 DRIVER="src/world_model/world_model/scripts/submit/submit_gene_embeddings.sh"
 SLURM_DIR="src/world_model/world_model/scripts/slurm"
@@ -36,16 +49,17 @@ CPU_QOS="${CPU_QOS:-cpu_normal}"
 LOG_ROOT="${LOG_ROOT:-logs}"
 SUBMIT_STAMP="${SUBMIT_STAMP:-$(date '+%Y%m%d_%H%M%S')}"
 TMP_ROOT="${TMP_ROOT:-runs/_tmp}"
-if [[ "$TMP_ROOT" = /* ]]; then
-    TMP_BASE="$TMP_ROOT"
-else
-    TMP_BASE="${PROJECT_DIR}/${TMP_ROOT}"
-fi
+LOG_ROOT="$(project_path "$LOG_ROOT")"
+TMP_BASE="$(project_path "$TMP_ROOT")"
 export TMPDIR="${TMPDIR:-${TMP_BASE}/submit-${SUBMIT_STAMP}}"
 RUN_ROOT_BASE="${RUN_ROOT_BASE:-runs/World_Model}"
+RUN_ROOT_BASE="$(project_path "$RUN_ROOT_BASE")"
 SWEEP_RUN_DIR="${SWEEP_RUN_DIR:-${RUN_ROOT_BASE}/_sweep/${SUBMIT_STAMP}}"
 LOG_DIR="${LOG_DIR:-${LOG_ROOT}/World_Model/submissions/embedding_sweep/${SUBMIT_STAMP}}"
-mkdir -p "$LOG_DIR" "$SWEEP_RUN_DIR" runs/world_model/_sweep "$TMP_BASE" "$TMPDIR"
+SWEEP_RUN_DIR="$(project_path "$SWEEP_RUN_DIR")"
+LOG_DIR="$(project_path "$LOG_DIR")"
+SWEEP_TMP_DIR="$(project_path "runs/world_model/_sweep")"
+mkdir -p "$LOG_DIR" "$SWEEP_RUN_DIR" "$SWEEP_TMP_DIR" "$TMP_BASE" "$TMPDIR"
 
 # Source of truth for "what is usable" = the driver's own catalog. The
 # `list` output prints exactly one `EMB=<name>` line per non-convert entry.
@@ -75,7 +89,7 @@ if [[ "${DRYRUN:-0}" == "1" ]]; then
     exit 0
 fi
 
-JID_FILE="$(mktemp runs/world_model/_sweep/jids.XXXXXX)"
+JID_FILE="$(mktemp "${SWEEP_TMP_DIR}/jids.XXXXXX")"
 : >"$JID_FILE"
 
 for emb in "${EMB_LIST[@]}"; do
