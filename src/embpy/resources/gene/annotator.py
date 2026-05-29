@@ -86,6 +86,19 @@ def _get_text(url: str, params: dict | None = None, timeout: int = 30) -> str | 
         return None
 
 
+def _string_score_1000(value: Any) -> int:
+    """Parse STRING scores returned as either 0-1000 ints or 0-1 floats."""
+    if value is None or value == "":
+        return 0
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if 0 <= score <= 1:
+        score *= 1000
+    return int(round(score))
+
+
 class GeneAnnotator:
     """Aggregate annotations for genes from public databases.
 
@@ -385,7 +398,7 @@ class GeneAnnotator:
             row = dict(zip(header, cols))
             partners.append({
                 "partner": row.get("preferredName_B", row.get("stringId_B", "")),
-                "combined_score": int(row.get("score", 0)),
+                "combined_score": _string_score_1000(row.get("score")),
                 "nscore": float(row.get("nscore", 0)),
                 "fscore": float(row.get("fscore", 0)),
                 "pscore": float(row.get("pscore", 0)),

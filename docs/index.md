@@ -8,6 +8,7 @@
 :caption: Documentation
 
 api.md
+technical.md
 changelog.md
 contributing.md
 references.md

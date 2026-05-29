@@ -21,7 +21,7 @@ def annotator():
 
 
 class TestPathways:
-    @patch("embpy.resources.gene_annotator._get_json")
+    @patch("embpy.resources.gene.annotator._get_json")
     def test_get_pathways(self, mock_get, annotator):
         mock_get.return_value = {
             "hits": [{
@@ -37,7 +37,7 @@ class TestPathways:
         assert len(result["kegg"]) == 1
         assert len(result["wikipathways"]) == 1
 
-    @patch("embpy.resources.gene_annotator._get_json")
+    @patch("embpy.resources.gene.annotator._get_json")
     def test_no_pathways(self, mock_get, annotator):
         mock_get.return_value = {"hits": [{}]}
         result = annotator.get_pathways("FAKEGENE")
@@ -50,10 +50,10 @@ class TestPathways:
 
 
 class TestTissueExpression:
-    @patch("embpy.resources.gene_annotator._get_json")
+    @patch("embpy.resources.gene.annotator._get_json")
     def test_get_tissue_expression(self, mock_get, annotator):
         mock_get.side_effect = [
-            {"hits": [{"ensembl": {"gene": "ENSG00000141510"}}]},
+            {"data": [{"gencodeId": "ENSG00000141510.18"}]},
             {"data": [
                 {"tissueSiteDetailId": "Brain", "tissueSiteDetail": "Brain - Cortex", "median": 15.2, "numSamples": 100},
                 {"tissueSiteDetailId": "Liver", "tissueSiteDetail": "Liver", "median": 5.1, "numSamples": 80},
@@ -63,7 +63,7 @@ class TestTissueExpression:
         assert len(tissues) == 2
         assert tissues[0]["median_tpm"] >= tissues[1]["median_tpm"]
 
-    @patch("embpy.resources.gene_annotator._get_json")
+    @patch("embpy.resources.gene.annotator._get_json")
     def test_unresolvable_gene(self, mock_get, annotator):
         mock_get.return_value = {"hits": []}
         tissues = annotator.get_tissue_expression("FAKEGENE")
@@ -76,8 +76,8 @@ class TestTissueExpression:
 
 
 class TestProteinInteractions:
-    @patch("embpy.resources.gene_annotator._get_text")
-    @patch("embpy.resources.gene_annotator._get_json")
+    @patch("embpy.resources.gene.annotator._get_text")
+    @patch("embpy.resources.gene.annotator._get_json")
     def test_get_ppi(self, mock_json, mock_text, annotator):
         mock_json.return_value = {"hits": [{"symbol": "TP53"}]}
         mock_text.return_value = (
@@ -90,6 +90,21 @@ class TestProteinInteractions:
         assert partners[0]["partner"] == "MDM2"
         assert partners[0]["combined_score"] == 999
 
+    @patch("embpy.resources.gene.annotator._get_text")
+    @patch("embpy.resources.gene.annotator._get_json")
+    def test_get_ppi_accepts_decimal_string_scores(self, mock_json, mock_text, annotator):
+        mock_json.return_value = {"hits": [{"symbol": "TP53"}]}
+        mock_text.return_value = (
+            "stringId_A\tstringId_B\tpreferredName_A\tpreferredName_B\tscore\tnscore\tfscore\tpscore\tescore\tdscore\ttscore\n"
+            "9606.ENSP1\t9606.ENSP2\tTP53\tMDM2\t0.999\t0\t0\t0\t0.900\t0.800\t0.950\n"
+            "9606.ENSP1\t9606.ENSP3\tTP53\tBRCA1\t0.850\t0\t0\t0\t0.700\t0.600\t0.800\n"
+        )
+        partners = annotator.get_protein_interactions("TP53", n_partners=5)
+        assert len(partners) == 2
+        assert partners[0]["partner"] == "MDM2"
+        assert partners[0]["combined_score"] == 999
+        assert partners[1]["combined_score"] == 850
+
 
 # =====================================================================
 # Disease associations (mocked Open Targets)
@@ -97,8 +112,8 @@ class TestProteinInteractions:
 
 
 class TestDiseaseAssociations:
-    @patch("embpy.resources.gene_annotator._post_json")
-    @patch("embpy.resources.gene_annotator._get_json")
+    @patch("embpy.resources.gene.annotator._post_json")
+    @patch("embpy.resources.gene.annotator._get_json")
     def test_get_diseases(self, mock_json, mock_post, annotator):
         mock_json.return_value = {"hits": [{"ensembl": {"gene": "ENSG00000141510"}}]}
         mock_post.return_value = {
@@ -124,13 +139,13 @@ class TestDiseaseAssociations:
 
 
 class TestAnnotate:
-    @patch("embpy.resources.gene_annotator._get_json")
+    @patch("embpy.resources.gene.annotator._get_json")
     def test_pathways_only(self, mock_get, annotator):
         mock_get.return_value = {"hits": [{"pathway": {"reactome": [{"id": "R1", "name": "P1"}]}}]}
         result = annotator.annotate("TP53", sources="pathways")
         assert "pathways" in result
 
-    @patch("embpy.resources.gene_annotator._get_json")
+    @patch("embpy.resources.gene.annotator._get_json")
     def test_ensembl_id_resolution(self, mock_get, annotator):
         mock_get.return_value = {"hits": [{"symbol": "TP53"}]}
         symbol = annotator._resolve_symbol("ENSG00000141510")
@@ -143,9 +158,9 @@ class TestAnnotate:
 
 
 class TestAnnotateAdata:
-    @patch("embpy.resources.gene_annotator._get_json")
-    @patch("embpy.resources.gene_annotator._post_json")
-    @patch("embpy.resources.gene_annotator._get_text")
+    @patch("embpy.resources.gene.annotator._get_json")
+    @patch("embpy.resources.gene.annotator._post_json")
+    @patch("embpy.resources.gene.annotator._get_text")
     def test_annotate_adata(self, mock_text, mock_post, mock_json, annotator):
         import pandas as pd
         from anndata import AnnData

@@ -22,8 +22,10 @@ set -euo pipefail
 export PATH="$HOME/.pixi/bin:$PATH"
 export PYTHONNOUSERSITE=1
 
-PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
+PROJECT_DIR="${PROJECT_DIR:-/lustre/groups/ml01/workspace/goncalo.pinto/embpy}"
 cd "$PROJECT_DIR"
+PROJECT_DIR="${PROJECT_DIR%/}"
+export PROJECT_DIR
 
 CONFIG="${1:-${CONFIG:?CONFIG env var required}}"
 CKPT="${2:-${CKPT:?CKPT env var required}}"

@@ -24,8 +24,10 @@ set -euo pipefail
 export PATH="$HOME/.pixi/bin:$PATH"
 export PYTHONNOUSERSITE=1
 
-PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
+PROJECT_DIR="${PROJECT_DIR:-/lustre/groups/ml01/workspace/goncalo.pinto/embpy}"
 cd "$PROJECT_DIR"
+PROJECT_DIR="${PROJECT_DIR%/}"
+export PROJECT_DIR
 
 export TMPDIR="${TMPDIR:-$PROJECT_DIR/runs/_tmp/compare-${SLURM_JOB_ID:-manual}}"
 mkdir -p "$TMPDIR"

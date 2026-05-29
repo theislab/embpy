@@ -21,9 +21,22 @@ set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-/lustre/groups/ml01/workspace/goncalo.pinto/embpy}"
 cd "$PROJECT_DIR"
+PROJECT_DIR="${PROJECT_DIR%/}"
+export PROJECT_DIR
 export PATH="$HOME/.pixi/bin:$PATH"
 export PYTHONNOUSERSITE=1
 unset SBATCH_GET_USER_ENV SBATCH_EXPORT SLURM_EXPORT_ENV
+
+project_path() {
+    local path="$1"
+    if [[ -z "$path" ]]; then
+        printf "%s\n" "$PROJECT_DIR"
+    elif [[ "$path" = /* ]]; then
+        printf "%s\n" "$path"
+    else
+        printf "%s/%s\n" "$PROJECT_DIR" "$path"
+    fi
+}
 
 SELF="src/world_model/world_model/scripts/submit/submit_cross_modality_incontext.sh"
 SLURM_DIR="src/world_model/world_model/scripts/slurm"
@@ -90,19 +103,28 @@ TMP_ROOT="${TMP_ROOT:-runs/_tmp}"
 LOG_ROOT="${LOG_ROOT:-logs}"
 SUBMIT_STAMP="${SUBMIT_STAMP:-$(date '+%Y%m%d_%H%M%S')}"
 SUBMITTED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
-if [[ "$TMP_ROOT" = /* ]]; then
-    TMP_BASE="$TMP_ROOT"
-else
-    TMP_BASE="${PROJECT_DIR}/${TMP_ROOT}"
+STACK_CACHE_DIR="$(project_path "$STACK_CACHE_DIR")"
+MORPHOLOGY_LOCAL_DIR="$(project_path "$MORPHOLOGY_LOCAL_DIR")"
+if [[ -n "$JUMP_PROFILES_DIR" ]]; then
+    JUMP_PROFILES_DIR="$(project_path "$JUMP_PROFILES_DIR")"
 fi
+STATE_H5AD_DIR="$(project_path "$STATE_H5AD_DIR")"
+STATE_NPZ_DIR="$(project_path "$STATE_NPZ_DIR")"
+CROSSMOD_H5AD_DIR="$(project_path "$CROSSMOD_H5AD_DIR")"
+LOG_ROOT="$(project_path "$LOG_ROOT")"
+TMP_BASE="$(project_path "$TMP_ROOT")"
 export TMPDIR="${TMPDIR:-${TMP_BASE}/submit-${SUBMIT_STAMP}}"
 CELL_EMBEDDING_LABEL="${CELL_EMBEDDING_LABEL:-${STATE_OBSM_KEY#X_}}"
 ACTION_LABEL="${ACTION_LABEL:-esm2_650M_to_subcell_mae_rybg}"
 WORKFLOW_LABEL="${WORKFLOW_LABEL:-${CELL_EMBEDDING_LABEL}_with_${ACTION_LABEL}}"
 RUN_ROOT_BASE="${RUN_ROOT_BASE:-runs/World_Model}"
 LOG_BASE="${LOG_BASE:-${LOG_ROOT}/World_Model}"
+RUN_ROOT_BASE="$(project_path "$RUN_ROOT_BASE")"
+LOG_BASE="$(project_path "$LOG_BASE")"
 SUBMIT_LOG_DIR="${SUBMIT_LOG_DIR:-${LOG_BASE}/submissions/${WORKFLOW_LABEL}/${SUBMIT_STAMP}}"
 SUBMIT_LOG="${SUBMIT_LOG:-${SUBMIT_LOG_DIR}/submit_cross_modality_incontext_${SUBMIT_STAMP}.log}"
+SUBMIT_LOG_DIR="$(project_path "$SUBMIT_LOG_DIR")"
+SUBMIT_LOG="$(project_path "$SUBMIT_LOG")"
 
 mkdir -p "$SUBMIT_LOG_DIR" "$STATE_H5AD_DIR" "$STATE_NPZ_DIR" "$CROSSMOD_H5AD_DIR" "$TMP_BASE" "$TMPDIR"
 
@@ -201,6 +223,8 @@ SUBMISSION_INFO_OVERRIDE="${SUBMISSION_INFO:-}"
 for ds in "${DATASETS[@]}"; do
     dataset_run_root="${RUN_ROOT:-${RUN_ROOT_BASE}/${WORKFLOW_LABEL}/${ds}/${SUBMIT_STAMP}}"
     dataset_log_dir="${LOG_DIR:-${LOG_BASE}/${WORKFLOW_LABEL}/${ds}/${SUBMIT_STAMP}}"
+    dataset_run_root="$(project_path "$dataset_run_root")"
+    dataset_log_dir="$(project_path "$dataset_log_dir")"
     MANIFEST="${MANIFEST_OVERRIDE:-${dataset_log_dir}/manifest.tsv}"
     SUBMISSION_INFO="${SUBMISSION_INFO_OVERRIDE:-${dataset_log_dir}/submission.txt}"
     mkdir -p "$dataset_run_root" "$dataset_log_dir"
@@ -223,7 +247,7 @@ dryrun=${DRYRUN}
 EOF
     printf "submitted_at\tdataset\tphase\tembedding\tjob_id\tdependency\toutput_path\tstdout\tstderr\n" >"$MANIFEST"
 
-    source_h5ad="$(h5ad_for "$ds")"
+    source_h5ad="$(project_path "$(h5ad_for "$ds")")"
     state_npz="${STATE_NPZ_DIR}/${ds}_stack.npz"
     state_h5ad="${STATE_H5AD_DIR}/${ds}_stack.h5ad"
     esm_h5ad="${CROSSMOD_H5AD_DIR}/${ds}_stack_esm2_650M.h5ad"
@@ -244,6 +268,8 @@ EOF
             fi
         fi
         if [[ "$DRYRUN" != "1" ]]; then
+            STACK_CHECKPOINT="$(project_path "$STACK_CHECKPOINT")"
+            STACK_GENELIST="$(project_path "$STACK_GENELIST")"
             [[ -f "$STACK_CHECKPOINT" ]] || { echo "ERROR: STACK_CHECKPOINT not found: $STACK_CHECKPOINT" >&2; exit 1; }
             [[ -f "$STACK_GENELIST" ]] || { echo "ERROR: STACK_GENELIST not found: $STACK_GENELIST" >&2; exit 1; }
         fi
@@ -300,7 +326,7 @@ EOF
     fi
 
     if [[ "$RUN_TRAIN" == "1" ]]; then
-        cfg="$(base_cfg_for "$ds")"
+        cfg="$(project_path "$(base_cfg_for "$ds")")"
         run_name="crossmod_incontext_${ds}_stack_esm2_650M_to_subcell_mae_rybg"
         out_dir="${dataset_run_root}/${run_name}"
         train_args=(--job-name="wm-xmod-train-${ds}" --partition="$PARTITION" --qos="$QOS" --gres="$TRAIN_GRES" --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" -o "${dataset_log_dir}/%x_%j.out" -e "${dataset_log_dir}/%x_%j.err" --export=ALL,EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}")
