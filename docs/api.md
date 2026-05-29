@@ -9,6 +9,7 @@
     :toctree: generated
 
     BioEmbedder
+    BioEmbedder.embed
 ```
 
 ### Gene and Protein Embedding
