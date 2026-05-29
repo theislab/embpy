@@ -204,8 +204,8 @@ link_job_logs() {
     [[ "$DRYRUN" == "1" ]] && return 0
     local job_dir="${root}/jobs/${jid}"
     mkdir -p "$job_dir"
-    ln -sfn "../${name}_${jid}.out" "${job_dir}/stdout"
-    ln -sfn "../${name}_${jid}.err" "${job_dir}/stderr"
+    ln -sfn "../../${name}_${jid}.out" "${job_dir}/stdout"
+    ln -sfn "../../${name}_${jid}.err" "${job_dir}/stderr"
 }
 
 manifest_add() {
@@ -267,6 +267,10 @@ export TMPDIR="${TMPDIR:-${TMP_BASE}/submit-${SUBMIT_STAMP}}"
 if [[ -z "${ACTION_SET_LABEL:-}" ]]; then
     if [[ "$EMBEDDINGS" == "all" || "$EMBEDDINGS" == "default" ]]; then
         ACTION_SET_LABEL="all_gene_embeddings"
+    elif [[ "${#EMBEDDING_KEYS[@]}" -gt 1 ]]; then
+        # Keep workflow paths short. Individual train run directories still
+        # include the exact embedding name, and the manifest records the full set.
+        ACTION_SET_LABEL="selected_${#EMBEDDING_KEYS[@]}_gene_embeddings"
     else
         ACTION_SET_LABEL="${EMBEDDING_KEYS[*]}"
         ACTION_SET_LABEL="${ACTION_SET_LABEL// /_}"

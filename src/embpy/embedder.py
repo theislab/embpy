@@ -109,6 +109,12 @@ def _guess_missing_package(msg: str) -> str | None:
     m = re.search(r"No module named ['\"]([^'\"]+)['\"]", msg)
     if m:
         return m.group(1).split(".")[0]
+    m = re.search(r"([A-Za-z0-9_.-]+)\s+package is not installed", msg, flags=re.IGNORECASE)
+    if m:
+        return m.group(1).split(".")[0]
+    m = re.search(r"['\"]([^'\"]+)['\"](?:\s+package)?\s+is required", msg, flags=re.IGNORECASE)
+    if m:
+        return m.group(1).split(".")[0]
     m = re.search(r"from ['\"]([^'\"]+)['\"]", msg)
     if m:
         return m.group(1).split(".")[0]

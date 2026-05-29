@@ -173,8 +173,8 @@ link_job_logs() {
     [[ "$DRYRUN" == "1" ]] && return 0
     local job_dir="${root}/jobs/${jid}"
     mkdir -p "$job_dir"
-    ln -sfn "../${name}_${jid}.out" "${job_dir}/stdout"
-    ln -sfn "../${name}_${jid}.err" "${job_dir}/stderr"
+    ln -sfn "../../${name}_${jid}.out" "${job_dir}/stdout"
+    ln -sfn "../../${name}_${jid}.err" "${job_dir}/stderr"
 }
 
 manifest_add() {
