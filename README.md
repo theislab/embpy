@@ -72,6 +72,24 @@ gene_adata.varm.keys()
 gene_adata.uns["embeddings"].keys()
 ```
 
+Embed gene perturbation labels as row-aligned action embeddings:
+
+```python
+# pert_adata.obs["perturbation"] contains symbols such as TP53/MYC.
+pert_adata = embedder.embed(
+    pert_adata,
+    entity_type="gene",
+    obs_column="perturbation",
+    id_type="symbol",
+    model="esm2_650M",
+    output="anndata",
+    is_perturbation=True,
+    key="X_pert_esm2_650M",
+)
+
+pert_adata.obsm["X_pert_esm2_650M"]
+```
+
 Embed proteins:
 
 ```python
@@ -173,7 +191,9 @@ for the model keys available in your environment.
 
 `BioEmbedder.embed(...)` follows a scverse-friendly output contract:
 
-- genes and proteins are feature-like and live in `.varm`
+- genes are feature-like and live in `.varm` by default
+- gene perturbation labels use `is_perturbation=True` and live in `.obsm`
+- proteins are feature-like and live in `.varm`
 - molecules, text, sequences, and cells are observation-like and live in `.obsm`
 - perturbation/action embeddings can be kept entity-aligned in `.uns`
 - `.X` remains expression/count-like data or a sparse placeholder

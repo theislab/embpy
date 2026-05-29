@@ -497,6 +497,8 @@ def _extend_unique(out: list[str], values: Sequence[str]) -> None:
 
 
 def _standalone_axis(result: EmbeddingResult) -> Literal["obs", "var", "uns"]:
+    if _is_perturbation_result(result):
+        return "obs"
     if result.entity_type in _UNS_ENTITY_TYPES:
         return "uns"
     if result.entity_type in _VAR_ENTITY_TYPES:
@@ -504,6 +506,10 @@ def _standalone_axis(result: EmbeddingResult) -> Literal["obs", "var", "uns"]:
     if result.entity_type in _OBS_ENTITY_TYPES:
         return "obs"
     return "obs"
+
+
+def _is_perturbation_result(result: EmbeddingResult) -> bool:
+    return bool(result.provenance.extra.get("is_perturbation"))
 
 
 def _attach_to_standalone_axis(
@@ -531,7 +537,7 @@ def _resolve_axis(
     min_overlap: float,
 ) -> Literal["obs", "var"]:
     """Pick obs vs var by id overlap; never guess silently."""
-    ids = set(result.entity_ids)
+    ids = set(_entity_lookup(result))
     obs_names = list(target.obs_names)
     var_names = list(target.var_names)
     obs_hits = sum(1 for n in obs_names if n in ids)
@@ -579,7 +585,7 @@ def _reindex_matrix(
     axis: str,
 ) -> np.ndarray:
     """Re-order rows of the matrix to match the target axis order."""
-    pos = {eid: i for i, eid in enumerate(result.entity_ids)}
+    pos = _entity_lookup(result)
     missing_names = [n for n in axis_names if n not in pos]
     if missing_names and missing == "error":
         preview = missing_names[:10]
@@ -602,13 +608,33 @@ def _reindex_matrix(
     return out
 
 
+def _entity_lookup(result: EmbeddingResult) -> dict[str, int]:
+    """Map canonical ids and display aliases to result rows."""
+    pos: dict[str, int] = {str(eid): i for i, eid in enumerate(result.entity_ids)}
+    if not result.aliases:
+        return pos
+
+    canonical_pos = {str(eid): i for i, eid in enumerate(result.entity_ids)}
+    for canonical_id, aliases in result.aliases.items():
+        row = canonical_pos.get(str(canonical_id))
+        if row is None:
+            continue
+        for value in (aliases or {}).values():
+            if value is not None:
+                pos.setdefault(str(value), row)
+    return pos
+
+
 def _add_alias_columns(frame: pd.DataFrame, result: EmbeddingResult) -> None:
     if not result.aliases:
         return
+    lookup = _entity_lookup(result)
     for scheme in _alias_schemes(result):
         col = scheme
         values = []
-        for eid in frame.index:
+        for label in frame.index:
+            row = lookup.get(str(label))
+            eid = result.entity_ids[row] if row is not None else str(label)
             values.append((result.aliases.get(str(eid), {}) or {}).get(scheme))
         frame[col] = values
 
@@ -664,9 +690,11 @@ def to_anndata(
     generated embedding matrix.
 
     Attach (``target`` given): place the (re-indexed) matrix into
-    ``target.obsm[key]`` or ``target.varm[key]`` depending on which axis
-    the entity ids align to. ``attach_to="auto"`` decides by overlap and
-    **raises** (never guesses) when both or neither axis clears
+    ``target.obsm[key]`` or ``target.varm[key]``. ``attach_to="auto"``
+    uses entity-specific defaults first: genes attach to ``.varm``
+    unless provenance marks them as perturbation labels, in which case
+    they attach to ``.obsm``. Other entities are resolved by overlap and
+    **raise** (never guess) when both or neither axis clears
     ``min_overlap``. The matrix is re-indexed to the chosen axis order;
     entities missing from the target are an error (``missing="error"``)
     or NaN-filled (``missing="nan"``).
@@ -678,6 +706,12 @@ def to_anndata(
     if attach_to == "uns" or result.entity_type in _UNS_ENTITY_TYPES:
         _store_uns_embedding(target, result, out_key)
         return target
+
+    if attach_to == "auto":
+        if _is_perturbation_result(result):
+            attach_to = "obs"
+        elif result.entity_type == "gene":
+            attach_to = "var"
 
     axis = _resolve_axis(result, target, attach_to, min_overlap)
     if axis == "obs":

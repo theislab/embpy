@@ -35,11 +35,11 @@ def test_anndata_standalone_when_no_target():
 
 
 def test_anndata_attach_when_target_given():
-    tgt = AnnData(X=np.zeros((3, 2), dtype=np.float32))
-    tgt.obs_names = ["ENSG1", "ENSG2", "ENSG3"]
-    tgt.var_names = ["g1", "g2"]
+    tgt = AnnData(X=np.zeros((2, 3), dtype=np.float32))
+    tgt.obs_names = ["cell1", "cell2"]
+    tgt.var_names = ["ENSG1", "ENSG2", "ENSG3"]
     out = route_output(_result(), output="anndata", target=tgt)
-    assert "X_emb__gene__m" in out.obsm
+    assert "X_emb__gene__m" in out.varm
 
 
 def test_table_output_returns_dataframe():

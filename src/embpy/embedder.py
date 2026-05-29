@@ -658,6 +658,7 @@ class BioEmbedder:
         anndata_axis: Literal["obs", "var"] | None = None,
         obs_column: str | None = None,
         var_column: str | None = None,
+        is_perturbation: bool = False,
         whole_genome: bool = False,
         biotype: str = "protein_coding",
         show_progress: bool = False,
@@ -679,6 +680,12 @@ class BioEmbedder:
         ``output="payload"`` returns the entity-aligned embedding payload
         directly, including canonical ids, model/provenance metadata and
         the requested embedding matrix.
+
+        Gene embeddings are feature embeddings by default and therefore
+        route to ``.varm`` for AnnData output. Set ``is_perturbation=True``
+        when gene identifiers are perturbation/action labels; those
+        embeddings route to ``.obsm`` and the flag is recorded in
+        provenance.
 
         Defaults are explicit: if ``output`` is omitted, an output path
         chooses compact NPZ/CSV/Zarr file output, otherwise AnnData is
@@ -706,6 +713,13 @@ class BioEmbedder:
             target = data
 
         entity_types = self._resolve_entity_types(entity_type, data, whole_genome)
+        if is_perturbation and any(et != "gene" for et in entity_types):
+            raise ValueError(
+                "input normalization: is_perturbation=True is currently only "
+                "supported for entity_type='gene'. Use entity_type='perturbation' "
+                "for morphology/action-image embeddings, or attach_to='obs' for "
+                "other row-aligned entity embeddings."
+            )
         models = self._as_string_list(model, arg_name="model")
         if "cell" in entity_types:
             if entity_types != ["cell"]:
@@ -772,6 +786,7 @@ class BioEmbedder:
                 id_type=self._id_type_for_entity(id_type, et),
                 organism=org,
                 pooling_strategy=pooling_strategy,
+                is_perturbation=bool(is_perturbation and et == "gene"),
                 show_progress=show_progress,
                 **embed_kwargs,
             )
@@ -921,6 +936,7 @@ class BioEmbedder:
         id_type: str | None,
         organism: str,
         pooling_strategy: str,
+        is_perturbation: bool = False,
         show_progress: bool = False,
         **embed_kwargs: Any,
     ):
@@ -950,6 +966,7 @@ class BioEmbedder:
             "input_source": norm.source,
             "input_id_column": norm.id_column,
             "input_id_type": id_type,
+            "is_perturbation": bool(is_perturbation),
             "n_requested_inputs": requested_n,
         }
         layer = (

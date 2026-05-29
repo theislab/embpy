@@ -36,28 +36,32 @@ Generated embeddings are never placed in `.X`.
 
 | Entity type | Default AnnData location | Notes |
 | --- | --- | --- |
-| genes | `.varm` | Feature-aligned, canonicalized to gene IDs when possible. |
+| genes | `.varm` | Feature-aligned by default, canonicalized to gene IDs when possible. |
+| gene perturbation labels | `.obsm` | Set `is_perturbation=True` when genes are row-level action labels. |
 | proteins | `.varm` | Feature-aligned, usually keyed by UniProt/canonical protein IDs. |
 | molecules | `.obsm` | Observation-aligned, canonical SMILES used when possible. |
 | text and sequences | `.obsm` | Observation-aligned raw inputs. |
 | cells | `.obsm` | One vector per cell. |
-| perturbations/actions | `.uns` | Entity-aligned payload; materialize to `.obsm` only when a downstream model needs one vector per observation. |
+| perturbation morphology/actions | `.uns` | Entity-aligned payload; materialize to `.obsm` only when a downstream model needs one vector per observation. |
 
-For perturbation/action embeddings, keep the source-of-truth table in `.uns`:
+For gene perturbation/action embeddings, attach directly to rows:
 
 ```python
 adata = embedder.embed(
-    ["TP53", "MYC"],
+    adata,
     entity_type="gene",
+    obs_column="perturbation",
+    id_type="symbol",
     model="esm2_650M",
-    target=adata,
     output="anndata",
-    attach_to="uns",
+    is_perturbation=True,
     key="X_pert_esm2_650M",
 )
 ```
 
-Then materialize a row-aligned matrix when needed:
+For entity-aligned perturbation payloads, such as morphology embeddings,
+keep the source-of-truth table in `.uns` and materialize a row-aligned
+matrix when needed:
 
 ```python
 from embpy.io import materialize_perturbation_obsm
