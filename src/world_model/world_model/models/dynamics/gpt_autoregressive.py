@@ -43,7 +43,7 @@ class GPTAutoregressiveDynamics(nn.Module):
         positional embedding table and causal mask.
     use_action_token
         If False, the model becomes a state-only causal transformer.
-        Useful as an ablation that quantifies how much the action
+        Useful for checking how much the action
         carries the predictive signal.
     """
 

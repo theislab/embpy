@@ -55,7 +55,7 @@ def test_script_classifies_and_filters(monkeypatch, tmp_path: Path) -> None:
         "control",
         "TP53",
         "TP53+MYC",
-        "NT5C2",            # real gene that starts with NT; must NOT be control
+        "NT5C2",  # real gene that starts with NT; must NOT be control
         "unknown_gene_zzz",  # unresolved
     ]
     h5ad = tmp_path / "synth.h5ad"
@@ -63,30 +63,42 @@ def test_script_classifies_and_filters(monkeypatch, tmp_path: Path) -> None:
 
     resolved = {
         "TP53": np.linspace(0.1, 0.4, 4).astype(np.float32),
-        "MYC":  np.linspace(0.5, 0.2, 4).astype(np.float32),
+        "MYC": np.linspace(0.5, 0.2, 4).astype(np.float32),
         "NT5C2": None,  # explicitly unresolved by the embedder
     }
 
     # Patch the lazy embedder loader on the provider class.
     def _stub_get_embedder(self):
         if self._embedder is None:
-            self._embedder = _StubEmbedder(
-                {k: v for k, v in resolved.items() if v is not None}
-            )
+            self._embedder = _StubEmbedder({k: v for k, v in resolved.items() if v is not None})
         return self._embedder
 
     monkeypatch.setattr(
-        BioEmbedderProvider, "_get_embedder", _stub_get_embedder,
+        BioEmbedderProvider,
+        "_get_embedder",
+        _stub_get_embedder,
     )
 
     output_npz = tmp_path / "out.npz"
-    rc = ep.main([
-        "--dataset", "replogle",
-        "--h5ad", str(h5ad),
-        "--model", "stub_v0",
-        "--cache-dir", str(tmp_path / "cache"),
-        "--output", str(output_npz),
-    ])
+    output_h5ad = tmp_path / "out.h5ad"
+    rc = ep.main(
+        [
+            "--dataset",
+            "replogle",
+            "--h5ad",
+            str(h5ad),
+            "--model",
+            "stub_v0",
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--output",
+            str(output_npz),
+            "--output-h5ad",
+            str(output_h5ad),
+            "--obsm-key",
+            "X_pert_stub",
+        ]
+    )
     assert rc == 0
     sidecar = output_npz.with_suffix(output_npz.suffix + ".status.json")
     assert sidecar.exists(), f"status sidecar missing at {sidecar}"
@@ -101,9 +113,7 @@ def test_script_classifies_and_filters(monkeypatch, tmp_path: Path) -> None:
     assert meta["counts"][EmbeddingStatus.RESOLVED.value] >= 2, meta["counts"]
     assert meta["counts"][EmbeddingStatus.UNRESOLVED.value] >= 1, meta["counts"]
     assert any("NT5C2" in s for s in meta["unresolved_symbols_first_50"])
-    assert any(
-        "unknown_gene_zzz" in s for s in meta["unresolved_symbols_first_50"]
-    )
+    assert any("unknown_gene_zzz" in s for s in meta["unresolved_symbols_first_50"])
 
     # NPZ on disk carries (symbols, embeddings, statuses).
     arch = np.load(output_npz, allow_pickle=True)
@@ -114,6 +124,11 @@ def test_script_classifies_and_filters(monkeypatch, tmp_path: Path) -> None:
     assert "control" not in syms
     assert "TP53" in syms
     assert "NT5C2" in syms
+
+    attached = anndata.read_h5ad(output_h5ad)
+    assert "X_pert_stub" in attached.obsm
+    assert "X_pert_stub" in attached.uns["perturbations"]
+    assert attached.uns["perturbations"]["X_pert_stub"]["entity_type"] == "perturbation"
 
 
 def test_fail_on_unresolved_returns_nonzero(monkeypatch, tmp_path: Path) -> None:
@@ -128,14 +143,82 @@ def test_fail_on_unresolved_returns_nonzero(monkeypatch, tmp_path: Path) -> None
         return self._embedder
 
     monkeypatch.setattr(
-        BioEmbedderProvider, "_get_embedder", _stub_get_embedder,
+        BioEmbedderProvider,
+        "_get_embedder",
+        _stub_get_embedder,
     )
-    rc = ep.main([
-        "--dataset", "replogle",
-        "--h5ad", str(h5ad),
-        "--model", "stub_v0",
-        "--cache-dir", str(tmp_path / "cache"),
-        "--output", str(tmp_path / "out.npz"),
-        "--fail-on-unresolved",
-    ])
+    rc = ep.main(
+        [
+            "--dataset",
+            "replogle",
+            "--h5ad",
+            str(h5ad),
+            "--model",
+            "stub_v0",
+            "--cache-dir",
+            str(tmp_path / "cache"),
+            "--output",
+            str(tmp_path / "out.npz"),
+            "--fail-on-unresolved",
+        ]
+    )
     assert rc == 2
+
+
+def test_script_uses_public_embed_for_perturbation_morphology(monkeypatch, tmp_path: Path) -> None:
+    labels = ["non-targeting", "TP53", "MISSING"]
+    h5ad = tmp_path / "synth_morph.h5ad"
+    _write_anndata(h5ad, labels)
+
+    class _FakeBioEmbedder:
+        calls: list[dict] = []
+
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        def embed(self, identifiers, **kwargs):
+            self.calls.append({"identifiers": list(identifiers), "kwargs": dict(kwargs)})
+            assert kwargs["entity_type"] == "perturbation"
+            assert kwargs["model"] == "subcell_mae_rybg"
+            return {
+                "schema_version": "embpy.uns_embedding.v1",
+                "entity_type": "perturbation",
+                "id_scheme": "perturbation_label",
+                "entity_ids": ["TP53"],
+                "matrix": np.ones((1, 5), dtype=np.float32),
+                "aliases": {"TP53": {"perturbation_label": "TP53"}},
+                "model": {"name": "subcell_mae_rybg"},
+            }
+
+    import embpy.embedder as embedder_mod
+
+    monkeypatch.setattr(embedder_mod, "BioEmbedder", _FakeBioEmbedder)
+    out = tmp_path / "morph.h5ad"
+    rc = ep.main(
+        [
+            "--dataset",
+            "replogle",
+            "--h5ad",
+            str(h5ad),
+            "--model",
+            "subcell_mae_rybg",
+            "--entity-type",
+            "perturbation",
+            "--output-h5ad",
+            str(out),
+            "--obsm-key",
+            "X_pert_subcell_mae_rybg",
+            "--morphology-dataset",
+            "hpa",
+            "--max-images",
+            "1",
+        ]
+    )
+
+    assert rc == 0
+    attached = anndata.read_h5ad(out)
+    assert "X_pert_subcell_mae_rybg" in attached.obsm
+    assert attached.obsm["X_pert_subcell_mae_rybg"].shape == (3, 5)
+    assert "X_pert_subcell_mae_rybg" in attached.uns["perturbations"]
+    statuses = attached.obs["X_pert_subcell_mae_rybg_status"].astype(str).tolist()
+    assert statuses == ["CONTROL", "RESOLVED", "UNRESOLVED"]

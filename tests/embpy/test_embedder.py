@@ -311,7 +311,10 @@ class TestEmbedProtein:
         )
 
         result = embedder.embed_protein(
-            "TP53", model="esm2_650M", id_type="symbol", isoform="canonical",
+            "TP53",
+            model="esm2_650M",
+            id_type="symbol",
+            isoform="canonical",
         )
         assert isinstance(result, np.ndarray)
         assert result.shape == (1280,)
@@ -335,7 +338,10 @@ class TestEmbedProtein:
         )
 
         result = embedder.embed_protein(
-            "TP53", model="esm2_650M", id_type="symbol", isoform="all",
+            "TP53",
+            model="esm2_650M",
+            id_type="symbol",
+            isoform="all",
         )
         assert isinstance(result, dict)
         assert len(result) == 2
@@ -354,7 +360,9 @@ class TestEmbedProtein:
         embedder._get_model = MagicMock(return_value=mock_wrapper)
 
         result = embedder.embed_protein(
-            "MEEPQSDP", model="esm2_35M", id_type="sequence",
+            "MEEPQSDP",
+            model="esm2_35M",
+            id_type="sequence",
         )
         assert isinstance(result, np.ndarray)
 
@@ -406,7 +414,9 @@ class TestEmbedProteinsBatch:
         )
 
         result = embedder.embed_proteins_batch(
-            ["TP53", "BRCA1"], model="esm2_650M", isoform="canonical",
+            ["TP53", "BRCA1"],
+            model="esm2_650M",
+            isoform="canonical",
         )
         assert isinstance(result, dict)
         assert len(result) == 2
@@ -430,7 +440,9 @@ class TestEmbedProteinsBatch:
         )
 
         result = embedder.embed_proteins_batch(
-            ["TP53", "BRCA1"], model="esm2_650M", isoform="all",
+            ["TP53", "BRCA1"],
+            model="esm2_650M",
+            isoform="all",
         )
         assert isinstance(result, dict)
         assert len(result) == 2
@@ -463,7 +475,8 @@ class TestEmbedCells:
         adata = self._make_adata()
 
         result = embedder.embed_cells(
-            adata, models=["pca"],
+            adata,
+            models=["pca"],
             preprocessing="standard",
             n_pca_components=10,
             n_top_genes=50,
@@ -480,7 +493,8 @@ class TestEmbedCells:
         adata = self._make_adata()
 
         result = embedder.embed_cells(
-            adata, models=["pca"],
+            adata,
+            models=["pca"],
             preprocessing="none",
             n_pca_components=5,
         )
@@ -504,11 +518,95 @@ class TestEmbedCells:
         adata = self._make_adata()
 
         result = embedder.embed_cells(
-            adata, models=["pca"], preprocessing="standard",
-            n_pca_components=10, n_top_genes=50,
+            adata,
+            models=["pca"],
+            preprocessing="standard",
+            n_pca_components=10,
+            n_top_genes=50,
         )
         assert "embpy_cell_embeddings" in result.uns
         assert "pca" in result.uns["embpy_cell_embeddings"]
+
+    @patch("embpy.embedder.GeneResolver")
+    def test_embed_cells_auto_preprocessing_for_pca(self, mock_resolver_cls, monkeypatch):
+        from embpy.embedder import BioEmbedder
+
+        calls = []
+
+        def fake_preprocess_counts(adata, *, pipeline, **kwargs):
+            calls.append((pipeline, kwargs))
+            adata.layers["counts"] = adata.X.copy()
+            adata.layers["log_normalized"] = np.asarray(adata.X, dtype=np.float32)
+            hvg = np.zeros(adata.n_vars, dtype=bool)
+            hvg[:20] = True
+            adata.var["highly_variable"] = hvg
+            return adata
+
+        monkeypatch.setattr(
+            "embpy.pp.sc_preprocessing.preprocess_counts",
+            fake_preprocess_counts,
+        )
+
+        embedder = BioEmbedder(device="cpu")
+        adata = self._make_adata()
+        result = embedder.embed_cells(
+            adata,
+            models=["pca"],
+            preprocessing="auto",
+            n_pca_components=5,
+            n_top_genes=20,
+        )
+
+        assert calls[0][0] == "standard"
+        assert calls[0][1]["select_hvg"] is True
+        assert "X_pca" in result.obsm
+        assert result.uns["embpy_cell_embeddings"]["__preprocessing__"]["resolved"] == "standard"
+        assert result.uns["embpy_cell_embeddings"]["pca"]["model_requirements"]["uses_hvg"] is True
+
+    @patch("embpy.embedder.GeneResolver")
+    def test_embed_cells_auto_preprocessing_for_raw_count_model(
+        self,
+        mock_resolver_cls,
+        monkeypatch,
+    ):
+        from embpy.embedder import BioEmbedder
+
+        calls = []
+
+        def fake_preprocess_counts(adata, *, pipeline, **kwargs):
+            calls.append((pipeline, kwargs))
+            adata.layers["counts"] = adata.X.copy()
+            return adata
+
+        class FakeSingleCellWrapper:
+            def embed_cells(self, adata):
+                return np.ones((adata.n_obs, 7), dtype=np.float32)
+
+        monkeypatch.setattr(
+            "embpy.pp.sc_preprocessing.preprocess_counts",
+            fake_preprocess_counts,
+        )
+
+        embedder = BioEmbedder(device="cpu")
+        monkeypatch.setattr(
+            embedder,
+            "_get_or_load_singlecell_wrapper",
+            lambda *args, **kwargs: FakeSingleCellWrapper(),
+        )
+        adata = self._make_adata()
+        result = embedder.embed_cells(
+            adata,
+            models=["scgpt"],
+            preprocessing="auto",
+            select_hvg=False,
+            hvg_flavor="cell_ranger",
+        )
+
+        assert calls[0][0] == "raw"
+        assert calls[0][1]["select_hvg"] is False
+        assert calls[0][1]["hvg_flavor"] == "cell_ranger"
+        assert result.obsm["X_scgpt"].shape == (adata.n_obs, 7)
+        assert result.uns["embpy_cell_embeddings"]["__preprocessing__"]["resolved"] == "raw"
 
     @patch("embpy.embedder.GeneResolver")
     def test_embed_cells_copy(self, mock_resolver_cls):
@@ -518,11 +616,70 @@ class TestEmbedCells:
         adata = self._make_adata()
         original_shape = adata.shape
 
-        _ = embedder.embed_cells(adata, models=["pca"], copy=True,
-                                 n_pca_components=5, n_top_genes=50,
-                                 preprocessing="standard")
+        _ = embedder.embed_cells(
+            adata, models=["pca"], copy=True, n_pca_components=5, n_top_genes=50, preprocessing="standard"
+        )
         assert adata.shape == original_shape
         assert "X_pca" not in adata.obsm
+
+    @patch("embpy.embedder.GeneResolver")
+    def test_embed_routes_cell_anndata_output(self, mock_resolver_cls):
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        adata = self._make_adata()
+
+        def fake_embed_cells(adata_in, models, **kwargs):
+            out = adata_in.copy()
+            out.obsm["X_pca"] = np.ones((out.n_obs, 5), dtype=np.float32)
+            out.uns["embpy_cell_embeddings"] = {
+                "pca": {
+                    "obsm_key": "X_pca",
+                    "embedding_dim": 5,
+                    "n_cells": out.n_obs,
+                },
+            }
+            return out
+
+        embedder.embed_cells = fake_embed_cells
+
+        result = embedder.embed(
+            adata,
+            entity_type="cell",
+            model="pca",
+            output="anndata",
+            preprocessing="none",
+        )
+        assert "X_pca" in result.obsm
+        assert result.obsm["X_pca"].shape == (adata.n_obs, 5)
+        assert "X_pca" in result.uns["embeddings"]
+        assert result.uns["embeddings"]["X_pca"]["entity_type"] == "cell"
+
+    @patch("embpy.embedder.GeneResolver")
+    def test_embed_routes_cell_payload_output(self, mock_resolver_cls):
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        adata = self._make_adata()
+
+        def fake_embed_cells(adata_in, models, **kwargs):
+            out = adata_in.copy()
+            out.obsm["X_pca"] = np.ones((out.n_obs, 3), dtype=np.float32)
+            out.uns["embpy_cell_embeddings"] = {"pca": {"obsm_key": "X_pca"}}
+            return out
+
+        embedder.embed_cells = fake_embed_cells
+
+        payload = embedder.embed(
+            adata,
+            entity_type="cell",
+            model="pca",
+            output="payload",
+            include_matrix=True,
+        )
+        assert payload["schema_version"] == "embpy.uns_embedding.v1"
+        assert payload["entity_type"] == "cell"
+        assert payload["matrix"].shape == (adata.n_obs, 3)
 
 
 # =====================================================================
@@ -555,9 +712,11 @@ class TestEmbedAdata:
         adata = self._make_adata_with_perts()
 
         result = embedder.embed_adata(
-            adata, cell_models=["pca"],
+            adata,
+            cell_models=["pca"],
             preprocessing="standard",
-            n_pca_components=10, n_top_genes=50,
+            n_pca_components=10,
+            n_top_genes=50,
         )
         assert "X_pca" in result.obsm
         assert "embpy_embeddings" in result.uns
@@ -584,8 +743,11 @@ class TestEmbedAdata:
             perturbation_type="symbol",
             preprocessing="none",
         )
-        assert "X_esm2_650M" in result.obsm
-        assert result.obsm["X_esm2_650M"].shape[0] == adata.n_obs
+        assert "X_esm2_650M" not in result.obsm
+        assert "X_esm2_650M" in result.uns["perturbations"]
+        payload = result.uns["perturbations"]["X_esm2_650M"]
+        assert payload["matrix"].shape[0] <= result.obs["perturbation"].nunique()
+        assert payload["entity_type"] == "perturbation"
 
     @patch("embpy.embedder.GeneResolver")
     def test_missing_perturbation_column_raises(self, mock_resolver_cls):
@@ -596,7 +758,8 @@ class TestEmbedAdata:
 
         with pytest.raises(ValueError, match="perturbation_column is required"):
             embedder.embed_adata(
-                adata, perturbation_models=["esm2_650M"],
+                adata,
+                perturbation_models=["esm2_650M"],
                 preprocessing="none",
             )
 
@@ -641,7 +804,8 @@ class TestEmbedAdata:
             n_top_genes=50,
         )
         assert "X_pca" in result.obsm
-        assert "X_esm2_650M" in result.obsm
+        assert "X_esm2_650M" not in result.obsm
+        assert "X_esm2_650M" in result.uns["perturbations"]
         assert "embpy_embeddings" in result.uns
 
     @patch("embpy.embedder.GeneResolver")
@@ -667,8 +831,8 @@ class TestEmbedAdata:
             preprocessing="none",
         )
         meta = result.uns["embpy_embeddings"]["esm2_650M"]
-        assert "obsm_key" in meta
+        assert "uns_key" in meta
         assert "embedding_dim" in meta
         assert "n_perturbations_embedded" in meta
-        assert "n_cells_mapped" in meta
         assert meta["type"] == "perturbation"
+        assert meta["storage"] == "uns"

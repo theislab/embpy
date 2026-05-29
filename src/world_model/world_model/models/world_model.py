@@ -21,17 +21,17 @@ from typing import Any
 import torch
 from torch import nn
 
-from ..training.losses import info_nce, latent_mse
-from .action.gene_embedding_action import GeneEmbeddingAction
-from .decoders.expression_decoder import ExpressionDecoder
-from .dynamics.gpt_autoregressive import GPTAutoregressiveDynamics
-from .encoders.backbones import (
+from world_model.models.action.gene_embedding_action import GeneEmbeddingAction
+from world_model.models.decoders.expression_decoder import ExpressionDecoder
+from world_model.models.dynamics.gpt_autoregressive import GPTAutoregressiveDynamics
+from world_model.models.encoders.backbones import (
     ForeignBackboneHead,
     LocalBackbone,
     StateBackboneProvider,
     build_backbone,
 )
-from .encoders.state_stack_encoder import StateStackEncoder
+from world_model.models.encoders.state_stack_encoder import StateStackEncoder
+from world_model.training.losses import info_nce, latent_mse
 
 
 @dataclass
@@ -86,18 +86,13 @@ class WorldModel(nn.Module):
     ) -> None:
         super().__init__()
         if encoder.d_model != dynamics.d_model:
-            raise ValueError(
-                f"encoder d_model ({encoder.d_model}) must match dynamics d_model ({dynamics.d_model})"
-            )
+            raise ValueError(f"encoder d_model ({encoder.d_model}) must match dynamics d_model ({dynamics.d_model})")
         if action_encoder.d_model != dynamics.d_model:
             raise ValueError(
-                f"action_encoder d_model ({action_encoder.d_model}) must match "
-                f"dynamics d_model ({dynamics.d_model})"
+                f"action_encoder d_model ({action_encoder.d_model}) must match dynamics d_model ({dynamics.d_model})"
             )
         if decoder is not None and decoder.d_model != dynamics.d_model:
-            raise ValueError(
-                f"decoder d_model ({decoder.d_model}) must match dynamics d_model ({dynamics.d_model})"
-            )
+            raise ValueError(f"decoder d_model ({decoder.d_model}) must match dynamics d_model ({dynamics.d_model})")
         self.encoder = encoder
         self.action_encoder = action_encoder
         self.dynamics = dynamics
@@ -185,9 +180,12 @@ class WorldModel(nn.Module):
         next_obs = batch["next_obs_stack"]
         actions = batch["action_indices"]
 
+        # Consume integer action indices before the float-heavy state path.
+        # This is equivalent mathematically and avoids flaky Apple MPS
+        # corruption of long index tensors after unrelated kernels run.
+        action_tokens = self.encode_action(actions) if self.dynamics.use_action_token else None
         state_tokens = self.encode(obs)
         next_state_tokens = self.encode(next_obs)
-        action_tokens = self.encode_action(actions) if self.dynamics.use_action_token else None
         s_hat = self.predict_next(state_tokens, action_tokens)
 
         x_hat: torch.Tensor | None = None
@@ -224,6 +222,28 @@ class WorldModel(nn.Module):
         components : dict[str, torch.Tensor]
             Per-term scalar tensors for logging / debugging.
         """
+        valid_neg_mask: torch.Tensor | None = None
+        cf_action_tokens: torch.Tensor | None = None
+        if "action_indices" in batch:
+            actions = batch["action_indices"]
+            # Keep small integer action metadata on CPU for permutation and
+            # same-perturbation bookkeeping. Apple MPS has flaky long-tensor
+            # advanced-index behavior here; move back only for embedding.
+            actions_cpu = actions.detach().cpu()
+            if info_nce_weight > 0.0 and info_nce_mask_same_pert:
+                b_actions, t_actions = actions_cpu.shape[:2]
+                actions_flat = actions_cpu.reshape(b_actions * t_actions, -1).contiguous()
+                sorted_actions, _ = actions_flat.sort(dim=-1)
+                same_pert = (sorted_actions.unsqueeze(0) == sorted_actions.unsqueeze(1)).all(dim=-1)
+                n = same_pert.shape[0]
+                eye = torch.eye(n, dtype=torch.bool, device=same_pert.device)
+                valid_neg_mask = ((~same_pert) | eye).to(actions.device)
+            if action_counterfactual_weight > 0.0:
+                b_orig = actions_cpu.shape[0]
+                perm = torch.randperm(b_orig)
+                cf_actions = actions_cpu[perm]
+                cf_action_tokens = self.encode_action(cf_actions)
+
         out = self.forward(batch)
         components: dict[str, torch.Tensor] = {}
 
@@ -256,30 +276,20 @@ class WorldModel(nn.Module):
             # The mask is True where the negative is *kept*; same-pert
             # off-diagonals are False (excluded from the softmax). The
             # diagonal stays True so positives are preserved.
-            valid_neg_mask: torch.Tensor | None = None
-            if info_nce_mask_same_pert and "action_indices" in batch:
-                actions_flat = batch["action_indices"].reshape(b * t, -1).contiguous()
-                sorted_actions, _ = actions_flat.sort(dim=-1)
-                same_pert = (
-                    sorted_actions.unsqueeze(0) == sorted_actions.unsqueeze(1)
-                ).all(dim=-1)
-                n = same_pert.shape[0]
-                eye = torch.eye(n, dtype=torch.bool, device=same_pert.device)
-                valid_neg_mask = (~same_pert) | eye
+            if valid_neg_mask is not None:
                 # Fraction of off-diagonal entries kept as negatives.
                 # 1.0 means no masking applied; < 1.0 means same-pert
                 # negatives were filtered out.
+                n = valid_neg_mask.shape[0]
                 n_off = n * (n - 1)
                 kept_off = valid_neg_mask.sum() - n
-                components["info_nce_neg_kept_frac"] = (
-                    kept_off.float() / max(float(n_off), 1.0)
-                )
+                components["info_nce_neg_kept_frac"] = kept_off.float() / max(float(n_off), 1.0)
 
             loss_nce = info_nce(
                 pred_flat,
                 target_flat,
                 temperature=info_nce_temperature,
-                valid_negative_mask=valid_neg_mask,
+                valid_negative_mask=valid_neg_mask.to(pred_flat.device) if valid_neg_mask is not None else None,
             )
             components["info_nce"] = loss_nce
             total = total + info_nce_weight * loss_nce
@@ -312,17 +322,12 @@ class WorldModel(nn.Module):
                 # are nearly constant across the batch (collapse).
                 components["s_hat_dim_var"] = pred_flat.var(dim=0).mean()
 
-        if action_counterfactual_weight > 0.0 and "action_indices" in batch:
+        if action_counterfactual_weight > 0.0 and cf_action_tokens is not None:
             # Option 1 -- counterfactual-action contrast. Re-run dynamics
             # with action indices permuted across the batch dim. The
             # real-action prediction should be more similar to s_target
             # than the counterfactual-action prediction is; if it isn't,
             # the dynamics module is ignoring the action token.
-            actions = batch["action_indices"]
-            b_orig = actions.shape[0]
-            perm = torch.randperm(b_orig, device=actions.device)
-            cf_actions = actions[perm]
-            cf_action_tokens = self.encode_action(cf_actions)
             s_hat_cf = self.predict_next(out.state_tokens, cf_action_tokens)
 
             b_, t_, d_ = s_hat_cf.shape
@@ -337,18 +342,14 @@ class WorldModel(nn.Module):
             sim_cf = (cf_n * tgt_n).sum(dim=-1) / tau
             # Binary contrast over (real, counterfactual); class 0 = real.
             cf_logits = torch.stack([sim_real, sim_cf], dim=-1)
-            cf_labels = torch.zeros(
-                cf_logits.size(0), dtype=torch.long, device=cf_logits.device
-            )
+            cf_labels = torch.zeros(cf_logits.size(0), dtype=torch.long, device=cf_logits.device)
             loss_cf = nn.functional.cross_entropy(cf_logits, cf_labels)
             components["action_counterfactual"] = loss_cf
             with torch.no_grad():
                 # Pre-temperature similarities for human-readable logs.
                 components["cf_sim_real"] = sim_real.mean() * tau
                 components["cf_sim_counter"] = sim_cf.mean() * tau
-                components["cf_real_minus_counter"] = (
-                    (sim_real - sim_cf).mean() * tau
-                )
+                components["cf_real_minus_counter"] = (sim_real - sim_cf).mean() * tau
             total = total + action_counterfactual_weight * loss_cf
 
         components["total"] = total.detach()
@@ -388,13 +389,9 @@ class WorldModel(nn.Module):
             ``{"s_hat": (B, T, d_model), "x_hat": (B, T, G) or None}``.
         """
         if init_obs_stack.ndim != 3:
-            raise ValueError(
-                f"init_obs_stack must be (B, K, G), got {tuple(init_obs_stack.shape)}"
-            )
+            raise ValueError(f"init_obs_stack must be (B, K, G), got {tuple(init_obs_stack.shape)}")
         if action_indices_seq.ndim != 3:
-            raise ValueError(
-                f"action_indices_seq must be (B, T, n_pert), got {tuple(action_indices_seq.shape)}"
-            )
+            raise ValueError(f"action_indices_seq must be (B, T, n_pert), got {tuple(action_indices_seq.shape)}")
 
         b, k, g = init_obs_stack.shape
         t = action_indices_seq.shape[1]
@@ -403,9 +400,7 @@ class WorldModel(nn.Module):
         # appending predicted state tokens. Action tokens come straight
         # from the table at every step.
         s0 = self.encode(init_obs_stack.unsqueeze(1))  # (B, 1, d)
-        action_tokens_full = (
-            self.encode_action(action_indices_seq) if self.dynamics.use_action_token else None
-        )
+        action_tokens_full = self.encode_action(action_indices_seq) if self.dynamics.use_action_token else None
 
         s_hist = s0
         s_hat_list: list[torch.Tensor] = []
@@ -433,12 +428,14 @@ class WorldModel(nn.Module):
     # ------------------------------------------------------------------
 
     def num_parameters(self, trainable_only: bool = True) -> int:
+        """Return the number of model parameters."""
         params = self.parameters()
         if trainable_only:
             return sum(p.numel() for p in params if p.requires_grad)
         return sum(p.numel() for p in params)
 
     def extra_repr(self) -> str:
+        """Return the compact ``nn.Module`` representation string."""
         return f"d_model={self.d_model}, has_decoder={self.decoder is not None}"
 
 
@@ -446,6 +443,7 @@ def build_world_model(
     *,
     n_genes: int,
     gene_embedding_table: torch.Tensor,
+    query_gene_embedding_table: torch.Tensor | None = None,
     encoder_kind: str = "transformer",
     d_model: int = 256,
     stack_size: int = 4,
@@ -471,15 +469,12 @@ def build_world_model(
     Parameters
     ----------
     state_backbone_cfg
-        ``StateBackboneConfig`` from :mod:`configs`. ``None`` (the
-        legacy default) behaves exactly like the pre-Phase-5 path: a
-        local :class:`StateStackEncoder` with the same hyperparameters.
-        When set to ``kind='state' | 'stack'``, the dataloader is
-        expected to have pre-encoded the cells through the foundation
-        model (see :func:`world_model.data.build_dataloaders`); in that
-        case ``state_backbone_provider`` and ``state_backbone_embedding_dim``
-        should be passed in by the caller (the dataloader builds the
-        provider once on rank 0).
+        ``StateBackboneConfig`` from :mod:`configs`. Training tensors
+        are always pre-attached AnnData ``.obsm`` rows. ``kind='local'``
+        uses the normal stack encoder over those rows; ``kind='state'``
+        or ``'stack'`` uses a small foreign-embedding head and requires
+        ``state_backbone_embedding_dim`` unless a provider is explicitly
+        passed for backwards-compatible tests.
     state_backbone_provider
         Provider instance owned by the caller (typically the
         dataloader). Only used when ``state_backbone_cfg.kind`` is
@@ -489,7 +484,7 @@ def build_world_model(
         Override for the foreign backbone's embedding dim. Useful in
         tests so we don't have to actually load STATE / STACK weights.
     """
-    from .encoders.state_stack_encoder import build_state_stack_encoder  # noqa: PLC0415
+    from .encoders.state_stack_encoder import build_state_stack_encoder
 
     kind = getattr(state_backbone_cfg, "kind", "local") if state_backbone_cfg is not None else "local"
     backbone: StateBackboneProvider | None = None
@@ -515,7 +510,7 @@ def build_world_model(
                 # untouched.
                 backbone.freeze()
     else:
-        if state_backbone_provider is None:
+        if state_backbone_provider is None and state_backbone_embedding_dim is None:
             backbone = build_backbone(
                 state_backbone_cfg,
                 n_genes=n_genes,
@@ -526,14 +521,18 @@ def build_world_model(
                 encoder_heads=encoder_heads,
                 dropout=dropout,
             )
-        else:
+        elif state_backbone_provider is not None:
             backbone = state_backbone_provider
         emb_dim = state_backbone_embedding_dim
-        if emb_dim is None:
+        if emb_dim is None and backbone is not None:
             emb_dim = backbone.embedding_dim
-        identity_when_dims_match = bool(
-            state_backbone_cfg is not None and state_backbone_cfg.freeze
-        )
+        if emb_dim is None:
+            raise ValueError(
+                "state_backbone.kind in {'state', 'stack'} requires "
+                "state_backbone_embedding_dim when consuming pre-attached "
+                "adata.obsm state embeddings."
+            )
+        identity_when_dims_match = bool(state_backbone_cfg is not None and state_backbone_cfg.freeze)
         encoder = ForeignBackboneHead(
             embedding_dim=int(emb_dim),
             d_model=d_model,
@@ -548,6 +547,21 @@ def build_world_model(
         freeze_embeddings=True,
         adapter_cfg=action_adapter_cfg,
     )
+    query_action_encoder: GeneEmbeddingAction | None = None
+    if query_gene_embedding_table is not None:
+        if dynamics_kind not in ("incontext_set", "incontext_tokens"):
+            raise ValueError(
+                "query_gene_embedding_table was provided for a non-in-context "
+                f"dynamics_kind={dynamics_kind!r}. Use dynamics_kind='incontext_set' "
+                "or remove the query action embedding table."
+            )
+        query_action_encoder = GeneEmbeddingAction(
+            gene_embedding_table=query_gene_embedding_table,
+            d_model=d_model,
+            pool="mean",
+            freeze_embeddings=True,
+            adapter_cfg=action_adapter_cfg,
+        )
     decoder = (
         ExpressionDecoder(
             d_model=d_model,
@@ -559,27 +573,44 @@ def build_world_model(
         else None
     )
 
-    if dynamics_kind == "incontext_set":
-        # Bidirectional set model: predict a held-out query
+    if dynamics_kind in ("incontext_set", "incontext_tokens"):
+        # Bidirectional in-context models: predict a held-out query
         # perturbation from a SET of (control, action, perturbed)
         # support triplets. Non-causal, permutation-invariant.
-        from .dynamics.incontext_set import InContextSetDynamics  # noqa: PLC0415
-        from .incontext_world_model import InContextWorldModel  # noqa: PLC0415
+        #   * incontext_set    -> one fused token per triplet
+        #   * incontext_tokens -> explicit 3 tokens (s, a, s') per triplet
+        from .incontext_world_model import InContextWorldModel
 
-        dynamics = InContextSetDynamics(
-            d_model=d_model,
-            n_layers=dynamics_layers,
-            n_heads=dynamics_heads,
-            dropout=dropout,
-            max_set_size=max(int(incontext_support_size) + 1, max_sequence_length),
-        )
+        max_set = max(int(incontext_support_size) + 1, max_sequence_length)
+        if dynamics_kind == "incontext_tokens":
+            from .dynamics.incontext_tokens import InContextTokensDynamics
+
+            dynamics = InContextTokensDynamics(
+                d_model=d_model,
+                n_layers=dynamics_layers,
+                n_heads=dynamics_heads,
+                dropout=dropout,
+                max_set_size=max_set,
+            )
+        else:
+            from .dynamics.incontext_set import InContextSetDynamics
+
+            dynamics = InContextSetDynamics(
+                d_model=d_model,
+                n_layers=dynamics_layers,
+                n_heads=dynamics_heads,
+                dropout=dropout,
+                max_set_size=max_set,
+            )
         return InContextWorldModel(
             encoder=encoder,
             action_encoder=action_encoder,
+            query_action_encoder=query_action_encoder,
             dynamics=dynamics,
             decoder=decoder,
             d_model=d_model,
             backbone=backbone,
+            default_support_size=int(incontext_support_size),
         )
 
     dynamics = GPTAutoregressiveDynamics(

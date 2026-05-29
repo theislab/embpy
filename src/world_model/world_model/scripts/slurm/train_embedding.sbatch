@@ -2,11 +2,9 @@
 # -----------------------------------------------------------------------------
 # Generic single-dataset training launcher with CLI-override passthrough.
 #
-# Unlike train_single_{nadig,replogle}.sbatch (which only forward a config
-# path), this one forwards EVERY positional arg after the config straight
-# into `python -m world_model.scripts.train` as a dotted override -- exactly
-# the mechanism train_transfer.sbatch already relies on. That lets the
-# submit_gene_embeddings.sh driver swap the action/gene embedding without a
+# This forwards EVERY positional arg after the config straight
+# into `python -m world_model.scripts.train` as a dotted override. That lets
+# submit_gene_embeddings.sh swap the dataset/action embedding without a
 # bespoke YAML per embedding.
 #
 # Usage:
@@ -19,8 +17,8 @@
 #          --qos=gpu_normal .../train_embedding.sbatch <config> ...
 # -----------------------------------------------------------------------------
 #SBATCH --job-name=wm-emb
-#SBATCH -o logs/%x_%j.out
-#SBATCH -e logs/%x_%j.err
+#SBATCH -o logs/slurm/train_embedding/%x_%j.out
+#SBATCH -e logs/slurm/train_embedding/%x_%j.err
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8
@@ -38,7 +36,7 @@ PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
 export TMPDIR="${TMPDIR:-$PROJECT_DIR/runs/_tmp}"
-mkdir -p "$TMPDIR" logs
+mkdir -p "$TMPDIR" logs/slurm/train_embedding
 
 if [[ $# -lt 1 ]]; then
     echo "usage: train_embedding.sbatch <config_path> [key.sub=value ...]" >&2
@@ -46,9 +44,9 @@ if [[ $# -lt 1 ]]; then
 fi
 
 CONFIG="$1"; shift
-# Pixi env to run in. Defaults to `gpu`; bio_embedders that need exotic
+# Pixi env to run in. Defaults to `gpu`; attachment jobs for models with exotic
 # CUDA kernels (Caduceus, Evo2) set EMBPY_PIXI_ENV at submit time so the
-# whole DAG (prewarm -> train -> baselines -> compare) shares one env.
+# whole DAG (attach -> train -> baselines -> compare) shares one env.
 PIXI_ENV="${EMBPY_PIXI_ENV:-gpu}"
 echo "Config:    $CONFIG"
 echo "Overrides: $*"

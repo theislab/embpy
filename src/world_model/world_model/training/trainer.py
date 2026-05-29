@@ -12,37 +12,36 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import torch
 from torch.utils.data import DataLoader
 
-from ..configs import LossConfig, OptimConfig, StateBackboneConfig, TrainConfig
-from ..utils.checkpoint import save_checkpoint
-from .hooks import (
-    CSVLossLogger,
+from world_model.configs import LossConfig, OptimConfig, StateBackboneConfig, TrainConfig
+from world_model.training.hooks import (
     CheckpointHook,
     ConsoleLogger,
+    CSVLossLogger,
     Hook,
     HookState,
     LossPlotter,
     TensorBoardLogger,
 )
-from .schedulers import build_scheduler
+from world_model.training.schedulers import build_scheduler
+from world_model.utils.checkpoint import save_checkpoint
 
 if TYPE_CHECKING:
-    from ..models.encoders.backbones import StateBackboneProvider
-    from ..models.world_model import WorldModel
+    from world_model.models.encoders.backbones import StateBackboneProvider
+    from world_model.models.world_model import WorldModel
 
 logger = logging.getLogger(__name__)
 
 
 def iter_trainable_params(
     model: torch.nn.Module,
-    provider: "StateBackboneProvider | None",
-    state_backbone_cfg: "StateBackboneConfig | None",
+    provider: StateBackboneProvider | None,
+    state_backbone_cfg: StateBackboneConfig | None,
 ) -> tuple[list[tuple[str, torch.nn.Parameter]], dict[str, int]]:
     """Return the de-duplicated list of params the optimizer should see.
 
@@ -81,11 +80,7 @@ def iter_trainable_params(
         params.append((name, p))
         counts[_bucket(name)] += int(p.numel())
 
-    include_backbone = (
-        provider is not None
-        and state_backbone_cfg is not None
-        and not state_backbone_cfg.freeze
-    )
+    include_backbone = provider is not None and state_backbone_cfg is not None and not state_backbone_cfg.freeze
     if include_backbone:
         for i, p in enumerate(provider.parameters()):
             if not p.requires_grad:
@@ -118,7 +113,7 @@ class WorldModelTrainer:
 
     def __init__(
         self,
-        model: "WorldModel",
+        model: WorldModel,
         optim_cfg: OptimConfig,
         loss_cfg: LossConfig,
         train_cfg: TrainConfig,
@@ -126,7 +121,7 @@ class WorldModelTrainer:
         run_name: str = "wm_run",
         hooks: list[Hook] | None = None,
         state_backbone_cfg: StateBackboneConfig | None = None,
-        backbone_provider: "StateBackboneProvider | None" = None,
+        backbone_provider: StateBackboneProvider | None = None,
     ) -> None:
         self.model = model
         self.optim_cfg = optim_cfg
@@ -141,7 +136,9 @@ class WorldModelTrainer:
         self.backbone_provider = backbone_provider
 
         decay, no_decay = self._split_params_for_weight_decay(
-            self.model, self.backbone_provider, self.state_backbone_cfg,
+            self.model,
+            self.backbone_provider,
+            self.state_backbone_cfg,
         )
         self.optimizer: torch.optim.Optimizer = torch.optim.AdamW(
             [
@@ -152,14 +149,20 @@ class WorldModelTrainer:
             betas=optim_cfg.betas,
         )
         params, counts = iter_trainable_params(
-            self.model, self.backbone_provider, self.state_backbone_cfg,
+            self.model,
+            self.backbone_provider,
+            self.state_backbone_cfg,
         )
         logger.info(
             "Trainer optimizer param groups: total=%d -- head=%d dynamics=%d "
             "decoder=%d action=%d backbone_trainable=%d other=%d",
             sum(p.numel() for _, p in params),
-            counts["head"], counts["dynamics"], counts["decoder"],
-            counts["action"], counts["backbone_trainable"], counts["other"],
+            counts["head"],
+            counts["dynamics"],
+            counts["decoder"],
+            counts["action"],
+            counts["backbone_trainable"],
+            counts["other"],
         )
         self.scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
         self.use_amp = train_cfg.amp and self.device.type == "cuda"
@@ -222,6 +225,7 @@ class WorldModelTrainer:
 
     @torch.no_grad()
     def evaluate(self, loader: DataLoader) -> float:
+        """Evaluate the model over ``loader`` and return mean loss."""
         self.model.eval()
         self._set_backbone_train_mode(False)
         total = 0.0
@@ -246,10 +250,9 @@ class WorldModelTrainer:
     def load_state(self, ckpt_path: str | Path, *, strict: bool = False) -> None:
         """Load model weights (and optionally optimizer/scheduler) from a checkpoint.
 
-        Used by the transfer setup to seed fine-tuning with the
-        pretrained weights.
+        Useful for evaluation-only runs or manual checkpoint resumes.
         """
-        from ..utils.checkpoint import load_checkpoint  # noqa: PLC0415
+        from world_model.utils.checkpoint import load_checkpoint
 
         payload = load_checkpoint(ckpt_path, map_location=self.device)
         missing = self.model.load_state_dict(payload["state_dict"], strict=strict)
@@ -284,18 +287,24 @@ class WorldModelTrainer:
                 grad_norm = None
                 if self.optim_cfg.grad_clip is not None:
                     self.scaler.unscale_(self.optimizer)
-                    grad_norm = float(torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), self.optim_cfg.grad_clip,
-                    ))
+                    grad_norm = float(
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(),
+                            self.optim_cfg.grad_clip,
+                        )
+                    )
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
             else:
                 loss.backward()
                 grad_norm = None
                 if self.optim_cfg.grad_clip is not None:
-                    grad_norm = float(torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), self.optim_cfg.grad_clip,
-                    ))
+                    grad_norm = float(
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.parameters(),
+                            self.optim_cfg.grad_clip,
+                        )
+                    )
                 self.optimizer.step()
 
             if self.scheduler is not None:
@@ -318,6 +327,9 @@ class WorldModelTrainer:
         moved: dict[str, Any] = {}
         for k, v in batch.items():
             if isinstance(v, torch.Tensor):
+                if self.device.type == "mps" and not torch.is_floating_point(v) and not torch.is_complex(v):
+                    moved[k] = v.contiguous()
+                    continue
                 moved[k] = v.to(self.device, non_blocking=True)
             else:
                 moved[k] = v
@@ -374,8 +386,8 @@ class WorldModelTrainer:
     @staticmethod
     def _split_params_for_weight_decay(
         model: torch.nn.Module,
-        provider: "StateBackboneProvider | None" = None,
-        state_backbone_cfg: "StateBackboneConfig | None" = None,
+        provider: StateBackboneProvider | None = None,
+        state_backbone_cfg: StateBackboneConfig | None = None,
     ) -> tuple[list[torch.nn.Parameter], list[torch.nn.Parameter]]:
         params, _ = iter_trainable_params(model, provider, state_backbone_cfg)
         decay: list[torch.nn.Parameter] = []

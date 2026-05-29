@@ -10,7 +10,6 @@ The schema is a tree of small dataclasses keyed by component:
       |- optim:             OptimConfig
       |- train:             TrainConfig
       |- split:             SplitConfig
-      |- transfer:          TransferConfig
       |- eval:              EvalConfig
       |- action_embedding:  ActionEmbeddingConfig
       |- action_adapter:    ActionAdapterConfig
@@ -42,21 +41,27 @@ except ImportError:
 class DataConfig:
     """Where to find data and how to assemble training tuples."""
 
-    dataset: str = "replogle"
-    """One of ``{"replogle", "nadig"}``."""
+    dataset: str = ""
+    """Human-readable dataset label used for run names and split-cache files.
+
+    This is not a loader switch. The world model reads any perturbation
+    AnnData file using the keys below.
+    """
 
     h5ad_path: str = ""
     """Absolute path to the .h5ad file."""
 
-    gene_embedding_path: str = ""
-    """CSV / NPZ table mapping gene_symbol -> embedding vector."""
+    state_obsm_key: str = "X_state"
+    """Key in ``adata.obsm`` containing per-cell state embeddings.
+
+    World-model training consumes this matrix directly. Expression in
+    ``adata.X`` is not transformed on the training path; any STATE,
+    STACK, PCA, HVG, or other cell representation must already have
+    been generated and attached to the AnnData before training starts.
+    """
 
     perturbation_key: str = "perturbation"
     control_label: str = "non-targeting"
-    cell_type_key: str | None = "cell_type"
-
-    n_top_genes: int = 5000
-    log_normalize: bool = True
 
     stack_size: int = 4
     sequence_length: int = 8
@@ -80,7 +85,6 @@ class DataConfig:
     triplets per task. The query is one additional triplet."""
 
     batch_size: int = 64
-    val_fraction: float = 0.1
     num_workers: int = 4
     pin_memory: bool = True
 
@@ -99,6 +103,8 @@ class DataConfig:
 
 @dataclass
 class EncoderConfig:
+    """Observation encoder hyperparameters."""
+
     kind: str = "transformer"
     d_model: int = 256
     n_layers: int = 2
@@ -109,6 +115,8 @@ class EncoderConfig:
 
 @dataclass
 class DynamicsConfig:
+    """Latent dynamics model hyperparameters."""
+
     kind: str = "gpt"
     d_model: int = 256
     n_layers: int = 6
@@ -120,6 +128,8 @@ class DynamicsConfig:
 
 @dataclass
 class LossConfig:
+    """Training loss weights and contrastive knobs."""
+
     latent_mse: float = 1.0
     decoder_mse: float = 0.5
     info_nce: float = 0.0
@@ -141,6 +151,8 @@ class LossConfig:
 
 @dataclass
 class OptimConfig:
+    """Optimizer and scheduler hyperparameters."""
+
     lr: float = 3e-4
     weight_decay: float = 1e-2
     betas: tuple[float, float] = (0.9, 0.95)
@@ -151,6 +163,8 @@ class OptimConfig:
 
 @dataclass
 class TrainConfig:
+    """Training loop runtime options."""
+
     n_epochs: int = 50
     log_every_n_steps: int = 50
     eval_every_n_epochs: int = 1
@@ -185,51 +199,6 @@ class SplitConfig:
 
 
 @dataclass
-class TransferConfig:
-    """Pretrain on one dataset, fine-tune on a fraction of another.
-
-    The new ``pretrain_action_encoder`` / ``finetune_action_encoder``
-    fields let a single transfer run mix two different
-    :class:`ActionEmbeddingConfig` blocks (one per phase). Resolution
-    rule: when either field is ``None``, fall back to the run's
-    top-level ``action_embedding``. ``swap_strategy`` then picks how the
-    fine-tune model reuses the pretrained weights when the two providers
-    disagree on dimension or identity.
-    """
-
-    enabled: bool = False
-
-    pretrain_h5ad_path: str = ""
-    pretrain_dataset: str = "nadig"
-    pretrain_gene_embedding_path: str = ""
-    pretrain_epochs: int = 30
-
-    finetune_fraction: float = 0.1
-    """Fraction of training perturbations (or cells) used for fine-tuning."""
-
-    finetune_epochs: int = 20
-    pretrain_checkpoint: str | None = None
-    """If set, skip the pretrain phase and load this checkpoint."""
-
-    freeze_encoder_during_finetune: bool = False
-    freeze_dynamics_during_finetune: bool = False
-
-    pretrain_action_encoder: ActionEmbeddingConfig | None = None
-    """If None, fall back to the run's top-level ``action_embedding``."""
-
-    finetune_action_encoder: ActionEmbeddingConfig | None = None
-    """If None, fall back to the run's top-level ``action_embedding``."""
-
-    swap_strategy: str = "none"
-    """One of ``{"none", "reset_adapter", "learn_alignment", "reset_all_action"}``."""
-
-    alignment_epochs: int = 5
-    """Only used when ``swap_strategy == "learn_alignment"``."""
-
-    alignment_lr: float = 1e-3
-
-
-@dataclass
 class EvalConfig:
     """Knobs for the end-of-training evaluation pipeline."""
 
@@ -248,42 +217,60 @@ class EvalConfig:
 class ActionEmbeddingConfig:
     """How to materialise the action (perturbation) embedding table.
 
-    Two backends are supported:
+    Training uses one run-time backend:
 
-    * ``"precomputed"`` -- read a CSV / NPZ from ``path``. If ``path``
-      is empty, falls back to :attr:`DataConfig.gene_embedding_path`
-      so the legacy YAMLs keep working unchanged.
-    * ``"bio_embedder"`` -- delegate to :class:`embpy.embedder.BioEmbedder`.
-      ``model_name`` must be a key in ``embpy.embedder.MODEL_REGISTRY``.
+    * ``"anndata_obsm"`` -- read per-cell perturbation embeddings from
+      ``adata.obsm`` and deduplicate them by perturbation label.
+
+    CSV / NPZ tables and BioEmbedder models are still supported by
+    ``world_model.scripts.embed_perturbations`` as offline attachment
+    sources, but the model itself only reads AnnData ``.obsm``.
     """
 
-    source: str = "precomputed"
-    """One of ``{"precomputed", "bio_embedder"}``."""
+    source: str = "anndata_obsm"
+    """Must be ``"anndata_obsm"`` for training."""
 
     path: str = ""
-    """``precomputed`` only -- CSV / NPZ. Empty means fall back to data.gene_embedding_path."""
+    """Deprecated training input; use only with offline attachment scripts."""
+
+    h5ad_path: str = ""
+    """Deprecated override; training reads action embeddings from ``data.h5ad_path``."""
+
+    obsm_key: str = "X_pert"
+    """``anndata_obsm`` only -- key in ``adata.obsm`` with per-cell action vectors."""
+
+    perturbation_key: str = ""
+    """``anndata_obsm`` only -- optional obs column override.
+
+    Empty means reuse ``data.perturbation_key``."""
+
+    store_path: str = ""
+    """Deprecated ``.emstore`` path kept so older YAMLs get a migration hint."""
+
+    store_key: str = ""
+    """Deprecated ``.emstore`` key kept so older YAMLs get a migration hint."""
 
     model_name: str = "esm2_650M"
-    """``bio_embedder`` only -- key in :attr:`embpy.embedder.MODEL_REGISTRY`."""
+    """Offline attachment metadata/model key; not used directly by training."""
 
     organism: str = "human"
     id_type: str = "symbol"
-    """``bio_embedder`` only -- one of ``{"symbol", "ensembl_id"}``."""
+    """Offline attachment only -- one of ``{"symbol", "ensembl_id"}``."""
 
     region: str = "full"
-    """``bio_embedder`` (DNA only) -- one of ``{"full", "exons", "introns"}``."""
+    """Offline DNA attachment only -- one of ``{"full", "exons", "introns"}``."""
 
     pooling_strategy: str = "mean"
 
     resolver_backend: str = "api"
-    """``bio_embedder`` only -- one of ``{"api", "local"}``."""
+    """Offline attachment only -- one of ``{"api", "local"}``."""
 
     mart_file: str | None = None
     chromosome_folder: str | None = None
     device: str = "auto"
 
     cache_dir: str = "runs/_cache/action_embeddings"
-    """Disk cache root. Use ``""`` to disable caching (not recommended)."""
+    """Offline embedding cache root. Training does not consult it."""
 
     extra_kwargs: dict[str, Any] = field(default_factory=dict)
     """Forwarded to :meth:`BioEmbedder.embed_genes_batch` (e.g. ``biotype``)."""
@@ -347,20 +334,18 @@ class ActionAdapterConfig:
 class StateBackboneConfig:
     """Foundation backbone used as the state (observation) encoder.
 
-    Three flavours via ``kind``:
+    Training consumes already-attached state embeddings from
+    ``adata.obsm[data.state_obsm_key]``. ``kind`` now selects the small
+    train-time head placed on top of those embeddings:
 
-    * ``"local"`` -- the existing :class:`StateStackEncoder` wrapped as
-      a :class:`LocalBackbone`. Default. Byte-equivalent to the
-      pre-Phase-5 path. No extra dependencies.
-    * ``"state"`` -- STATE / SE-600M (Arc Institute) via
-      :class:`StateEmbeddingWrapper`. Requires the ``arc-state``
-      package. Cell embeddings are pre-computed and cached.
-    * ``"stack"`` -- STACK (Arc Institute) via :class:`StackWrapper`.
-      Requires the ``arc-stack`` package.
+    * ``"local"`` -- the existing :class:`StateStackEncoder` over the
+      state embedding stack. Default.
+    * ``"state"`` / ``"stack"`` -- a mean-pool projection head for
+      foreign cell embeddings that were generated offline.
 
-    ``freeze=True`` (default) keeps the foundation backbone in eval
-    mode and out of the optimizer. Flip to ``False`` to fine-tune the
-    backbone end-to-end (a learnable head is always included).
+    The heavy STATE / STACK forward pass is not run by the dataloader.
+    Use ``world_model.scripts.encode_cells`` or another offline step to
+    create the AnnData ``.obsm`` matrix first.
     """
 
     kind: str = "local"
@@ -402,14 +387,16 @@ class StateBackboneConfig:
     require_cache_hit: bool = False
     """If True and a cache miss happens, raise instead of running the backbone.
 
-    Useful for cluster jobs that should only re-use a pre-warmed cache
-    (e.g. evaluation-only runs that must not wait on GPU encoding).
+    Useful for offline state-embedding attachment jobs that should only
+    re-use cached encoder outputs instead of waiting on GPU encoding.
     Meaningful only for ``state`` / ``stack``; warned-against for ``local``.
     """
 
 
 @dataclass
 class WorldModelConfig:
+    """Top-level resolved world-model configuration."""
+
     data: DataConfig = field(default_factory=DataConfig)
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
     dynamics: DynamicsConfig = field(default_factory=DynamicsConfig)
@@ -417,9 +404,9 @@ class WorldModelConfig:
     optim: OptimConfig = field(default_factory=OptimConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     split: SplitConfig = field(default_factory=SplitConfig)
-    transfer: TransferConfig = field(default_factory=TransferConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
     action_embedding: ActionEmbeddingConfig = field(default_factory=ActionEmbeddingConfig)
+    query_action_embedding: ActionEmbeddingConfig = field(default_factory=lambda: ActionEmbeddingConfig(obsm_key=""))
     action_adapter: ActionAdapterConfig = field(default_factory=ActionAdapterConfig)
     state_backbone: StateBackboneConfig = field(default_factory=StateBackboneConfig)
 
@@ -428,22 +415,44 @@ class WorldModelConfig:
     output_dir: str = "runs/world_model"
 
     mode: str = "single"
-    """One of ``{"single", "transfer"}``."""
+    """Training mode. Only ``"single"`` is supported."""
 
     def to_dict(self) -> dict[str, Any]:
+        """Return a JSON/YAML-serialisable representation."""
         return asdict(self)
 
     def validate(self) -> None:
         """Cross-field sanity checks. Called explicitly by training entrypoints."""
+        if not self.data.state_obsm_key:
+            raise ValueError("data.state_obsm_key is required; training reads states from adata.obsm.")
+        if self.action_embedding.source != "anndata_obsm":
+            raise ValueError(
+                "action_embedding.source must be 'anndata_obsm' for training. "
+                "Generate or attach embeddings first with world_model.scripts.embed_perturbations."
+            )
+        if not self.action_embedding.obsm_key:
+            raise ValueError("action_embedding.obsm_key is required; training reads actions from adata.obsm.")
+        query_enabled = bool(self.query_action_embedding.obsm_key)
+        if query_enabled:
+            incontext_data = self.data.context_mode == "incontext_set"
+            incontext_dynamics = self.dynamics.kind in {"incontext_set", "incontext_tokens"}
+            if not (incontext_data and incontext_dynamics):
+                raise ValueError(
+                    "query_action_embedding is only valid for in-context training. "
+                    "Set data.context_mode='incontext_set' and dynamics.kind to "
+                    "'incontext_set' or 'incontext_tokens', or remove "
+                    "query_action_embedding.obsm_key."
+                )
+            if self.query_action_embedding.source != "anndata_obsm":
+                raise ValueError(
+                    "query_action_embedding.source must be 'anndata_obsm'. "
+                    "Generate or attach query/action embeddings to AnnData first."
+                )
+        if self.mode != "single":
+            raise ValueError("Only mode='single' is supported.")
         sb = self.state_backbone
         if sb.kind not in {"local", "state", "stack"}:
             raise ValueError(f"state_backbone.kind must be one of {{'local','state','stack'}}, got {sb.kind!r}")
-        if sb.kind == "state" and not (sb.state_checkpoint or sb.state_model_folder):
-            raise ValueError(
-                "state_backbone.kind='state' requires either state_checkpoint or state_model_folder to be set."
-            )
-        if sb.kind == "stack" and not (sb.stack_checkpoint and sb.stack_genelist):
-            raise ValueError("state_backbone.kind='stack' requires both stack_checkpoint and stack_genelist to be set.")
         if sb.kind == "local" and sb.require_cache_hit:
             import logging
 
@@ -453,14 +462,7 @@ class WorldModelConfig:
             )
 
 
-# Fields whose declared default is ``None`` but whose YAML override may
-# arrive as a dict. We materialise the dict into the dataclass type
-# named here so the rest of the merge stays uniform.
-_OPTIONAL_DATACLASS_FIELDS: dict[str, type] = {}
-
-
-def _register_optional_dataclass_field(field_name: str, dc_type: type) -> None:
-    _OPTIONAL_DATACLASS_FIELDS[field_name] = dc_type
+_CONFIG_ROOT = Path(__file__).resolve().parent
 
 
 def _merge_into_dataclass(dc: Any, overrides: dict[str, Any]) -> Any:
@@ -478,29 +480,138 @@ def _merge_into_dataclass(dc: Any, overrides: dict[str, Any]) -> Any:
         new = overrides[f.name]
         if is_dataclass(cur) and isinstance(new, dict):
             _merge_into_dataclass(cur, new)
-        elif cur is None and isinstance(new, dict) and f.name in _OPTIONAL_DATACLASS_FIELDS:
-            sub = _OPTIONAL_DATACLASS_FIELDS[f.name]()
-            _merge_into_dataclass(sub, new)
-            setattr(dc, f.name, sub)
         else:
             setattr(dc, f.name, new)
     return dc
 
 
-_register_optional_dataclass_field("pretrain_action_encoder", ActionEmbeddingConfig)
-_register_optional_dataclass_field("finetune_action_encoder", ActionEmbeddingConfig)
+def _deep_merge_mapping(base: dict[str, Any], overrides: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge two YAML mappings without mutating either input."""
+    merged = dict(base)
+    for key, value in overrides.items():
+        current = merged.get(key)
+        if isinstance(current, dict) and isinstance(value, dict):
+            merged[key] = _deep_merge_mapping(current, value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _load_yaml_mapping(path: Path, *, seen: set[Path] | None = None) -> dict[str, Any]:
+    """Load a YAML config mapping, resolving one-parent ``extends:`` chains."""
+    if not _HAS_YAML:
+        raise ImportError("PyYAML is required to load YAML configs. Install with: pip install pyyaml")
+    resolved = path.expanduser().resolve()
+    seen = set() if seen is None else seen
+    if resolved in seen:
+        chain = " -> ".join(str(p) for p in [*seen, resolved])
+        raise ValueError(f"Config extends cycle detected: {chain}")
+    seen.add(resolved)
+    with open(resolved) as fp:
+        raw = yaml.safe_load(fp) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"YAML config root must be a mapping, got {type(raw).__name__}: {path}")
+    parent_spec = raw.pop("extends", None)
+    if parent_spec is None:
+        return raw
+    parent = _resolve_config_parent(resolved, parent_spec)
+    parent_raw = _load_yaml_mapping(parent, seen=seen)
+    return _deep_merge_mapping(parent_raw, raw)
+
+
+def _resolve_config_parent(path: Path, parent_spec: Any) -> Path:
+    if not isinstance(parent_spec, str) or not parent_spec:
+        raise ValueError(f"Config 'extends' in {path} must be a non-empty string.")
+    parent = Path(parent_spec).expanduser()
+    if parent.is_absolute():
+        candidates = [parent]
+    else:
+        candidates = [path.parent / parent, _CONFIG_ROOT / parent]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    tried = ", ".join(str(c) for c in candidates)
+    raise FileNotFoundError(f"Config parent for {path} not found. Tried: {tried}")
 
 
 def load_yaml_config(path: str | Path) -> WorldModelConfig:
-    """Load a :class:`WorldModelConfig` from a YAML file."""
-    if not _HAS_YAML:
-        raise ImportError("PyYAML is required to load YAML configs. Install with: pip install pyyaml")
-    with open(path) as fp:
-        raw = yaml.safe_load(fp) or {}
-    if not isinstance(raw, dict):
-        raise ValueError(f"YAML config root must be a mapping, got {type(raw).__name__}")
+    """Load a :class:`WorldModelConfig` from YAML, resolving optional ``extends:``."""
+    raw = _load_yaml_mapping(Path(path))
     cfg = WorldModelConfig()
     return _merge_into_dataclass(cfg, raw)
+
+
+def validate_world_model_data_sources(cfg: WorldModelConfig) -> None:
+    """Fail early when a local H5AD violates the world-model input contract."""
+    _validate_h5ad_contract(
+        cfg.data.h5ad_path,
+        perturbation_key=cfg.data.perturbation_key,
+        control_label=cfg.data.control_label,
+        state_obsm_key=cfg.data.state_obsm_key,
+        action_obsm_key=cfg.action_embedding.obsm_key,
+        query_action_obsm_key=(cfg.query_action_embedding.obsm_key if cfg.query_action_embedding.obsm_key else None),
+        stage="training data",
+    )
+
+
+def _validate_h5ad_contract(
+    h5ad_path: str,
+    *,
+    perturbation_key: str,
+    control_label: str,
+    state_obsm_key: str,
+    action_obsm_key: str,
+    query_action_obsm_key: str | None = None,
+    stage: str,
+) -> None:
+    if not h5ad_path:
+        return
+    path = Path(h5ad_path).expanduser()
+    if not path.exists():
+        return
+    try:
+        import anndata as ad  # type: ignore[import-not-found]
+    except ImportError as exc:  # pragma: no cover - dependency guard
+        raise ImportError(
+            f"world-model config validation: anndata is required to inspect local H5AD files for {stage}."
+        ) from exc
+    try:
+        adata = ad.read_h5ad(path, backed="r")
+    except (OSError, ValueError) as exc:
+        raise ValueError(
+            "world-model config validation: failed to inspect local H5AD for "
+            f"{stage}: {path}. Check that the file exists, is a valid .h5ad, "
+            "and is not truncated."
+        ) from exc
+    try:
+        if perturbation_key not in adata.obs.columns:
+            raise ValueError(
+                "world-model config validation: perturbation key "
+                f"{perturbation_key!r} is missing from {stage} at {path}. "
+                f"Available obs columns: {list(adata.obs.columns)}."
+            )
+        labels = adata.obs[perturbation_key].astype(str)
+        if not labels.eq(str(control_label)).any():
+            examples = labels.value_counts().head(10).index.tolist()
+            raise ValueError(
+                "world-model config validation: control label "
+                f"{control_label!r} was not found in {stage} at {path} "
+                f"under obs[{perturbation_key!r}]. Example labels: {examples}. "
+                "Set data.control_label to the exact control string used by the dataset."
+            )
+        missing_obsm = [
+            key for key in (state_obsm_key, action_obsm_key, query_action_obsm_key) if key and key not in adata.obsm
+        ]
+        if missing_obsm:
+            raise ValueError(
+                "world-model config validation: required AnnData obsm key(s) "
+                f"{missing_obsm} are missing from {stage} at {path}. "
+                f"Available obsm keys: {list(adata.obsm.keys())}. "
+                "Training only consumes pre-attached state/action embeddings."
+            )
+    finally:
+        if hasattr(adata, "file"):
+            adata.file.close()
 
 
 def apply_cli_overrides(cfg: WorldModelConfig, overrides: list[str]) -> WorldModelConfig:
@@ -550,8 +661,8 @@ __all__ = [
     "SplitConfig",
     "StateBackboneConfig",
     "TrainConfig",
-    "TransferConfig",
     "WorldModelConfig",
     "apply_cli_overrides",
     "load_yaml_config",
+    "validate_world_model_data_sources",
 ]

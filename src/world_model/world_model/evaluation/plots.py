@@ -12,13 +12,14 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 
 def _try_mpl():  # type: ignore[no-untyped-def]
     try:
-        import matplotlib.pyplot as plt  # noqa: PLC0415
+        import matplotlib.pyplot as plt
 
         return plt
     except ImportError:
@@ -42,6 +43,7 @@ def plot_pred_vs_real_scatter(
     control_label: str = "non-targeting",
     title: str = "Predicted vs real (mean per perturbation)",
 ) -> None:
+    """Plot mean predicted expression against mean real expression."""
     plt = _try_mpl()
     if plt is None:
         return
@@ -107,20 +109,30 @@ def plot_deg_overlap_bar(
     *,
     column_prefix: str = "deg_overlap@",
     title: str = "DEG overlap@K (per perturbation)",
+    dataset: str = "unknown",
+    model: str = "world_model",
+    seed: int | str | None = None,
 ) -> None:
+    """Plot DEG-overlap distributions and write the tidy CSV sidecar."""
     plt = _try_mpl()
     if plt is None or per_pert is None or per_pert.empty:
         return
     cols = [c for c in per_pert.columns if c.startswith(column_prefix)]
     if not cols:
         return
-    col = cols[0]
-    series = per_pert.set_index("perturbation")[col].sort_values(ascending=False)
-    fig, ax = plt.subplots(figsize=(max(6, 0.25 * series.size), 4))
-    ax.bar(range(series.size), series.values, color="steelblue")
-    ax.set_xticks(range(series.size))
-    ax.set_xticklabels(series.index, rotation=90, fontsize=6)
-    ax.set_ylabel(col)
+    long = _per_pert_to_long(
+        per_pert,
+        metrics=cols,
+        dataset=dataset,
+        model=model,
+        seed=seed,
+    )
+    _write_plot_csv(long, out_path)
+    if long.empty:
+        return
+    fig, ax = plt.subplots(figsize=(max(5, 1.4 * long["metric"].nunique()), 4))
+    _boxplot_long(ax, long, group_col="metric", value_col="value", point_col="seed")
+    ax.set_ylabel("score")
     ax.set_title(title)
     ax.grid(alpha=0.3, axis="y")
     fig.tight_layout()
@@ -134,8 +146,17 @@ def plot_baseline_comparison(
     *,
     metrics: list[str] | None = None,
     title: str = "Baselines vs world model (aggregated)",
+    per_perturbation_long: pd.DataFrame | None = None,
+    dataset: str = "unknown",
+    seed: int | str | None = None,
 ) -> None:
-    """Bar chart with one bar per (model/baseline, metric)."""
+    """Boxplot comparison with one distribution per evaluator and metric.
+
+    ``per_perturbation_long`` is preferred and should contain one row per
+    ``dataset x model/baseline x seed x perturbation x metric``. When only an
+    aggregate table is available, the helper falls back to one pseudo-point per
+    evaluator/metric so legacy callers still get a reproducible figure plus CSV.
+    """
     plt = _try_mpl()
     if plt is None or aggregate_table is None or aggregate_table.empty:
         return
@@ -144,13 +165,25 @@ def plot_baseline_comparison(
         metrics = [c for c in df.columns if c not in {"name", "n_perturbations"}]
     if not metrics:
         return
+    long = (
+        _normalize_long_metrics(per_perturbation_long, metrics=metrics)
+        if per_perturbation_long is not None
+        else pd.DataFrame()
+    )
+    if long.empty:
+        long = _aggregate_to_long(df, metrics=metrics, dataset=dataset, seed=seed)
+    _write_plot_csv(long, out_path)
+    if long.empty:
+        return
+
     fig, axes = plt.subplots(1, len(metrics), figsize=(4 * len(metrics), 4), squeeze=False)
     for j, m in enumerate(metrics):
         ax = axes[0, j]
-        sub = df.dropna(subset=[m]).set_index("name")[m].sort_values()
-        ax.barh(range(sub.size), sub.values)
-        ax.set_yticks(range(sub.size))
-        ax.set_yticklabels(sub.index)
+        sub = long[long["metric"] == m].dropna(subset=["value"]).copy()
+        if sub.empty:
+            ax.set_axis_off()
+            continue
+        _boxplot_long(ax, sub, group_col="model", value_col="value", point_col="seed", horizontal=True)
         ax.set_xlabel(m)
         ax.grid(alpha=0.3, axis="x")
     fig.suptitle(title)
@@ -159,7 +192,178 @@ def plot_baseline_comparison(
     plt.close(fig)
 
 
+def _per_pert_to_long(
+    per_pert: pd.DataFrame,
+    *,
+    metrics: list[str],
+    dataset: str,
+    model: str,
+    seed: int | str | None,
+) -> pd.DataFrame:
+    if "perturbation" not in per_pert.columns:
+        return pd.DataFrame(columns=_LONG_COLUMNS)
+    keep = ["perturbation", *metrics]
+    long = per_pert[keep].melt(
+        id_vars=["perturbation"],
+        value_vars=metrics,
+        var_name="metric",
+        value_name="value",
+    )
+    long.insert(0, "seed", "unknown" if seed is None else str(seed))
+    long.insert(0, "baseline", model)
+    long.insert(0, "model", model)
+    long.insert(0, "dataset", dataset)
+    return _normalize_long_metrics(long, metrics=metrics)
+
+
+def per_perturbation_tables_to_long(
+    tables: dict[str, pd.DataFrame],
+    *,
+    dataset: str,
+    seed: int | str | None,
+    metrics: list[str] | None = None,
+) -> pd.DataFrame:
+    """Convert evaluator-specific per-perturbation frames into tidy plot data."""
+    frames: list[pd.DataFrame] = []
+    for name, frame in tables.items():
+        if frame is None or frame.empty:
+            continue
+        available = [c for c in frame.columns if c != "perturbation" and pd.api.types.is_numeric_dtype(frame[c])]
+        selected = [m for m in available if metrics is None or m in metrics]
+        if selected:
+            frames.append(
+                _per_pert_to_long(
+                    frame,
+                    metrics=selected,
+                    dataset=dataset,
+                    model=str(name),
+                    seed=seed,
+                )
+            )
+    if not frames:
+        return pd.DataFrame(columns=_LONG_COLUMNS)
+    return pd.concat(frames, ignore_index=True)
+
+
+def _aggregate_to_long(
+    aggregate_table: pd.DataFrame,
+    *,
+    metrics: list[str],
+    dataset: str,
+    seed: int | str | None,
+) -> pd.DataFrame:
+    rows: list[dict[str, object]] = []
+    for row in aggregate_table.to_dict(orient="records"):
+        name = str(row.get("name", row.get("baseline", "unknown")))
+        for metric in metrics:
+            value = row.get(metric)
+            if pd.isna(value):
+                continue
+            rows.append(
+                {
+                    "dataset": dataset,
+                    "model": name,
+                    "baseline": name,
+                    "seed": "unknown" if seed is None else str(seed),
+                    "perturbation": "aggregate",
+                    "metric": metric,
+                    "value": float(value),
+                }
+            )
+    return pd.DataFrame(rows, columns=_LONG_COLUMNS)
+
+
+_LONG_COLUMNS = ["dataset", "model", "baseline", "seed", "perturbation", "metric", "value"]
+
+
+def _normalize_long_metrics(
+    frame: pd.DataFrame | None,
+    *,
+    metrics: list[str] | None = None,
+) -> pd.DataFrame:
+    if frame is None or frame.empty:
+        return pd.DataFrame(columns=_LONG_COLUMNS)
+    out = frame.copy()
+    if "model" not in out.columns and "baseline" in out.columns:
+        out["model"] = out["baseline"].astype(str)
+    if "baseline" not in out.columns and "model" in out.columns:
+        out["baseline"] = out["model"].astype(str)
+    for col, default in (
+        ("dataset", "unknown"),
+        ("model", "unknown"),
+        ("baseline", "unknown"),
+        ("seed", "unknown"),
+        ("perturbation", "unknown"),
+    ):
+        if col not in out.columns:
+            out[col] = default
+    if metrics is not None:
+        out = out[out["metric"].isin(metrics)]
+    out["value"] = pd.to_numeric(out["value"], errors="coerce")
+    return out[_LONG_COLUMNS].dropna(subset=["value"]).reset_index(drop=True)
+
+
+def _write_plot_csv(long: pd.DataFrame, out_path: Path) -> None:
+    csv_path = out_path.with_suffix(".csv")
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    long.to_csv(csv_path, index=False)
+    logger.info("Saved plot data %s", csv_path)
+
+
+def _boxplot_long(
+    ax: Any,
+    long: pd.DataFrame,
+    *,
+    group_col: str,
+    value_col: str,
+    point_col: str,
+    horizontal: bool = False,
+) -> None:
+    grouped = [(name, values[value_col].astype(float).to_numpy()) for name, values in long.groupby(group_col)]
+    grouped = [(name, values) for name, values in grouped if values.size]
+    if not grouped:
+        ax.set_axis_off()
+        return
+    reverse = not _metric_lower_is_better(str(long["metric"].iloc[0]))
+    grouped.sort(key=lambda item: float(np.nanmedian(item[1])), reverse=reverse)
+    labels = [str(name) for name, _ in grouped]
+    values = [vals for _, vals in grouped]
+    positions = np.arange(1, len(values) + 1)
+    ax.boxplot(
+        values,
+        positions=positions,
+        orientation="horizontal" if horizontal else "vertical",
+        patch_artist=True,
+        showfliers=False,
+        boxprops={"facecolor": "#D8E7F5", "edgecolor": "#365F7D"},
+        medianprops={"color": "#9B2D20", "linewidth": 1.5},
+    )
+    rng = np.random.default_rng(0)
+    lookup = dict(zip(labels, positions, strict=False))
+    for label, sub in long.groupby(group_col):
+        pos = lookup.get(str(label))
+        if pos is None:
+            continue
+        vals = sub[value_col].astype(float).to_numpy()
+        jitter = rng.normal(0.0, 0.035, size=vals.size)
+        if horizontal:
+            ax.scatter(vals, pos + jitter, s=14, alpha=0.65, color="#333333", linewidths=0)
+        else:
+            ax.scatter(pos + jitter, vals, s=14, alpha=0.65, color="#333333", linewidths=0)
+    if horizontal:
+        ax.set_yticks(positions)
+        ax.set_yticklabels([f"{label} (n={len(vals)})" for label, vals in zip(labels, values, strict=False)])
+    else:
+        ax.set_xticks(positions)
+        ax.set_xticklabels([f"{label}\nn={len(vals)}" for label, vals in zip(labels, values, strict=False)])
+
+
+def _metric_lower_is_better(metric: str) -> bool:
+    return metric in {"mse", "mae"}
+
+
 __all__ = [
+    "per_perturbation_tables_to_long",
     "plot_baseline_comparison",
     "plot_deg_overlap_bar",
     "plot_per_perturbation_metric",

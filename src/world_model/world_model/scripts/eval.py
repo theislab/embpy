@@ -1,4 +1,4 @@
-"""Evaluate a trained world model and produce the full report.
+r"""Evaluate a trained world model and produce the full report.
 
 Loads a checkpoint produced by :mod:`world_model.scripts.train` and
 runs the perturbation evaluation pipeline (cell-eval-style metrics +
@@ -7,9 +7,9 @@ launcher when you want to re-evaluate without re-training.
 
 Usage:
 
-    python -m world_model.scripts.eval \\
-        --config src/world_model/world_model/configs/experiments/single_replogle.yaml \\
-        --checkpoint runs/world_model/single_replogle/single_replogle_final.pt
+        python -m world_model.scripts.eval \\
+            --config src/world_model/world_model/configs/datasets/replogle.yaml \\
+            --checkpoint runs/world_model/single_replogle/single_replogle_final.pt
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for the eval-only entrypoint."""
     parser = argparse.ArgumentParser(description="Evaluate a trained world model.")
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--checkpoint", type=str, required=True)
@@ -39,6 +40,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Run eval-only reporting for an existing checkpoint."""
     args = parse_args(argv)
     cfg: WorldModelConfig = load_yaml_config(args.config)
     cfg = apply_cli_overrides(cfg, args.overrides)
@@ -48,24 +50,30 @@ def main(argv: list[str] | None = None) -> None:
     seed_everything(cfg.seed)
 
     # Pass action_cfg + state_backbone_cfg so the action-embedding source
-    # (bio_embedder vs precomputed) matches the train run. See the same
-    # fix in run_baselines.py: without these, build_dataloaders falls back
-    # to data.gene_embedding_path (genept 3072d), and load_state_dict
-    # crashes with a shape mismatch when the checkpoint used a non-genept
-    # embedding (e.g. borzoi_v0 -> 1536d).
+    # matches the train run. Without these,
+    # build_dataloaders can instantiate a model with the wrong action
+    # dimension and load_state_dict then fails with a shape mismatch.
     artifacts = build_dataloaders(
         cfg.data,
         split_cfg=cfg.split,
         action_cfg=cfg.action_embedding,
+        query_action_cfg=cfg.query_action_embedding,
         state_backbone_cfg=cfg.state_backbone,
         seed=cfg.seed,
         output_dir=output_dir,
     )
-    n_genes = len(artifacts.gene_symbols)
+    n_genes = (
+        artifacts.state_backbone_embedding_dim
+        if artifacts.state_backbone_embedding_dim is not None
+        else len(artifacts.gene_symbols)
+    )
 
     model = build_world_model(
         n_genes=n_genes,
         gene_embedding_table=torch.from_numpy(artifacts.gene_table),
+        query_gene_embedding_table=(
+            torch.from_numpy(artifacts.query_gene_table) if artifacts.query_gene_table is not None else None
+        ),
         encoder_kind=cfg.encoder.kind,
         d_model=cfg.encoder.d_model,
         stack_size=cfg.data.stack_size,
@@ -73,9 +81,15 @@ def main(argv: list[str] | None = None) -> None:
         encoder_heads=cfg.encoder.n_heads,
         dynamics_layers=cfg.dynamics.n_layers,
         dynamics_heads=cfg.dynamics.n_heads,
+        dynamics_kind=cfg.dynamics.kind,
+        incontext_support_size=getattr(cfg.data, "incontext_support_size", 16),
         dropout=cfg.dynamics.dropout,
+        action_adapter_cfg=cfg.action_adapter,
         max_sequence_length=cfg.dynamics.max_sequence_length,
         use_action_token=cfg.dynamics.use_action_token,
+        state_backbone_cfg=cfg.state_backbone,
+        state_backbone_provider=artifacts.state_backbone,
+        state_backbone_embedding_dim=artifacts.state_backbone_embedding_dim,
     )
     payload = load_checkpoint(args.checkpoint, map_location="cpu")
     model.load_state_dict(payload["state_dict"], strict=False)

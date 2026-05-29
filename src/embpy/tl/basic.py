@@ -3,7 +3,7 @@
 All functions have been moved to dedicated modules:
 
 - ``embpy.tl.similarity`` -- compute_similarity, compute_distance_matrix,
-  compute_knn_overlap, rank_perturbations
+  compute_knn_overlap, rank_perturbations, nearest_neighbors
 - ``embpy.tl.dimred`` -- compute_umap, compute_tsne
 - ``embpy.tl.clustering`` -- find_nearest_neighbors, leiden, cluster_embeddings
 
@@ -18,10 +18,17 @@ from anndata import AnnData
 from .clustering import cluster_embeddings, find_nearest_neighbors, leiden
 from .dimred import compute_tsne, compute_umap
 from .similarity import (
+    aggregate_embedding_table,
+    compare_embedding_matrices,
     compute_distance_matrix,
     compute_knn_overlap,
     compute_similarity,
+    embedding_similarity_matrix,
+    knn_jaccard,
+    nearest_neighbors,
+    nearest_neighbors_table,
     rank_perturbations,
+    similarity_correlation,
 )
 
 
@@ -32,13 +39,20 @@ def basic_tool(adata: AnnData) -> int:
 
 __all__ = [
     "basic_tool",
+    "aggregate_embedding_table",
     "cluster_embeddings",
+    "compare_embedding_matrices",
     "compute_distance_matrix",
     "compute_knn_overlap",
     "compute_similarity",
     "compute_tsne",
     "compute_umap",
+    "embedding_similarity_matrix",
     "find_nearest_neighbors",
+    "knn_jaccard",
     "leiden",
+    "nearest_neighbors",
+    "nearest_neighbors_table",
     "rank_perturbations",
+    "similarity_correlation",
 ]

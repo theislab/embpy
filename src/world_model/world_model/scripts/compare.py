@@ -1,4 +1,4 @@
-"""Merge world-model + baseline metrics into a unified comparison.
+r"""Merge world-model + baseline metrics into a unified comparison.
 
 Reads ``runs/<run_id>/baselines.csv`` (produced by
 ``run_baselines.py``) and an optional world-model row from
@@ -23,11 +23,13 @@ from pathlib import Path
 
 from world_model.evaluation.plots import plot_baseline_comparison
 from world_model.utils import setup_logging
+from world_model.utils.run_identity import resolve_latest_suffixed_run_dir
 
 logger = logging.getLogger(__name__)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Build comparison.csv + comparison.png.")
     parser.add_argument(
         "--run-dir",
@@ -51,25 +53,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
-    import pandas as pd  # noqa: PLC0415
+    """Build comparison artifacts from CLI arguments."""
+    import pandas as pd
 
     args = parse_args(argv)
-    run_dir = Path(args.run_dir)
+    run_dir = resolve_latest_suffixed_run_dir(args.run_dir)
     if not run_dir.exists():
         raise FileNotFoundError(f"Run directory not found: {run_dir}")
     setup_logging(level=logging.INFO, log_file=run_dir / "compare.log")
 
     baselines_csv = Path(args.baselines_csv or run_dir / "baselines.csv")
     if not baselines_csv.exists():
-        raise FileNotFoundError(
-            f"Expected {baselines_csv}. Run scripts/run_baselines.py first."
-        )
+        raise FileNotFoundError(f"Expected {baselines_csv}. Run scripts/run_baselines.py first.")
     long = pd.read_csv(baselines_csv)
     expected_cols = {"baseline", "metric", "value"}
     if not expected_cols.issubset(long.columns):
-        raise ValueError(
-            f"baselines.csv must have columns {expected_cols}, got {set(long.columns)}"
-        )
+        raise ValueError(f"baselines.csv must have columns {expected_cols}, got {set(long.columns)}")
 
     wide = long.pivot_table(index="baseline", columns="metric", values="value", aggfunc="first")
     wide = wide.reset_index().rename(columns={"baseline": "name"})
@@ -89,7 +88,9 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Wrote %s with shape %s", out_csv, wide.shape)
 
     plot_path = run_dir / "plots" / "comparison.png"
-    plot_baseline_comparison(wide, plot_path)
+    per_pert_long_path = run_dir / "eval" / "per_perturbation_long.csv"
+    per_pert_long = pd.read_csv(per_pert_long_path) if per_pert_long_path.exists() else None
+    plot_baseline_comparison(wide, plot_path, per_perturbation_long=per_pert_long)
 
 
 if __name__ == "__main__":  # pragma: no cover

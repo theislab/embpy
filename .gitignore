@@ -44,9 +44,32 @@ buck-out/
 # tempfiles. Multi-GB and regenerated on every run.
 /runs/
 
-# Job outputs & logs
+# Job outputs & logs. Keep a few empty log directories tracked so Slurm can
+# open stdout/stderr paths even for direct sbatch submissions; ignore contents.
 /err/
-/logs/
+/logs/**
+!/logs/
+!/logs/.gitkeep
+!/logs/cross_modality_incontext/
+!/logs/cross_modality_incontext/.gitkeep
+!/logs/embedding_sweep/
+!/logs/embedding_sweep/.gitkeep
+!/logs/gene_embeddings/
+!/logs/gene_embeddings/.gitkeep
+!/logs/slurm/
+!/logs/slurm/.gitkeep
+!/logs/slurm/compare/
+!/logs/slurm/compare/.gitkeep
+!/logs/slurm/eval_only/
+!/logs/slurm/eval_only/.gitkeep
+!/logs/slurm/install_pixi_envs/
+!/logs/slurm/install_pixi_envs/.gitkeep
+!/logs/slurm/run_baselines/
+!/logs/slurm/run_baselines/.gitkeep
+!/logs/slurm/train_embedding/
+!/logs/slurm/train_embedding/.gitkeep
+!/logs/world_model_ready_adatas/
+!/logs/world_model_ready_adatas/.gitkeep
 submission_scripts/logs/
 
 # Debug / runtime logs
@@ -80,8 +103,7 @@ hg38_chroms/
 
 # SLURM job stdout/stderr -- regenerated every run, never commit.
 # Root-level files come from `sbatch --wrap` (default slurm-%j.out);
-# the named .sbatch launchers write into logs/%x_%j.{out,err}.
+# named launchers and submitters write under logs/<workflow>/.
 slurm-*.out
 slurm-*.err
-logs/
 .tmp/

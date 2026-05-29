@@ -297,7 +297,7 @@ Every entry point that accepts a perturbation label after Part A:
 | `BioEmbedderProvider.embed_with_status` | `src/world_model/data/embeddings/bio_embedder.py` | (did not exist) | Classifies first; never sends a control variant to `BioEmbedder.embed_genes_batch`. |
 | `PrecomputedProvider.embed_with_status` | `src/world_model/data/embeddings/precomputed.py` | (did not exist) | Same policy; controls map to deterministic sentinel. |
 | `GeneIndexer.encode` | `src/world_model/data/datasets/base.py:67` | Only maps `perturbation == control_label` to index 0. | Unchanged in Part A. *Follow-up*: should consult `ControlPolicy` so dataset-level encoding agrees with the provider. |
-| `cls.from_h5ad` (Replogle / Nadig) | `datasets/replogle.py:49`, `datasets/nadig.py:43` | Same single-literal policy. | Unchanged in Part A; follow-up step in section 9. |
+| `AnnDataSequenceDataset.from_h5ad` | `src/world_model/world_model/data/datasets/anndata.py` | Dataset-specific adapters (`replogle.py`, `nadig.py`). | Generic AnnData loader keyed by `obs` / `obsm` config names. |
 | `build_dataloaders` | `data/dataloader.py:68` | Reported `n_unresolved` from a count of all-zero rows; conflated unresolved + control. | Honours `action_embedding.fail_on_unresolved`; persists per-bucket counts via `ProviderMetadata`. |
 
 Per-entry-point policy after Part A: every entry point either runs

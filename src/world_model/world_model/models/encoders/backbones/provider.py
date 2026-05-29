@@ -13,7 +13,7 @@ import torch
 
 @dataclass
 class ProviderMetadata:
-    """Metadata persisted to ``runs/<run>/state_backbone_meta.json``."""
+    """Metadata produced by offline state-backbone encoding helpers."""
 
     kind: str
     name: str
@@ -30,17 +30,15 @@ class ProviderMetadata:
 class StateBackboneProvider(ABC):
     """Common interface for state-encoder backbones.
 
-    Two flavours of usage:
+    Two flavours of usage remain for the model/head layer:
 
     * **Local** -- the provider *is* the state-stack encoder. Forward
       operates on raw expression tensors of shape ``(B, T, K, G)``.
       No pre-encoding step is required.
-    * **Foreign (STATE / STACK)** -- the provider holds a frozen
-      foundation model. The dataloader pre-encodes the AnnData once
-      through :meth:`encode`, caches the result on disk, and replaces
-      the in-memory expression matrix with the cached embeddings.
-      Downstream the world model sees only ``(B, T, K, embedding_dim)``
-      tensors after the dataset's stack step.
+    * **Foreign (STATE / STACK)** -- the provider can be used by
+      offline scripts to encode an AnnData and attach the result to
+      ``adata.obsm``. Training itself consumes that pre-attached matrix
+      and does not call :meth:`encode` inside the dataloader.
 
     Implementations must keep their underlying torch model importable
     and operable behind a *single* :meth:`_load` call -- the provider

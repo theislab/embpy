@@ -1,1 +1,1 @@
-"""Command-line entry points (``train`` and ``eval``)."""
+"""Canonical command-line entry points plus compatibility wrappers."""

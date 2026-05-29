@@ -21,6 +21,20 @@ def _make_batch() -> dict:
     }
 
 
+def _make_incontext_batch() -> dict:
+    m = 3
+    return {
+        "support_obs": torch.randn(B, m, K, G),
+        "support_act": torch.randint(0, N_GENES_PERT + 1, size=(B, m, 2)),
+        "support_next": torch.randn(B, m, K, G),
+        "query_obs": torch.randn(B, K, G),
+        "query_act": torch.randint(0, N_GENES_PERT + 1, size=(B, 2)),
+        "query_next": torch.randn(B, K, G),
+        "query_next_expression": torch.randn(B, G),
+        "obs_stack": torch.randn(B, K, G),
+    }
+
+
 def _make_model(decoder: bool = True):
     return build_world_model(
         n_genes=G,
@@ -33,6 +47,25 @@ def _make_model(decoder: bool = True):
         dynamics_layers=2,
         dynamics_heads=2,
         max_sequence_length=4 * T,
+        enable_decoder=decoder,
+    )
+
+
+def _make_incontext_model(decoder: bool = True):
+    return build_world_model(
+        n_genes=G,
+        gene_embedding_table=torch.randn(N_GENES_PERT + 1, 24),
+        query_gene_embedding_table=torch.randn(N_GENES_PERT + 1, 10),
+        encoder_kind="transformer",
+        d_model=D,
+        stack_size=K,
+        encoder_layers=1,
+        encoder_heads=2,
+        dynamics_layers=1,
+        dynamics_heads=2,
+        dynamics_kind="incontext_set",
+        incontext_support_size=3,
+        max_sequence_length=8,
         enable_decoder=decoder,
     )
 
@@ -79,3 +112,15 @@ def test_mismatched_d_model_raises() -> None:
     dec = ExpressionDecoder(d_model=D, n_genes=G)
     with pytest.raises(ValueError):
         WorldModel(encoder=enc, action_encoder=act, dynamics=dyn, decoder=dec)
+
+
+def test_incontext_support_query_action_tables_have_independent_dims() -> None:
+    model = _make_incontext_model(decoder=True)
+    batch = _make_incontext_batch()
+    out = model.predict(batch)
+    assert out["s_hat"].shape == (B, D)
+    assert out["x_hat"].shape == (B, G)
+    loss, components = model.loss(batch, decoder_mse_weight=0.1)
+    assert torch.isfinite(loss)
+    assert "latent_mse" in components
+    loss.backward()

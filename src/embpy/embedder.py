@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import logging
 import os
+import pathlib
 import re
 import traceback
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from hashlib import sha1
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -21,38 +23,13 @@ from .errors import (
     ModelNotFoundError,
     ModelOOMError,
 )
+from .models.base import BaseModelWrapper
 from .observability import log_event, time_block
 from .reporting import ResolutionReport
 from .retry import embed_batch_with_oom_recovery
-from .models.base import BaseModelWrapper
-from .models.dna_models import (
-    BorzoiWrapper,
-    CaduceusWrapper,
-    EnformerWrapper,
-    GENALMWrapper,
-    HyenaDNAWrapper,
-    NucleotideTransformerV3Wrapper,
-    NucleotideTransformerWrapper,
-)
 
 if TYPE_CHECKING:
     pass
-from .models.api_models import APIEmbeddingWrapper
-from .models.molecule_models import (
-    ChembertaWrapper,
-    MHGGNNWrapper,
-    MiniMolWrapper,
-    MolEWrapper,
-    MolformerWrapper,
-    RDKitWrapper,
-)
-from .models.morphology_models import SubCellWrapper
-from .models.protein_models import ESM2Wrapper, ESM3Wrapper, ESMCWrapper, ProtT5Wrapper
-from .models.text_models import LlamaEmbeddingWrapper, TextLLMWrapper
-from .resources.gene_resolver import GeneResolver
-from .resources.protein_resolver import ProteinResolver
-from .resources.text_resolver import TextResolver
-
 # MODEL_REGISTRY + the three DNA species sets live in
 # `embpy.embedder_registry` (audit steps 2 + 3). The DNA / Protein /
 # Molecule / Text / Morphology / Single-cell / API entries are split
@@ -69,8 +46,13 @@ from .embedder_registry.flat import (
     HUMAN_ONLY_MODELS,
     MODEL_REGISTRY,
     MOUSE_ONLY_MODELS,
-    MULTI_SPECIES_DNA,
 )
+from .models.api_models import APIEmbeddingWrapper
+from .models.morphology_models import SubCellWrapper
+from .models.text_models import TextLLMWrapper
+from .resources.gene_resolver import GeneResolver
+from .resources.protein_resolver import ProteinResolver
+from .resources.text_resolver import TextResolver
 
 
 # Helper function (can be moved to utils later)
@@ -144,8 +126,13 @@ def _parse_oom_attempted_bytes(msg: str) -> int | None:
         return None
     val, unit = float(m.group(1)), m.group(2).lower()
     scale = {
-        "gib": 1024 ** 3, "mib": 1024 ** 2, "kib": 1024,
-        "gb": 1000 ** 3, "mb": 1000 ** 2, "kb": 1000, "b": 1,
+        "gib": 1024**3,
+        "mib": 1024**2,
+        "kib": 1024,
+        "gb": 1000**3,
+        "mb": 1000**2,
+        "kb": 1000,
+        "b": 1,
     }.get(unit, 1)
     return int(val * scale)
 
@@ -184,9 +171,7 @@ def _classify_embedder_exception(
 
     # 2) Context overflow: the model's positional buffer or attention
     #    mask got expanded to a sequence length it cannot represent.
-    if isinstance(exc, RuntimeError) and any(
-        p in msg_lower for p in _CONTEXT_OVERFLOW_PATTERNS
-    ):
+    if isinstance(exc, RuntimeError) and any(p in msg_lower for p in _CONTEXT_OVERFLOW_PATTERNS):
         # Best-effort length parsing from messages like
         # "Target sizes: [16, 16596]. Tensor sizes: [1, 512]"
         m = re.search(r"\[\d+,\s*(\d+)\][\s\S]*\[\d+,\s*(\d+)\]", msg)
@@ -211,8 +196,7 @@ def _classify_embedder_exception(
         model_name=model_name,
         cause=f"{type(exc).__name__}: {exc}",
         message=(
-            f"embed_batch failed for model='{model_name}' on {n_inputs} inputs. "
-            f"Root cause: {type(exc).__name__}: {exc}"
+            f"embed_batch failed for model='{model_name}' on {n_inputs} inputs. Root cause: {type(exc).__name__}: {exc}"
         ),
     )
 
@@ -392,9 +376,7 @@ class BioEmbedder:
                 # "needs `pixi install` of a different env" from "the model
                 # is genuinely broken on HF".
                 pkg = _guess_missing_package(str(e)) or "unknown"
-                logging.error(
-                    f"Failed to load model '{model_name}': missing dependency '{pkg}'."
-                )
+                logging.error(f"Failed to load model '{model_name}': missing dependency '{pkg}'.")
                 raise DependencyError(package=pkg, feature=f"model '{model_name}'") from e
             except Exception as e:
                 logging.error(
@@ -425,8 +407,10 @@ class BioEmbedder:
                 raise ModelNotFoundError(message) from e
 
     @staticmethod
-    def _detect_vocab_type(var_names: Sequence[str], sample: int = 200) -> Literal["symbol", "ensembl_id", "mixed", "unknown"]:
-        """Guess the gene-identifier convention of an AnnData's ``var_names``.
+    def _detect_vocab_type(
+        var_names: Sequence[str], sample: int = 200
+    ) -> Literal["symbol", "ensembl_id", "mixed", "unknown"]:
+        r"""Guess the gene-identifier convention of an AnnData's ``var_names``.
 
         Heuristic: sample up to ``sample`` names and check what fraction
         look like Ensembl gene IDs (``ENSG`` / ``ENSMUSG`` / ``ENSRNOG`` /
@@ -460,8 +444,7 @@ class BioEmbedder:
         model_key: str,
         organism: str = "human",
     ):
-        """Auto-convert ``adata.var_names`` to the format expected by a
-        single-cell foundation model.
+        """Auto-convert ``adata.var_names`` for a single-cell foundation model.
 
         Does nothing if the model's ``vocab_type`` is ``"any"`` or
         ``"either"`` (the wrapper handles it internally), or if the
@@ -508,17 +491,16 @@ class BioEmbedder:
         # Need to convert from `current` to `target`.
         logging.info(
             "Auto-converting adata.var_names for model '%s': %s -> %s (%d genes)",
-            model_key, current, target, adata.n_vars,
+            model_key,
+            current,
+            target,
+            adata.n_vars,
         )
 
         if current == "ensembl_id" and target == "symbol":
-            mapping = self.gene_resolver.ensembl_to_symbols_batch(
-                list(adata.var_names), organism=organism
-            )
+            mapping = self.gene_resolver.ensembl_to_symbols_batch(list(adata.var_names), organism=organism)
         elif current == "symbol" and target == "ensembl_id":
-            mapping = self.gene_resolver.symbols_to_ensembl_batch(
-                list(adata.var_names), organism=organism
-            )
+            mapping = self.gene_resolver.symbols_to_ensembl_batch(list(adata.var_names), organism=organism)
         else:
             return adata, {"action": "none", "reason": f"unhandled {current}->{target}"}
 
@@ -529,12 +511,14 @@ class BioEmbedder:
             logging.error(
                 "Vocabulary conversion %s -> %s produced 0 mapped genes for "
                 "model '%s'. Returning original adata; embedding will likely fail.",
-                current, target, model_key,
+                current,
+                target,
+                model_key,
             )
             return adata, {"action": "failed", "detected": current, "target": target, "n_mapped": 0}
 
         out = adata[:, keep_mask].copy()
-        new_names_arr = np.array([n for n, keep in zip(new_names, keep_mask) if keep])
+        new_names_arr = np.array([n for n, keep in zip(new_names, keep_mask, strict=False) if keep])
         # Drop duplicates (multiple Ensembl IDs can map to the same symbol
         # and vice versa). Keep first occurrence.
         seen: set[str] = set()
@@ -546,7 +530,9 @@ class BioEmbedder:
         if (~unique_mask).any():
             logging.info(
                 "Dropped %d duplicate names during %s -> %s conversion.",
-                int((~unique_mask).sum()), current, target,
+                int((~unique_mask).sum()),
+                current,
+                target,
             )
             out = out[:, unique_mask].copy()
             new_names_arr = new_names_arr[unique_mask]
@@ -559,7 +545,10 @@ class BioEmbedder:
         out.var_names = new_names_arr
         logging.info(
             "Vocabulary conversion OK: %d -> %d genes mapped (%s -> %s).",
-            adata.n_vars, out.n_vars, current, target,
+            adata.n_vars,
+            out.n_vars,
+            current,
+            target,
         )
         return out, {
             "action": "converted",
@@ -575,8 +564,7 @@ class BioEmbedder:
         batch_size: int,
         device_str: str,
     ):
-        """Return a cached single-cell foundation-model wrapper, loading it
-        the first time.
+        """Return a cached single-cell foundation-model wrapper.
 
         The cache is keyed by ``(model_key, device_str)`` only;
         ``batch_size`` is applied on every call so it can change between
@@ -642,6 +630,777 @@ class BioEmbedder:
                 torch.cuda.ipc_collect()
         except Exception:  # noqa: BLE001
             pass
+
+    # ------------------------------------------------------------------
+    # Standardized output API (canonical EmbeddingResult + exporters)
+    # ------------------------------------------------------------------
+
+    def embed(
+        self,
+        identifiers: Any | None = None,
+        *,
+        entity_type: str | Sequence[str] | None = None,
+        model: str | Sequence[str],
+        id_type: str | Mapping[str, str] | None = None,
+        organism: str | None = None,
+        pooling_strategy: str = "mean",
+        output: Literal["anndata", "table", "payload"] | None = None,
+        target: Any = None,
+        input_path: str | os.PathLike[str] | None = None,
+        output_path: str | os.PathLike[str] | None = None,
+        attach_to: Literal["auto", "obs", "var", "uns"] = "auto",
+        harmonize_dim: int | None = None,
+        path: str | os.PathLike[str] | None = None,
+        fmt: Literal["csv", "npz", "zarr"] = "npz",
+        missing: Literal["error", "nan"] = "error",
+        id_column: str | None = None,
+        identifier_column: str | None = None,
+        anndata_axis: Literal["obs", "var"] | None = None,
+        obs_column: str | None = None,
+        var_column: str | None = None,
+        whole_genome: bool = False,
+        biotype: str = "protein_coding",
+        show_progress: bool = False,
+        key: str | None = None,
+        metadata_mode: Literal["minimal", "full"] = "full",
+        include_matrix: bool = True,
+        random_state: int = 0,
+        **embed_kwargs: Any,
+    ):
+        """Embed entities and return the standardized embpy output.
+
+        This is the package-wide output path. It accepts direct in-memory
+        inputs (sequences, NumPy arrays, pandas Series/DataFrames, AnnData)
+        and CSV/TSV/Parquet paths, normalizes them before inference,
+        canonicalizes identifiers by entity type, then exports either
+        AnnData or a table. Generated embeddings are never stored in
+        AnnData ``.X``; standalone AnnData uses sparse placeholder ``.X``
+        and stores matrices in ``.obsm``, ``.varm`` or ``.uns``.
+        ``output="payload"`` returns the entity-aligned embedding payload
+        directly, including canonical ids, model/provenance metadata and
+        the requested embedding matrix.
+
+        Defaults are explicit: if ``output`` is omitted, an output path
+        chooses compact NPZ/CSV/Zarr file output, otherwise AnnData is
+        returned. Multiple models or multiple entity types return the
+        same output family with deterministic keys that include entity
+        type and model name.
+        """
+        from .io.exporters import route_output
+        from .io.normalize import normalize_embedding_input
+
+        org = organism or self.organism
+        out_path = output_path if output_path is not None else path
+        data = input_path if input_path is not None else identifiers
+
+        if data is None and target is not None and not whole_genome:
+            data = target
+        if data is None and not whole_genome:
+            raise ValueError(
+                "input normalization: no identifiers or input_path were provided. "
+                "Pass identifiers, an input file path, an AnnData object, or "
+                "whole_genome=True."
+            )
+
+        if target is None and data is not None and self._is_anndata_like(data):
+            target = data
+
+        entity_types = self._resolve_entity_types(entity_type, data, whole_genome)
+        models = self._as_string_list(model, arg_name="model")
+        if "cell" in entity_types:
+            if entity_types != ["cell"]:
+                raise ValueError(
+                    "input normalization: entity_type='cell' cannot be mixed "
+                    "with other entity types in one BioEmbedder.embed(...) call. "
+                    "Run cell embeddings and feature/entity embeddings as "
+                    "separate calls so their AnnData alignment stays explicit."
+                )
+            return self._embed_cells_standardized(
+                data,
+                models=models,
+                output=output or "anndata",
+                target=target,
+                path=out_path,
+                fmt=fmt,
+                missing=missing,
+                key=key,
+                metadata_mode=metadata_mode,
+                include_matrix=include_matrix,
+                **embed_kwargs,
+            )
+
+        normalized_by_entity = {}
+        for et in entity_types:
+            if whole_genome:
+                normalized_by_entity[et] = self._whole_genome_input(
+                    entity_type=et,
+                    organism=org,
+                    biotype=biotype,
+                )
+                continue
+            entity_data = data[et] if isinstance(data, Mapping) and et in data else data
+            try:
+                normalized_by_entity[et] = normalize_embedding_input(
+                    entity_data,
+                    entity_type=et,
+                    id_column=id_column,
+                    identifier_column=identifier_column,
+                    anndata_axis=anndata_axis,
+                    obs_column=obs_column,
+                    var_column=var_column,
+                )
+            except Exception as exc:
+                if str(exc).startswith(("input loading:", "input normalization:")):
+                    raise
+                raise ValueError(
+                    f"input normalization: failed for entity_type={et!r}: {type(exc).__name__}: {exc}"
+                ) from exc
+
+        tasks = [(et, m) for et in entity_types for m in models]
+        iterator = tasks
+        if show_progress:
+            from tqdm.auto import tqdm
+
+            iterator = tqdm(tasks, desc="embpy embed", unit="result")
+
+        results = []
+        for et, model_name in iterator:
+            result = self._embed_to_result(
+                normalized_by_entity[et],
+                entity_type=et,
+                model=model_name,
+                id_type=self._id_type_for_entity(id_type, et),
+                organism=org,
+                pooling_strategy=pooling_strategy,
+                show_progress=show_progress,
+                **embed_kwargs,
+            )
+            results.append(result)
+
+        resolved_output = output or ("table" if out_path is not None else "anndata")
+        return route_output(
+            results,
+            output=resolved_output,
+            target=target,
+            attach_to=attach_to,
+            harmonize_dim=harmonize_dim,
+            path=out_path,
+            fmt=fmt,
+            missing=missing,
+            key=key,
+            metadata_mode=metadata_mode,
+            include_matrix=include_matrix,
+            random_state=random_state,
+        )
+
+    def _embed_cells_standardized(
+        self,
+        data: Any,
+        *,
+        models: Sequence[str],
+        output: Literal["anndata", "table", "payload"],
+        target: Any = None,
+        path: str | os.PathLike[str] | None = None,
+        fmt: Literal["csv", "npz", "zarr"] = "npz",
+        missing: Literal["error", "nan"] = "error",
+        key: str | None = None,
+        metadata_mode: Literal["minimal", "full"] = "full",
+        include_matrix: bool = True,
+        **cell_kwargs: Any,
+    ):
+        """Route single-cell embeddings through ``BioEmbedder.embed``.
+
+        ``embed_cells`` remains the implementation backend, but this method
+        converts each produced ``.obsm`` matrix into the same standardized
+        ``EmbeddingResult``/exporter path used by the rest of
+        ``BioEmbedder.embed``. That keeps tutorials and public workflows on
+        one entry point while preserving existing single-cell behavior.
+        """
+        from .io.exporters import to_anndata_many, to_payloads, to_tables
+        from .io.result import EmbeddingProvenance, EmbeddingResult
+
+        if output not in ("anndata", "table", "payload"):
+            raise ValueError(f"output must be 'anndata', 'table', or 'payload', got {output!r}.")
+        if not self._is_anndata_like(data):
+            raise ValueError("input normalization: entity_type='cell' expects an AnnData object as identifiers/target.")
+        if key is not None and len(models) > 1:
+            raise ValueError(
+                "output routing: a single key cannot name multiple cell "
+                "embedding results. Omit key or request one model."
+            )
+
+        obsm_prefix = str(cell_kwargs.get("obsm_prefix", "X_"))
+        adata_out = self.embed_cells(
+            data,
+            models=list(models),
+            **cell_kwargs,
+        )
+        ids = tuple(str(x) for x in adata_out.obs_names)
+
+        results = []
+        keys = []
+        cell_meta = adata_out.uns.get("embpy_cell_embeddings", {})
+        for model_name in models:
+            default_key = f"{obsm_prefix}{model_name}"
+            out_key = key or default_key
+            if default_key not in adata_out.obsm:
+                details = cell_meta.get(model_name, {}) if isinstance(cell_meta, dict) else {}
+                message = details.get("error") if isinstance(details, dict) else None
+                raise RuntimeError(
+                    f"embedding generation: cell model {model_name!r} did not "
+                    f"produce adata.obsm[{default_key!r}]." + (f" Backend error: {message}" if message else "")
+                )
+            matrix = np.asarray(adata_out.obsm[default_key], dtype=np.float32)
+            if matrix.ndim != 2 or matrix.shape[0] != adata_out.n_obs:
+                raise ValueError(
+                    f"embedding generation: adata.obsm[{default_key!r}] must "
+                    f"have shape (n_obs, n_dims), got {matrix.shape!r} for "
+                    f"n_obs={adata_out.n_obs}."
+                )
+            extra: dict[str, Any] = {
+                "entity_type": "cell",
+                "organism": self.organism,
+                "input_kind": "anndata",
+                "input_source": None,
+                "input_id_column": "obs_names",
+                "input_id_type": "obs_names",
+                "n_requested_inputs": int(adata_out.n_obs),
+                "n_successfully_embedded_entities": int(adata_out.n_obs),
+                "n_embedding_failures": 0,
+                "n_unresolved_identifiers": 0,
+                "duplicate_canonical_ids_dropped": 0,
+                "n_dropped_or_unresolved_entities": 0,
+                "canonical_id_scheme": "obs_names",
+            }
+            if isinstance(cell_meta, dict) and isinstance(cell_meta.get(model_name), dict):
+                extra["cell_embedding"] = dict(cell_meta[model_name])
+            prov = EmbeddingProvenance.create(
+                model=str(model_name),
+                pooling=None,
+                layer=None,
+                extra=extra,
+            )
+            results.append(
+                EmbeddingResult(
+                    matrix=matrix,
+                    entity_ids=ids,
+                    entity_type="cell",
+                    id_scheme="obs_names",
+                    provenance=prov,
+                )
+            )
+            keys.append(out_key)
+
+        if output == "payload":
+            return to_payloads(
+                results,
+                keys=keys,
+                metadata_mode=metadata_mode,
+                include_matrix=include_matrix,
+            )
+        if output == "table":
+            return to_tables(results, path=path, fmt=fmt)
+        if path is not None:
+            logging.warning(
+                "output='anndata' ignores path/output_path; call `.write_h5ad(...)` on the returned AnnData."
+            )
+        return to_anndata_many(
+            results,
+            target=adata_out,
+            attach_to="obs",
+            keys=keys,
+            missing=missing,
+        )
+
+    def _embed_to_result(
+        self,
+        identifiers: Any,
+        *,
+        entity_type: str,
+        model: str,
+        id_type: str | None,
+        organism: str,
+        pooling_strategy: str,
+        show_progress: bool = False,
+        **embed_kwargs: Any,
+    ):
+        """Dispatch to a batch embedder + canonicalize -> EmbeddingResult.
+
+        The numeric embedding comes from the existing ``embed_*_batch``
+        methods; canonicalization reuses the existing resolvers (the sole
+        owners of id-mapping logic). Rows whose embedding or id-resolution
+        fails are dropped; duplicate canonical ids collapse to the first.
+        """
+        from .io._canon import SCHEME, build_aliases, canonicalize, drop_and_dedup
+        from .io.normalize import NormalizedInput, normalize_embedding_input
+        from .io.result import EmbeddingProvenance, EmbeddingResult
+
+        norm = (
+            identifiers
+            if isinstance(identifiers, NormalizedInput)
+            else normalize_embedding_input(identifiers, entity_type=entity_type)
+        )
+        ids = list(norm.identifiers)
+        alias_cols = {k: list(v) for k, v in norm.alias_columns.items()}
+        requested_n = len(ids)
+        extra: dict[str, Any] = {
+            "entity_type": entity_type,
+            "organism": organism,
+            "input_kind": norm.input_kind,
+            "input_source": norm.source,
+            "input_id_column": norm.id_column,
+            "input_id_type": id_type,
+            "n_requested_inputs": requested_n,
+        }
+        layer = (
+            embed_kwargs.get("target_layer")
+            or embed_kwargs.get("layer")
+            or embed_kwargs.get("embedding_layer")
+            or embed_kwargs.get("layer_name")
+        )
+        if "region" in embed_kwargs:
+            extra["region"] = embed_kwargs["region"]
+        if "isoform" in embed_kwargs:
+            extra["isoform_mode"] = embed_kwargs["isoform"]
+        whole_genome_sequences = norm.metadata.get("prefetched_sequences")
+        output_entity_type = entity_type
+
+        if entity_type == "gene":
+            it = "ensembl_id" if norm.metadata.get("whole_genome") else (id_type or "symbol")
+            vecs = self.embed_genes_batch(
+                model=model,
+                identifiers=ids,
+                id_type=it,
+                organism=organism,
+                pooling_strategy=pooling_strategy,
+                **embed_kwargs,
+                fetch_all_dna=bool(norm.metadata.get("whole_genome")),
+                biotype=str(norm.metadata.get("biotype", "protein_coding")),
+                prefetched_sequences=whole_genome_sequences,
+            )
+            raw, matrix = self._aligned_matrix(ids, vecs)
+            canon, keep = canonicalize(
+                raw,
+                "gene",
+                organism,
+                id_type=it,
+                gene_resolver=self.gene_resolver,
+            )
+            scheme = SCHEME["gene"]
+        elif entity_type == "molecule":
+            it = id_type or "smiles"
+            smiles, name_alias = self._molecule_inputs_to_smiles(ids, it, extra)
+            vecs = self.embed_molecules_batch(
+                smiles,
+                model,
+                pooling_strategy=pooling_strategy,
+                **embed_kwargs,
+            )
+            raw, matrix = self._aligned_matrix(smiles, vecs)
+            alias_cols = self._molecule_alias_columns(raw, name_alias)
+            canon, keep = canonicalize(raw, "molecule", organism, id_type=it)
+            scheme = SCHEME["molecule"]
+        elif entity_type == "protein":
+            it = id_type or "symbol"
+            d = self.embed_proteins_batch(
+                ids,
+                model,
+                id_type=it,
+                organism=organism,
+                pooling_strategy=pooling_strategy,
+                **embed_kwargs,
+            )
+            raw, matrix, protein_aliases, output_entity_type, scheme = self._dict_matrix(d)
+            if output_entity_type == "protein_isoform":
+                extra.setdefault("isoform_mode", "all")
+                canon = [str(x) for x in raw]
+                keep = np.array([True] * len(canon), dtype=bool)
+                aliases = protein_aliases
+            else:
+                canon, keep = canonicalize(
+                    raw,
+                    "protein",
+                    organism,
+                    id_type=it,
+                    protein_resolver=self.protein_resolver,
+                )
+                aliases = protein_aliases
+                scheme = SCHEME["protein"]
+        elif entity_type == "perturbation":
+            morph_kwargs = dict(embed_kwargs)
+            morphology_dataset = morph_kwargs.pop(
+                "morphology_dataset",
+                morph_kwargs.pop("dataset", "hpa"),
+            )
+            morphology_source = morph_kwargs.pop(
+                "morphology_source",
+                morph_kwargs.pop("source", "subcell"),
+            )
+            morphology_local_dir = morph_kwargs.pop(
+                "morphology_local_dir",
+                morph_kwargs.pop("local_dir", None),
+            )
+            aggregate = morph_kwargs.pop(
+                "aggregation",
+                morph_kwargs.pop("aggregate", "mean"),
+            )
+            perturbation_type = morph_kwargs.pop("perturbation_type", "genetic")
+            max_images = morph_kwargs.pop("max_images", 5)
+            plate_type = morph_kwargs.pop("plate_type", None)
+            jump_profiles_dir = morph_kwargs.pop("jump_profiles_dir", None)
+            skip_failures = bool(morph_kwargs.pop("skip_failures", True))
+            n_workers_value = morph_kwargs.pop("n_workers", None)
+            if n_workers_value is None:
+                n_workers_value = morph_kwargs.pop("morphology_workers", 8)
+            n_workers = int(n_workers_value)
+            verbose = bool(morph_kwargs.pop("verbose", True))
+            matrix, successful_labels = self.embed_perturbation_morphology_batch(
+                ids,
+                perturbation_type=perturbation_type,
+                dataset=morphology_dataset,
+                source=morphology_source,
+                model=model,
+                pooling_strategy=pooling_strategy,
+                local_dir=morphology_local_dir,
+                aggregate=aggregate,
+                max_images=max_images,
+                plate_type=plate_type,
+                jump_profiles_dir=jump_profiles_dir,
+                verbose=verbose,
+                skip_failures=skip_failures,
+                n_workers=n_workers,
+                **morph_kwargs,
+            )
+            raw = [str(x) for x in successful_labels]
+            alias_cols = {}
+            matrix = np.asarray(matrix, dtype=np.float32)
+            if matrix.ndim != 2:
+                raise ValueError(f"perturbation morphology embeddings must be 2D, got {matrix.shape!r}.")
+            if matrix.shape[0] == 0:
+                raise ValueError(
+                    "embedding generation: no perturbation morphology embeddings were produced. "
+                    "Check the morphology dataset/source, local cache, max_images, and perturbation labels."
+                )
+            canon = raw
+            keep = np.ones((len(canon),), dtype=bool)
+            scheme = "perturbation_label"
+            aliases = {str(label): {"perturbation_label": str(label)} for label in successful_labels}
+            extra.update(
+                {
+                    "morphology_dataset": morphology_dataset,
+                    "morphology_source": morphology_source,
+                    "morphology_local_dir": morphology_local_dir,
+                    "aggregation": aggregate,
+                    "perturbation_type": perturbation_type,
+                    "max_images": max_images,
+                    "plate_type": plate_type,
+                    "jump_profiles_dir": jump_profiles_dir,
+                    "skip_failures": skip_failures,
+                    "n_workers": n_workers,
+                }
+            )
+        elif entity_type in ("sequence", "text"):
+            raw, matrix = self._embed_raw_inputs(
+                ids,
+                model=model,
+                pooling_strategy=pooling_strategy,
+                show_progress=show_progress,
+                **embed_kwargs,
+            )
+            canon, keep = canonicalize(
+                raw,
+                entity_type,
+                organism,
+                id_type=entity_type,
+            )
+            scheme = SCHEME[entity_type]
+            aliases = {}
+        else:
+            raise ValueError(
+                "embedding generation: entity_type must be one of "
+                "'gene', 'molecule', 'protein', 'sequence', 'text', or 'perturbation', "
+                f"got {entity_type!r}."
+            )
+
+        n_embedding_failures = max(0, requested_n - len(raw))
+        n_canonical_unresolved = int((~keep).sum())
+        kept_canonical = [str(c) for c, ok in zip(canon, keep, strict=False) if ok and c]
+        n_duplicate_canonical = len(kept_canonical) - len(set(kept_canonical))
+        canon, matrix, alias_cols, kept_raw = drop_and_dedup(
+            canon,
+            matrix,
+            keep,
+            raw,
+            alias_cols,
+        )
+        built_aliases = build_aliases(output_entity_type, canon, kept_raw, alias_cols)
+        aliases = self._merge_aliases(built_aliases, aliases if "aliases" in locals() else {})
+        extra.update(
+            {
+                "canonical_id_scheme": scheme,
+                "n_successfully_embedded_entities": len(canon),
+                "n_embedding_failures": n_embedding_failures,
+                "n_unresolved_identifiers": n_canonical_unresolved,
+                "duplicate_canonical_ids_dropped": n_duplicate_canonical,
+                "n_dropped_or_unresolved_entities": (
+                    n_embedding_failures + n_canonical_unresolved + n_duplicate_canonical
+                ),
+            }
+        )
+        prov = EmbeddingProvenance.create(
+            model=model,
+            pooling=pooling_strategy,
+            layer=layer,
+            extra=extra,
+        )
+        return EmbeddingResult(
+            matrix=matrix,
+            entity_ids=tuple(canon),
+            entity_type=output_entity_type,
+            id_scheme=scheme,
+            provenance=prov,
+            aliases=aliases or None,
+        )
+
+    @staticmethod
+    def _as_string_list(value: str | Sequence[str], *, arg_name: str) -> list[str]:
+        if isinstance(value, str):
+            return [value]
+        values = [str(x) for x in value]
+        if not values:
+            raise ValueError(f"input normalization: {arg_name} cannot be empty.")
+        return values
+
+    def _resolve_entity_types(
+        self,
+        entity_type: str | Sequence[str] | None,
+        data: Any,
+        whole_genome: bool,
+    ) -> list[str]:
+        if entity_type is None:
+            if whole_genome:
+                return ["gene"]
+            if isinstance(data, Mapping):
+                return [str(k) for k in data.keys()]
+            raise ValueError(
+                "input normalization: entity_type is required unless identifiers "
+                "is a mapping keyed by entity type or whole_genome=True."
+            )
+        values = self._as_string_list(entity_type, arg_name="entity_type")
+        allowed = {"gene", "molecule", "protein", "sequence", "text", "perturbation", "cell"}
+        bad = [x for x in values if x not in allowed]
+        if bad:
+            raise ValueError(
+                f"input normalization: unsupported entity_type(s) {bad}; expected one of {sorted(allowed)}."
+            )
+        if isinstance(data, Mapping):
+            missing = [x for x in values if x not in data]
+            if missing and not whole_genome:
+                raise ValueError(
+                    "input normalization: identifiers mapping is missing "
+                    f"entity_type key(s) {missing}. Available keys: {list(data.keys())}."
+                )
+        return values
+
+    @staticmethod
+    def _id_type_for_entity(
+        id_type: str | Mapping[str, str] | None,
+        entity_type: str,
+    ) -> str | None:
+        if isinstance(id_type, Mapping):
+            return id_type.get(entity_type)
+        return id_type
+
+    @staticmethod
+    def _is_anndata_like(value: Any) -> bool:
+        try:
+            from anndata import AnnData
+        except ImportError:  # pragma: no cover
+            return False
+        return isinstance(value, AnnData)
+
+    def _whole_genome_input(
+        self,
+        *,
+        entity_type: str,
+        organism: str,
+        biotype: str,
+    ):
+        from .io.normalize import NormalizedInput
+
+        if entity_type != "gene":
+            raise ValueError(
+                "input loading: whole_genome=True is currently supported for "
+                f"entity_type='gene' only, got {entity_type!r}."
+            )
+        try:
+            sequences = self.gene_resolver.get_gene_sequences(biotype=biotype)
+        except Exception as exc:
+            raise RuntimeError(
+                "input loading: whole-genome gene request failed while reading "
+                f"the genome annotation resource for organism={organism!r}, "
+                f"biotype={biotype!r}: {type(exc).__name__}: {exc}. "
+                "Install/index the resolver backend (for example pyensembl or "
+                "a local Mart/genome resource) or pass explicit identifiers."
+            ) from exc
+        if not sequences:
+            raise RuntimeError(
+                "input loading: whole-genome gene request could not load any "
+                f"Ensembl gene IDs for organism={organism!r}, biotype={biotype!r}. "
+                "The resolver backend or genome annotation resource is missing "
+                "or empty; install/index the resource or pass explicit identifiers."
+            )
+        return NormalizedInput(
+            identifiers=tuple(str(x) for x in sequences.keys()),
+            input_kind="whole_genome",
+            source=f"whole_genome:{organism}:{biotype}",
+            id_column="ensembl_gene_id",
+            metadata={
+                "whole_genome": True,
+                "organism": organism,
+                "biotype": biotype,
+                "prefetched_sequences": sequences,
+            },
+        )
+
+    @staticmethod
+    def _merge_aliases(
+        left: dict[str, dict[str, str]],
+        right: dict[str, dict[str, str]],
+    ) -> dict[str, dict[str, str]]:
+        out = {k: dict(v) for k, v in left.items()}
+        for key, mapping in right.items():
+            out.setdefault(key, {}).update(mapping)
+        return out
+
+    @staticmethod
+    def _molecule_alias_columns(
+        raw_smiles: list[str],
+        name_alias: dict[str, str],
+    ) -> dict[str, list[str]]:
+        names = [name_alias.get(s) for s in raw_smiles]
+        return {"name": list(names)} if any(names) else {}
+
+    def _embed_raw_inputs(
+        self,
+        identifiers: list[str],
+        *,
+        model: str,
+        pooling_strategy: str,
+        show_progress: bool = False,
+        **kwargs: Any,
+    ) -> tuple[list[str], np.ndarray]:
+        inst = self._get_model(model)
+        raw_iter = identifiers
+        rows: list[np.ndarray] = []
+        kept: list[str] = []
+
+        if hasattr(inst, "embed_batch"):
+            try:
+                batch = inst.embed_batch(
+                    inputs=identifiers,
+                    pooling_strategy=pooling_strategy,
+                    **kwargs,
+                )
+            except TypeError:
+                batch = inst.embed_batch(
+                    input=identifiers,
+                    pooling_strategy=pooling_strategy,
+                    **kwargs,
+                )
+            return self._aligned_matrix(identifiers, list(batch))
+
+        if show_progress:
+            from tqdm.auto import tqdm
+
+            raw_iter = tqdm(identifiers, desc=f"{model} inputs", unit="input")
+        for item in raw_iter:
+            try:
+                rows.append(
+                    np.asarray(
+                        inst.embed(input=item, pooling_strategy=pooling_strategy, **kwargs),
+                        dtype=np.float32,
+                    ).ravel()
+                )
+                kept.append(item)
+            except Exception as exc:  # noqa: BLE001
+                logging.warning("Failed to embed input %r with %s: %s", item, model, exc)
+        if not rows:
+            raise ValueError("embedding generation: no embeddings were produced.")
+        return kept, np.stack(rows, axis=0)
+
+    @staticmethod
+    def _aligned_matrix(
+        ids: list[str],
+        vecs: list[np.ndarray | None],
+    ) -> tuple[list[str], np.ndarray]:
+        """Drop None embeddings; return (kept_ids, stacked matrix)."""
+        kept_ids = [i for i, v in zip(ids, vecs, strict=False) if v is not None]
+        kept = [np.asarray(v, dtype=np.float32).ravel() for v in vecs if v is not None]
+        if not kept:
+            raise ValueError("embedding generation: no embeddings were produced (all inputs failed).")
+        return kept_ids, np.stack(kept, axis=0)
+
+    @staticmethod
+    def _dict_matrix(
+        d: dict,
+    ) -> tuple[list[str], np.ndarray, dict[str, dict[str, str]], str, str]:
+        """Flatten a {id: vector} batch-protein result into (ids, matrix)."""
+        ids: list[str] = []
+        rows: list[np.ndarray] = []
+        aliases: dict[str, dict[str, str]] = {}
+        has_isoforms = any(isinstance(v, dict) for v in d.values())
+
+        for k, v in d.items():
+            if isinstance(v, dict):
+                for iso_id, iso_vec in v.items():
+                    ids.append(str(iso_id))
+                    rows.append(np.asarray(iso_vec, dtype=np.float32).ravel())
+                    aliases.setdefault(str(iso_id), {})["parent_input_id"] = str(k)
+                continue
+            ids.append(str(k))
+            rows.append(np.asarray(v, dtype=np.float32).ravel())
+        if not rows:
+            raise ValueError("embedding generation: no protein embeddings were produced.")
+        if has_isoforms:
+            return ids, np.stack(rows, axis=0), aliases, "protein_isoform", "uniprot_isoform"
+        return ids, np.stack(rows, axis=0), aliases, "protein", "uniprot"
+
+    def _molecule_inputs_to_smiles(
+        self,
+        ids: list[str],
+        id_type: str,
+        extra: dict[str, Any],
+    ) -> tuple[list[str], dict[str, str]]:
+        """Return SMILES to embed + a {smiles: name} alias map.
+
+        For ``id_type="smiles"`` the inputs are passed through. For
+        ``id_type="name"`` each name is resolved to SMILES via the drug
+        resolver chain, recording which API answered (provenance).
+        """
+        if id_type in ("smiles", "canonical_smiles"):
+            return ids, {}
+        if id_type != "name":
+            raise ValueError(
+                f"canonicalization: molecule id_type must be 'smiles', 'canonical_smiles', or 'name', got {id_type!r}."
+            )
+        from .resources.molecule.resolver import DrugResolver
+
+        resolver = DrugResolver()
+        smiles: list[str] = []
+        name_alias: dict[str, str] = {}
+        sources: dict[str, int] = {}
+        for name in ids:
+            res = resolver.name_to_smiles_resolved(name)
+            if res.smiles is None:
+                logging.warning("Dropping drug name %r: could not resolve to SMILES.", name)
+                continue
+            smiles.append(res.smiles)
+            name_alias[res.smiles] = name
+            sources[res.source] = sources.get(res.source, 0) + 1
+        if sources:
+            extra["name_resolution_sources"] = ", ".join(f"{k}:{v}" for k, v in sorted(sources.items()))
+        return smiles, name_alias
 
     def embed_gene(
         self,
@@ -943,6 +1702,7 @@ class BioEmbedder:
         gene_description_format: str | None = None,
         fetch_all_dna: bool = False,
         biotype: str = "protein_coding",
+        prefetched_sequences: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> list[np.ndarray | None]:
         """
@@ -958,11 +1718,15 @@ class BioEmbedder:
         mtype = inst.model_type
 
         # Dictionary to hold pre-fetched sequences (if any)
-        prefetched_data: dict[str, str] = {}
+        prefetched_data: dict[str, str] = dict(prefetched_sequences or {})
+        if prefetched_data and identifiers is None:
+            identifiers = list(prefetched_data.keys())
+            id_type = "ensembl_id"
+            logging.info("Using %d prefetched whole-genome sequences.", len(prefetched_data))
 
         # --- LOGIC CHANGE: Discovery Mode ---
         # If identifiers is None OR we explicitly want to pre-fetch
-        if fetch_all_dna or identifiers is None:
+        if (fetch_all_dna or identifiers is None) and not prefetched_data:
             if self.resolver_backend == "api":
                 logging.info(f"Fetching list of all '{biotype}' genes via API...")
                 # This returns {ensembl_id: dna_sequence} or None
@@ -1056,9 +1820,7 @@ class BioEmbedder:
                                         id_type,
                                         ident,
                                     )
-                                    state["reason"] = (
-                                        f"resolver:unsupported_id_type:{id_type}"
-                                    )
+                                    state["reason"] = f"resolver:unsupported_id_type:{id_type}"
                                 elif self.resolver_backend == "local":
                                     data = self.gene_resolver.get_local_dna_sequence(ident, dna_id)
                                     state["source"] = "gene_resolver_local"
@@ -1079,12 +1841,12 @@ class BioEmbedder:
                         # thin but non-None description (e.g. just "Gene
                         # TP53 (human). TP53: tumor protein p53.").
                         state["attempted"].append("mygene")
-                        fmt = gene_description_format or (
-                            "Gene {identifier} ({organism}). "
-                            "{symbol}: {name}. {summary}"
-                        )
+                        fmt = gene_description_format or ("Gene {identifier} ({organism}). {symbol}: {name}. {summary}")
                         data = self.gene_resolver.get_gene_description(
-                            ident, id_type, organism, format_string=fmt,
+                            ident,
+                            id_type,
+                            organism,
+                            format_string=fmt,
                         )
                         state["source"] = "mygene_description"
 
@@ -1143,11 +1905,13 @@ class BioEmbedder:
         # still OOMs propagates so it can be classified as
         # ContextOverflowError / ModelOOMError below.
         def _do_embed(batch: Sequence[str]) -> list[Any]:
-            return list(inst.embed_batch(
-                inputs=list(batch),
-                pooling_strategy=pooling_strategy,
-                **kwargs,
-            ))
+            return list(
+                inst.embed_batch(
+                    inputs=list(batch),
+                    pooling_strategy=pooling_strategy,
+                    **kwargs,
+                )
+            )
 
         try:
             with time_block(
@@ -1183,11 +1947,16 @@ class BioEmbedder:
             # embeddings" error several layers up. We refuse to do that.
             logging.error(
                 "Batch embed failed for model='%s' (n_inputs=%d): %s",
-                model, len(valid_inputs), e,
+                model,
+                len(valid_inputs),
+                e,
             )
             traceback.print_exc()
             typed = _classify_embedder_exception(
-                e, model_name=model, n_inputs=len(valid_inputs), device=str(self.device),
+                e,
+                model_name=model,
+                n_inputs=len(valid_inputs),
+                device=str(self.device),
             )
             raise typed from e
 
@@ -1202,9 +1971,7 @@ class BioEmbedder:
         # this point, so anything in ``results[i] is None`` here is a
         # resolver miss with state already captured.
         valid_index_set = set(valid_indices)
-        for i, (ident, state) in enumerate(
-            zip(identifiers, per_input_state, strict=False)
-        ):
+        for i, (ident, state) in enumerate(zip(identifiers, per_input_state, strict=False)):
             if i in valid_index_set and results[i] is not None:
                 report.record(
                     ident,
@@ -1619,15 +2386,63 @@ class BioEmbedder:
 
         return results
 
+    @staticmethod
+    def _singlecell_preprocessing_warnings(
+        adata: Any,
+        *,
+        models: Sequence[str],
+        resolved_preprocessing: str,
+        pca_use_hvg: bool,
+    ) -> dict[str, list[str]]:
+        """Return actionable warnings about model/input preprocessing fit."""
+        from .models.singlecell_models import singlecell_info
+
+        warnings_by_model: dict[str, list[str]] = {}
+        for model_key in models:
+            card = singlecell_info(model_key)
+            warnings: list[str] = []
+            if card.input_layer == "log_normalized" and "log_normalized" not in adata.layers:
+                warnings.append(
+                    "Model consumes .layers['log_normalized'], but that layer "
+                    "is absent. Run with preprocessing='auto' or "
+                    "preprocessing='standard', or provide that layer yourself."
+                )
+            if card.input_layer == "counts" and "counts" not in adata.layers:
+                warnings.append(
+                    "Model is configured to consume raw counts from "
+                    ".layers['counts'], but that layer is absent. The wrapper "
+                    "may fall back to .X; use preprocessing='auto' or "
+                    "preprocessing='raw' to materialize the counts layer."
+                )
+            if card.uses_hvg and pca_use_hvg and "highly_variable" not in adata.var.columns:
+                warnings.append(
+                    "Model can restrict to highly-variable genes, but "
+                    "adata.var['highly_variable'] is absent. Use "
+                    "preprocessing='auto'/'standard' with select_hvg=True, "
+                    "or pass pca_use_hvg=False to use all genes."
+                )
+            if warnings:
+                warnings_by_model[model_key] = warnings
+                for message in warnings:
+                    logging.warning(
+                        "Single-cell preprocessing warning for %s (resolved=%s): %s",
+                        model_key,
+                        resolved_preprocessing,
+                        message,
+                    )
+        return warnings_by_model
+
     def embed_cells(
         self,
         adata,  # anndata.AnnData
         models: list[str] | str = "scgpt",
-        preprocessing: Literal["raw", "standard", "none"] = "standard",
+        preprocessing: Literal["auto", "raw", "standard", "none"] = "auto",
         *,
         # Preprocessing params (forwarded to preprocess_counts)
         target_sum: float | None = 1e4,
         n_top_genes: int = 2000,
+        select_hvg: bool = True,
+        hvg_flavor: Literal["auto", "seurat", "seurat_v3", "cell_ranger"] = "auto",
         log_transform: bool = True,
         scale: bool = False,
         max_value: float | None = 10.0,
@@ -1668,7 +2483,11 @@ class BioEmbedder:
             any key from :func:`~embpy.models.singlecell_models.list_singlecell_models`,
             e.g. ``"scgpt"``, ``"geneformer_v2_12L"``, ``"pca"``,
             ``"scvi"``, ``"scanvi"``, ``"totalvi"``.
-        preprocessing : {"raw", "standard", "none"}
+        preprocessing : {"auto", "raw", "standard", "none"}
+            ``"auto"`` chooses a model-aware default from the single-cell
+            registry: raw-count models get QC/counts-layer preparation, while
+            models that consume processed expression (for example PCA) get the
+            standard pipeline.
             ``"standard"`` runs log-normalize + HVG.
             ``"raw"`` applies only QC filtering.
             ``"none"`` skips preprocessing entirely.
@@ -1676,6 +2495,11 @@ class BioEmbedder:
             Target total counts for normalization (standard pipeline).
         n_top_genes
             Number of highly variable genes (standard pipeline).
+        select_hvg
+            Whether to compute highly variable genes in the standard pipeline.
+        hvg_flavor
+            Highly-variable-gene method. ``"auto"`` chooses a scanpy flavor
+            compatible with ``log_transform``.
         log_transform
             Whether to log1p-transform (standard pipeline).
         scale
@@ -1729,8 +2553,9 @@ class BioEmbedder:
         from .models.singlecell_models import (
             PCAEmbedding,
             ScVIToolsWrapper,
-            get_singlecell_wrapper,
             list_singlecell_models,
+            resolve_singlecell_preprocessing,
+            singlecell_info,
         )
         from .pp.sc_preprocessing import preprocess_counts
 
@@ -1742,29 +2567,70 @@ class BioEmbedder:
             if m not in available:
                 raise ValueError(f"Unknown single-cell model '{m}'. Available: {available}")
 
+        resolved_preprocessing, preprocessing_plan = resolve_singlecell_preprocessing(
+            models,
+            preprocessing,
+        )
+
         if copy:
             adata = adata.copy()
 
         # ---- Preprocessing -----------------------------------------------
-        if preprocessing != "none":
+        preprocessing_options = {
+            "target_sum": target_sum,
+            "n_top_genes": n_top_genes,
+            "select_hvg": select_hvg,
+            "hvg_flavor": hvg_flavor,
+            "log_transform": log_transform,
+            "scale": scale,
+            "max_value": max_value,
+            "min_genes": min_genes,
+            "min_cells": min_cells,
+            "max_pct_mito": max_pct_mito,
+            "backend": backend,
+        }
+        if resolved_preprocessing != "none":
             adata = preprocess_counts(
                 adata,
-                pipeline=preprocessing,
+                pipeline=resolved_preprocessing,
                 min_genes=min_genes,
                 min_cells=min_cells,
                 max_pct_mito=max_pct_mito,
                 target_sum=target_sum,
                 n_top_genes=n_top_genes,
+                select_hvg=select_hvg,
+                hvg_flavor=hvg_flavor,
                 log_transform=log_transform,
                 scale=scale,
                 max_value=max_value,
                 copy=False,
                 backend=backend,
             )
+        else:
+            logging.warning(
+                "Skipping single-cell preprocessing because preprocessing='none'. "
+                "Models that expect .layers['log_normalized'], .layers['counts'], "
+                "or adata.var['highly_variable'] may fall back to .X or run "
+                "without HVG restriction."
+            )
+
+        preprocessing_warnings = self._singlecell_preprocessing_warnings(
+            adata,
+            models=models,
+            resolved_preprocessing=resolved_preprocessing,
+            pca_use_hvg=pca_use_hvg,
+        )
+        preprocessing_metadata: dict[str, Any] = {
+            **preprocessing_plan,
+            "options": preprocessing_options,
+            "warnings": preprocessing_warnings,
+        }
 
         # ---- Embed with each model ---------------------------------------
         device_str = str(self.device)
-        metadata: dict[str, dict[str, Any]] = {}
+        metadata: dict[str, dict[str, Any]] = {
+            "__preprocessing__": preprocessing_metadata,
+        }
 
         for model_key in models:
             obsm_key = f"{obsm_prefix}{model_key}"
@@ -1820,9 +2686,7 @@ class BioEmbedder:
                     # to embed_cells -- e.g. chunked inference over a large
                     # AnnData -- reuse the already-loaded torch model
                     # instead of re-instantiating it on every call.
-                    wrapper = self._get_or_load_singlecell_wrapper(
-                        model_key, batch_size, device_str
-                    )
+                    wrapper = self._get_or_load_singlecell_wrapper(model_key, batch_size, device_str)
                     # Auto-adapt var_names to the model's vocabulary.
                     # This is the difference between a silent zero-match
                     # failure (e.g. passing Ensembl IDs to scGPT) and a
@@ -1838,11 +2702,19 @@ class BioEmbedder:
                     embs = wrapper.embed_cells(adata_for_model)
 
                 adata.obsm[obsm_key] = embs
+                card = singlecell_info(model_key)
                 metadata[model_key] = {
                     "obsm_key": obsm_key,
                     "embedding_dim": embs.shape[1],
                     "n_cells": embs.shape[0],
                     "wrapper_class": type(wrapper).__name__,
+                    "preprocessing": preprocessing_metadata,
+                    "model_requirements": {
+                        "default_preprocessing": card.default_preprocessing,
+                        "input_layer": card.input_layer,
+                        "uses_hvg": card.uses_hvg,
+                        "vocab_type": card.vocab_type,
+                    },
                 }
                 logging.info(
                     "  -> stored in .obsm['%s'], shape %s",
@@ -1852,7 +2724,10 @@ class BioEmbedder:
 
             except Exception as e:  # noqa: BLE001
                 logging.error("Failed to embed with '%s': %s", model_key, e)
-                metadata[model_key] = {"error": str(e)}
+                metadata[model_key] = {
+                    "error": str(e),
+                    "preprocessing": preprocessing_metadata,
+                }
 
         adata.uns["embpy_cell_embeddings"] = metadata
         logging.info(
@@ -1931,10 +2806,7 @@ class BioEmbedder:
 
         if latent is None:
             if adata is None:
-                raise ValueError(
-                    "decode_cells needs either `latent` or `adata` "
-                    "(+ optional `obsm_key`)."
-                )
+                raise ValueError("decode_cells needs either `latent` or `adata` (+ optional `obsm_key`).")
             key = obsm_key or f"X_{model}"
             if key not in adata.obsm:
                 raise KeyError(
@@ -1970,10 +2842,8 @@ class BioEmbedder:
         if write_layer is not None and adata is not None:
             if decoded.shape[1] != adata.n_vars:
                 raise ValueError(
-                    "Decoded matrix has %d genes but adata has %d "
-                    "var_names; cannot write to adata.layers." % (
-                        decoded.shape[1], adata.n_vars,
-                    )
+                    f"Decoded matrix has {decoded.shape[1]} genes but adata has "
+                    f"{adata.n_vars} var_names; cannot write to adata.layers."
                 )
             adata.layers[write_layer] = decoded
 
@@ -2015,10 +2885,7 @@ class BioEmbedder:
 
         card = singlecell_info(model)
         if not card.supports_generation:
-            raise ValueError(
-                f"Model '{model}' does not expose an in-context "
-                f"generation head. Supported: stack."
-            )
+            raise ValueError(f"Model '{model}' does not expose an in-context generation head. Supported: stack.")
 
         if wrapper is None:
             device_str = str(self.device)
@@ -2039,9 +2906,11 @@ class BioEmbedder:
         *,
         # --- Cell-level embeddings (from expression) ---
         cell_models: list[str] | str | None = None,
-        preprocessing: Literal["raw", "standard", "none"] = "standard",
+        preprocessing: Literal["auto", "raw", "standard", "none"] = "auto",
         target_sum: float | None = 1e4,
         n_top_genes: int = 2000,
+        select_hvg: bool = True,
+        hvg_flavor: Literal["auto", "seurat", "seurat_v3", "cell_ranger"] = "auto",
         log_transform: bool = True,
         scale: bool = False,
         max_value: float | None = 10.0,
@@ -2095,9 +2964,15 @@ class BioEmbedder:
             ``None`` skips cell embedding.
         preprocessing
             Preprocessing pipeline for cell models.
-        target_sum, n_top_genes, log_transform, scale, max_value,
+        target_sum, n_top_genes, log_transform, scale, max_value
+            Normalization and scaling options forwarded to
+            :func:`~embpy.pp.preprocess_counts`.
+        select_hvg, hvg_flavor
+            Highly-variable-gene options forwarded to
+            :func:`~embpy.pp.preprocess_counts`.
         min_genes, min_cells, max_pct_mito
-            Forwarded to :func:`~embpy.pp.preprocess_counts`.
+            QC filtering options forwarded to
+            :func:`~embpy.pp.preprocess_counts`.
         n_pca_components, pca_use_hvg
             PCA-specific parameters.
         n_latent, n_layers_scvi, n_hidden_scvi, max_epochs,
@@ -2137,8 +3012,8 @@ class BioEmbedder:
             - ``.layers["log_normalized"]`` = processed expression
               (standard pipeline)
             - ``.obsm["{prefix}{cell_model}"]`` = cell embeddings
-            - ``.obsm["{prefix}{pert_model}"]`` = perturbation embeddings
-              (mapped per cell)
+            - ``.uns["perturbations"]["{prefix}{pert_model}"]``
+              = perturbation embeddings, one row per unique perturbation
             - ``.uns["embpy_embeddings"]`` = metadata dict
 
         Examples
@@ -2152,9 +3027,11 @@ class BioEmbedder:
         ... )
         >>> result.obsm["X_scgpt"].shape  # cell embeddings
         (5000, 512)
-        >>> result.obsm["X_esm2_650M"].shape  # perturbation embeddings
-        (5000, 1280)
+        >>> result.uns["perturbations"]["X_esm2_650M"]["matrix"].shape
+        (n_perturbations, 1280)
         """
+        from .io.exporters import to_anndata
+        from .io.result import EmbeddingProvenance, EmbeddingResult
         from .resources.gene_resolver import detect_identifier_type
 
         if copy:
@@ -2172,6 +3049,8 @@ class BioEmbedder:
                 preprocessing=preprocessing,
                 target_sum=target_sum,
                 n_top_genes=n_top_genes,
+                select_hvg=select_hvg,
+                hvg_flavor=hvg_flavor,
                 log_transform=log_transform,
                 scale=scale,
                 max_value=max_value,
@@ -2286,39 +3165,62 @@ class BioEmbedder:
                         }
                         continue
 
-                    # Map embeddings back to cells
-                    n_cells = adata.n_obs
-                    cell_matrix = np.zeros(
-                        (n_cells, emb_dim),
-                        dtype=np.float32,
-                    )
-                    n_mapped = 0
-                    for i, pert in enumerate(pert_ids):
-                        emb = pert_embs.get(pert)
-                        if emb is not None:
-                            cell_matrix[i] = emb
-                            n_mapped += 1
-
-                    adata.obsm[obsm_key] = cell_matrix
                     n_ok = sum(1 for v in pert_embs.values() if v is not None)
+                    successful_perts = [p for p in unique_perts if pert_embs.get(p) is not None]
+                    entity_matrix = np.stack(
+                        [np.asarray(pert_embs[p], dtype=np.float32).ravel() for p in successful_perts],
+                        axis=0,
+                    )
+                    aliases = {
+                        str(p): {
+                            "perturbation_label": str(p),
+                            "input_id_type": str(id_types.get(p, perturbation_type)),
+                        }
+                        for p in successful_perts
+                    }
+                    result = EmbeddingResult(
+                        matrix=entity_matrix,
+                        entity_ids=tuple(str(p) for p in successful_perts),
+                        entity_type="perturbation",
+                        id_scheme="perturbation_label",
+                        provenance=EmbeddingProvenance.create(
+                            model=model_key,
+                            pooling=pooling_strategy,
+                            extra={
+                                "entity_type": "perturbation",
+                                "input_kind": "anndata_obs_column",
+                                "input_source": "AnnData.obs",
+                                "input_id_column": perturbation_column,
+                                "perturbation_column": perturbation_column,
+                                "perturbation_type": perturbation_type,
+                                "organism": perturbation_organism,
+                                "n_requested_inputs": len(unique_perts),
+                                "n_successfully_embedded_entities": n_ok,
+                                "n_embedding_failures": len(unique_perts) - n_ok,
+                                "n_cells": int(adata.n_obs),
+                            },
+                        ),
+                        aliases=aliases,
+                    )
+                    to_anndata(result, target=adata, attach_to="uns", key=obsm_key)
+
                     metadata[model_key] = {
-                        "obsm_key": obsm_key,
+                        "uns_key": obsm_key,
+                        "storage": "uns",
                         "embedding_dim": emb_dim,
-                        "n_cells": n_cells,
+                        "n_cells": int(adata.n_obs),
                         "n_perturbations_total": len(unique_perts),
                         "n_perturbations_embedded": n_ok,
-                        "n_cells_mapped": n_mapped,
                         "type": "perturbation",
                         "perturbation_column": perturbation_column,
                     }
                     logging.info(
-                        "  -> stored in .obsm['%s'], shape %s (%d/%d perturbations embedded, %d/%d cells mapped)",
+                        "  -> stored in .uns perturbations[%r], shape=(%d, %d) (%d/%d perturbations embedded)",
                         obsm_key,
-                        cell_matrix.shape,
+                        entity_matrix.shape[0],
+                        entity_matrix.shape[1],
                         n_ok,
                         len(unique_perts),
-                        n_mapped,
-                        n_cells,
                     )
 
                 except Exception as e:  # noqa: BLE001
@@ -2675,6 +3577,13 @@ class BioEmbedder:
 
         n_total = len(perturbations)
         t0 = time.time()
+        hpa_catalog = None
+        if dataset == "hpa":
+            hpa_catalog = self._build_hpa_batch_catalog(
+                perturbations,
+                local_dir=local_dir,
+                verbose=verbose,
+            )
 
         # ── Stage 1: resolve images for ALL perturbations in parallel ──
         if verbose:
@@ -2702,11 +3611,12 @@ class BioEmbedder:
                         local_dir,
                         max_images,
                         ctx,
+                        hpa_catalog=hpa_catalog,
                     )
                 else:
                     raise ValueError(f"Unknown dataset: {dataset!r}")
                 return pert, imgs, ctx.final_source, None
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 return pert, [], ctx.final_source, exc
 
         per_gene_images: dict[str, list[np.ndarray]] = {}
@@ -2857,6 +3767,77 @@ class BioEmbedder:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _hpa_shared_cache_root(local_dir: str | None) -> pathlib.Path | None:
+        """Return a persistent shared HPA cache root when one is configured."""
+        if os.environ.get("EMBPY_HPA_CACHE_DIR"):
+            return pathlib.Path(os.environ["EMBPY_HPA_CACHE_DIR"])
+        if local_dir is None:
+            return None
+        local_path = pathlib.Path(local_dir)
+        if local_path.name in {"_hpa", "hpa"}:
+            return local_path
+        return local_path.parent / "_hpa"
+
+    @staticmethod
+    def _build_hpa_batch_catalog(
+        perturbations: Sequence[str],
+        *,
+        local_dir: str | None,
+        verbose: bool,
+    ):
+        """Build or load one HPA XML catalog slice for a batch of genes."""
+        genes = sorted({str(p).strip().upper() for p in perturbations if str(p).strip()})
+        if not genes:
+            return None
+
+        cache_root = BioEmbedder._hpa_shared_cache_root(local_dir)
+        xml_source = None
+        cache_path = None
+        if cache_root is not None:
+            cache_root.mkdir(parents=True, exist_ok=True)
+            digest = sha1("\n".join(genes).encode("utf-8")).hexdigest()[:16]
+            xml_source = cache_root / "proteinatlas.xml.gz"
+            cache_path = cache_root / f"subcellular_catalog_{digest}.csv"
+
+        from .resources.hpa_images import build_hpa_subcellular_catalog
+
+        if verbose:
+            cache_msg = f" (cache: {cache_path})" if cache_path is not None else ""
+            print(f"[embpy] Building/loading one HPA XML catalog for {len(genes)} genes{cache_msg}...")
+        try:
+            return build_hpa_subcellular_catalog(
+                xml_source=xml_source,
+                cache_path=cache_path,
+                genes=genes,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if verbose:
+                print(
+                    f"[embpy] WARNING: failed to build shared HPA XML catalog; falling back to per-gene lookup ({exc})"
+                )
+            return None
+
+    @staticmethod
+    def _hpa_catalog_rows_to_antibodies(catalog, perturbation: str) -> list[dict[str, Any]]:
+        """Convert pre-filtered HPA catalog rows into fetchable image records."""
+        if catalog is None or len(catalog) == 0:
+            return []
+        gene_upper = str(perturbation).upper()
+        rows = catalog[catalog["gene"].astype(str).str.upper() == gene_upper]
+        antibodies: list[dict[str, Any]] = []
+        for _, row in rows.iterrows():
+            antibodies.append(
+                {
+                    "id": row["antibody"],
+                    "_plate": row["plate"],
+                    "_position": row["position"],
+                    "_sample": row["sample"],
+                    "_url_prefix": row.get("image_url_prefix", ""),
+                }
+            )
+        return antibodies
+
+    @staticmethod
     def _resolve_jump_images(
         perturbation: str,
         perturbation_type: str,
@@ -2926,7 +3907,7 @@ class BioEmbedder:
                 subcell_4ch = cell_painting_to_subcell(fov)
                 canvas = prepare_subcell_canvas(subcell_4ch, nm_per_pixel=325.0)
                 images.append(canvas)
-            except Exception:
+            except Exception:  # noqa: BLE001
                 failed_count += 1
         if failed_count > 0 and resolution_ctx:
             resolution_ctx.add_step(f"{failed_count} image(s) failed to load")
@@ -2938,6 +3919,7 @@ class BioEmbedder:
         local_dir: str | None,
         max_images: int | None,
         resolution_ctx: _ResolutionContext | None = None,
+        hpa_catalog=None,
     ) -> list[np.ndarray]:
         """Resolve an HPA gene to SubCell-ready image arrays.
 
@@ -2978,7 +3960,7 @@ class BioEmbedder:
                         try:
                             img = load_hpa_if_image(prefix=str(gene_dir / prefix))
                             images.append(img)
-                        except Exception:
+                        except Exception:  # noqa: BLE001
                             failed_local += 1
                     if max_images is not None:
                         images = images[:max_images]
@@ -2990,39 +3972,31 @@ class BioEmbedder:
                         return images
 
         # ── Fetch from CDN ──────────────────────────────────────────
-        if resolution_ctx:
-            resolution_ctx.add_step("HPA API lookup")
-
-        antibodies, gene_source = get_hpa_antibodies_quiet(perturbation)
-        used_xml_fallback = False
-
+        gene_source = None
+        if hpa_catalog is not None:
+            if resolution_ctx:
+                resolution_ctx.add_step("HPA shared XML catalog")
+            antibodies = BioEmbedder._hpa_catalog_rows_to_antibodies(hpa_catalog, perturbation)
+            if antibodies:
+                gene_source = "HPA shared XML catalog"
+            else:
+                return []
+        else:
+            if resolution_ctx:
+                resolution_ctx.add_step("HPA API lookup")
+            antibodies, gene_source = get_hpa_antibodies_quiet(perturbation)
         if not antibodies:
             if resolution_ctx:
-                resolution_ctx.add_step("HPA XML catalog fallback")
+                resolution_ctx.add_step("HPA per-gene XML catalog fallback")
             try:
                 from .resources.hpa_images import build_hpa_subcellular_catalog
 
                 catalog = build_hpa_subcellular_catalog(genes=[perturbation])
                 if len(catalog) == 0:
                     return []
-                antibodies = []
-                for _, row in catalog.iterrows():
-                    antibodies.append(
-                        {
-                            "id": row["antibody"],
-                            "_plate": row["plate"],
-                            "_position": row["position"],
-                            "_sample": row["sample"],
-                            # Preserve full URL prefix from the XML so we
-                            # can keep cell-line subdirectories like /U-251/
-                            # that the antibody/plate/position/sample alone
-                            # would not encode.
-                            "_url_prefix": row.get("image_url_prefix", ""),
-                        }
-                    )
-                used_xml_fallback = True
+                antibodies = BioEmbedder._hpa_catalog_rows_to_antibodies(catalog, perturbation)
                 gene_source = "HPA XML catalog"
-            except Exception:
+            except Exception:  # noqa: BLE001
                 return []
 
         # Cap the antibody list *before* downloading so we only fetch
@@ -3068,7 +4042,7 @@ class BioEmbedder:
                         sample,
                     )
                 return img
-            except Exception:
+            except Exception:  # noqa: BLE001
                 failed_fetch[0] += 1
                 return None
 
@@ -3635,7 +4609,7 @@ def _resolve_compound_jump_fallback(
             if rows:
                 return _ret(rows, "DrugResolver SMILES")
 
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return _ret([], None)
@@ -3691,10 +4665,10 @@ def _resolve_gene_jump_fallback(
                     )
                     if rows:
                         return _ret(rows, f"mygene alias '{alt}'")
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
 
-    except Exception:
+    except Exception:  # noqa: BLE001
         pass
 
     return _ret([], None)

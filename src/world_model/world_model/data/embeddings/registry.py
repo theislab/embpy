@@ -7,22 +7,18 @@ new backend is a four-line patch here plus a new file under
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from embpy.resources.gene.control import ControlPolicy
 
-from .bio_embedder import BioEmbedderProvider
-from .precomputed import PrecomputedProvider
+from .anndata_obsm import AnnDataObsmProvider
 from .provider import ActionEmbeddingProvider
 
 if TYPE_CHECKING:
-    from ...configs import ActionEmbeddingConfig, DataConfig
-
-logger = logging.getLogger(__name__)
+    from world_model.configs import ActionEmbeddingConfig, DataConfig
 
 
-def _policy_from_cfg(cfg: "ActionEmbeddingConfig") -> ControlPolicy:
+def _policy_from_cfg(cfg: ActionEmbeddingConfig) -> ControlPolicy:
     """Build a :class:`ControlPolicy` from the YAML knobs.
 
     All three knobs are optional; defaults are the curated regex set.
@@ -35,69 +31,75 @@ def _policy_from_cfg(cfg: "ActionEmbeddingConfig") -> ControlPolicy:
     if patterns_override is None or len(patterns_override) == 0:
         return ControlPolicy.from_iterable(extras, strict=strict)
     return ControlPolicy.from_iterable(
-        extras, patterns=tuple(patterns_override), strict=strict,
+        extras,
+        patterns=tuple(patterns_override),
+        strict=strict,
     )
 
 
 def build_provider(
-    cfg: "ActionEmbeddingConfig",
+    cfg: ActionEmbeddingConfig,
     *,
-    data_cfg: "DataConfig | None" = None,
+    data_cfg: DataConfig | None = None,
 ) -> ActionEmbeddingProvider:
     """Build an :class:`ActionEmbeddingProvider` from config.
 
-    The precomputed-fallback rule lives here: when
-    ``cfg.source == "precomputed"`` and ``cfg.path`` is empty, we fall
-    back to ``data_cfg.gene_embedding_path`` (the legacy single field).
-    A one-time ``warning`` log line documents the deprecation.
+    Training has a single input contract: perturbation embeddings must
+    already live in ``adata.obsm[cfg.obsm_key]`` in the same AnnData
+    that provides the state embeddings. CSV / NPZ tables and BioEmbedder
+    models remain available only as offline attachment sources in
+    ``world_model.scripts.embed_perturbations``.
     """
     src = cfg.source
-    if src == "precomputed":
-        path = cfg.path
-        if not path and data_cfg is not None and data_cfg.gene_embedding_path:
-            logger.warning(
-                "ActionEmbeddingConfig.path is empty; falling back to "
-                "DataConfig.gene_embedding_path=%s. This legacy path is "
-                "supported but deprecated -- migrate to the explicit "
-                "action_embedding: block in your YAML.",
-                data_cfg.gene_embedding_path,
-            )
-            path = data_cfg.gene_embedding_path
-        if not path:
+    if src == "anndata_obsm":
+        if cfg.h5ad_path:
+            data_path = data_cfg.h5ad_path if data_cfg is not None else ""
+            if not data_path or str(cfg.h5ad_path) != str(data_path):
+                raise ValueError(
+                    "action_embedding.h5ad_path overrides are no longer supported. "
+                    "Training reads action embeddings from data.h5ad_path so state "
+                    "and action matrices are indexed against the same AnnData."
+                )
+        h5ad_path = data_cfg.h5ad_path if data_cfg is not None else ""
+        perturbation_key = cfg.perturbation_key or (
+            data_cfg.perturbation_key if data_cfg is not None else "perturbation"
+        )
+        if not h5ad_path:
             raise ValueError(
-                "Precomputed action embeddings require either "
-                "action_embedding.path or data.gene_embedding_path to be set."
+                "action_embedding.source='anndata_obsm' requires action_embedding.h5ad_path "
+                "or data.h5ad_path."
             )
-        return PrecomputedProvider(
-            path=path,
+        if not cfg.obsm_key:
+            raise ValueError(
+                "action_embedding.source='anndata_obsm' requires action_embedding.obsm_key."
+            )
+        return AnnDataObsmProvider(
+            h5ad_path=h5ad_path,
+            obsm_key=cfg.obsm_key,
+            perturbation_key=perturbation_key,
             control_policy=_policy_from_cfg(cfg),
-            control_sentinel_seed=int(
-                getattr(cfg, "control_sentinel_seed", 0) or 0
-            ),
+            control_sentinel_seed=int(getattr(cfg, "control_sentinel_seed", 0) or 0),
         )
 
-    if src == "bio_embedder":
-        return BioEmbedderProvider(
-            model_name=cfg.model_name,
-            organism=cfg.organism,
-            resolver_backend=cfg.resolver_backend,
-            mart_file=cfg.mart_file,
-            chromosome_folder=cfg.chromosome_folder,
-            id_type=cfg.id_type,
-            region=cfg.region,
-            pooling_strategy=cfg.pooling_strategy,
-            device=cfg.device,
-            cache_dir=cfg.cache_dir or None,
-            extra_kwargs=dict(cfg.extra_kwargs or {}),
-            control_policy=_policy_from_cfg(cfg),
-            control_sentinel_seed=int(
-                getattr(cfg, "control_sentinel_seed", 0) or 0
-            ),
+    if src == "store":
+        raise ValueError(
+            "action_embedding.source='store' / .emstore has been removed from the "
+            "world-model training path. Attach perturbation embeddings to AnnData "
+            "with `python -m world_model.scripts.embed_perturbations --output-h5ad ...` "
+            "and use action_embedding.source='anndata_obsm'."
+        )
+
+    if src in {"precomputed", "bio_embedder"}:
+        raise ValueError(
+            f"action_embedding.source={src!r} is not a training input anymore. "
+            "Attach embeddings to AnnData first with "
+            "`python -m world_model.scripts.embed_perturbations --output-h5ad ...` "
+            "and train with action_embedding.source='anndata_obsm'."
         )
 
     raise ValueError(
-        f"Unknown action_embedding.source={src!r}. "
-        f"Supported: 'precomputed', 'bio_embedder'."
+        f"Unknown action_embedding.source={src!r}. Supported: "
+        "'anndata_obsm'."
     )
 
 

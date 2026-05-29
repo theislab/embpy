@@ -1,13 +1,13 @@
-"""End-to-end training entry-point.
+r"""End-to-end single-dataset training entry-point.
 
-Handles both ``mode: single`` (one dataset, train + test split, single
-fit) and ``mode: transfer`` (pretrain on Nadig, fine-tune on a fraction
-of Replogle, evaluate on the rest of Replogle).
+The world model trains within one perturbation dataset at a time. State
+and action embeddings must already be attached to the configured AnnData
+under ``data.state_obsm_key`` and ``action_embedding.obsm_key``.
 
 Usage:
 
     python -m world_model.scripts.train \\
-        --config src/world_model/world_model/configs/experiments/single_replogle.yaml \\
+        --config src/world_model/world_model/configs/datasets/replogle.yaml \\
         encoder.d_model=256 dynamics.n_layers=8
 
 Positional arguments after ``--config`` are treated as dotted CLI
@@ -17,7 +17,6 @@ overrides applied on top of the YAML.
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import logging
 from pathlib import Path
 from typing import Any
@@ -26,17 +25,16 @@ import numpy as np
 import torch
 
 from world_model.configs import (
-    ActionEmbeddingConfig,
-    DataConfig,
     WorldModelConfig,
     apply_cli_overrides,
     load_yaml_config,
+    validate_world_model_data_sources,
 )
 from world_model.data import build_dataloaders
 from world_model.data.inspect import dump_sample_contexts
-from world_model.data.splits import subsample_train_perturbations
 from world_model.evaluation import run_evaluation
 from world_model.evaluation.plots import (
+    per_perturbation_tables_to_long,
     plot_baseline_comparison,
     plot_deg_overlap_bar,
     plot_per_perturbation_metric,
@@ -44,13 +42,20 @@ from world_model.evaluation.plots import (
 )
 from world_model.evaluation.report import write_report
 from world_model.models.world_model import build_world_model
-from world_model.training import WorldModelTrainer, apply_encoder_swap
+from world_model.training import WorldModelTrainer
 from world_model.utils import seed_everything, setup_logging
+from world_model.utils.run_identity import (
+    append_run_suffix,
+    has_run_suffix,
+    make_run_suffix,
+    strip_run_suffix,
+)
 
 logger = logging.getLogger(__name__)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Train the perturbation world model.")
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument(
@@ -72,12 +77,14 @@ def _build_model(
     n_genes: int,
     gene_table: np.ndarray,
     *,
+    query_gene_table: np.ndarray | None = None,
     state_backbone_provider: Any = None,
     state_backbone_embedding_dim: int | None = None,
 ):
     return build_world_model(
         n_genes=n_genes,
         gene_embedding_table=torch.from_numpy(gene_table),
+        query_gene_embedding_table=(torch.from_numpy(query_gene_table) if query_gene_table is not None else None),
         encoder_kind=cfg.encoder.kind,
         d_model=cfg.encoder.d_model,
         stack_size=cfg.data.stack_size,
@@ -97,53 +104,13 @@ def _build_model(
     )
 
 
-def _freeze_components(model, *, encoder: bool, dynamics: bool) -> None:
-    if encoder:
-        for p in model.encoder.parameters():
-            p.requires_grad_(False)
-        logger.info("Encoder frozen for fine-tuning.")
-    if dynamics:
-        for p in model.dynamics.parameters():
-            p.requires_grad_(False)
-        logger.info("Dynamics frozen for fine-tuning.")
-
-
-def _pretrain_action_cfg(cfg: WorldModelConfig) -> ActionEmbeddingConfig:
-    """Action-embedding config for the pretrain phase.
-
-    Resolution rule:
-    1. If ``transfer.pretrain_action_encoder`` is set, use it verbatim.
-    2. Else fall back to ``cfg.action_embedding`` and, for the legacy
-       ``precomputed`` route, honour ``transfer.pretrain_gene_embedding_path``
-       so existing YAMLs keep working.
-    """
-    if cfg.transfer.pretrain_action_encoder is not None:
-        return dataclasses.replace(cfg.transfer.pretrain_action_encoder)
-    pre_cfg = dataclasses.replace(cfg.action_embedding)
-    if pre_cfg.source == "precomputed" and cfg.transfer.pretrain_gene_embedding_path:
-        pre_cfg.path = cfg.transfer.pretrain_gene_embedding_path
-    return pre_cfg
-
-
-def _finetune_action_cfg(cfg: WorldModelConfig) -> ActionEmbeddingConfig:
-    """Action-embedding config for the fine-tune phase.
-
-    Defaults to the run's top-level ``action_embedding`` (Phase-1/2
-    behaviour). When ``transfer.finetune_action_encoder`` is set, that
-    block wins -- this is how the leave-one-encoder-out runner asks for
-    Y on the fine-tune side while the run's nominal encoder is X.
-    """
-    if cfg.transfer.finetune_action_encoder is not None:
-        return dataclasses.replace(cfg.transfer.finetune_action_encoder)
-    return dataclasses.replace(cfg.action_embedding)
-
-
 def _run_single(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object]:
     """Single-dataset train. Returns (model, artifacts)."""
     artifacts = build_dataloaders(
         cfg.data,
         split_cfg=cfg.split,
         action_cfg=cfg.action_embedding,
+        query_action_cfg=cfg.query_action_embedding,
         state_backbone_cfg=cfg.state_backbone,
         seed=cfg.seed,
         output_dir=output_dir,
@@ -167,14 +134,23 @@ def _run_single(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object
         else len(artifacts.gene_symbols)
     )
     model = _build_model(
-        cfg, n_genes, artifacts.gene_table,
+        cfg,
+        n_genes,
+        artifacts.gene_table,
+        query_gene_table=artifacts.query_gene_table,
         state_backbone_provider=artifacts.state_backbone,
         state_backbone_embedding_dim=artifacts.state_backbone_embedding_dim,
     )
+    query_action_dim = (
+        artifacts.query_gene_table.shape[1] if artifacts.query_gene_table is not None else artifacts.gene_table.shape[1]
+    )
     logger.info(
-        "Model: %d trainable params (action_dim=%d, decoder_dim=%d, hvgs=%d)",
-        model.num_parameters(), artifacts.gene_table.shape[1],
-        n_genes, len(artifacts.gene_symbols),
+        "Model: %d trainable params (support_action_dim=%d, query_action_dim=%d, decoder_dim=%d, hvgs=%d)",
+        model.num_parameters(),
+        artifacts.gene_table.shape[1],
+        query_action_dim,
+        n_genes,
+        len(artifacts.gene_symbols),
     )
 
     trainer = WorldModelTrainer(
@@ -191,177 +167,15 @@ def _run_single(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object
     return model, artifacts
 
 
-def _run_transfer(cfg: WorldModelConfig, output_dir: Path) -> tuple[object, object]:
-    """Pretrain on Nadig, fine-tune on a fraction of Replogle."""
-    pretrain_data = DataConfig(
-        dataset=cfg.transfer.pretrain_dataset,
-        h5ad_path=cfg.transfer.pretrain_h5ad_path,
-        gene_embedding_path=cfg.transfer.pretrain_gene_embedding_path,
-        perturbation_key=cfg.data.perturbation_key,
-        control_label=cfg.data.control_label,
-        cell_type_key=None,
-        n_top_genes=cfg.data.n_top_genes,
-        log_normalize=cfg.data.log_normalize,
-        stack_size=cfg.data.stack_size,
-        sequence_length=cfg.data.sequence_length,
-        n_pert=cfg.data.n_pert,
-        batch_size=cfg.data.batch_size,
-        val_fraction=cfg.data.val_fraction,
-        num_workers=cfg.data.num_workers,
-        pin_memory=cfg.data.pin_memory,
-        n_sequences_per_epoch=cfg.data.n_sequences_per_epoch,
-    )
-    pretrain_action_cfg = _pretrain_action_cfg(cfg)
-
-    pretrain_dir = output_dir / "pretrain"
-    pretrain_artifacts = build_dataloaders(
-        pretrain_data,
-        split_cfg=cfg.split,
-        action_cfg=pretrain_action_cfg,
-        state_backbone_cfg=cfg.state_backbone,
-        seed=cfg.seed,
-        output_dir=pretrain_dir,
-    )
-    # Decoder output dim == observation dim. See _run_single for context.
-    n_genes = (
-        pretrain_artifacts.state_backbone_embedding_dim
-        if pretrain_artifacts.state_backbone_embedding_dim is not None
-        else len(pretrain_artifacts.gene_symbols)
-    )
-    pretrain_action_dim = pretrain_artifacts.gene_table.shape[1]
-    model = _build_model(
-        cfg, n_genes, pretrain_artifacts.gene_table,
-        state_backbone_provider=pretrain_artifacts.state_backbone,
-        state_backbone_embedding_dim=pretrain_artifacts.state_backbone_embedding_dim,
-    )
-
-    pretrain_train_cfg = dataclasses.replace(cfg.train, n_epochs=cfg.transfer.pretrain_epochs)
-    pre_trainer = WorldModelTrainer(
-        model=model,
-        optim_cfg=cfg.optim,
-        loss_cfg=cfg.loss,
-        train_cfg=pretrain_train_cfg,
-        output_dir=pretrain_dir,
-        run_name=f"{cfg.run_name}_pretrain",
-        state_backbone_cfg=cfg.state_backbone,
-        backbone_provider=pretrain_artifacts.state_backbone,
-    )
-
-    if cfg.transfer.pretrain_checkpoint:
-        pre_trainer.load_state(cfg.transfer.pretrain_checkpoint, strict=False)
-        logger.info("Skipping pretrain phase; loaded %s", cfg.transfer.pretrain_checkpoint)
-    else:
-        pre_trainer.fit(
-            train_loader=pretrain_artifacts.train_loader,
-            val_loader=pretrain_artifacts.val_loader,
-        )
-        ckpt_path = pretrain_dir / f"{cfg.run_name}_pretrain_final.pt"
-        logger.info("Pretrain done. Checkpoint at %s", ckpt_path)
-
-    finetune_action_cfg = _finetune_action_cfg(cfg)
-    finetune_dir = output_dir / "finetune"
-    artifacts = build_dataloaders(
-        cfg.data,
-        split_cfg=cfg.split,
-        action_cfg=finetune_action_cfg,
-        state_backbone_cfg=cfg.state_backbone,
-        seed=cfg.seed,
-        output_dir=finetune_dir,
-    )
-    finetune_action_dim = artifacts.gene_table.shape[1]
-
-    sub_split = subsample_train_perturbations(
-        artifacts.split,
-        artifacts.full_dataset.perturbation_labels,
-        fraction=cfg.transfer.finetune_fraction,
-        seed=cfg.seed,
-    )
-    artifacts = build_dataloaders(
-        cfg.data,
-        split_cfg=cfg.split,
-        action_cfg=finetune_action_cfg,
-        state_backbone_cfg=cfg.state_backbone,
-        seed=cfg.seed,
-        output_dir=finetune_dir,
-        finetune_perturbations=sub_split.train_perturbations,
-        state_backbone_override=pretrain_artifacts.state_backbone,
-    )
-
-    finetune_n_genes = (
-        artifacts.state_backbone_embedding_dim
-        if artifacts.state_backbone_embedding_dim is not None
-        else len(artifacts.gene_symbols)
-    )
-    if finetune_n_genes != n_genes:
-        logger.warning(
-            "Pretrain decoder_dim (%d) != fine-tune decoder_dim (%d). Rebuilding encoder/decoder.",
-            n_genes, finetune_n_genes,
-        )
-        new_model = _build_model(
-            cfg, finetune_n_genes, artifacts.gene_table,
-            state_backbone_provider=artifacts.state_backbone,
-            state_backbone_embedding_dim=artifacts.state_backbone_embedding_dim,
-        )
-        new_model.dynamics.load_state_dict(model.dynamics.state_dict())
-        if pretrain_action_dim == finetune_action_dim:
-            new_model.action_encoder.load_state_dict(model.action_encoder.state_dict())
-        else:
-            logger.warning(
-                "Action embedding dim changed during rebuild "
-                "(%d -> %d); skipping action_encoder weight transfer.",
-                pretrain_action_dim, finetune_action_dim,
-            )
-        model = new_model
-
-    apply_encoder_swap(
-        model,
-        pretrain_provider=pretrain_artifacts.provider,
-        finetune_provider=artifacts.provider,
-        pretrain_table=pretrain_artifacts.gene_table,
-        finetune_table=artifacts.gene_table,
-        pretrain_indexer=pretrain_artifacts.indexer,
-        finetune_indexer=artifacts.indexer,
-        strategy=cfg.transfer.swap_strategy,
-        adapter_cfg=cfg.action_adapter,
-        d_model=cfg.encoder.d_model,
-        alignment_epochs=cfg.transfer.alignment_epochs,
-        alignment_lr=cfg.transfer.alignment_lr,
-        device=("cuda" if torch.cuda.is_available() else "cpu"),
-    )
-
-    _freeze_components(
-        model,
-        encoder=cfg.transfer.freeze_encoder_during_finetune,
-        dynamics=cfg.transfer.freeze_dynamics_during_finetune,
-    )
-
-    finetune_train_cfg = dataclasses.replace(cfg.train, n_epochs=cfg.transfer.finetune_epochs)
-    ft_trainer = WorldModelTrainer(
-        model=model,
-        optim_cfg=cfg.optim,
-        loss_cfg=cfg.loss,
-        train_cfg=finetune_train_cfg,
-        output_dir=finetune_dir,
-        run_name=f"{cfg.run_name}_finetune",
-        state_backbone_cfg=cfg.state_backbone,
-        backbone_provider=artifacts.state_backbone,
-    )
-    ft_trainer.fit(
-        train_loader=artifacts.train_loader,
-        val_loader=artifacts.val_loader,
-    )
-    return model, artifacts
-
-
 def _dump_config_yaml(cfg: WorldModelConfig, path: Path) -> None:
     """Persist the resolved config so compare.py / make_report.py can re-read it."""
     try:
-        import yaml  # noqa: PLC0415
+        import yaml
 
         with open(path, "w") as fp:
             yaml.safe_dump(cfg.to_dict(), fp, sort_keys=False)
     except ImportError:
-        import json  # noqa: PLC0415
+        import json
 
         with open(path, "w") as fp:
             json.dump(cfg.to_dict(), fp, indent=2, default=str)
@@ -374,28 +188,40 @@ def _git_provenance(repo_dir: Path | str = ".") -> dict[str, Any]:
     is not a repo, or any individual call fails. Best-effort -- never
     raises.
     """
-    import subprocess  # noqa: PLC0415
+    import subprocess
 
     out: dict[str, Any] = {"sha": None, "short_sha": None, "branch": None, "dirty": None}
     try:
-        out["sha"] = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(repo_dir), stderr=subprocess.DEVNULL, text=True,
-        ).strip() or None
+        out["sha"] = (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=str(repo_dir),
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+            or None
+        )
         out["short_sha"] = (out["sha"] or "")[:12] or None
     except Exception:  # noqa: BLE001
         return out
     try:
-        out["branch"] = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(repo_dir), stderr=subprocess.DEVNULL, text=True,
-        ).strip() or None
+        out["branch"] = (
+            subprocess.check_output(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=str(repo_dir),
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+            or None
+        )
     except Exception:  # noqa: BLE001
         pass
     try:
         status = subprocess.check_output(
             ["git", "status", "--porcelain"],
-            cwd=str(repo_dir), stderr=subprocess.DEVNULL, text=True,
+            cwd=str(repo_dir),
+            stderr=subprocess.DEVNULL,
+            text=True,
         )
         out["dirty"] = bool(status.strip())
     except Exception:  # noqa: BLE001
@@ -405,7 +231,7 @@ def _git_provenance(repo_dir: Path | str = ".") -> dict[str, Any]:
 
 def _slurm_provenance() -> dict[str, str | None]:
     """Snapshot SLURM env vars. Returns all-None outside of a SLURM job."""
-    import os  # noqa: PLC0415
+    import os
 
     keys = {
         "job_id": "SLURM_JOB_ID",
@@ -437,18 +263,15 @@ def _apply_auto_suffix(cfg: WorldModelConfig) -> str:
 
     Returns the resulting suffix (or an empty string when no-op).
     """
-    import datetime as _dt  # noqa: PLC0415
-    import os  # noqa: PLC0415
+    import os
 
     if os.environ.get("EMBPY_NO_AUTO_SUFFIX", "").strip() == "1":
         return ""
-    if "__job" in str(cfg.output_dir) or "__local" in str(cfg.output_dir):
+    if has_run_suffix(cfg.output_dir):
         return ""
 
-    jobid = os.environ.get("SLURM_JOB_ID")
-    ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-    suffix = f"__job{jobid}__{ts}" if jobid else f"__local__{ts}"
-    cfg.output_dir = f"{cfg.output_dir}{suffix}"
+    suffix = make_run_suffix()
+    cfg.output_dir = append_run_suffix(cfg.output_dir, suffix)
     return suffix
 
 
@@ -464,7 +287,6 @@ def _key_hyperparams(cfg: WorldModelConfig) -> dict[str, Any]:
         "data.sequence_length": cfg.data.sequence_length,
         "data.stack_size": cfg.data.stack_size,
         "data.batch_size": cfg.data.batch_size,
-        "data.n_top_genes": cfg.data.n_top_genes,
         "data.sequence_bucket_key": getattr(cfg.data, "sequence_bucket_key", None),
         "encoder.kind": cfg.encoder.kind,
         "encoder.d_model": cfg.encoder.d_model,
@@ -482,6 +304,9 @@ def _key_hyperparams(cfg: WorldModelConfig) -> dict[str, Any]:
         "state_backbone.kind": cfg.state_backbone.kind,
         "action_embedding.source": cfg.action_embedding.source,
         "action_embedding.model_name": cfg.action_embedding.model_name,
+        "action_embedding.obsm_key": cfg.action_embedding.obsm_key,
+        "query_action_embedding.obsm_key": cfg.query_action_embedding.obsm_key,
+        "query_action_embedding.model_name": cfg.query_action_embedding.model_name,
         "train.n_epochs": cfg.train.n_epochs,
     }
 
@@ -501,7 +326,7 @@ def _extract_final_metrics(output_dir: Path) -> dict[str, float | None]:
     train_csv = output_dir / "train_log.csv"
     if train_csv.exists():
         try:
-            import pandas as pd  # noqa: PLC0415
+            import pandas as pd
 
             df = pd.read_csv(train_csv)
             if not df.empty:
@@ -517,7 +342,7 @@ def _extract_final_metrics(output_dir: Path) -> dict[str, float | None]:
     wm_csv = output_dir / "world_model_metrics.csv"
     if wm_csv.exists():
         try:
-            import pandas as pd  # noqa: PLC0415
+            import pandas as pd
 
             df = pd.read_csv(wm_csv)
             if not df.empty:
@@ -552,9 +377,9 @@ def _write_run_info(
     also includes ``_extract_final_metrics`` so downstream tools can
     rank / filter runs by performance without re-loading checkpoints.
     """
-    import datetime as _dt  # noqa: PLC0415
-    import json  # noqa: PLC0415
-    import socket  # noqa: PLC0415
+    import datetime as _dt
+    import json
+    import socket
 
     info: dict[str, Any] = {
         "status": status,
@@ -567,6 +392,11 @@ def _write_run_info(
         "now": _dt.datetime.now().isoformat(timespec="seconds"),
         "hostname": socket.gethostname(),
         "slurm": _slurm_provenance(),
+        "run_identity": {
+            "logical_output_name": strip_run_suffix(output_dir),
+            "physical_output_name": output_dir.name,
+            "has_job_suffix": has_run_suffix(output_dir),
+        },
         "git": _git_provenance(),
         "key_hyperparams": _key_hyperparams(cfg),
         "final_metrics": _extract_final_metrics(output_dir) if status != "running" else None,
@@ -574,9 +404,7 @@ def _write_run_info(
     if extras:
         info.update(extras)
     try:
-        (output_dir / "run_info.json").write_text(
-            json.dumps(info, indent=2, default=str)
-        )
+        (output_dir / "run_info.json").write_text(json.dumps(info, indent=2, default=str))
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to write run_info.json: %s", exc)
 
@@ -600,7 +428,7 @@ def _snapshot_run_provenance(
 
     Failures here never abort training; provenance is best-effort.
     """
-    import shutil  # noqa: PLC0415
+    import shutil
 
     try:
         _dump_config_yaml(cfg, output_dir / "config.yaml")
@@ -621,40 +449,28 @@ def _snapshot_run_provenance(
         logger.warning("Failed to copy source YAML to %s: %s", target, exc)
 
     try:
-        (output_dir / "cli_overrides.txt").write_text(
-            "\n".join(overrides or []) + ("\n" if overrides else "")
-        )
+        (output_dir / "cli_overrides.txt").write_text("\n".join(overrides or []) + ("\n" if overrides else ""))
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to write cli_overrides.txt: %s", exc)
 
 
 def _run_eval_and_report(cfg: WorldModelConfig, output_dir: Path, model, artifacts) -> None:
-    import pandas as pd  # noqa: PLC0415
+    import pandas as pd
 
     # Refresh the resolved config -- captures any state mutated during
     # training (e.g. derived dims). The verbatim source YAML and the
     # CLI overrides are already on disk from _snapshot_run_provenance.
     _dump_config_yaml(cfg, output_dir / "config.yaml")
 
-    # The perturbation-eval harness drives the model via
-    # ``model.rollout(...)``, which only the causal WorldModel exposes.
-    # The in-context set model has a different inference contract
-    # (support set + query), so its dedicated eval adapter is a
-    # separate piece of work. Skip here rather than crash or emit
-    # rollout-shaped numbers that would be meaningless for it. Training,
-    # checkpointing and the trainer's teacher-forced val loss have
-    # already completed at this point.
-    if cfg.dynamics.kind == "incontext_set":
-        logger.warning(
-            "Skipping rollout-based perturbation eval: dynamics.kind="
-            "'incontext_set' has no .rollout (in-context eval adapter is "
-            "a follow-up). Checkpoint + train/val losses are saved in %s.",
-            output_dir,
-        )
-        return
-
-    device = "cuda" if (cfg.train.device == "auto" and torch.cuda.is_available()) else (
-        cfg.train.device if cfg.train.device != "auto" else "cpu"
+    # run_evaluation routes the in-context set model to its own
+    # support-set + query predictor (_predict_incontext); the causal
+    # model uses the rollout path. Both return the same
+    # (n_test_cells, n_genes) contract, so baselines + compare/report
+    # work identically for either.
+    device = (
+        "cuda"
+        if (cfg.train.device == "auto" and torch.cuda.is_available())
+        else (cfg.train.device if cfg.train.device != "auto" else "cpu")
     )
     results = run_evaluation(
         artifacts=artifacts,
@@ -681,13 +497,22 @@ def _run_eval_and_report(cfg: WorldModelConfig, output_dir: Path, model, artifac
         if res.per_perturbation is not None and not res.per_perturbation.empty:
             res.per_perturbation.to_csv(eval_dir / f"per_pert_{name}.csv", index=False)
         for col in res.aggregate.columns:
-            long_rows.append({
-                "baseline": name,
-                "metric": col,
-                "value": float(res.aggregate[col].iloc[0]),
-            })
+            long_rows.append(
+                {
+                    "baseline": name,
+                    "metric": col,
+                    "value": float(res.aggregate[col].iloc[0]),
+                }
+            )
 
     aggregate_table = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+    per_pert_long = per_perturbation_tables_to_long(
+        per_pert_tables,
+        dataset=cfg.data.dataset,
+        seed=cfg.seed,
+    )
+    if not per_pert_long.empty:
+        per_pert_long.to_csv(eval_dir / "per_perturbation_long.csv", index=False)
     if not aggregate_table.empty:
         cols = ["name"] + [c for c in aggregate_table.columns if c != "name"]
         aggregate_table = aggregate_table[cols]
@@ -699,9 +524,9 @@ def _run_eval_and_report(cfg: WorldModelConfig, output_dir: Path, model, artifac
 
         baseline_only = aggregate_table[aggregate_table["name"] != "world_model"]
         if not baseline_only.empty and long_rows:
-            pd.DataFrame(
-                [r for r in long_rows if r["baseline"] != "world_model"]
-            ).to_csv(output_dir / "baselines.csv", index=False)
+            pd.DataFrame([r for r in long_rows if r["baseline"] != "world_model"]).to_csv(
+                output_dir / "baselines.csv", index=False
+            )
         logger.info("Wrote comparison.csv with shape %s", aggregate_table.shape)
 
     plot_dir = output_dir / "plots"
@@ -710,14 +535,28 @@ def _run_eval_and_report(cfg: WorldModelConfig, output_dir: Path, model, artifac
         wm = results["world_model"]
         plot_pred_vs_real_scatter(wm.real_adata, wm.pred_adata, plot_dir / "scatter_world_model.png")
         plot_per_perturbation_metric(wm.per_perturbation, plot_dir / "perpert_r2.png", metric="r2")
-        plot_deg_overlap_bar(wm.per_perturbation, plot_dir / "deg_overlap.png")
-        plot_paths.update({
-            "Predicted vs real (world model)": "plots/scatter_world_model.png",
-            "Per-perturbation R^2 (world model)": "plots/perpert_r2.png",
-            "DEG overlap": "plots/deg_overlap.png",
-        })
+        plot_deg_overlap_bar(
+            wm.per_perturbation,
+            plot_dir / "deg_overlap.png",
+            dataset=cfg.data.dataset,
+            model="world_model",
+            seed=cfg.seed,
+        )
+        plot_paths.update(
+            {
+                "Predicted vs real (world model)": "plots/scatter_world_model.png",
+                "Per-perturbation R^2 (world model)": "plots/perpert_r2.png",
+                "DEG overlap": "plots/deg_overlap.png",
+            }
+        )
     if not aggregate_table.empty:
-        plot_baseline_comparison(aggregate_table, plot_dir / "comparison.png")
+        plot_baseline_comparison(
+            aggregate_table,
+            plot_dir / "comparison.png",
+            per_perturbation_long=per_pert_long,
+            dataset=cfg.data.dataset,
+            seed=cfg.seed,
+        )
         plot_paths["Baselines vs world model"] = "plots/comparison.png"
 
     if (output_dir / "plots" / "loss_curves.png").exists():
@@ -734,12 +573,14 @@ def _run_eval_and_report(cfg: WorldModelConfig, output_dir: Path, model, artifac
 
 
 def main(argv: list[str] | None = None) -> None:
-    import datetime as _dt  # noqa: PLC0415
+    """Run training from CLI arguments."""
+    import datetime as _dt
 
     args = parse_args(argv)
     cfg: WorldModelConfig = load_yaml_config(args.config)
     cfg = apply_cli_overrides(cfg, args.overrides)
     cfg.validate()
+    validate_world_model_data_sources(cfg)
 
     # Append a unique __job{jobid}__{timestamp} suffix to output_dir
     # so concurrent submissions of the same run_name never collide.
@@ -768,35 +609,41 @@ def main(argv: list[str] | None = None) -> None:
         overrides=args.overrides,
     )
     _write_run_info(
-        cfg, output_dir, args.config, args.overrides,
-        status="running", started_at=started_at,
+        cfg,
+        output_dir,
+        args.config,
+        args.overrides,
+        status="running",
+        started_at=started_at,
     )
 
     try:
-        if cfg.mode == "transfer":
-            if not cfg.transfer.enabled:
-                raise ValueError("mode='transfer' but transfer.enabled=False")
-            model, artifacts = _run_transfer(cfg, output_dir)
-        elif cfg.mode == "single":
-            model, artifacts = _run_single(cfg, output_dir)
-        else:
-            raise ValueError(f"Unknown mode {cfg.mode!r}; use 'single' or 'transfer'.")
-
+        if cfg.mode != "single":
+            raise ValueError("Only mode='single' is supported.")
+        model, artifacts = _run_single(cfg, output_dir)
         _run_eval_and_report(cfg, output_dir, model, artifacts)
-    except BaseException as exc:  # noqa: BLE001
+    except BaseException as exc:
         # Catch BaseException so SLURM-side SIGTERMs (KeyboardInterrupt,
         # SystemExit) also leave a "failed" marker on disk.
         _write_run_info(
-            cfg, output_dir, args.config, args.overrides,
-            status="failed", started_at=started_at,
+            cfg,
+            output_dir,
+            args.config,
+            args.overrides,
+            status="failed",
+            started_at=started_at,
             finished_at=_dt.datetime.now().isoformat(timespec="seconds"),
             extras={"error_type": type(exc).__name__, "error_message": str(exc)[:512]},
         )
         raise
 
     _write_run_info(
-        cfg, output_dir, args.config, args.overrides,
-        status="completed", started_at=started_at,
+        cfg,
+        output_dir,
+        args.config,
+        args.overrides,
+        status="completed",
+        started_at=started_at,
         finished_at=_dt.datetime.now().isoformat(timespec="seconds"),
     )
 

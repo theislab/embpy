@@ -1,0 +1,9 @@
+extends: ../bases/single.yaml
+
+run_name: "single_replogle"
+output_dir: "runs/world_model/single_replogle"
+
+data:
+  dataset: "replogle"
+  h5ad_path: "data/crispr_datasets/replogle/replogle_2022_k562_essential.h5ad"
+  control_label: "control"

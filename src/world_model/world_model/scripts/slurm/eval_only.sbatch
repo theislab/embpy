@@ -7,8 +7,8 @@
 #   CONFIG=... CKPT=... sbatch src/world_model/world_model/scripts/slurm/eval_only.sbatch
 # -----------------------------------------------------------------------------
 #SBATCH --job-name=wm-eval
-#SBATCH -o logs/%x_%j.out
-#SBATCH -e logs/%x_%j.err
+#SBATCH -o logs/slurm/eval_only/%x_%j.out
+#SBATCH -e logs/slurm/eval_only/%x_%j.err
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
 #SBATCH --cpus-per-task=8

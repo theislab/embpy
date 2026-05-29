@@ -170,21 +170,20 @@ class PrecomputedProvider(ActionEmbeddingProvider):
         table, indexer = load_gene_embedding_table(self._path, symbols=symbols)
         self._embedding_dim = int(table.shape[1])
         unresolved = 0
+        unresolved_symbols: list[str] = []
         for sym, idx in indexer.symbol_to_index.items():
             if idx == 0:
                 continue
             if not np.any(table[idx]):
                 unresolved += 1
+                unresolved_symbols.append(sym)
         self._last_n_unresolved = unresolved
+        self._last_unresolved = unresolved_symbols
         return table, indexer
 
     def metadata(self, n_symbols: int, n_unresolved: int) -> ProviderMetadata:
-        n_resolved = max(
-            int(n_symbols)
-            - len(self._last_unresolved)
-            - len(self._last_controls),
-            0,
-        )
+        n_missing = len(self._last_unresolved) or int(n_unresolved or self._last_n_unresolved)
+        n_resolved = max(int(n_symbols) - n_missing - len(self._last_controls), 0)
         return ProviderMetadata(
             source="precomputed",
             embedding_dim=self.embedding_dim,

@@ -1,4 +1,4 @@
-"""CLI smoke target: encode an AnnData through STATE / STACK and persist NPZ.
+"""Encode an AnnData through STATE / STACK and attach state embeddings.
 
 Usage
 -----
@@ -9,18 +9,20 @@ Usage
         --adata /path/to/cells.h5ad \\
         --state-checkpoint /path/to/SE-600M/se600m_epoch15.ckpt \\
         --state-model-folder /path/to/SE-600M \\
-        --output runs/_cache/state_backbone/state/<hash>/<ds>.npz
+        --output-h5ad runs/_cache/state_h5ad/<ds>_state.h5ad \\
+        --obsm-key X_state
 
     python -m world_model.scripts.encode_cells \\
         --kind stack \\
         --adata /path/to/cells.h5ad \\
         --stack-checkpoint /path/to/bc_large.ckpt \\
         --stack-genelist /path/to/basecount_1000per_15000max.pkl \\
-        --output runs/_cache/state_backbone/stack/<hash>/<ds>.npz
+        --output-h5ad runs/_cache/state_h5ad/<ds>_stack.h5ad \\
+        --obsm-key X_stack
 
-This is the canonical pre-flight check: if it fails, training will
-fail too -- the same code path is reused inside
-:func:`world_model.data.build_dataloaders`.
+This is the canonical pre-flight check for the state side. Training
+does not run STATE / STACK itself; it expects the selected state matrix
+to already live in ``adata.obsm``.
 """
 
 from __future__ import annotations
@@ -45,7 +47,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Encode an AnnData with a state backbone.")
     p.add_argument("--kind", choices=["state", "stack"], required=True)
     p.add_argument("--adata", required=True, help="Path to .h5ad")
-    p.add_argument("--output", required=True, help="Path to write the NPZ to")
+    p.add_argument("--output", default=None, help="Optional path to write a compact NPZ copy")
+    p.add_argument("--output-h5ad", default=None, help="Optional AnnData output path with embeddings attached")
+    p.add_argument("--obsm-key", default=None, help="AnnData obsm key for --output-h5ad")
     p.add_argument("--device", default="auto", help="auto | cuda | cpu")
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--cache-dir", default="", help="Optional persistent cache root.")
@@ -56,7 +60,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--stack-checkpoint", default="")
     p.add_argument("--stack-genelist", default="")
     p.add_argument("--stack-gene-name-col", default=None)
-    return p.parse_args(argv)
+    args = p.parse_args(argv)
+    if args.output is None and args.output_h5ad is None:
+        p.error("Pass --output, --output-h5ad, or both.")
+    if args.output_h5ad is not None and not args.obsm_key:
+        p.error("--output-h5ad requires --obsm-key.")
+    return args
 
 
 def _peak_gpu_mb() -> float:
@@ -119,19 +128,47 @@ def main(argv: list[str] | None = None) -> int:
     embeddings = provider.encode(adata)
     wall = time.time() - t0
 
-    out = Path(args.output)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(out, embeddings=np.asarray(embeddings, dtype=np.float32))
-    logger.info(
-        "Wrote %s -- shape=%s wall=%.2fs gpu_peak=%.1f MB",
-        out, tuple(embeddings.shape), wall, _peak_gpu_mb(),
-    )
+    emb = np.asarray(embeddings, dtype=np.float32)
+    out: Path | None = None
+    if args.output is not None:
+        out = Path(args.output)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(out, embeddings=emb)
+        logger.info(
+            "Wrote %s -- shape=%s wall=%.2fs gpu_peak=%.1f MB",
+            out, tuple(emb.shape), wall, _peak_gpu_mb(),
+        )
+    if args.output_h5ad is not None:
+        h5ad_out = Path(args.output_h5ad)
+        h5ad_out.parent.mkdir(parents=True, exist_ok=True)
+        if emb.shape[0] != adata.n_obs:
+            raise ValueError(
+                f"Encoded {emb.shape[0]} rows but AnnData has {adata.n_obs} obs."
+            )
+        adata.obsm[args.obsm_key] = emb
+        root = adata.uns.setdefault("world_model_state_embeddings", {})
+        root[args.obsm_key] = {
+            "model_name": args.kind,
+            "source": "encode_cells",
+            "obsm_key": args.obsm_key,
+            "embedding_dim": int(emb.shape[1]),
+            "n_cells": int(emb.shape[0]),
+            "checkpoint": args.state_checkpoint if args.kind == "state" else args.stack_checkpoint,
+            "wall_s": float(wall),
+        }
+        adata.write_h5ad(h5ad_out)
+        logger.info(
+            "Wrote %s with obsm[%r] shape=%s wall=%.2fs gpu_peak=%.1f MB",
+            h5ad_out, args.obsm_key, tuple(emb.shape), wall, _peak_gpu_mb(),
+        )
     print(
-        f"embedding_dim={embeddings.shape[1]} "
-        f"n_cells={embeddings.shape[0]} "
+        f"embedding_dim={emb.shape[1]} "
+        f"n_cells={emb.shape[0]} "
         f"wall_s={wall:.2f} "
         f"gpu_peak_mb={_peak_gpu_mb():.1f} "
-        f"output={out}"
+        f"output={out or ''} "
+        f"output_h5ad={args.output_h5ad or ''} "
+        f"obsm_key={args.obsm_key or ''}"
     )
     return 0
 

@@ -7,8 +7,8 @@ We use plain :mod:`dataclasses` rather than Hydra/OmegaConf. The reasons:
 3. Trivial YAML interop via :func:`load_yaml_config` -- the user-supplied
    YAML is loaded with PyYAML (already pulled in transitively by
    anndata) and merged into the dataclass.
-4. Hydra is overkill for a single training script and complicates
-   config-driven imports inside notebooks.
+4. ``extends:`` supports one-parent YAML composition without adding
+   Hydra/OmegaConf or hiding the final dataclass shape.
 """
 
 from __future__ import annotations
@@ -25,10 +25,10 @@ from .base import (
     SplitConfig,
     StateBackboneConfig,
     TrainConfig,
-    TransferConfig,
     WorldModelConfig,
     apply_cli_overrides,
     load_yaml_config,
+    validate_world_model_data_sources,
 )
 
 __all__ = [
@@ -43,8 +43,8 @@ __all__ = [
     "SplitConfig",
     "StateBackboneConfig",
     "TrainConfig",
-    "TransferConfig",
     "WorldModelConfig",
     "apply_cli_overrides",
     "load_yaml_config",
+    "validate_world_model_data_sources",
 ]

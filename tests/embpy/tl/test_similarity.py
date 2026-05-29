@@ -7,10 +7,17 @@ import pytest
 from anndata import AnnData
 
 from embpy.tl.similarity import (
+    aggregate_embedding_table,
+    compare_embedding_matrices,
     compute_distance_matrix,
     compute_knn_overlap,
     compute_similarity,
+    embedding_similarity_matrix,
+    knn_jaccard,
+    nearest_neighbors,
+    nearest_neighbors_table,
     rank_perturbations,
+    similarity_correlation,
 )
 
 
@@ -104,3 +111,45 @@ class TestRankPerturbations:
         adata = _make_adata()
         with pytest.raises(KeyError):
             rank_perturbations(adata, "nonexistent", "X_emb")
+
+
+class TestNearestNeighborsTable:
+    def test_query_skips_self(self):
+        matrix = np.array([[1.0, 0.0], [0.9, 0.1], [0.0, 1.0]], dtype=np.float32)
+        out = nearest_neighbors_table(matrix, ["a", "b", "c"], query="a", k=2)
+        assert out.iloc[0]["neighbor_id"] == "b"
+        assert out.iloc[0]["rank"] == 1
+
+    def test_anndata_wrapper(self):
+        adata = _make_adata(n=5, d=3)
+        out = nearest_neighbors(adata, "X_emb", query="pert_0", k=2)
+        assert len(out) == 2
+        assert set(out.columns) >= {"query_id", "neighbor_id", "rank", "distance"}
+
+
+class TestGenericEmbeddingUtilities:
+    def test_embedding_similarity_matrix_matches_compute_similarity(self):
+        adata = _make_adata(n=5, d=3)
+        direct = embedding_similarity_matrix(adata.obsm["X_emb"], metric="cosine")
+        from_adata = compute_similarity(adata, "X_emb", metric="cosine")
+        np.testing.assert_allclose(direct, from_adata)
+
+    def test_aggregate_embedding_table(self):
+        matrix = np.array([[1, 0], [3, 2], [0, 2]], dtype=np.float32)
+        out = aggregate_embedding_table(matrix, ["a", "a", "b"])
+        assert out.loc["a"].to_numpy().tolist() == pytest.approx([2.0, 1.0])
+        assert out.loc["b"].to_numpy().tolist() == pytest.approx([0.0, 2.0])
+
+    def test_similarity_correlation_and_compare(self):
+        a = np.array([[1, 0], [0.9, 0.1], [0, 1]], dtype=np.float32)
+        b = a.copy()
+        corr = similarity_correlation(a, matrix_b=b, label_a="a", target="b")
+        comp = compare_embedding_matrices({"a": a, "b": b})
+        assert corr.loc[0, "pearson"] == pytest.approx(1.0)
+        assert comp.loc[0, "knn_jaccard"] == pytest.approx(1.0)
+
+    def test_knn_jaccard(self):
+        a = np.array([[1, 0], [0.9, 0.1], [0, 1]], dtype=np.float32)
+        per_row, mean_j = knn_jaccard(a, a, k=1)
+        assert per_row.shape == (3,)
+        assert mean_j == pytest.approx(1.0)
