@@ -27,6 +27,9 @@ export PYTHONNOUSERSITE=1
 PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
 cd "$PROJECT_DIR"
 
+export TMPDIR="${TMPDIR:-$PROJECT_DIR/runs/_tmp/baselines-${SLURM_JOB_ID:-manual}}"
+mkdir -p "$TMPDIR"
+
 # Pixi env propagated from the submit driver. Caduceus / Evo2 sweep runs
 # set EMBPY_PIXI_ENV=caduceus|evo2; everything else stays on `gpu`.
 PIXI_ENV="${EMBPY_PIXI_ENV:-gpu}"

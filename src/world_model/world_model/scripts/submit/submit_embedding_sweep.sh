@@ -23,8 +23,10 @@
 # =============================================================================
 set -euo pipefail
 
-PROJECT_DIR="/lustre/groups/ml01/workspace/goncalo.pinto/embpy"
+PROJECT_DIR="${PROJECT_DIR:-/lustre/groups/ml01/workspace/goncalo.pinto/embpy}"
 cd "$PROJECT_DIR"
+export PATH="$HOME/.pixi/bin:$PATH"
+unset SBATCH_GET_USER_ENV SBATCH_EXPORT SLURM_EXPORT_ENV
 
 DRIVER="src/world_model/world_model/scripts/submit/submit_gene_embeddings.sh"
 SLURM_DIR="src/world_model/world_model/scripts/slurm"
@@ -32,9 +34,18 @@ DATASET="${DATASET:-replogle}"
 CPU_PARTITION="${CPU_PARTITION:-cpu_p}"
 CPU_QOS="${CPU_QOS:-cpu_normal}"
 LOG_ROOT="${LOG_ROOT:-logs}"
-LOG_DIR="${LOG_DIR:-${LOG_ROOT}/embedding_sweep}"
-GENE_LOG_DIR="${GENE_LOG_DIR:-${LOG_DIR}/gene_embeddings}"
-mkdir -p "$LOG_DIR" "$GENE_LOG_DIR" runs/world_model/_sweep
+SUBMIT_STAMP="${SUBMIT_STAMP:-$(date '+%Y%m%d_%H%M%S')}"
+TMP_ROOT="${TMP_ROOT:-runs/_tmp}"
+if [[ "$TMP_ROOT" = /* ]]; then
+    TMP_BASE="$TMP_ROOT"
+else
+    TMP_BASE="${PROJECT_DIR}/${TMP_ROOT}"
+fi
+export TMPDIR="${TMPDIR:-${TMP_BASE}/submit-${SUBMIT_STAMP}}"
+RUN_ROOT_BASE="${RUN_ROOT_BASE:-runs/World_Model}"
+SWEEP_RUN_DIR="${SWEEP_RUN_DIR:-${RUN_ROOT_BASE}/_sweep/${SUBMIT_STAMP}}"
+LOG_DIR="${LOG_DIR:-${LOG_ROOT}/World_Model/submissions/embedding_sweep/${SUBMIT_STAMP}}"
+mkdir -p "$LOG_DIR" "$SWEEP_RUN_DIR" runs/world_model/_sweep "$TMP_BASE" "$TMPDIR"
 
 # Source of truth for "what is usable" = the driver's own catalog. The
 # `list` output prints exactly one `EMB=<name>` line per non-convert entry.
@@ -55,6 +66,8 @@ echo "Sweep plan"
 echo "  dataset(s):  $DATASET"
 echo "  embeddings:  ${#EMB_LIST[@]}  ->  ${EMB_LIST[*]}"
 echo "  logs:        $LOG_DIR"
+echo "  run root:    $RUN_ROOT_BASE/<cell>_with_<action>/<dataset>/$SUBMIT_STAMP"
+echo "  aggregate:   $SWEEP_RUN_DIR"
 echo
 
 if [[ "${DRYRUN:-0}" == "1" ]]; then
@@ -67,7 +80,8 @@ JID_FILE="$(mktemp runs/world_model/_sweep/jids.XXXXXX)"
 
 for emb in "${EMB_LIST[@]}"; do
     echo "=== $emb ==="
-    SWEEP_JID_FILE="$JID_FILE" DATASET="$DATASET" EMB="$emb" LOG_DIR="$GENE_LOG_DIR" \
+    SWEEP_JID_FILE="$JID_FILE" DATASET="$DATASET" EMB="$emb" SUBMIT_STAMP="$SUBMIT_STAMP" \
+        RUN_ROOT_BASE="$RUN_ROOT_BASE" LOG_ROOT="$LOG_ROOT" \
         bash "$DRIVER" || {
             echo "WARN: submit failed for $emb; continuing." >&2
             continue
@@ -87,21 +101,27 @@ DS_ARGS="${DATASET}"
 echo
 echo "Submitting cross-embedding aggregator afterany:${DEP} ..."
 AGG_JID=$(sbatch --parsable \
+    --chdir="$PROJECT_DIR" \
     --job-name=wm-sweep-aggregate \
     --partition="$CPU_PARTITION" --qos="$CPU_QOS" \
     --cpus-per-task=2 --mem=8G --time=00:30:00 \
+    --export=ALL \
     -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" \
     --dependency=afterany:"${DEP}" \
     --wrap="set -euo pipefail; cd ${PROJECT_DIR}; \
         export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
+        export PYTHONNOUSERSITE=1; \
+        export TMPDIR=\"${TMP_BASE}/aggregate-\${SLURM_JOB_ID:-manual}\"; \
+        mkdir -p \"\$TMPDIR\"; \
+        trap 'rm -rf \"\$TMPDIR\"' EXIT; \
         pixi run -e gpu -- python -m world_model.scripts.sweeps.aggregate_sweep \
-            --datasets ${DS_ARGS} --out runs/world_model/_sweep")
+            --runs-root ${RUN_ROOT_BASE} --datasets ${DS_ARGS} --out ${SWEEP_RUN_DIR}")
 
 echo
 echo "Submitted sweep:"
 printf "  per-embedding compare jobs: %s\n" "${ALL_JIDS[*]}"
 printf "  aggregator:                 %s\n" "$AGG_JID"
-echo "  results -> runs/world_model/_sweep/{comparison_all.csv,world_model_by_embedding.csv,report.md}"
+echo "  results -> ${SWEEP_RUN_DIR}/{comparison_all.csv,world_model_by_embedding.csv,report.md}"
 echo
 if command -v squeue >/dev/null 2>&1; then
     squeue --me --format="%.18i %.9P %.26j %.8T %.10M %.6D %R" || true

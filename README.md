@@ -752,20 +752,21 @@ cat slurm_jupyter_<JOBID>.txt  # token, host, port, SSH tunnel command
 > [Models that need their own pixi env](#models-that-need-their-own-pixi-env)
 > below.
 
-#### Single-cell foundation models: a separate pixi env
+#### Single-cell foundation models: separate pixi envs
 
-Notebook [`08_singlecell_foundation_models.ipynb`](docs/notebooks/08_singlecell_foundation_models.ipynb)
-uses the [helical](https://github.com/helicalAI/helical) package to load
-scGPT, Geneformer, UCE, TranscriptFormer, Tahoe-x1 and Cell2Sentence.
-Helical has a large set of rigid transitive dependencies
-(`datasets==3.6.0`, `scib`, `loompy`, `mamba-ssm`, ...) that force older
-`numpy`, `pandas`, `fsspec`, `dill` and `torch` versions than the main
-`gpu` env uses. Mixing them in a single resolver run fails every time, so
-helical lives in its own pixi environment: **`helical-gpu`**.
+Notebook [`cells.ipynb`](docs/notebooks/cells.ipynb)
+shows the public `BioEmbedder.embed(..., entity_type="cell", ...)` workflow
+for PCA, scGPT, Geneformer, Arc STATE/STACK, and other cell models. Some
+single-cell models use [helical](https://github.com/helicalAI/helical), which
+has a large set of rigid transitive dependencies (`datasets==3.6.0`, `scib`,
+`loompy`, `mamba-ssm`, ...) that force older `numpy`, `pandas`, `fsspec`,
+`dill` and `torch` versions than the main `gpu` env uses. Mixing them in a
+single resolver run fails every time, so helical lives in its own pixi
+environment: **`helical-gpu`**.
 
-Consequently, notebook 12 must be run from a different JupyterLab server
-than every other notebook in the repo. The repo ships a dedicated SLURM
-launcher,
+Consequently, the helical-backed sections of the cell notebook must be run from
+a different JupyterLab server than the lightweight PCA/scverse sections. The
+repo ships a dedicated SLURM launcher,
 [`submission_scripts/jupyter_pixi_helical.sbatch`](submission_scripts/jupyter_pixi_helical.sbatch),
 that activates `helical-gpu` instead of `gpu`.
 
@@ -776,15 +777,14 @@ that activates `helical-gpu` instead of `gpu`.
 cd /path/to/embpy
 CONDA_OVERRIDE_CUDA=12.0 pixi install -e helical-gpu
 
-# Every time you want to run notebook 12:
+# Every time you want to run the helical-backed cell examples:
 sbatch submission_scripts/jupyter_pixi_helical.sbatch
 cat submission_scripts/logs/jupyter_pixi_helical_<JOBID>.out  # URL + token
 ```
 
-All other notebooks (DNA, protein, molecule, morphology, identifier
-handling, ...) run in the default `gpu` env via
-`jupyter_pixi.sbatch`. If you're not touching notebook 12, you can
-ignore `helical-gpu` entirely.
+The lightweight sections of all entity notebooks run in the default `gpu` env
+via `jupyter_pixi.sbatch`. Install the dedicated envs only when you run the
+model-specific cells that need them.
 
 #### Models that need their own pixi env
 
@@ -793,23 +793,23 @@ main `gpu` stack, so each gets a dedicated pixi environment **and** a
 matching SLURM JupyterLab launcher. Install the env once, then submit its
 launcher and connect exactly like `jupyter_pixi.sbatch`.
 
-| Models / notebook                | Why isolated                          | Install once                                           | Launcher                                                                        |
-| -------------------------------- | ------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| **Boltz-2** (`boltz2*`) — nb 04  | pins `numpy<2.0`, `scipy==1.13.1`     | `pixi install -e boltz`                                | [`jupyter_pixi_boltz.sbatch`](submission_scripts/jupyter_pixi_boltz.sbatch)     |
-| **Evo 2** (`evo2_*`)             | FlashAttn/CUDA build pins             | `pixi install -e evo2`                                 | [`jupyter_pixi_evo2.sbatch`](submission_scripts/jupyter_pixi_evo2.sbatch)       |
-| **Arc STATE/STACK** — nb 08 §13c | `pytorch>=2.7`, `scipy>=1.15`         | `CONDA_OVERRIDE_CUDA=12.0 pixi install -e arc-gpu`     | [`jupyter_pixi_arc.sbatch`](submission_scripts/jupyter_pixi_arc.sbatch)         |
-| **helical** scFMs — nb 08        | `transformers==4.49`, `scipy==1.13.1` | `CONDA_OVERRIDE_CUDA=12.0 pixi install -e helical-gpu` | [`jupyter_pixi_helical.sbatch`](submission_scripts/jupyter_pixi_helical.sbatch) |
-| **Caduceus** (`caduceus_*`)      | needs `mamba-ssm` (CUDA nvcc)         | `pixi install -e caduceus`                             | run via `pixi run -e caduceus`                                                  |
+| Models / notebook                    | Why isolated                          | Install once                                           | Launcher                                                                        |
+| ------------------------------------ | ------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| **Boltz-2** (`boltz2*`) — proteins   | pins `numpy<2.0`, `scipy==1.13.1`     | `pixi install -e boltz`                                | [`jupyter_pixi_boltz.sbatch`](submission_scripts/jupyter_pixi_boltz.sbatch)     |
+| **Evo 2** (`evo2_*`) — genes         | FlashAttn/CUDA build pins             | `pixi install -e evo2`                                 | [`jupyter_pixi_evo2.sbatch`](submission_scripts/jupyter_pixi_evo2.sbatch)       |
+| **Arc STATE/STACK** — cells          | `pytorch>=2.7`, `scipy>=1.15`         | `CONDA_OVERRIDE_CUDA=12.0 pixi install -e arc-gpu`     | [`jupyter_pixi_arc.sbatch`](submission_scripts/jupyter_pixi_arc.sbatch)         |
+| **helical** scFMs — cells            | `transformers==4.49`, `scipy==1.13.1` | `CONDA_OVERRIDE_CUDA=12.0 pixi install -e helical-gpu` | [`jupyter_pixi_helical.sbatch`](submission_scripts/jupyter_pixi_helical.sbatch) |
+| **Caduceus** (`caduceus_*`) — genes  | needs `mamba-ssm` (CUDA nvcc)         | `pixi install -e caduceus`                             | run via `pixi run -e caduceus`                                                  |
 
 ```bash
-# Example: Boltz-2 structure embeddings (notebook 04)
+# Example: Boltz-2 structure embeddings (protein notebook)
 pixi install -e boltz                              # one-time
 sbatch submission_scripts/jupyter_pixi_boltz.sbatch
 cat submission_scripts/logs/jupyter_pixi_boltz_<JOBID>.out   # URL + token
 # In the notebook, pick the kernel from the `boltz` server, NOT the gpu one.
 ```
 
-The "Boltz not installed" message in notebook 04 simply means the notebook
+The "Boltz not installed" message in the protein notebook simply means the notebook
 is running on a kernel from a different env (e.g. `gpu`); launch it from the
 `boltz` server above instead.
 
@@ -1033,21 +1033,12 @@ pixi install
 
 ## Tutorials
 
-| #   | Topic                                                                      | Notebook                                                                                        |
-| --- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| 01  | Identifiers, Resolvers & Data Loading                                      | [01_identifiers_and_preprocessing.ipynb](docs/notebooks/01_identifiers_and_preprocessing.ipynb) |
-| 02  | Gene & DNA Embeddings                                                      | [02_gene_embeddings.ipynb](docs/notebooks/02_gene_embeddings.ipynb)                             |
-| 03  | Protein Embeddings                                                         | [03_protein_embeddings.ipynb](docs/notebooks/03_protein_embeddings.ipynb)                       |
-| 04  | Boltz-2 Structure Embeddings                                               | [04_boltz2_structure_embeddings.ipynb](docs/notebooks/04_boltz2_structure_embeddings.ipynb)     |
-| 05  | Molecule (Drug) Embeddings                                                 | [05_molecule_embeddings.ipynb](docs/notebooks/05_molecule_embeddings.ipynb)                     |
-| 06  | Text Embeddings                                                            | [06_text_embeddings.ipynb](docs/notebooks/06_text_embeddings.ipynb)                             |
-| 07  | PPI Network Embeddings                                                     | [07_ppi_embeddings.ipynb](docs/notebooks/07_ppi_embeddings.ipynb)                               |
-| 08  | Single-Cell Foundation Model Embeddings                                    | [08_singlecell_foundation_models.ipynb](docs/notebooks/08_singlecell_foundation_models.ipynb)   |
-| 09  | JUMP Cell Painting Morphological Embeddings                                | [09_morphology_jump_cell_painting.ipynb](docs/notebooks/09_morphology_jump_cell_painting.ipynb) |
-| 10  | Annotation & Entity Context (genes, proteins, molecules, cell lines, text) | [10_annotation_and_context.ipynb](docs/notebooks/10_annotation_and_context.ipynb)               |
-| 11  | Cross-Species Ortholog Embeddings                                          | [11_cross_species_embeddings.ipynb](docs/notebooks/11_cross_species_embeddings.ipynb)           |
-| 12  | Unified Embedding with embed_adata                                         | [12_unified_embedding.ipynb](docs/notebooks/12_unified_embedding.ipynb)                         |
-| 13  | DepMap Cancer Dependency Analysis                                          | [13_depmap_analysis.ipynb](docs/notebooks/13_depmap_analysis.ipynb)                             |
+| Entity type     | What it covers                                                                | Notebook                                              |
+| --------------- | ----------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Genes           | DNA, protein-derived, morphology, and text embeddings; annotation and plots    | [genes.ipynb](docs/notebooks/genes.ipynb)             |
+| Proteins        | ESM/ProtT5/Boltz-style protein embeddings; annotations and comparison plots    | [proteins.ipynb](docs/notebooks/proteins.ipynb)       |
+| Small molecules | RDKit/fingerprint and neural molecule embeddings; annotations and comparisons | [small_molecules.ipynb](docs/notebooks/small_molecules.ipynb) |
+| Cells           | Preprocessing-aware cell embeddings, scverse outputs, and world-model handoff  | [cells.ipynb](docs/notebooks/cells.ipynb)             |
 
 ## Package Structure
 

@@ -37,6 +37,7 @@ PROJECT_DIR="${PROJECT_DIR:-/lustre/groups/ml01/workspace/goncalo.pinto/embpy}"
 cd "$PROJECT_DIR"
 export PATH="$HOME/.pixi/bin:$PATH"
 export PYTHONNOUSERSITE=1
+unset SBATCH_GET_USER_ENV SBATCH_EXPORT SLURM_EXPORT_ENV
 
 SELF="src/world_model/world_model/scripts/submit/submit_world_model_ready_adatas.sh"
 SLURM_DIR="src/world_model/world_model/scripts/slurm"
@@ -97,9 +98,6 @@ ACTION_NPZ_DIR="${ACTION_NPZ_DIR:-runs/_cache/action_embeddings}"
 READY_H5AD_DIR="${READY_H5AD_DIR:-runs/_cache/world_model_ready_h5ad}"
 TMP_ROOT="${TMP_ROOT:-runs/_tmp}"
 LOG_ROOT="${LOG_ROOT:-logs}"
-LOG_DIR="${LOG_DIR:-${LOG_ROOT}/world_model_ready_adatas}"
-
-mkdir -p "$LOG_DIR" "$STATE_NPZ_DIR" "$STATE_H5AD_DIR" "$ACTION_NPZ_DIR" "$READY_H5AD_DIR" "$TMP_ROOT"
 
 matrix_value() {
     pixi run -e "$MATRIX_PIXI_ENV" -- python -m world_model.configs.run_matrix "$@"
@@ -166,7 +164,7 @@ print_catalog() {
 
 submit_sbatch() {
     if [[ "$DRYRUN" == "1" ]]; then
-        printf '+ sbatch' >&2
+        printf '+ sbatch --chdir %q' "$PROJECT_DIR" >&2
         local arg
         for arg in "$@"; do
             printf ' %q' "$arg" >&2
@@ -174,8 +172,32 @@ submit_sbatch() {
         printf '\n\n' >&2
         echo "DRYRUN-$RANDOM"
     else
-        sbatch --parsable "$@"
+        sbatch --parsable --chdir="$PROJECT_DIR" "$@"
     fi
+}
+
+job_stdout() {
+    echo "${1}/jobs/${3}/stdout"
+}
+
+job_stderr() {
+    echo "${1}/jobs/${3}/stderr"
+}
+
+link_job_logs() {
+    local root="$1"
+    local name="$2"
+    local jid="$3"
+    [[ "$DRYRUN" == "1" ]] && return 0
+    local job_dir="${root}/jobs/${jid}"
+    mkdir -p "$job_dir"
+    ln -sfn "../${name}_${jid}.out" "${job_dir}/stdout"
+    ln -sfn "../${name}_${jid}.err" "${job_dir}/stderr"
+}
+
+manifest_add() {
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$SUBMITTED_AT" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" >>"$MANIFEST"
 }
 
 case "${1:-}" in
@@ -219,6 +241,35 @@ if [[ -n "$ACTION_OBSM_KEY" && "$ACTION_OBSM_KEY" != X_pert_* ]]; then
     exit 2
 fi
 
+SUBMIT_STAMP="${SUBMIT_STAMP:-$(date '+%Y%m%d_%H%M%S')}"
+SUBMITTED_AT="$(date '+%Y-%m-%dT%H:%M:%S%z')"
+if [[ "$TMP_ROOT" = /* ]]; then
+    TMP_BASE="$TMP_ROOT"
+else
+    TMP_BASE="${PROJECT_DIR}/${TMP_ROOT}"
+fi
+export TMPDIR="${TMPDIR:-${TMP_BASE}/submit-${SUBMIT_STAMP}}"
+if [[ -z "${ACTION_SET_LABEL:-}" ]]; then
+    if [[ "$EMBEDDINGS" == "all" || "$EMBEDDINGS" == "default" ]]; then
+        ACTION_SET_LABEL="all_gene_embeddings"
+    else
+        ACTION_SET_LABEL="${EMBEDDING_KEYS[*]}"
+        ACTION_SET_LABEL="${ACTION_SET_LABEL// /_}"
+    fi
+fi
+CELL_EMBEDDING_LABEL="${CELL_EMBEDDING_LABEL:-${STATE_KIND}}"
+WORKFLOW_LABEL="${WORKFLOW_LABEL:-${CELL_EMBEDDING_LABEL}_with_${ACTION_SET_LABEL}}"
+RUN_ROOT_BASE="${RUN_ROOT_BASE:-runs/World_Model}"
+LOG_BASE="${LOG_BASE:-${LOG_ROOT}/World_Model}"
+SUBMIT_LOG_DIR="${SUBMIT_LOG_DIR:-${LOG_BASE}/submissions/${WORKFLOW_LABEL}/${SUBMIT_STAMP}}"
+SUBMIT_LOG="${SUBMIT_LOG:-${SUBMIT_LOG_DIR}/submit_world_model_ready_adatas_${ACTION_SET_LABEL}_${SUBMIT_STAMP}.log}"
+
+mkdir -p "$SUBMIT_LOG_DIR" "$STATE_NPZ_DIR" "$STATE_H5AD_DIR" "$ACTION_NPZ_DIR" "$READY_H5AD_DIR" "$TMP_BASE" "$TMPDIR"
+
+if [[ "${TEE_SUBMIT_LOG:-1}" == "1" ]]; then
+    exec > >(tee -a "$SUBMIT_LOG") 2>&1
+fi
+
 if [[ -z "$STACK_CHECKPOINT" || -z "$STACK_GENELIST" ]]; then
     echo "ERROR: set both STACK_CHECKPOINT and STACK_GENELIST." >&2
     echo >&2
@@ -258,13 +309,43 @@ echo "  datasets:         ${DATASETS[*]}"
 echo "  state embedding:  STACK -> obsm[$STATE_OBSM_KEY]"
 echo "  action embeddings (${#EMBEDDING_KEYS[@]}): ${EMBEDDING_KEYS[*]}"
 echo "  final h5ad dir:   $READY_H5AD_DIR"
-echo "  logs:             $LOG_DIR"
+echo "  workflow:         $WORKFLOW_LABEL"
+echo "  run root:         ${RUN_ROOT_BASE}/${WORKFLOW_LABEL}/<dataset>/${SUBMIT_STAMP}"
+echo "  logs:             ${LOG_BASE}/${WORKFLOW_LABEL}/<dataset>/${SUBMIT_STAMP}"
+echo "  submit log:       $SUBMIT_LOG"
 echo "  reuse state:      $REUSE_STATE"
 echo "  reuse action:     $REUSE_ACTION"
 echo "  dry run:          $DRYRUN"
 echo
 
+MANIFEST_OVERRIDE="${MANIFEST:-}"
+SUBMISSION_INFO_OVERRIDE="${SUBMISSION_INFO:-}"
+
 for ds in "${DATASETS[@]}"; do
+    dataset_run_root="${RUN_ROOT:-${RUN_ROOT_BASE}/${WORKFLOW_LABEL}/${ds}/${SUBMIT_STAMP}}"
+    dataset_log_dir="${LOG_DIR:-${LOG_BASE}/${WORKFLOW_LABEL}/${ds}/${SUBMIT_STAMP}}"
+    MANIFEST="${MANIFEST_OVERRIDE:-${dataset_log_dir}/manifest.tsv}"
+    SUBMISSION_INFO="${SUBMISSION_INFO_OVERRIDE:-${dataset_log_dir}/submission.txt}"
+    mkdir -p "$dataset_run_root" "$dataset_log_dir"
+    cat >"$SUBMISSION_INFO" <<EOF
+submitted_at=${SUBMITTED_AT}
+submit_stamp=${SUBMIT_STAMP}
+project_dir=${PROJECT_DIR}
+script=${SELF}
+dataset=${ds}
+action_set_label=${ACTION_SET_LABEL}
+embeddings=${EMBEDDING_KEYS[*]}
+cell_embedding_label=${CELL_EMBEDDING_LABEL}
+workflow_label=${WORKFLOW_LABEL}
+state_obsm_key=${STATE_OBSM_KEY}
+run_root=${dataset_run_root}
+log_dir=${dataset_log_dir}
+manifest=${MANIFEST}
+dryrun=${DRYRUN}
+run_train=${RUN_TRAIN}
+EOF
+    printf "submitted_at\tdataset\tphase\tembedding\tjob_id\tdependency\toutput_path\tstdout\tstderr\n" >"$MANIFEST"
+
     source_h5ad="$(h5ad_for "$ds")"
     state_npz="${STATE_NPZ_DIR}/${ds}_${STATE_KIND}.npz"
     state_h5ad="${STATE_H5AD_DIR}/${ds}_${STATE_KIND}.h5ad"
@@ -277,11 +358,12 @@ for ds in "${DATASETS[@]}"; do
     stack_jid=""
     if [[ "$REUSE_STATE" == "1" && -s "$state_h5ad" ]]; then
         echo "[$ds] reusing STACK state AnnData: $state_h5ad obsm[$STATE_OBSM_KEY]"
+        manifest_add "$ds" "state" "$STATE_KIND" "REUSED" "none" "$state_h5ad" "" ""
     else
         stack_cmd="set -euo pipefail; cd ${PROJECT_DIR}; \
             export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
             export PYTHONNOUSERSITE=1; \
-            export TMPDIR=\"${PROJECT_DIR}/${TMP_ROOT}/stack-\${SLURM_JOB_ID:-manual}\"; \
+            export TMPDIR=\"${TMP_BASE}/stack-\${SLURM_JOB_ID:-manual}\"; \
             mkdir -p \"\$TMPDIR\"; \
             trap 'rm -rf \"\$TMPDIR\"' EXIT; \
             pixi run -e ${STATE_PIXI_ENV} -- python -m world_model.scripts.encode_cells \
@@ -301,17 +383,21 @@ for ds in "${DATASETS[@]}"; do
             --job-name="wm-stack-${ds}" \
             --partition="$PARTITION" --qos="$QOS" \
             --gres=gpu:1
+            --export=ALL
         )
         if [[ -n "$STACK_GPU_CONSTRAINT" ]]; then
             stack_sbatch_args+=(--constraint="$STACK_GPU_CONSTRAINT")
         fi
         stack_sbatch_args+=(
             --time="$STACK_TIME" --mem="$STACK_MEM" --cpus-per-task="$STACK_CPUS"
-            -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err"
+            -o "${dataset_log_dir}/%x_%j.out" -e "${dataset_log_dir}/%x_%j.err"
             --wrap="$stack_cmd"
         )
         stack_jid=$(submit_sbatch "${stack_sbatch_args[@]}")
         echo "[$ds]   STACK job: $stack_jid -> $state_h5ad obsm[$STATE_OBSM_KEY]"
+        link_job_logs "$dataset_log_dir" "wm-stack-${ds}" "$stack_jid"
+        manifest_add "$ds" "state" "$STATE_KIND" "$stack_jid" "none" "$state_h5ad" \
+            "$(job_stdout "$dataset_log_dir" "wm-stack-${ds}" "$stack_jid")" "$(job_stderr "$dataset_log_dir" "wm-stack-${ds}" "$stack_jid")"
     fi
 
     fail_args=""
@@ -325,6 +411,7 @@ for ds in "${DATASETS[@]}"; do
     action_jids=()
     assemble_embedding_args=()
     for emb in "${EMBEDDING_KEYS[@]}"; do
+        action_log_dir="$dataset_log_dir"
         IFS='|' read -r kind target desc <<<"$(resolve_embedding "$emb")"
         action_npz="${ACTION_NPZ_DIR}/${ds}_${emb}.npz"
         assemble_name="$emb"
@@ -334,6 +421,7 @@ for ds in "${DATASETS[@]}"; do
 
         if [[ "$REUSE_ACTION" == "1" && -s "$action_npz" ]]; then
             echo "[$ds][$emb] reusing action NPZ: $action_npz"
+            manifest_add "$ds" "action" "$emb" "REUSED" "none" "$action_npz" "" ""
             assemble_embedding_args+=("${assemble_name}=${action_npz}")
             continue
         fi
@@ -343,6 +431,9 @@ for ds in "${DATASETS[@]}"; do
             action_cmd="set -euo pipefail; cd ${PROJECT_DIR}; \
                 export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
                 export PYTHONNOUSERSITE=1; \
+                export TMPDIR=\"${TMP_BASE}/action-\${SLURM_JOB_ID:-manual}\"; \
+                mkdir -p \"\$TMPDIR\"; \
+                trap 'rm -rf \"\$TMPDIR\"' EXIT; \
                 pixi run -e ${action_pixi_env} -- python -m world_model.scripts.embed_perturbations \
                     --dataset ${ds} \
                     --h5ad ${state_h5ad} \
@@ -352,8 +443,9 @@ for ds in "${DATASETS[@]}"; do
             action_sbatch_args=(
                 --job-name="wm-act-${ds}-${emb}"
                 --partition="$CPU_PARTITION" --qos="$CPU_QOS"
+                --export=ALL
                 --time="$PRECOMPUTED_ACTION_TIME" --mem="$PRECOMPUTED_ACTION_MEM" --cpus-per-task="$PRECOMPUTED_ACTION_CPUS"
-                -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err"
+                -o "${action_log_dir}/%x_%j.out" -e "${action_log_dir}/%x_%j.err"
                 --wrap="$action_cmd"
             )
         else
@@ -361,7 +453,7 @@ for ds in "${DATASETS[@]}"; do
             action_cmd="set -euo pipefail; cd ${PROJECT_DIR}; \
                 export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
                 export PYTHONNOUSERSITE=1; \
-                export TMPDIR=\"${PROJECT_DIR}/${TMP_ROOT}/action-\${SLURM_JOB_ID:-manual}\"; \
+                export TMPDIR=\"${TMP_BASE}/action-\${SLURM_JOB_ID:-manual}\"; \
                 mkdir -p \"\$TMPDIR\"; \
                 trap 'rm -rf \"\$TMPDIR\"' EXIT; \
                 pixi run -e ${action_pixi_env} -- python -m world_model.scripts.embed_perturbations \
@@ -379,13 +471,14 @@ for ds in "${DATASETS[@]}"; do
                 --job-name="wm-act-${ds}-${emb}"
                 --partition="$PARTITION" --qos="$QOS"
                 --gres=gpu:1
+                --export=ALL
             )
             if [[ -n "$ACTION_GPU_CONSTRAINT" ]]; then
                 action_sbatch_args+=(--constraint="$ACTION_GPU_CONSTRAINT")
             fi
             action_sbatch_args+=(
                 --time="$ACTION_TIME" --mem="$ACTION_MEM" --cpus-per-task="$ACTION_CPUS"
-                -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err"
+                -o "${action_log_dir}/%x_%j.out" -e "${action_log_dir}/%x_%j.err"
                 --wrap="$action_cmd"
             )
         fi
@@ -396,6 +489,9 @@ for ds in "${DATASETS[@]}"; do
         echo "[$ds][$emb] submitting action embedding job (${kind}, pixi env: ${action_pixi_env}) ..."
         action_jid=$(submit_sbatch "${action_sbatch_args[@]}")
         echo "[$ds][$emb]   action NPZ job: $action_jid -> $action_npz"
+        link_job_logs "$action_log_dir" "wm-act-${ds}-${emb}" "$action_jid"
+        manifest_add "$ds" "action" "$emb" "$action_jid" "${stack_jid:+afterok:${stack_jid}}" "$action_npz" \
+            "$(job_stdout "$action_log_dir" "wm-act-${ds}-${emb}" "$action_jid")" "$(job_stderr "$action_log_dir" "wm-act-${ds}-${emb}" "$action_jid")"
         action_jids+=("$action_jid")
         assemble_embedding_args+=("${assemble_name}=${action_npz}")
     done
@@ -418,6 +514,9 @@ for ds in "${DATASETS[@]}"; do
     assemble_cmd="set -euo pipefail; cd ${PROJECT_DIR}; \
         export PATH=\"\$HOME/.pixi/bin:\$PATH\"; \
         export PYTHONNOUSERSITE=1; \
+        export TMPDIR=\"${TMP_BASE}/assemble-\${SLURM_JOB_ID:-manual}\"; \
+        mkdir -p \"\$TMPDIR\"; \
+        trap 'rm -rf \"\$TMPDIR\"' EXIT; \
         pixi run -e ${ASSEMBLE_PIXI_ENV} -- python -m world_model.scripts.assemble_ready_adata \
             --input-h5ad ${state_h5ad} \
             --output-h5ad ${ready_h5ad} \
@@ -428,8 +527,9 @@ for ds in "${DATASETS[@]}"; do
     assemble_sbatch_args=(
         --job-name="wm-ready-${ds}-all"
         --partition="$CPU_PARTITION" --qos="$CPU_QOS"
+        --export=ALL
         --time="$ASSEMBLE_TIME" --mem="$ASSEMBLE_MEM" --cpus-per-task="$ASSEMBLE_CPUS"
-        -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err"
+        -o "${dataset_log_dir}/%x_%j.out" -e "${dataset_log_dir}/%x_%j.err"
         --wrap="$assemble_cmd"
     )
     if [[ -n "$assemble_dependency" ]]; then
@@ -439,20 +539,24 @@ for ds in "${DATASETS[@]}"; do
     echo "[$ds]   ready AnnData job: $assemble_jid -> $ready_h5ad"
     echo "[$ds]   state key: obsm[$STATE_OBSM_KEY]"
     echo "[$ds]   action keys: ${EMBEDDING_KEYS[*]/#/X_pert_}"
+    link_job_logs "$dataset_log_dir" "wm-ready-${ds}-all" "$assemble_jid"
+    manifest_add "$ds" "assemble" "$ACTION_SET_LABEL" "$assemble_jid" "${assemble_dependency:+afterok:${assemble_dependency}}" "$ready_h5ad" \
+        "$(job_stdout "$dataset_log_dir" "wm-ready-${ds}-all" "$assemble_jid")" "$(job_stderr "$dataset_log_dir" "wm-ready-${ds}-all" "$assemble_jid")"
 
     if [[ "$RUN_TRAIN" == "1" ]]; then
         cfg="$(base_cfg_for "$ds")"
         for emb in "${EMBEDDING_KEYS[@]}"; do
+            action_log_dir="$dataset_log_dir"
             action_obsm_key="${ACTION_OBSM_KEY:-X_pert_${emb}}"
             run_name="single_${ds}_${STATE_KIND}_${emb}"
-            out_dir="runs/world_model/${run_name}"
+            out_dir="${dataset_run_root}/${run_name}"
             echo "[$ds][$emb] chaining training after ready AnnData build ..."
             train_jid=$(submit_sbatch \
                 --job-name="wm-${ds}-${emb}" \
                 --partition="$PARTITION" --qos="$QOS" \
                 --gres="$TRAIN_GRES" --constraint="$TRAIN_GPU_CONSTRAINT" \
                 --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" \
-                -o "${LOG_DIR}/%x_%j.out" -e "${LOG_DIR}/%x_%j.err" \
+                -o "${action_log_dir}/%x_%j.out" -e "${action_log_dir}/%x_%j.err" \
                 --dependency=afterok:"${assemble_jid}" \
                 --export=ALL,EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}" \
                 "$TRAIN_LAUNCHER" "$cfg" \
@@ -465,6 +569,9 @@ for ds in "${DATASETS[@]}"; do
                 "run_name=${run_name}" \
                 "output_dir=${out_dir}")
             echo "[$ds][$emb]   train job: $train_jid -> $out_dir"
+            link_job_logs "$action_log_dir" "wm-${ds}-${emb}" "$train_jid"
+            manifest_add "$ds" "train" "$emb" "$train_jid" "afterok:${assemble_jid}" "$out_dir" \
+                "$(job_stdout "$action_log_dir" "wm-${ds}-${emb}" "$train_jid")" "$(job_stderr "$action_log_dir" "wm-${ds}-${emb}" "$train_jid")"
         done
     fi
     echo

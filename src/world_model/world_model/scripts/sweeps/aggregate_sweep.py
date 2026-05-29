@@ -1,6 +1,9 @@
 r"""Cross-embedding aggregator for the gene-embedding sweep.
 
-Each embedding's run writes ``runs/world_model/single_<ds>_<emb>/comparison.csv``
+Each embedding's run writes ``comparison.csv`` under either the historical
+``runs/world_model/single_<ds>_<emb>`` layout or the organized
+``runs/World_Model/<cell>_with_<action>/<ds>/<stamp>/single_<ds>_<emb>``
+layout
 (world_model row + every baseline row + cell_eval metrics) via
 ``compare.py``. This script stitches all of those into one table so you can
 see, in a single view, how each embedding does against every other one and
@@ -45,7 +48,7 @@ _LOWER_IS_BETTER = {"mse", "mae"}
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     p = argparse.ArgumentParser(description="Aggregate the embedding sweep.")
-    p.add_argument("--runs-root", default="runs/world_model")
+    p.add_argument("--runs-root", default="runs/World_Model")
     p.add_argument("--datasets", nargs="+", default=["replogle", "nadig"])
     p.add_argument("--out", default="runs/world_model/_sweep")
     p.add_argument(
@@ -76,6 +79,12 @@ def _comparison_csvs(runs_root: Path, dataset: str) -> list[Path]:
             *runs_root.glob(f"single_{dataset}_*/comparison.csv"),
             *runs_root.glob(f"crossmod_incontext_{dataset}_*/comparison.csv"),
             *runs_root.glob(f"cross_modality_incontext/{dataset}_*/comparison.csv"),
+            *runs_root.glob(f"action_embeddings/**/single_{dataset}_*/comparison.csv"),
+            *runs_root.glob(f"action_embeddings/**/crossmod_incontext_{dataset}_*/comparison.csv"),
+            *runs_root.glob(f"datasets/{dataset}/**/single_{dataset}_*/comparison.csv"),
+            *runs_root.glob(f"datasets/{dataset}/**/crossmod_incontext_{dataset}_*/comparison.csv"),
+            *runs_root.glob(f"*/{dataset}/**/single_{dataset}_*/comparison.csv"),
+            *runs_root.glob(f"*/{dataset}/**/crossmod_incontext_{dataset}_*/comparison.csv"),
         ]
     )
 
@@ -86,6 +95,12 @@ def _run_dirs(runs_root: Path, dataset: str) -> list[Path]:
             *[p for p in runs_root.glob(f"single_{dataset}_*") if p.is_dir()],
             *[p for p in runs_root.glob(f"crossmod_incontext_{dataset}_*") if p.is_dir()],
             *[p for p in runs_root.glob(f"cross_modality_incontext/{dataset}_*") if p.is_dir()],
+            *[p for p in runs_root.glob(f"action_embeddings/**/single_{dataset}_*") if p.is_dir()],
+            *[p for p in runs_root.glob(f"action_embeddings/**/crossmod_incontext_{dataset}_*") if p.is_dir()],
+            *[p for p in runs_root.glob(f"datasets/{dataset}/**/single_{dataset}_*") if p.is_dir()],
+            *[p for p in runs_root.glob(f"datasets/{dataset}/**/crossmod_incontext_{dataset}_*") if p.is_dir()],
+            *[p for p in runs_root.glob(f"*/{dataset}/**/single_{dataset}_*") if p.is_dir()],
+            *[p for p in runs_root.glob(f"*/{dataset}/**/crossmod_incontext_{dataset}_*") if p.is_dir()],
         ]
     )
 
