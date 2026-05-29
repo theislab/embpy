@@ -12,6 +12,7 @@ Supported file formats
   possible.
 * **Parquet** (``.parquet``) — efficient columnar storage for metadata and
   embeddings.
+* **Zarr** (``.zarr``) — scverse-friendly static embedding stores.
 * **NumPy tensors** (``.npy`` / ``.npz``) — raw embedding arrays with an
   accompanying row-index file (``_index.csv``) that maps rows to
   identifiers.
@@ -32,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 from anndata import AnnData
-from huggingface_hub import HfApi, hf_hub_download, list_repo_files
+from huggingface_hub import HfApi, hf_hub_download, list_repo_files, snapshot_download
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _RAW_EXTENSIONS = frozenset({".h5ad", ".csv", ".parquet"})
-_EMBEDDING_EXTENSIONS = frozenset({".parquet", ".npy", ".npz"})
+_EMBEDDING_EXTENSIONS = frozenset({".zarr", ".parquet", ".npy", ".npz"})
 
 
 # ------------------------------------------------------------------
@@ -74,6 +75,93 @@ def _read_tabular(path: Path) -> pd.DataFrame:
     if ext == ".parquet":
         return pd.read_parquet(path)
     raise ValueError(f"Unsupported tabular extension {ext!r}. Use .csv or .parquet.")
+
+
+def _as_dense_float32(value: Any) -> np.ndarray:
+    if hasattr(value, "toarray"):
+        value = value.toarray()
+    return np.asarray(value, dtype=np.float32)
+
+
+def _read_embedding_zarr(path: Path, *, model_key: str | None = None) -> dict[str, Any]:
+    """Read an AnnData or plain embpy embedding Zarr store."""
+    try:
+        import anndata as ad
+
+        adata = ad.read_zarr(path)
+        obsm_key = None
+        matrix: np.ndarray
+        if adata.obsm:
+            preferred = f"X_{model_key}" if model_key else None
+            if preferred and preferred in adata.obsm:
+                obsm_key = preferred
+            else:
+                x_keys = [k for k in adata.obsm.keys() if str(k).startswith("X_")]
+                obsm_key = x_keys[0] if x_keys else next(iter(adata.obsm.keys()))
+            matrix = _as_dense_float32(adata.obsm[obsm_key])
+        elif adata.n_vars > 0:
+            matrix = _as_dense_float32(adata.X)
+        else:
+            raise ValueError("AnnData Zarr store has neither .obsm embeddings nor non-empty .X.")
+
+        ids = adata.obs_names.astype(str).to_numpy()
+        result: dict[str, Any] = {
+            "embeddings": matrix,
+            "ids": ids,
+            "index": pd.DataFrame({"id": ids}),
+            "obs": pd.DataFrame(adata.obs),
+            "format": "anndata_zarr",
+        }
+        if obsm_key is not None:
+            result["obsm_key"] = obsm_key
+        return result
+    except Exception as anndata_error:  # noqa: BLE001
+        try:
+            import zarr
+
+            root = zarr.open_group(str(path), mode="r")
+            matrix_key = next(
+                (key for key in ("embeddings", "matrix", "X") if key in root),
+                None,
+            )
+            if matrix_key is None:
+                raise KeyError("No embeddings/matrix/X array found in Zarr store.")
+            matrix = _as_dense_float32(root[matrix_key][:])
+
+            attrs = dict(root.attrs)
+            id_key = next(
+                (
+                    key
+                    for key in (
+                        "entity_ids",
+                        "ids",
+                        "ensembl_gene_ids",
+                        "ensembl_ids",
+                        "symbols",
+                        "gene_symbols",
+                        "genes",
+                    )
+                    if key in root or key in attrs
+                ),
+                None,
+            )
+            if id_key is None:
+                raise KeyError("No row-id array or attr found in Zarr store.")
+            ids_obj = root[id_key][:] if id_key in root else attrs[id_key]
+            ids = np.asarray(ids_obj).astype(str)
+            return {
+                "embeddings": matrix,
+                "ids": ids,
+                id_key: ids,
+                "index": pd.DataFrame({"id": ids}),
+                "format": "zarr",
+            }
+        except Exception as zarr_error:  # noqa: BLE001
+            raise ValueError(
+                f"Could not read embedding Zarr store {path}: "
+                f"AnnData reader failed with {type(anndata_error).__name__}: {anndata_error}; "
+                f"plain Zarr reader failed with {type(zarr_error).__name__}: {zarr_error}."
+            ) from zarr_error
 
 
 # ------------------------------------------------------------------
@@ -254,7 +342,8 @@ class HFHandler:
     def upload_embeddings(self, embeddings_dir: str | Path) -> None:
         """Upload embedding files from a local directory to ``embeddings/``.
 
-        Supports ``.parquet``, ``.npy``, and ``.npz`` files.
+        Supports ``.zarr`` directories and ``.parquet``, ``.npy``,
+        and ``.npz`` files.
 
         Parameters
         ----------
@@ -265,6 +354,9 @@ class HFHandler:
         if not emb_dir.is_dir():
             raise FileNotFoundError(f"Embeddings directory not found: {emb_dir}")
         for fpath in sorted(emb_dir.iterdir()):
+            if fpath.is_dir() and fpath.suffix.lower() == ".zarr":
+                self.upload_folder(fpath, f"embeddings/{fpath.name}")
+                continue
             if fpath.suffix.lower() in _EMBEDDING_EXTENSIONS or fpath.name.endswith("_index.csv"):
                 self.upload_file(fpath, f"embeddings/{fpath.name}")
 
@@ -274,7 +366,7 @@ class HFHandler:
         embeddings: np.ndarray,
         identifiers: Sequence[str],
         *,
-        fmt: str = "parquet",
+        fmt: str = "zarr",
     ) -> None:
         """Upload an embedding matrix directly from numpy arrays.
 
@@ -288,9 +380,11 @@ class HFHandler:
             Row identifiers (e.g. SMILES strings), same length as
             *embeddings*.
         fmt
-            Output format: ``"parquet"`` (default) stores identifiers and
-            embedding vectors together; ``"npy"`` saves the array as
-            ``.npy`` with a companion ``_index.csv``.
+            Output format: ``"zarr"`` (default) writes a small AnnData
+            Zarr store with row identifiers in ``.obs_names`` and the
+            embedding matrix in ``.obsm["X_{model_key}"]``. ``"parquet"``
+            stores identifiers and embedding vectors together; ``"npy"``
+            saves the array as ``.npy`` with a companion ``_index.csv``.
         """
         if embeddings.shape[0] != len(identifiers):
             raise ValueError(
@@ -300,7 +394,22 @@ class HFHandler:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)
-            if fmt == "parquet":
+            if fmt == "zarr":
+                obs = pd.DataFrame(index=pd.Index(list(identifiers), name="id"))
+                adata = AnnData(X=np.zeros((embeddings.shape[0], 0), dtype=np.float32), obs=obs)
+                adata.obsm[f"X_{model_key}"] = np.asarray(embeddings, dtype=np.float32)
+                adata.uns["embpy_static_embedding"] = {
+                    "model_key": model_key,
+                    "storage": "obsm",
+                    "obsm_key": f"X_{model_key}",
+                    "id_type": "id",
+                    "n_entities": int(embeddings.shape[0]),
+                    "n_dims": int(embeddings.shape[1]),
+                }
+                out = tmp / f"{model_key}.zarr"
+                adata.write_zarr(out)
+                self.upload_folder(out, f"embeddings/{model_key}.zarr")
+            elif fmt == "parquet":
                 df = pd.DataFrame({
                     "smiles": list(identifiers),
                     "embedding": [row.tolist() for row in embeddings],
@@ -316,7 +425,7 @@ class HFHandler:
                 self.upload_file(arr_path, f"embeddings/{model_key}.npy")
                 self.upload_file(idx_path, f"embeddings/{model_key}_index.csv")
             else:
-                raise ValueError(f"Unsupported format {fmt!r}. Use 'parquet' or 'npy'.")
+                raise ValueError(f"Unsupported format {fmt!r}. Use 'zarr', 'parquet', or 'npy'.")
 
     # ══════════════════════════════════════════════════════════════════
     # Download
@@ -332,6 +441,18 @@ class HFHandler:
             token=self.token,
         )
         return Path(local)
+
+    def _download_folder(self, prefix: str, cache_dir: str | Path | None = None) -> Path:
+        """Download a repository folder prefix, returning the local folder path."""
+        clean = prefix.rstrip("/")
+        root = snapshot_download(
+            repo_id=self.repo_name,
+            repo_type="dataset",
+            cache_dir=str(cache_dir) if cache_dir else None,
+            token=self.token,
+            allow_patterns=f"{clean}/**",
+        )
+        return Path(root) / clean
 
     # ── discovery ────────────────────────────────────────────────────
 
@@ -356,21 +477,24 @@ class HFHandler:
     def available_embeddings(self) -> list[str]:
         """Return model keys whose embeddings are in the repo.
 
-        Detects ``.parquet``, ``.npy``, and ``.npz`` files under
+        Detects ``.zarr``, ``.parquet``, ``.npy``, and ``.npz`` files under
         ``embeddings/``, ignoring companion ``_index.csv`` files.
         """
-        out: list[str] = []
+        out: set[str] = set()
         for f in self.list_files():
             if not f.startswith("embeddings/"):
                 continue
             stem = f.removeprefix("embeddings/")
+            if ".zarr/" in stem:
+                out.add(stem.split(".zarr/", 1)[0])
+                continue
             if stem.endswith("_index.csv"):
                 continue
-            for ext in (".parquet", ".npy", ".npz"):
+            for ext in (".zarr", ".parquet", ".npy", ".npz"):
                 if stem.endswith(ext):
-                    out.append(stem.removesuffix(ext))
+                    out.add(stem.removesuffix(ext))
                     break
-        return out
+        return sorted(out)
 
     # ── datasets ─────────────────────────────────────────────────────
 
@@ -534,6 +658,10 @@ class HFHandler:
     def _resolve_embedding_filename(self, model_key: str) -> str:
         """Find the actual embedding filename for a model key."""
         files = self.list_files()
+        zarr_prefix = f"embeddings/{model_key}.zarr"
+        if any(f == zarr_prefix or f.startswith(f"{zarr_prefix}/") for f in files):
+            return zarr_prefix
+
         for ext in (".parquet", ".npy", ".npz"):
             candidate = f"embeddings/{model_key}{ext}"
             if candidate in files:
@@ -568,8 +696,17 @@ class HFHandler:
         identifiers from the companion ``_index.csv``.
 
         For ``.npz`` files: a dict with all stored arrays.
+
+        For ``.zarr`` stores: a dict with ``"embeddings"`` and ``"ids"``.
+        AnnData Zarr stores are read from ``.obsm`` when present, falling
+        back to ``.X``. Plain embpy Zarr groups are read from ``matrix`` /
+        ``embeddings`` / ``X`` and row-id arrays or attributes.
         """
         remote = self._resolve_embedding_filename(model_key)
+        if remote.endswith(".zarr"):
+            path = self._download_folder(remote, cache_dir=cache_dir)
+            return _read_embedding_zarr(path, model_key=model_key)
+
         path = self._download_file(remote, cache_dir=cache_dir)
         ext = path.suffix.lower()
 
