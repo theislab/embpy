@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
 from embpy.embedder import BioEmbedder
 
@@ -187,3 +188,88 @@ def test_embed_whole_genome_uses_ensembl_ids_and_prefetched_sequences(monkeypatc
 
     assert list(out.index) == ["ENSG00000141510", "ENSG00000136997"]
     assert seen["fetch_all_dna"] is True
+
+
+def test_embed_static_hf_gene_embeddings_to_table(monkeypatch):
+    emb = _bare_embedder()
+
+    def fail_if_model_inference_runs(**kwargs):
+        raise AssertionError("static HF lookup should not call embed_genes_batch")
+
+    def fake_static_table(*args, **kwargs):
+        return {
+            "ids": ["TP53", "MYC"],
+            "matrix": np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+            "id_key": "symbols",
+            "id_type": "symbol",
+        }
+
+    monkeypatch.setattr(emb, "embed_genes_batch", fail_if_model_inference_runs)
+    monkeypatch.setattr(emb, "_load_static_embedding_table", fake_static_table)
+
+    out = emb.embed(
+        ["TP53", "MYC"],
+        entity_type="gene",
+        model="genept",
+        output="table",
+    )
+
+    assert list(out.index) == ["ENSG00000141510", "ENSG00000136997"]
+    assert list(out.columns) == ["gene_symbol", "dim_0", "dim_1"]
+    assert np.array_equal(out[["dim_0", "dim_1"]].to_numpy(), np.array([[1.0, 2.0], [3.0, 4.0]]))
+
+
+def test_embed_static_hf_warns_and_drops_missing_genes(monkeypatch):
+    emb = _bare_embedder()
+
+    def fake_static_table(*args, **kwargs):
+        return {
+            "ids": ["TP53"],
+            "matrix": np.array([[1.0, 2.0]], dtype=np.float32),
+            "id_key": "symbols",
+            "id_type": "symbol",
+        }
+
+    monkeypatch.setattr(emb, "_load_static_embedding_table", fake_static_table)
+
+    with pytest.warns(UserWarning, match="available for 1/2 requested gene"):
+        out = emb.embed(
+            ["TP53", "MYC"],
+            entity_type="gene",
+            model="genept",
+            output="table",
+        )
+
+    assert list(out.index) == ["ENSG00000141510"]
+
+
+def test_embed_static_hf_gene_perturbations_to_obsm(monkeypatch):
+    emb = _bare_embedder()
+
+    def fake_static_table(*args, **kwargs):
+        return {
+            "ids": ["TP53", "MYC"],
+            "matrix": np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+            "id_key": "symbols",
+            "id_type": "symbol",
+        }
+
+    monkeypatch.setattr(emb, "_load_static_embedding_table", fake_static_table)
+
+    out = emb.embed(
+        ["TP53", "MYC"],
+        entity_type="gene",
+        model="genept",
+        embedding_source="static",
+        output="anndata",
+        is_perturbation=True,
+        key="X_pert_genept",
+    )
+
+    assert "X_pert_genept" in out.obsm
+    assert "X_pert_genept" not in out.varm
+    assert list(out.obs_names) == ["ENSG00000141510", "ENSG00000136997"]
+    meta = out.uns["embeddings"]["X_pert_genept"]["provenance"]["extra"]
+    assert meta["embedding_source"] == "hf"
+    assert meta["hf_repo_id"] == "theislab/Embpy_Data"
+    assert meta["is_perturbation"] is True

@@ -15,12 +15,12 @@ re-sampled.
 Optional context-bucketing
 --------------------------
 
-Set ``cell_buckets`` to a per-cell integer array (e.g. assay batch,
-gem-group, cell-cycle bin) to constrain every emitted sequence to a
-single bucket. The intuition: by holding the biological / technical
-substrate fixed across the T timesteps and varying only the
-perturbation, the transformer must learn how that substrate responds
-to different actions -- the invariances and equivariances of a cell.
+Set ``cell_buckets`` to a per-cell integer array (e.g. cell type,
+assay batch, donor, gem-group, cell-cycle bin) to constrain every
+emitted sequence/task to a single bucket. The intuition: by holding the
+biological / technical substrate fixed and varying only the
+perturbation, the transformer must learn how that substrate responds to
+different actions -- the invariances and equivariances of a cell.
 Without bucketing, ``S_{t+1}`` is independent of ``S_t`` in the data and
 the model collapses to predicting the per-action mean.
 
@@ -250,11 +250,11 @@ class PerturbationSequenceDataset:
         with the number of perturbed cells.
     cell_buckets
         Optional ``(n_cells,)`` integer array assigning each cell to a
-        bucket id (e.g. assay batch, gem-group). When provided, every
-        emitted sequence is drawn from a single bucket so the
+        bucket id (e.g. cell type x batch). When provided, every
+        emitted sequence/task is drawn from a single bucket so the
         transformer sees a coherent biological/technical context with
-        only the perturbation varying across timesteps. ``None``
-        disables bucketing (the legacy global-pool sampler is used).
+        only the perturbation varying. ``None`` disables bucketing (the
+        legacy global-pool sampler is used).
     bucket_value_map
         Optional ``{bucket_id: human_readable_label}`` map kept around
         for diagnostic logging only. Has no effect on sampling.
@@ -341,8 +341,9 @@ class PerturbationSequenceDataset:
         self._cells_by_bucket_label: dict[int, dict[str, np.ndarray]] = {}
         # Map: bucket_id -> list of labels with >= 1 allowed cell (incl. control).
         self._labels_by_bucket: dict[int, list[str]] = {}
-        # Buckets that have at least one control cell AND at least one
-        # non-control perturbation. Sampleable as sequence anchors.
+        # Buckets that have enough controls/perturbations to anchor a
+        # sample. In-context tasks need at least two non-control labels
+        # so support triplets do not leak the exact query perturbation.
         self._sampleable_buckets: list[int] = []
 
         if cell_buckets is not None:
@@ -360,6 +361,8 @@ class PerturbationSequenceDataset:
             allowed_bucket_ids = np.unique(buckets[allowed_mask])
             for bid in allowed_bucket_ids:
                 bid_int = int(bid)
+                if bid_int < 0:
+                    continue
                 in_bucket = (buckets == bid) & allowed_mask
                 labels_here: dict[str, np.ndarray] = {}
                 for label in np.unique(self.perturbation_labels[in_bucket]):
@@ -369,11 +372,12 @@ class PerturbationSequenceDataset:
                 if not labels_here:
                     continue
                 has_control = control_label in labels_here
-                has_pert = any(k != control_label for k in labels_here)
-                if not (has_control and has_pert):
+                n_pert_labels = sum(k != control_label for k in labels_here)
+                min_pert_labels = 2 if self.context_mode == "incontext_set" else 1
+                if not (has_control and n_pert_labels >= min_pert_labels):
                     # Skip buckets that cannot anchor a sequence (need a
-                    # control to start from and at least one perturbation
-                    # to draw actions from).
+                    # control to start from and enough perturbations to
+                    # draw a non-leaking support/query task).
                     continue
                 self._cells_by_bucket_label[bid_int] = labels_here
                 self._labels_by_bucket[bid_int] = sorted(labels_here.keys())
@@ -383,8 +387,8 @@ class PerturbationSequenceDataset:
             if not self._sampleable_buckets:
                 raise ValueError(
                     "cell_buckets was provided but no bucket has both a "
-                    "control cell and at least one non-control perturbation "
-                    "in the allowed subset; cannot anchor any sequence."
+                    "control cell and enough non-control perturbations "
+                    "in the allowed subset; cannot anchor any sequence/task."
                 )
 
         if n_sequences_per_epoch is None:
@@ -541,12 +545,24 @@ class PerturbationSequenceDataset:
             cells_by_label = self._cells_by_label
             label_pool = [lbl for lbl in self._sampleable_labels if lbl != self.control_label]
 
-        # M support + 1 query distinct perturbations where possible.
-        n_draw = M + 1
-        replace = len(label_pool) < n_draw
-        chosen = list(local.choice(np.asarray(label_pool, dtype=object), size=n_draw, replace=replace))
-        support_labels = [str(x) for x in chosen[:M]]
-        query_label = str(chosen[M])
+        # Pick the query first, then draw support labels from the same
+        # context bucket but excluding the query perturbation whenever
+        # possible. This keeps context biologically close while avoiding
+        # an easy leakage path where the support set already contains
+        # the exact query action's perturbed state.
+        query_label = str(local.choice(np.asarray(label_pool, dtype=object)))
+        support_pool = [lbl for lbl in label_pool if lbl != query_label]
+        if not support_pool:
+            support_pool = list(label_pool)
+        support_replace = len(support_pool) < M
+        support_labels = [
+            str(x)
+            for x in local.choice(
+                np.asarray(support_pool, dtype=object),
+                size=M,
+                replace=support_replace,
+            )
+        ]
 
         control_cells = cells_by_label[self.control_label]
 

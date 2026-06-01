@@ -183,7 +183,8 @@ class WorldModelTrainer:
         val_loader: DataLoader | None = None,
     ) -> dict[str, list[float]]:
         """Run the full training loop, returning the loss history."""
-        total_steps = max(1, len(train_loader)) * self.train_cfg.n_epochs
+        steps_per_epoch = max(1, len(train_loader))
+        total_steps = steps_per_epoch * self.train_cfg.n_epochs
         self.scheduler = build_scheduler(
             self.optimizer,
             kind=self.optim_cfg.scheduler,
@@ -197,13 +198,23 @@ class WorldModelTrainer:
                 h.optimizer = self.optimizer
                 h.scheduler = self.scheduler
 
+        self.state.extra.update(
+            {
+                "steps_per_epoch": steps_per_epoch,
+                "total_epochs": self.train_cfg.n_epochs,
+                "total_steps": total_steps,
+                "fit_start_time_s": time.time(),
+            }
+        )
         self._fire("on_train_start")
         self._set_backbone_train_mode(True)
 
         for epoch in range(1, self.train_cfg.n_epochs + 1):
             self.state.epoch = epoch
-            self._fire("on_epoch_start")
             t0 = time.time()
+            self.state.extra["epoch_start_time_s"] = t0
+            self.state.extra["epoch_step"] = 0
+            self._fire("on_epoch_start")
             self._set_backbone_train_mode(True)
             train_loss = self._train_one_epoch(train_loader)
             self.history["train_loss"].append(train_loss)
@@ -266,7 +277,7 @@ class WorldModelTrainer:
         self.model.train()
         running = 0.0
         n = 0
-        for batch in loader:
+        for step_idx, batch in enumerate(loader, start=1):
             batch = self._move_batch(batch)
             self.optimizer.zero_grad(set_to_none=True)
 
@@ -315,6 +326,7 @@ class WorldModelTrainer:
             self.state.lr = float(self.optimizer.param_groups[0]["lr"])
             self.state.grad_norm = grad_norm
             self.state.components = {k: float(v) for k, v in components.items()}
+            self.state.extra["epoch_step"] = step_idx
 
             self._fire("on_step_end")
 

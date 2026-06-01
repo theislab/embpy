@@ -72,6 +72,12 @@ if TYPE_CHECKING:
         ResolverError,
     )
     from .observability import log_event, time_block
+    from .pp.static_embeddings import (
+        StaticEmbeddingStore,
+        load_static_embedding_package,
+        render_static_embedding_dataset_card,
+        write_static_embedding_dataset_card,
+    )
     from .reporting import ResolutionRecord, ResolutionReport
     from .resources import DrugResolver, GeneResolver
     from .retry import embed_batch_with_oom_recovery, retry_with_backoff
@@ -88,6 +94,7 @@ _LAZY: dict[str, str] = {
     "resources": "embpy.resources",
     "tl": "embpy.tl",
     "BioEmbedder": "embpy.embedder:BioEmbedder",
+    "StaticEmbeddingStore": "embpy.pp.static_embeddings:StaticEmbeddingStore",
     "ConfigError": "embpy.errors:ConfigError",
     "ContextOverflowError": "embpy.errors:ContextOverflowError",
     "DataError": "embpy.errors:DataError",
@@ -115,6 +122,9 @@ _LAZY: dict[str, str] = {
     # Layer 4: structured logging helpers.
     "log_event": "embpy.observability:log_event",
     "time_block": "embpy.observability:time_block",
+    "load_static_embedding_package": "embpy.pp.static_embeddings:load_static_embedding_package",
+    "render_static_embedding_dataset_card": "embpy.pp.static_embeddings:render_static_embedding_dataset_card",
+    "write_static_embedding_dataset_card": "embpy.pp.static_embeddings:write_static_embedding_dataset_card",
 }
 
 
@@ -162,9 +172,11 @@ __all__ = [
     "ResolutionRecord",
     "ResolutionReport",
     "ResolverError",
+    "StaticEmbeddingStore",
     "dt",
     "embed_batch_with_oom_recovery",
     "log_event",
+    "load_static_embedding_package",
     "models",
     "pl",
     "pp",

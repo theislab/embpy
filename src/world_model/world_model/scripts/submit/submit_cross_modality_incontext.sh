@@ -69,8 +69,14 @@ STACK_GPU_CONSTRAINT="${STACK_GPU_CONSTRAINT:-}"
 ACTION_GPU_CONSTRAINT="${ACTION_GPU_CONSTRAINT:-a100_80gb|h100_80gb}"
 TRAIN_GPU_CONSTRAINT="${TRAIN_GPU_CONSTRAINT:-h100_80gb}"
 TRAIN_GRES="${TRAIN_GRES:-gpu:h100:1}"
+TRAIN_TIME="${TRAIN_TIME:-24:00:00}"
 TRAIN_MEM="${TRAIN_MEM:-128G}"
 TRAIN_CPUS="${TRAIN_CPUS:-8}"
+TRAIN_INCONTEXT_SUPPORT_SIZE="${TRAIN_INCONTEXT_SUPPORT_SIZE:-16}"
+TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH="${TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH:-16}"
+TRAIN_SEQUENCE_BUCKET_KEY="${TRAIN_SEQUENCE_BUCKET_KEY:-auto}"
+TRAIN_DEFAULT_OVERRIDES="${TRAIN_DEFAULT_OVERRIDES:-data.batch_size=16 data.num_workers=0 data.pin_memory=false eval.save_predictions=false eval.n_control_samples_per_pert=8 optim.lr=0.0001 optim.grad_clip=0.5 loss.info_nce=0.05 loss.action_counterfactual=0.05 loss.info_nce_temperature=0.1}"
+TRAIN_OVERRIDES="${TRAIN_OVERRIDES:-$TRAIN_DEFAULT_OVERRIDES}"
 
 STACK_TIME="${STACK_TIME:-24:00:00}"
 STACK_MEM="${STACK_MEM:-128G}"
@@ -87,6 +93,11 @@ ESM_PIXI_ENV="${ESM_PIXI_ENV:-gpu}"
 SUBCELL_PIXI_ENV="${SUBCELL_PIXI_ENV:-gpu}"
 TRAIN_PIXI_ENV="${TRAIN_PIXI_ENV:-gpu}"
 MATRIX_PIXI_ENV="${MATRIX_PIXI_ENV:-gpu}"
+
+TRAIN_EXTRA_ARGS=()
+if [[ -n "$TRAIN_OVERRIDES" ]]; then
+    read -r -a TRAIN_EXTRA_ARGS <<<"$TRAIN_OVERRIDES"
+fi
 
 DRYRUN="${DRYRUN:-0}"
 RUN_TRAIN="${RUN_TRAIN:-1}"
@@ -173,8 +184,8 @@ link_job_logs() {
     [[ "$DRYRUN" == "1" ]] && return 0
     local job_dir="${root}/jobs/${jid}"
     mkdir -p "$job_dir"
-    ln -sfn "../${name}_${jid}.out" "${job_dir}/stdout"
-    ln -sfn "../${name}_${jid}.err" "${job_dir}/stderr"
+    ln -sfn "../../${name}_${jid}.out" "${job_dir}/stdout"
+    ln -sfn "../../${name}_${jid}.err" "${job_dir}/stderr"
 }
 
 manifest_add() {
@@ -329,14 +340,17 @@ EOF
         cfg="$(project_path "$(base_cfg_for "$ds")")"
         run_name="crossmod_incontext_${ds}_stack_esm2_650M_to_subcell_mae_rybg"
         out_dir="${dataset_run_root}/${run_name}"
-        train_args=(--job-name="wm-xmod-train-${ds}" --partition="$PARTITION" --qos="$QOS" --gres="$TRAIN_GRES" --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" -o "${dataset_log_dir}/%x_%j.out" -e "${dataset_log_dir}/%x_%j.err" --export=ALL,EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}")
+        train_args=(--job-name="wm-xmod-train-${ds}" --partition="$PARTITION" --qos="$QOS" --gres="$TRAIN_GRES" --time="$TRAIN_TIME" --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" -o "${dataset_log_dir}/%x_%j.out" -e "${dataset_log_dir}/%x_%j.err" --export=ALL,EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}")
         if [[ -n "$TRAIN_GPU_CONSTRAINT" ]]; then train_args+=(--constraint="$TRAIN_GPU_CONSTRAINT"); fi
         if [[ -n "$subcell_jid" ]]; then train_args=(--dependency=afterok:"$subcell_jid" "${train_args[@]}"); fi
         train_args+=("$TRAIN_LAUNCHER" "$cfg"
             "data.h5ad_path=${ready_h5ad}"
             "data.state_obsm_key=${STATE_OBSM_KEY}"
             "data.context_mode=incontext_set"
+            "data.incontext_support_size=${TRAIN_INCONTEXT_SUPPORT_SIZE}"
+            "data.sequence_bucket_key=${TRAIN_SEQUENCE_BUCKET_KEY}"
             "dynamics.kind=incontext_set"
+            "dynamics.max_sequence_length=${TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH}"
             "state_backbone.kind=stack"
             "action_embedding.source=anndata_obsm"
             "action_embedding.obsm_key=${SUPPORT_OBSM_KEY}"
@@ -345,7 +359,8 @@ EOF
             "query_action_embedding.obsm_key=${QUERY_OBSM_KEY}"
             "query_action_embedding.model_name=subcell_mae_rybg"
             "run_name=${run_name}"
-            "output_dir=${out_dir}")
+            "output_dir=${out_dir}"
+            "${TRAIN_EXTRA_ARGS[@]}")
         train_jid=$(submit_sbatch "${train_args[@]}")
         echo "[$ds] training job: $train_jid -> $out_dir"
         link_job_logs "$dataset_log_dir" "wm-xmod-train-${ds}" "$train_jid"

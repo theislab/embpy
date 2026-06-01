@@ -92,13 +92,16 @@ class DataConfig:
     """Override for dataset epoch length. ``None`` uses the dataset default."""
 
     sequence_bucket_key: str | None = None
-    """Name of an ``adata.obs`` column to anchor sequences to a single
-    context (e.g. ``"batch"`` or ``"gem_group"``). When set, every
-    sequence emitted by ``__getitem__`` draws all of its (current,
-    next) cells from one bucket so the transformer sees a coherent
-    biological / technical substrate with only the perturbation varying
-    across timesteps. ``None`` falls back to the legacy global-pool
-    sampler."""
+    """``adata.obs`` context columns used to anchor samples.
+
+    ``None`` disables bucketing. A single column name (``"batch"``) or
+    a composite list (``"cell_type,batch"`` or ``"cell_type+batch"``)
+    constrains each emitted sequence/task to that exact context
+    neighborhood. ``"auto"`` picks common biological/technical columns
+    when present, currently one cell-identity column and one
+    batch/sample/donor column. This is especially important for
+    in-context training because support triplets should describe the
+    same biological/technical substrate as the query."""
 
 
 @dataclass

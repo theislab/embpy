@@ -9,6 +9,7 @@
 
 api.md
 technical.md
+static_embeddings.md
 changelog.md
 contributing.md
 references.md

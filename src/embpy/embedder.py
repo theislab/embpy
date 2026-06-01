@@ -5,6 +5,7 @@ import os
 import pathlib
 import re
 import traceback
+import warnings
 from collections.abc import Mapping, Sequence
 from hashlib import sha1
 from typing import TYPE_CHECKING, Any, Literal
@@ -53,6 +54,23 @@ from .models.text_models import TextLLMWrapper
 from .resources.gene_resolver import GeneResolver
 from .resources.protein_resolver import ProteinResolver
 from .resources.text_resolver import TextResolver
+
+DEFAULT_STATIC_EMBEDDING_REPO = "theislab/Embpy_Data"
+DEFAULT_STATIC_EMBEDDING_MODELS = frozenset(
+    {
+        "genept",
+        "genept_scaled",
+        "gene2vec",
+        "wikicrow",
+        "ccle",
+        "ccle_ensembl",
+        "crispr_gene_effect",
+        "crispr_gene_effect_1178",
+        "crispr_gene_effect_205",
+        "omics",
+        "pops",
+    }
+)
 
 
 # Helper function (can be moved to utils later)
@@ -107,6 +125,12 @@ def _guess_missing_package(msg: str) -> str | None:
     caller falls back to a generic "unknown" placeholder.
     """
     m = re.search(r"No module named ['\"]([^'\"]+)['\"]", msg)
+    if m:
+        return m.group(1).split(".")[0]
+    m = re.search(r"([A-Za-z0-9_.-]+)\s+package is not installed", msg, flags=re.IGNORECASE)
+    if m:
+        return m.group(1).split(".")[0]
+    m = re.search(r"['\"]([^'\"]+)['\"](?:\s+package)?\s+is required", msg, flags=re.IGNORECASE)
     if m:
         return m.group(1).split(".")[0]
     m = re.search(r"from ['\"]([^'\"]+)['\"]", msg)
@@ -659,6 +683,12 @@ class BioEmbedder:
         obs_column: str | None = None,
         var_column: str | None = None,
         is_perturbation: bool = False,
+        embedding_source: Literal["auto", "model", "hf", "huggingface", "static", "precomputed"] = "auto",
+        hf_repo_id: str = DEFAULT_STATIC_EMBEDDING_REPO,
+        hf_cache_dir: str | os.PathLike[str] | None = None,
+        hf_token: str | None = None,
+        hf_id_key: str | None = None,
+        hf_id_type: str | None = None,
         whole_genome: bool = False,
         biotype: str = "protein_coding",
         show_progress: bool = False,
@@ -686,6 +716,15 @@ class BioEmbedder:
         when gene identifiers are perturbation/action labels; those
         embeddings route to ``.obsm`` and the flag is recorded in
         provenance.
+
+        ``embedding_source="auto"`` routes known static lookup models
+        such as ``genept`` and ``gene2vec`` to a Hugging Face dataset
+        repository and routes all other models through normal inference.
+        The default static repository is ``theislab/Embpy_Data`` and
+        files are resolved via ``embeddings/{model}.npz`` / ``.parquet``
+        / ``.npy`` using :class:`embpy.pp.HFHandler`. Static lookup
+        models return the same standardized outputs as model inference,
+        but only for genes present in the downloaded table.
 
         Defaults are explicit: if ``output`` is omitted, an output path
         chooses compact NPZ/CSV/Zarr file output, otherwise AnnData is
@@ -787,6 +826,12 @@ class BioEmbedder:
                 organism=org,
                 pooling_strategy=pooling_strategy,
                 is_perturbation=bool(is_perturbation and et == "gene"),
+                embedding_source=embedding_source,
+                hf_repo_id=hf_repo_id,
+                hf_cache_dir=hf_cache_dir,
+                hf_token=hf_token,
+                hf_id_key=hf_id_key,
+                hf_id_type=hf_id_type,
                 show_progress=show_progress,
                 **embed_kwargs,
             )
@@ -937,6 +982,12 @@ class BioEmbedder:
         organism: str,
         pooling_strategy: str,
         is_perturbation: bool = False,
+        embedding_source: str = "model",
+        hf_repo_id: str = DEFAULT_STATIC_EMBEDDING_REPO,
+        hf_cache_dir: str | os.PathLike[str] | None = None,
+        hf_token: str | None = None,
+        hf_id_key: str | None = None,
+        hf_id_type: str | None = None,
         show_progress: bool = False,
         **embed_kwargs: Any,
     ):
@@ -959,6 +1010,27 @@ class BioEmbedder:
         ids = list(norm.identifiers)
         alias_cols = {k: list(v) for k, v in norm.alias_columns.items()}
         requested_n = len(ids)
+        source = self._resolve_embedding_source(
+            embedding_source,
+            entity_type=entity_type,
+            model=model,
+        )
+        if source == "hf":
+            return self._embed_static_hf_to_result(
+                norm,
+                entity_type=entity_type,
+                model=model,
+                id_type=id_type,
+                organism=organism,
+                pooling_strategy=pooling_strategy,
+                is_perturbation=is_perturbation,
+                repo_id=hf_repo_id,
+                cache_dir=hf_cache_dir,
+                token=hf_token,
+                id_key=hf_id_key,
+                table_id_type=hf_id_type,
+            )
+
         extra: dict[str, Any] = {
             "entity_type": entity_type,
             "organism": organism,
@@ -1178,6 +1250,366 @@ class BioEmbedder:
             provenance=prov,
             aliases=aliases or None,
         )
+
+    @staticmethod
+    def _normalize_embedding_source(value: str) -> Literal["auto", "model", "hf"]:
+        source = str(value).lower().replace("-", "_")
+        if source in ("auto", "default"):
+            return "auto"
+        if source in ("model", "inference", "local_model"):
+            return "model"
+        if source in ("hf", "huggingface", "huggingface_hub", "static", "precomputed"):
+            return "hf"
+        raise ValueError(
+            "embedding generation: embedding_source must be one of "
+            f"'auto', 'model' or 'hf'/'static', got {value!r}."
+        )
+
+    @staticmethod
+    def _resolve_embedding_source(source: str, *, entity_type: str, model: str) -> Literal["model", "hf"]:
+        normalized = BioEmbedder._normalize_embedding_source(source)
+        if normalized != "auto":
+            return normalized
+        if entity_type == "gene" and model in DEFAULT_STATIC_EMBEDDING_MODELS:
+            return "hf"
+        return "model"
+
+    def _embed_static_hf_to_result(
+        self,
+        identifiers: Any,
+        *,
+        entity_type: str,
+        model: str,
+        id_type: str | None,
+        organism: str,
+        pooling_strategy: str,
+        is_perturbation: bool,
+        repo_id: str,
+        cache_dir: str | os.PathLike[str] | None,
+        token: str | None,
+        id_key: str | None,
+        table_id_type: str | None,
+    ):
+        """Return an EmbeddingResult by looking up rows in a static HF table."""
+        from .io._canon import SCHEME, build_aliases, canonicalize
+        from .io.normalize import NormalizedInput, normalize_embedding_input
+        from .io.result import EmbeddingProvenance, EmbeddingResult
+
+        if entity_type != "gene":
+            raise ValueError(
+                "static embedding lookup currently supports entity_type='gene' only; "
+                f"got {entity_type!r}."
+            )
+
+        norm = (
+            identifiers
+            if isinstance(identifiers, NormalizedInput)
+            else normalize_embedding_input(identifiers, entity_type=entity_type)
+        )
+        requested_ids = [str(x) for x in norm.identifiers]
+        table = self._load_static_embedding_table(
+            model,
+            repo_id=repo_id,
+            cache_dir=cache_dir,
+            token=token,
+            id_key=id_key,
+            id_type=table_id_type,
+        )
+        table_ids = [str(x) for x in table["ids"]]
+        table_matrix = np.asarray(table["matrix"], dtype=np.float32)
+        table_id_type = str(table["id_type"])
+
+        table_canon, table_keep = canonicalize(
+            table_ids,
+            entity_type,
+            organism,
+            id_type=table_id_type,
+            gene_resolver=self.gene_resolver,
+        )
+        row_by_canonical: dict[str, int] = {}
+        table_alias_by_canonical: dict[str, str] = {}
+        for i, (cid, ok) in enumerate(zip(table_canon, table_keep, strict=False)):
+            if not ok or not cid:
+                continue
+            canonical_id = str(cid)
+            row_by_canonical.setdefault(canonical_id, i)
+            if table_ids[i] != canonical_id:
+                table_alias_by_canonical.setdefault(canonical_id, table_ids[i])
+
+        request_id_type = id_type or "symbol"
+        req_canon, req_keep = canonicalize(
+            requested_ids,
+            entity_type,
+            organism,
+            id_type=request_id_type,
+            gene_resolver=self.gene_resolver,
+        )
+
+        out_ids: list[str] = []
+        out_rows: list[np.ndarray] = []
+        kept_raw: list[str] = []
+        unresolved_ids: list[str] = []
+        lookup_missing_ids: list[str] = []
+        seen: set[str] = set()
+        unresolved = 0
+        lookup_misses = 0
+        duplicate_canonical = 0
+
+        for raw_id, cid, ok in zip(requested_ids, req_canon, req_keep, strict=False):
+            if not ok or not cid:
+                unresolved += 1
+                unresolved_ids.append(raw_id)
+                continue
+            canonical_id = str(cid)
+            row = row_by_canonical.get(canonical_id)
+            if row is None:
+                lookup_misses += 1
+                lookup_missing_ids.append(raw_id)
+                continue
+            if canonical_id in seen:
+                duplicate_canonical += 1
+                continue
+            seen.add(canonical_id)
+            out_ids.append(canonical_id)
+            out_rows.append(np.asarray(table_matrix[row], dtype=np.float32))
+            kept_raw.append(raw_id)
+
+        if not out_rows:
+            raise ValueError(
+                "static embedding lookup: no requested identifiers were found in "
+                f"model={model!r} from repo={repo_id!r}. "
+                f"Requested {len(requested_ids)} ids; unresolved={unresolved}, "
+                f"lookup_misses={lookup_misses}."
+            )
+
+        if unresolved_ids or lookup_missing_ids:
+            missing_ids = list(dict.fromkeys(unresolved_ids + lookup_missing_ids))
+            preview = missing_ids[:10]
+            warnings.warn(
+                "Static embedding model "
+                f"{model!r} from {repo_id!r} is available for "
+                f"{len(out_ids)}/{len(requested_ids)} requested gene(s). "
+                f"Unavailable or unresolved genes were dropped; first missing: {preview}.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        matrix = np.vstack(out_rows).astype(np.float32, copy=False)
+        aliases = build_aliases(entity_type, out_ids, kept_raw, {})
+        for cid, table_id in table_alias_by_canonical.items():
+            if cid in out_ids and table_id != cid:
+                alias_key = "gene_symbol" if table_id_type == "symbol" else "source_id"
+                aliases.setdefault(cid, {}).setdefault(alias_key, table_id)
+
+        extra: dict[str, Any] = {
+            "entity_type": entity_type,
+            "organism": organism,
+            "input_kind": norm.input_kind,
+            "input_source": norm.source,
+            "input_id_column": norm.id_column,
+            "input_id_type": id_type,
+            "is_perturbation": bool(is_perturbation),
+            "embedding_source": "hf",
+            "hf_repo_id": repo_id,
+            "hf_model_key": model,
+            "hf_id_key": table.get("id_key"),
+            "hf_id_type": table_id_type,
+            "canonical_id_scheme": SCHEME[entity_type],
+            "n_requested_inputs": len(requested_ids),
+            "n_static_available_entities": int(table_matrix.shape[0]),
+            "n_successfully_embedded_entities": len(out_ids),
+            "n_embedding_failures": lookup_misses,
+            "n_unresolved_identifiers": unresolved,
+            "duplicate_canonical_ids_dropped": duplicate_canonical,
+            "n_dropped_or_unresolved_entities": unresolved + lookup_misses + duplicate_canonical,
+        }
+        prov = EmbeddingProvenance.create(
+            model=model,
+            pooling=pooling_strategy,
+            extra=extra,
+        )
+        return EmbeddingResult(
+            matrix=matrix,
+            entity_ids=tuple(out_ids),
+            entity_type=entity_type,
+            id_scheme=SCHEME[entity_type],
+            provenance=prov,
+            aliases=aliases or None,
+        )
+
+    def _load_static_embedding_table(
+        self,
+        model: str,
+        *,
+        repo_id: str,
+        cache_dir: str | os.PathLike[str] | None,
+        token: str | None,
+        id_key: str | None,
+        id_type: str | None,
+    ) -> dict[str, Any]:
+        from .pp.hf_handler import HFHandler
+
+        obj = HFHandler(repo_id, token=token).download_embedding(model, cache_dir=cache_dir)
+        return self._coerce_static_embedding_table(
+            obj,
+            model=model,
+            id_key=id_key,
+            id_type=id_type,
+        )
+
+    def _coerce_static_embedding_table(
+        self,
+        obj: Any,
+        *,
+        model: str,
+        id_key: str | None,
+        id_type: str | None,
+    ) -> dict[str, Any]:
+        """Normalize HFHandler output into ids + float32 matrix."""
+        import pandas as pd
+
+        if isinstance(obj, pd.DataFrame):
+            return self._coerce_static_embedding_frame(
+                obj,
+                model=model,
+                id_key=id_key,
+                id_type=id_type,
+            )
+        if not isinstance(obj, Mapping):
+            raise TypeError(
+                f"static embedding lookup: expected a DataFrame or dict for {model!r}, "
+                f"got {type(obj).__name__}."
+            )
+
+        matrix_key = self._first_present_key(obj, ("embeddings", "matrix", "X", "arr_0"))
+        if matrix_key is None:
+            raise KeyError(
+                "static embedding lookup: embedding file must contain one of "
+                "'embeddings', 'matrix', 'X', or 'arr_0'."
+            )
+        matrix = np.asarray(obj[matrix_key], dtype=np.float32)
+        if matrix.ndim != 2:
+            raise ValueError(f"static embedding lookup: matrix must be 2D, got {matrix.shape!r}.")
+
+        resolved_id_key = id_key or self._first_present_key(
+            obj,
+            (
+                "entity_ids",
+                "ids",
+                "ensembl_gene_ids",
+                "ensembl_gene_id",
+                "ensembl_ids",
+                "ensembl_id",
+                "symbols",
+                "gene_symbols",
+                "gene_symbol",
+                "genes",
+                "index",
+            ),
+        )
+        if resolved_id_key is None:
+            raise KeyError(
+                "static embedding lookup: embedding file must contain row identifiers. "
+                "Use one of 'symbols', 'gene_symbols', 'ensembl_gene_ids', "
+                "'entity_ids', 'ids', or pass hf_id_key=..."
+            )
+        ids_obj = obj[resolved_id_key]
+
+        if isinstance(ids_obj, pd.DataFrame):
+            ids = [] if ids_obj.empty else ids_obj.iloc[:, 0].astype(str).tolist()
+        else:
+            ids = [str(x) for x in np.asarray(ids_obj).reshape(-1).tolist()]
+
+        if matrix.shape[0] != len(ids):
+            raise ValueError(
+                f"static embedding lookup: {model!r} has {matrix.shape[0]} embedding rows "
+                f"but {len(ids)} ids in {resolved_id_key!r}."
+            )
+        return {
+            "ids": ids,
+            "matrix": matrix,
+            "id_key": resolved_id_key,
+            "id_type": id_type or self._infer_static_gene_id_type(resolved_id_key, ids),
+        }
+
+    def _coerce_static_embedding_frame(
+        self,
+        frame: Any,
+        *,
+        model: str,
+        id_key: str | None,
+        id_type: str | None,
+    ) -> dict[str, Any]:
+        import pandas as pd
+
+        df = pd.DataFrame(frame)
+        resolved_id_key = id_key or self._first_present_key(
+            df,
+            (
+                "entity_ids",
+                "ids",
+                "ensembl_gene_ids",
+                "ensembl_gene_id",
+                "ensembl_ids",
+                "ensembl_id",
+                "symbols",
+                "gene_symbols",
+                "gene_symbol",
+                "genes",
+                "id",
+            ),
+        )
+        if resolved_id_key is not None:
+            ids = df[resolved_id_key].astype(str).tolist()
+            value_df = df.drop(columns=[resolved_id_key])
+        elif not isinstance(df.index, pd.RangeIndex):
+            ids = df.index.astype(str).tolist()
+            resolved_id_key = str(df.index.name or "index")
+            value_df = df
+        else:
+            raise KeyError(
+                "static embedding lookup: parquet/static table must have an id column "
+                "or a non-default index. Pass hf_id_key=... if needed."
+            )
+
+        if "embedding" in value_df.columns:
+            matrix = np.vstack(value_df["embedding"].map(np.asarray).to_numpy()).astype(np.float32)
+        else:
+            dim_cols = [c for c in value_df.columns if str(c).startswith("dim_")]
+            numeric = value_df[dim_cols] if dim_cols else value_df.select_dtypes(include=[np.number])
+            matrix = numeric.to_numpy(dtype=np.float32)
+        if matrix.ndim != 2 or matrix.shape[1] == 0:
+            raise ValueError(f"static embedding lookup: no numeric embedding columns found for {model!r}.")
+        if matrix.shape[0] != len(ids):
+            raise ValueError(
+                f"static embedding lookup: {model!r} has {matrix.shape[0]} embedding rows "
+                f"but {len(ids)} ids."
+            )
+        return {
+            "ids": ids,
+            "matrix": matrix,
+            "id_key": resolved_id_key,
+            "id_type": id_type or self._infer_static_gene_id_type(resolved_id_key, ids),
+        }
+
+    @staticmethod
+    def _first_present_key(container: Any, keys: Sequence[str]) -> str | None:
+        for key in keys:
+            if key in container:
+                return key
+        return None
+
+    @staticmethod
+    def _infer_static_gene_id_type(id_key: str, ids: Sequence[str]) -> str:
+        key = str(id_key).lower()
+        if "ensembl" in key or key in {"ensembl_id", "ensembl_gene_id"}:
+            return "ensembl_id"
+        if "symbol" in key or key in {"gene", "genes"}:
+            return "symbol"
+        sample = [str(x).upper() for x in ids[:50]]
+        if sample and all(x.startswith(("ENSG", "ENSMUSG", "ENS")) for x in sample):
+            return "ensembl_id"
+        return "symbol"
 
     @staticmethod
     def _as_string_list(value: str | Sequence[str], *, arg_name: str) -> list[str]:
@@ -3262,6 +3694,7 @@ class BioEmbedder:
             "text",
             "morphology",
             "single_cell",
+            "static",
         ] = "all",
     ) -> list[str]:
         """Return available model names, optionally filtered by category.
@@ -3273,8 +3706,13 @@ class BioEmbedder:
             ``"dna"``, ``"protein"``, ``"molecule"``, ``"text"``,
             ``"morphology"`` filter the sequence/structure model registry.
             ``"single_cell"`` returns single-cell foundation model keys.
+            ``"static"`` returns fixed lookup embedding tables shipped via
+            the default Hugging Face data repository.
         """
         from .models.singlecell_models import list_singlecell_models
+
+        if category == "static":
+            return sorted(DEFAULT_STATIC_EMBEDDING_MODELS)
 
         if category == "single_cell":
             return sorted(list_singlecell_models())
@@ -3282,7 +3720,8 @@ class BioEmbedder:
         if category == "all":
             seq_models = sorted(self._available_models.keys())
             sc_models = sorted(list_singlecell_models())
-            return seq_models + sc_models
+            static_models = sorted(DEFAULT_STATIC_EMBEDDING_MODELS)
+            return sorted(set(seq_models + sc_models + static_models))
 
         result = []
         for name, (wrapper_cls, _) in self._available_models.items():

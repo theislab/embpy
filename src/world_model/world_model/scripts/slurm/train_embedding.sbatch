@@ -37,8 +37,14 @@ cd "$PROJECT_DIR"
 PROJECT_DIR="${PROJECT_DIR%/}"
 export PROJECT_DIR
 
-export TMPDIR="${TMPDIR:-$PROJECT_DIR/runs/_tmp}"
+if [[ -z "${TMPDIR:-}" ]]; then
+    export TMPDIR="/tmp/embpy-${USER:-user}-${SLURM_JOB_ID:-manual}"
+fi
 mkdir -p "$TMPDIR" logs/slurm/train_embedding
+cleanup_tmpdir() {
+    [[ "$TMPDIR" == /tmp/embpy-* ]] && rm -rf "$TMPDIR"
+}
+trap cleanup_tmpdir EXIT
 
 if [[ $# -lt 1 ]]; then
     echo "usage: train_embedding.sbatch <config_path> [key.sub=value ...]" >&2

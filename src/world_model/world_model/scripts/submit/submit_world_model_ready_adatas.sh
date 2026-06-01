@@ -95,8 +95,17 @@ ASSEMBLE_PIXI_ENV="${ASSEMBLE_PIXI_ENV:-gpu}"
 TRAIN_PIXI_ENV="${TRAIN_PIXI_ENV:-gpu}"
 TRAIN_GPU_CONSTRAINT="${TRAIN_GPU_CONSTRAINT:-h100_80gb}"
 TRAIN_GRES="${TRAIN_GRES:-gpu:h100:1}"
+TRAIN_TIME="${TRAIN_TIME:-48:00:00}"
 TRAIN_MEM="${TRAIN_MEM:-128G}"
 TRAIN_CPUS="${TRAIN_CPUS:-8}"
+TRAIN_CONTEXT_MODE="${TRAIN_CONTEXT_MODE:-incontext_set}"
+TRAIN_DYNAMICS_KIND="${TRAIN_DYNAMICS_KIND:-incontext_set}"
+TRAIN_INCONTEXT_SUPPORT_SIZE="${TRAIN_INCONTEXT_SUPPORT_SIZE:-16}"
+TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH="${TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH:-16}"
+TRAIN_SEQUENCE_BUCKET_KEY="${TRAIN_SEQUENCE_BUCKET_KEY:-auto}"
+TRAIN_RUN_PREFIX="${TRAIN_RUN_PREFIX:-incontext}"
+TRAIN_DEFAULT_OVERRIDES="${TRAIN_DEFAULT_OVERRIDES:-data.batch_size=16 data.num_workers=0 data.pin_memory=false eval.save_predictions=false eval.n_control_samples_per_pert=8 optim.lr=0.0001 optim.grad_clip=0.5 loss.info_nce=0.05 loss.action_counterfactual=0.05 loss.info_nce_temperature=0.1}"
+TRAIN_OVERRIDES="${TRAIN_OVERRIDES:-$TRAIN_DEFAULT_OVERRIDES}"
 DRYRUN="${DRYRUN:-0}"
 RUN_TRAIN="${RUN_TRAIN:-0}"
 FAIL_ON_UNRESOLVED="${FAIL_ON_UNRESOLVED:-0}"
@@ -204,8 +213,8 @@ link_job_logs() {
     [[ "$DRYRUN" == "1" ]] && return 0
     local job_dir="${root}/jobs/${jid}"
     mkdir -p "$job_dir"
-    ln -sfn "../${name}_${jid}.out" "${job_dir}/stdout"
-    ln -sfn "../${name}_${jid}.err" "${job_dir}/stderr"
+    ln -sfn "../../${name}_${jid}.out" "${job_dir}/stdout"
+    ln -sfn "../../${name}_${jid}.err" "${job_dir}/stderr"
 }
 
 manifest_add() {
@@ -237,6 +246,11 @@ for key in $expanded_embeddings; do
     EMBEDDING_KEYS+=("$key")
 done
 
+TRAIN_EXTRA_ARGS=()
+if [[ -n "$TRAIN_OVERRIDES" ]]; then
+    read -r -a TRAIN_EXTRA_ARGS <<<"$TRAIN_OVERRIDES"
+fi
+
 if [[ "${#EMBEDDING_KEYS[@]}" -eq 0 ]]; then
     echo "ERROR: no action embeddings selected." >&2
     echo >&2
@@ -267,6 +281,10 @@ export TMPDIR="${TMPDIR:-${TMP_BASE}/submit-${SUBMIT_STAMP}}"
 if [[ -z "${ACTION_SET_LABEL:-}" ]]; then
     if [[ "$EMBEDDINGS" == "all" || "$EMBEDDINGS" == "default" ]]; then
         ACTION_SET_LABEL="all_gene_embeddings"
+    elif [[ "${#EMBEDDING_KEYS[@]}" -gt 1 ]]; then
+        # Keep workflow paths short. Individual train run directories still
+        # include the exact embedding name, and the manifest records the full set.
+        ACTION_SET_LABEL="selected_${#EMBEDDING_KEYS[@]}_gene_embeddings"
     else
         ACTION_SET_LABEL="${EMBEDDING_KEYS[*]}"
         ACTION_SET_LABEL="${ACTION_SET_LABEL// /_}"
@@ -572,26 +590,32 @@ EOF
         for emb in "${EMBEDDING_KEYS[@]}"; do
             action_log_dir="$dataset_log_dir"
             action_obsm_key="${ACTION_OBSM_KEY:-X_pert_${emb}}"
-            run_name="single_${ds}_${STATE_KIND}_${emb}"
+            run_name="${TRAIN_RUN_PREFIX}_${ds}_${STATE_KIND}_${emb}"
             out_dir="${dataset_run_root}/${run_name}"
             echo "[$ds][$emb] chaining training after ready AnnData build ..."
             train_jid=$(submit_sbatch \
                 --job-name="wm-${ds}-${emb}" \
                 --partition="$PARTITION" --qos="$QOS" \
                 --gres="$TRAIN_GRES" --constraint="$TRAIN_GPU_CONSTRAINT" \
-                --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" \
+                --time="$TRAIN_TIME" --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" \
                 -o "${action_log_dir}/%x_%j.out" -e "${action_log_dir}/%x_%j.err" \
                 --dependency=afterok:"${assemble_jid}" \
                 --export=ALL,EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}" \
                 "$TRAIN_LAUNCHER" "$cfg" \
                 "data.h5ad_path=${ready_h5ad}" \
                 "data.state_obsm_key=${STATE_OBSM_KEY}" \
+                "data.context_mode=${TRAIN_CONTEXT_MODE}" \
+                "data.incontext_support_size=${TRAIN_INCONTEXT_SUPPORT_SIZE}" \
+                "data.sequence_bucket_key=${TRAIN_SEQUENCE_BUCKET_KEY}" \
+                "dynamics.kind=${TRAIN_DYNAMICS_KIND}" \
+                "dynamics.max_sequence_length=${TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH}" \
                 "state_backbone.kind=stack" \
                 "action_embedding.source=anndata_obsm" \
                 "action_embedding.obsm_key=${action_obsm_key}" \
                 "action_embedding.model_name=${emb}" \
                 "run_name=${run_name}" \
-                "output_dir=${out_dir}")
+                "output_dir=${out_dir}" \
+                "${TRAIN_EXTRA_ARGS[@]}")
             echo "[$ds][$emb]   train job: $train_jid -> $out_dir"
             link_job_logs "$action_log_dir" "wm-${ds}-${emb}" "$train_jid"
             manifest_add "$ds" "train" "$emb" "$train_jid" "afterok:${assemble_jid}" "$out_dir" \

@@ -83,10 +83,27 @@ def test_csv_logger_writes_header_and_rows(tmp_path: Path):
     assert "component_latent_mse" in lines[0]
 
 
-def test_console_logger_runs_without_crashing(tmp_path: Path):
+def test_console_logger_runs_without_crashing(tmp_path: Path, caplog):
     state = HookState(output_dir=tmp_path, run_name="t")
+    state.epoch = 1
+    state.global_step = 2
     state.lr = 1e-3
     state.components = {"a": 1.0}
+    state.extra.update(
+        {
+            "epoch_step": 2,
+            "steps_per_epoch": 10,
+            "total_epochs": 3,
+            "total_steps": 30,
+            "epoch_start_time_s": 0.0,
+            "fit_start_time_s": 0.0,
+        }
+    )
     h = ConsoleLogger(log_every_n_steps=1)
-    h.on_step_end(state)
+    with caplog.at_level("INFO"):
+        h.on_step_end(state)
     h.on_epoch_end(state)
+    text = caplog.text
+    assert "epoch 1/3" in text
+    assert "epoch_step=2/10" in text
+    assert "eta_epoch=" in text
