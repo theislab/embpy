@@ -98,6 +98,11 @@ TRAIN_GRES="${TRAIN_GRES:-gpu:h100:1}"
 TRAIN_TIME="${TRAIN_TIME:-48:00:00}"
 TRAIN_MEM="${TRAIN_MEM:-128G}"
 TRAIN_CPUS="${TRAIN_CPUS:-8}"
+TRAIN_CONTEXT_MODE="${TRAIN_CONTEXT_MODE:-incontext_set}"
+TRAIN_DYNAMICS_KIND="${TRAIN_DYNAMICS_KIND:-incontext_set}"
+TRAIN_INCONTEXT_SUPPORT_SIZE="${TRAIN_INCONTEXT_SUPPORT_SIZE:-16}"
+TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH="${TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH:-16}"
+TRAIN_RUN_PREFIX="${TRAIN_RUN_PREFIX:-incontext}"
 TRAIN_OVERRIDES="${TRAIN_OVERRIDES:-}"
 DRYRUN="${DRYRUN:-0}"
 RUN_TRAIN="${RUN_TRAIN:-0}"
@@ -583,7 +588,7 @@ EOF
         for emb in "${EMBEDDING_KEYS[@]}"; do
             action_log_dir="$dataset_log_dir"
             action_obsm_key="${ACTION_OBSM_KEY:-X_pert_${emb}}"
-            run_name="single_${ds}_${STATE_KIND}_${emb}"
+            run_name="${TRAIN_RUN_PREFIX}_${ds}_${STATE_KIND}_${emb}"
             out_dir="${dataset_run_root}/${run_name}"
             echo "[$ds][$emb] chaining training after ready AnnData build ..."
             train_jid=$(submit_sbatch \
@@ -597,6 +602,10 @@ EOF
                 "$TRAIN_LAUNCHER" "$cfg" \
                 "data.h5ad_path=${ready_h5ad}" \
                 "data.state_obsm_key=${STATE_OBSM_KEY}" \
+                "data.context_mode=${TRAIN_CONTEXT_MODE}" \
+                "data.incontext_support_size=${TRAIN_INCONTEXT_SUPPORT_SIZE}" \
+                "dynamics.kind=${TRAIN_DYNAMICS_KIND}" \
+                "dynamics.max_sequence_length=${TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH}" \
                 "state_backbone.kind=stack" \
                 "action_embedding.source=anndata_obsm" \
                 "action_embedding.obsm_key=${action_obsm_key}" \
