@@ -253,7 +253,7 @@ class GeneEmbeddingAction(nn.Module):
                 padding_idx=0,
             )
             return emb.to(weight_device)
-        return self.embed(gene_indices)
+        return self.embed(gene_indices.to(device=weight_device, dtype=torch.long, non_blocking=True))
 
 
 __all__ = ["GeneEmbeddingAction"]
