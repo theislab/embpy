@@ -277,11 +277,19 @@ class PerturbationSequenceDataset:
         bucket_value_map: dict[int, str] | None = None,
         context_mode: str = "trajectory",
         incontext_support_size: int = 16,
+        incontext_support_strategy: str = "random",
+        action_embedding_table: np.ndarray | None = None,
     ) -> None:
         if expression.ndim != 2:
             raise ValueError(f"expression must be 2D, got shape {expression.shape}")
         if perturbation_labels.shape[0] != expression.shape[0]:
             raise ValueError("expression and perturbation_labels must have matching number of rows")
+        if incontext_support_strategy not in {"random", "action_similarity"}:
+            raise ValueError(
+                "incontext_support_strategy must be one of "
+                "{'random', 'action_similarity'}, got "
+                f"{incontext_support_strategy!r}."
+            )
 
         self.expression = np.ascontiguousarray(expression, dtype=np.float32)
         # Always-gene-space view of the observation matrix. Survives the
@@ -302,6 +310,12 @@ class PerturbationSequenceDataset:
         self.n_genes = int(expression.shape[1])
         self.context_mode = str(context_mode)
         self.incontext_support_size = int(incontext_support_size)
+        self.incontext_support_strategy = str(incontext_support_strategy)
+        self._action_embedding_table = (
+            np.asarray(action_embedding_table, dtype=np.float32)
+            if action_embedding_table is not None
+            else None
+        )
 
         if allowed_cell_indices is None:
             allowed_mask = np.ones(self.expression.shape[0], dtype=bool)
@@ -327,6 +341,7 @@ class PerturbationSequenceDataset:
 
         # Sampleable labels include the control: the model also learns the identity action.
         self._sampleable_labels = sorted(self._cells_by_label.keys())
+        self._action_vector_by_label: dict[str, np.ndarray] = {}
 
         # --------------------------------------------------------------
         # Optional context-bucketing: a per-cell bucket id (e.g. assay
@@ -391,13 +406,29 @@ class PerturbationSequenceDataset:
                     "in the allowed subset; cannot anchor any sequence/task."
                 )
 
+        self._action_vector_by_label = self._build_action_vectors()
+        if self.incontext_support_strategy == "action_similarity":
+            if self._action_embedding_table is None:
+                raise ValueError(
+                    "incontext_support_strategy='action_similarity' requires "
+                    "action_embedding_table so support perturbations can be "
+                    "ranked by action-embedding cosine similarity."
+                )
+            if not self._action_vector_by_label:
+                raise ValueError(
+                    "incontext_support_strategy='action_similarity' could not "
+                    "build any finite non-zero action vectors for perturbation "
+                    "labels. Check the action embedding table and unresolved "
+                    "perturbation labels."
+                )
+
         if n_sequences_per_epoch is None:
             n_sequences_per_epoch = int(self.perturbed_idx.size)
         self.n_sequences_per_epoch = int(n_sequences_per_epoch)
 
         logger.info(
             "PerturbationSequenceDataset: cells_used=%d/%d, genes=%d, perts=%d, controls=%d, "
-            "T=%d, K=%d, n_pert=%d, sequences/epoch=%d",
+            "T=%d, K=%d, n_pert=%d, sequences/epoch=%d, support_strategy=%s",
             int(allowed_mask.sum()),
             self.expression.shape[0],
             self.n_genes,
@@ -407,6 +438,7 @@ class PerturbationSequenceDataset:
             self.stack_size,
             self.n_pert,
             self.n_sequences_per_epoch,
+            self.incontext_support_strategy,
         )
         if self._cell_buckets is not None:
             n_buckets = len(self._sampleable_buckets)
@@ -425,6 +457,74 @@ class PerturbationSequenceDataset:
                 int(np.median(label_counts)),
                 int(label_counts.max()),
             )
+
+    def _build_action_vectors(self) -> dict[str, np.ndarray]:
+        """Precompute normalized action vectors used for support ranking."""
+        if self._action_embedding_table is None:
+            return {}
+        table = self._action_embedding_table
+        if table.ndim != 2:
+            raise ValueError(
+                "action_embedding_table must be 2D when provided, got "
+                f"shape {table.shape}."
+            )
+        vectors: dict[str, np.ndarray] = {}
+        for label in self._sampleable_labels:
+            if label == self.control_label:
+                continue
+            ids = [int(i) for i in self.indexer.encode(label, self.control_label)]
+            valid = [i for i in ids if 0 < i < table.shape[0]]
+            if not valid:
+                continue
+            vec = np.asarray(table[valid], dtype=np.float32).mean(axis=0)
+            norm = float(np.linalg.norm(vec))
+            if not np.isfinite(norm) or norm <= 0.0:
+                continue
+            vectors[label] = vec / norm
+        return vectors
+
+    def _select_incontext_support_labels(
+        self,
+        *,
+        label_pool: list[str],
+        query_label: str,
+        local: np.random.Generator,
+        size: int,
+    ) -> list[str]:
+        """Select support labels for one in-context task."""
+        support_pool = [lbl for lbl in label_pool if lbl != query_label]
+        if not support_pool:
+            support_pool = list(label_pool)
+        if self.incontext_support_strategy == "action_similarity":
+            ranked = self._rank_action_similar_labels(query_label, support_pool)
+            if ranked:
+                if len(ranked) >= size:
+                    return ranked[:size]
+                repeats = int(np.ceil(size / max(len(ranked), 1)))
+                return (ranked * repeats)[:size]
+        replace = len(support_pool) < size
+        return [
+            str(x)
+            for x in local.choice(
+                np.asarray(support_pool, dtype=object),
+                size=size,
+                replace=replace,
+            )
+        ]
+
+    def _rank_action_similar_labels(self, query_label: str, support_pool: list[str]) -> list[str]:
+        """Rank candidate labels by cosine similarity to ``query_label``."""
+        query_vec = self._action_vector_by_label.get(query_label)
+        if query_vec is None:
+            return []
+        scored: list[tuple[float, str]] = []
+        for label in support_pool:
+            vec = self._action_vector_by_label.get(label)
+            if vec is None:
+                continue
+            scored.append((float(np.dot(query_vec, vec)), label))
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return [label for _, label in scored]
 
     # ------------------------------------------------------------------
     # PyTorch protocol
@@ -551,18 +651,12 @@ class PerturbationSequenceDataset:
         # an easy leakage path where the support set already contains
         # the exact query action's perturbed state.
         query_label = str(local.choice(np.asarray(label_pool, dtype=object)))
-        support_pool = [lbl for lbl in label_pool if lbl != query_label]
-        if not support_pool:
-            support_pool = list(label_pool)
-        support_replace = len(support_pool) < M
-        support_labels = [
-            str(x)
-            for x in local.choice(
-                np.asarray(support_pool, dtype=object),
-                size=M,
-                replace=support_replace,
-            )
-        ]
+        support_labels = self._select_incontext_support_labels(
+            label_pool=label_pool,
+            query_label=query_label,
+            local=local,
+            size=M,
+        )
 
         control_cells = cells_by_label[self.control_label]
 
@@ -646,6 +740,8 @@ class PerturbationSequenceDataset:
             bucket_value_map=self._bucket_value_map,
             context_mode=self.context_mode,
             incontext_support_size=self.incontext_support_size,
+            incontext_support_strategy=self.incontext_support_strategy,
+            action_embedding_table=self._action_embedding_table,
         )
 
     def available_perturbations(self) -> list[str]:

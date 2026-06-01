@@ -82,3 +82,35 @@ def test_collate_fn_stacks_correctly() -> None:
     batch = sequence_collate_fn(samples)
     assert batch["obs_stack"].shape == (2, 4, 3, N_GENES)
     assert batch["action_indices"].shape == (2, 4, 2)
+
+
+def test_incontext_action_similarity_support_ranks_nearest_embedding() -> None:
+    x, labels, indexer = _make_synthetic()
+    table = np.zeros((len(PERTURBATIONS) + 1, 3), dtype=np.float32)
+    table[indexer.symbol_to_index["GENE_A"]] = [1.0, 0.0, 0.0]
+    table[indexer.symbol_to_index["GENE_B"]] = [0.9, 0.1, 0.0]
+    table[indexer.symbol_to_index["GENE_C"]] = [0.0, 1.0, 0.0]
+    ds = PerturbationSequenceDataset(
+        expression=x,
+        perturbation_labels=labels,
+        indexer=indexer,
+        sequence_length=4,
+        stack_size=3,
+        n_pert=2,
+        control_label=CONTROL,
+        rng=np.random.default_rng(0),
+        n_sequences_per_epoch=8,
+        context_mode="incontext_set",
+        incontext_support_size=1,
+        incontext_support_strategy="action_similarity",
+        action_embedding_table=table,
+    )
+
+    labels_out = ds._select_incontext_support_labels(
+        label_pool=list(PERTURBATIONS),
+        query_label="GENE_A",
+        local=np.random.default_rng(0),
+        size=1,
+    )
+
+    assert labels_out == ["GENE_B"]

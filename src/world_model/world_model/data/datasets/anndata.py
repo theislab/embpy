@@ -93,6 +93,7 @@ class AnnDataSequenceDataset(PerturbationSequenceDataset):
         bucket_key: str | None = None,
         context_mode: str = "trajectory",
         incontext_support_size: int = 16,
+        incontext_support_strategy: str = "random",
     ) -> tuple[
         AnnDataSequenceDataset,
         np.ndarray,
@@ -149,6 +150,8 @@ class AnnDataSequenceDataset(PerturbationSequenceDataset):
             bucket_value_map=bucket_value_map,
             context_mode=context_mode,
             incontext_support_size=incontext_support_size,
+            incontext_support_strategy=incontext_support_strategy,
+            action_embedding_table=gene_table,
         )
         return dataset, gene_table, indexer, gene_symbols, query_gene_table, query_indexer
 

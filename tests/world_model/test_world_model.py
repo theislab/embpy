@@ -51,7 +51,7 @@ def _make_model(decoder: bool = True):
     )
 
 
-def _make_incontext_model(decoder: bool = True):
+def _make_incontext_model(decoder: bool = True, **kwargs):
     return build_world_model(
         n_genes=G,
         gene_embedding_table=torch.randn(N_GENES_PERT + 1, 24),
@@ -67,6 +67,7 @@ def _make_incontext_model(decoder: bool = True):
         incontext_support_size=3,
         max_sequence_length=8,
         enable_decoder=decoder,
+        **kwargs,
     )
 
 
@@ -134,3 +135,38 @@ def test_incontext_support_query_action_tables_have_independent_dims() -> None:
     assert "delta_dim_var" in components
     assert "action_counterfactual" in components
     loss.backward()
+
+
+def test_incontext_residual_delta_mode_reports_delta_objective() -> None:
+    model = _make_incontext_model(
+        decoder=True,
+        incontext_prediction_mode="residual_delta",
+        incontext_residual_output_init_scale=0.01,
+    )
+    batch = _make_incontext_batch()
+    out = model.predict(batch)
+
+    assert out["delta_hat"].shape == (B, D)
+    torch.testing.assert_close(out["s_hat"], out["query_s"] + out["delta_hat"])
+
+    loss, components = model.loss(batch)
+    assert torch.isfinite(loss)
+    assert "latent_mse" in components
+    assert "delta_mse" in components
+    assert "latent_objective" in components
+    torch.testing.assert_close(components["latent_objective"], components["delta_mse"])
+
+
+def test_incontext_layer_norm_normalizes_encoded_latents() -> None:
+    model = _make_incontext_model(
+        decoder=False,
+        incontext_latent_normalization="layer_norm",
+    )
+    out = model.predict(_make_incontext_batch())
+
+    assert torch.allclose(out["query_s"].mean(dim=-1), torch.zeros(B), atol=1e-5)
+    assert torch.allclose(
+        out["query_s"].var(dim=-1, unbiased=False),
+        torch.ones(B),
+        atol=1e-4,
+    )

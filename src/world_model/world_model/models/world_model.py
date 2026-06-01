@@ -453,6 +453,9 @@ def build_world_model(
     dynamics_heads: int = 8,
     dynamics_kind: str = "gpt",
     incontext_support_size: int = 16,
+    incontext_latent_normalization: str = "none",
+    incontext_prediction_mode: str = "absolute",
+    incontext_residual_output_init_scale: float = 0.01,
     dropout: float = 0.1,
     max_sequence_length: int = 64,
     use_action_token: bool = True,
@@ -602,6 +605,8 @@ def build_world_model(
                 dropout=dropout,
                 max_set_size=max_set,
             )
+        if incontext_prediction_mode == "residual_delta":
+            _scale_output_head(dynamics, float(incontext_residual_output_init_scale))
         return InContextWorldModel(
             encoder=encoder,
             action_encoder=action_encoder,
@@ -611,6 +616,8 @@ def build_world_model(
             d_model=d_model,
             backbone=backbone,
             default_support_size=int(incontext_support_size),
+            latent_normalization=incontext_latent_normalization,
+            prediction_mode=incontext_prediction_mode,
         )
 
     dynamics = GPTAutoregressiveDynamics(
@@ -628,6 +635,21 @@ def build_world_model(
         decoder=decoder,
         backbone=backbone,
     )
+
+
+def _scale_output_head(module: torch.nn.Module, scale: float) -> None:
+    """Scale a dynamics output head at init time for residual prediction."""
+    if scale == 1.0:
+        return
+    if scale < 0.0:
+        raise ValueError(f"Output head init scale must be non-negative, got {scale}.")
+    head = getattr(module, "head", None)
+    if not isinstance(head, torch.nn.Linear):
+        return
+    with torch.no_grad():
+        head.weight.mul_(scale)
+        if head.bias is not None:
+            head.bias.mul_(scale)
 
 
 __all__ = ["WorldModel", "WorldModelOutput", "build_world_model"]

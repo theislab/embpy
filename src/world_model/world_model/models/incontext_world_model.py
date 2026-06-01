@@ -22,6 +22,7 @@ from typing import Any
 
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from world_model.training.losses import info_nce
 
@@ -40,8 +41,20 @@ class InContextWorldModel(nn.Module):
         d_model: int,
         backbone: Any = None,
         default_support_size: int = 16,
+        latent_normalization: str = "none",
+        prediction_mode: str = "absolute",
     ) -> None:
         super().__init__()
+        if latent_normalization not in {"none", "layer_norm", "l2"}:
+            raise ValueError(
+                "latent_normalization must be one of {'none', 'layer_norm', 'l2'}, "
+                f"got {latent_normalization!r}."
+            )
+        if prediction_mode not in {"absolute", "residual_delta"}:
+            raise ValueError(
+                "prediction_mode must be one of {'absolute', 'residual_delta'}, "
+                f"got {prediction_mode!r}."
+            )
         self.encoder = encoder
         self.action_encoder = action_encoder
         self.query_action_encoder = query_action_encoder or action_encoder
@@ -55,6 +68,13 @@ class InContextWorldModel(nn.Module):
         self.dynamics = dynamics
         self.decoder = decoder
         self.d_model = int(d_model)
+        self.latent_normalization = latent_normalization
+        self.prediction_mode = prediction_mode
+        self.latent_norm = (
+            nn.LayerNorm(d_model, elementwise_affine=False)
+            if latent_normalization == "layer_norm"
+            else None
+        )
         # Support-set size the eval adapter uses when building tasks for
         # held-out query perturbations (mirrors data.incontext_support_size).
         self.default_support_size = int(default_support_size)
@@ -85,6 +105,40 @@ class InContextWorldModel(nn.Module):
         """``(B, n_pert) -> (B, d)`` using the query action table."""
         return self.query_action_encoder(idx.unsqueeze(1)).squeeze(1)
 
+    def _normalize_latent(self, x: torch.Tensor) -> torch.Tensor:
+        if self.latent_normalization == "none":
+            return x
+        if self.latent_normalization == "layer_norm":
+            if self.latent_norm is None:  # pragma: no cover - defensive
+                raise RuntimeError("latent_norm module was not initialized.")
+            return self.latent_norm(x)
+        if self.latent_normalization == "l2":
+            return F.normalize(x, dim=-1)
+        raise RuntimeError(f"Unexpected latent_normalization={self.latent_normalization!r}")
+
+    def _predict_from_encoded(
+        self,
+        support_s: torch.Tensor,
+        support_a: torch.Tensor,
+        support_sp: torch.Tensor,
+        query_s: torch.Tensor,
+        query_a: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        raw = self.dynamics(
+            support_s,
+            support_a,
+            support_sp,
+            query_s,
+            query_a,
+        )
+        if self.prediction_mode == "residual_delta":
+            delta_hat = raw
+            s_hat = query_s + delta_hat
+        else:
+            s_hat = raw
+            delta_hat = s_hat - query_s
+        return s_hat, delta_hat
+
     def decode(self, s: torch.Tensor) -> torch.Tensor:
         if self.decoder is None:
             raise RuntimeError("InContextWorldModel built without a decoder.")
@@ -105,13 +159,13 @@ class InContextWorldModel(nn.Module):
         perturbation effects relative to the same pre-perturbation
         state, rather than contrasting absolute state embeddings.
         """
-        support_s = self._encode_stacks(batch["support_obs"])  # (B,M,d)
-        support_sp = self._encode_stacks(batch["support_next"])  # (B,M,d)
+        support_s = self._normalize_latent(self._encode_stacks(batch["support_obs"]))  # (B,M,d)
+        support_sp = self._normalize_latent(self._encode_stacks(batch["support_next"]))  # (B,M,d)
         support_a = self._encode_actions(batch["support_act"])  # (B,M,d)
-        query_s = self._encode_one_stack(batch["query_obs"])  # (B,d)
+        query_s = self._normalize_latent(self._encode_one_stack(batch["query_obs"]))  # (B,d)
         query_a = self._encode_one_query_action(batch["query_act"])  # (B,d)
 
-        s_hat = self.dynamics(
+        s_hat, delta_hat = self._predict_from_encoded(
             support_s,
             support_a,
             support_sp,
@@ -122,11 +176,16 @@ class InContextWorldModel(nn.Module):
         # ``query_next`` is deliberately absent (the answer is what we
         # predict) -- encode it only when given, so .predict() works for
         # both loss computation and held-out inference.
-        s_target = self._encode_one_stack(batch["query_next"]) if "query_next" in batch else None
+        s_target = (
+            self._normalize_latent(self._encode_one_stack(batch["query_next"]))
+            if "query_next" in batch
+            else None
+        )
 
         x_hat = self.decode(s_hat) if self.decoder is not None else None
         return {
             "s_hat": s_hat,
+            "delta_hat": delta_hat,
             "s_target": s_target,
             "query_s": query_s,
             "support_s": support_s,
@@ -156,15 +215,38 @@ class InContextWorldModel(nn.Module):
 
         # BYOL-style stop-grad on the target (same as WorldModel).
         s_hat = out["s_hat"]
+        if out["s_target"] is None:
+            raise ValueError("batch must include query_next when computing in-context loss.")
         s_target = out["s_target"].detach()
         query_s_ref = out["query_s"].detach()
-        loss_lat = nn.functional.mse_loss(s_hat, s_target)
+        delta_hat = out["delta_hat"]
+        pred_delta = delta_hat if self.prediction_mode == "residual_delta" else s_hat - query_s_ref
+        target_delta = s_target - query_s_ref
+        loss_lat = F.mse_loss(s_hat, s_target)
+        loss_delta = F.mse_loss(delta_hat, target_delta)
+        latent_objective = loss_delta if self.prediction_mode == "residual_delta" else loss_lat
         components["latent_mse"] = loss_lat
-        total = latent_mse_weight * loss_lat
+        components["delta_mse"] = loss_delta
+        components["latent_objective"] = latent_objective
+        total = latent_mse_weight * latent_objective
+
+        with torch.no_grad():
+            pred_norm = pred_delta.norm(dim=-1).mean()
+            target_norm = target_delta.norm(dim=-1).mean()
+            components["delta_norm"] = pred_norm
+            components["target_delta_norm"] = target_norm
+            components["delta_norm_ratio"] = pred_norm / target_norm.clamp_min(1e-8)
+            components["delta_dim_var"] = pred_delta.var(dim=0, unbiased=False).mean()
+            components["target_delta_dim_var"] = target_delta.var(dim=0, unbiased=False).mean()
+            components["s_hat_dim_var"] = s_hat.var(dim=0, unbiased=False).mean()
+            components["target_s_dim_var"] = s_target.var(dim=0, unbiased=False).mean()
+            components["query_s_dim_var"] = query_s_ref.var(dim=0, unbiased=False).mean()
+            components["s_hat_norm"] = s_hat.norm(dim=-1).mean()
+            components["target_s_norm"] = s_target.norm(dim=-1).mean()
 
         if self.decoder is not None and "query_next_expression" in batch and decoder_mse_weight > 0.0:
             tgt = batch["query_next_expression"]
-            loss_dec = nn.functional.mse_loss(out["x_hat"], tgt)
+            loss_dec = F.mse_loss(out["x_hat"], tgt)
             components["decoder_mse"] = loss_dec
             total = total + decoder_mse_weight * loss_dec
 
@@ -175,28 +257,27 @@ class InContextWorldModel(nn.Module):
             # state asks InfoNCE to match "what changed under this
             # perturbation", preserving the in-context prediction
             # principle for both within- and cross-modality runs.
-            pred_delta = s_hat - query_s_ref
-            target_delta = s_target - query_s_ref
             loss_nce = info_nce(pred_delta, target_delta, temperature=info_nce_temperature)
             components["info_nce"] = loss_nce
             total = total + info_nce_weight * loss_nce
             with torch.no_grad():
-                p = nn.functional.normalize(pred_delta, dim=-1)
-                t = nn.functional.normalize(target_delta, dim=-1)
+                p = F.normalize(pred_delta, dim=-1)
+                t = F.normalize(target_delta, dim=-1)
                 sim = p @ t.T
                 eye = torch.eye(sim.size(0), dtype=torch.bool, device=sim.device)
                 pos_sim = sim[eye].mean()
-                neg_sim = sim[~eye].mean()
+                neg_sim = sim[~eye].mean() if bool((~eye).any()) else torch.zeros((), device=sim.device)
                 pred_self = p @ p.T
                 target_self = t @ t.T
                 components["pos_sim"] = pos_sim
                 components["neg_sim"] = neg_sim
                 components["pos_minus_neg"] = pos_sim - neg_sim
-                components["pred_delta_self_offdiag"] = pred_self[~eye].mean()
-                components["target_delta_self_offdiag"] = target_self[~eye].mean()
-                components["delta_norm"] = pred_delta.norm(dim=-1).mean()
-                components["delta_dim_var"] = pred_delta.var(dim=0).mean()
-                components["s_hat_dim_var"] = s_hat.var(dim=0).mean()
+                components["pred_delta_self_offdiag"] = (
+                    pred_self[~eye].mean() if bool((~eye).any()) else torch.zeros((), device=sim.device)
+                )
+                components["target_delta_self_offdiag"] = (
+                    target_self[~eye].mean() if bool((~eye).any()) else torch.zeros((), device=sim.device)
+                )
 
         if action_counterfactual_weight > 0.0:
             # Re-predict with the query action permuted across the batch
@@ -205,7 +286,7 @@ class InContextWorldModel(nn.Module):
             # the counterfactual one -- forces action conditioning.
             perm = torch.randperm(s_hat.size(0), device=s_hat.device)
             cf_a = self._encode_one_query_action(batch["query_act"][perm])
-            s_hat_cf = self.dynamics(
+            s_hat_cf, cf_delta_hat = self._predict_from_encoded(
                 out["support_s"],
                 out["support_a"],
                 out["support_sp"],
@@ -213,17 +294,16 @@ class InContextWorldModel(nn.Module):
                 cf_a,
             )
             tau = max(action_counterfactual_temperature, 1e-8)
-            real_delta = s_hat - query_s_ref
-            cf_delta = s_hat_cf - query_s_ref
-            target_delta = s_target - query_s_ref
-            p = nn.functional.normalize(real_delta, dim=-1)
-            cf = nn.functional.normalize(cf_delta, dim=-1)
-            tn = nn.functional.normalize(target_delta, dim=-1)
+            real_delta = pred_delta
+            cf_delta = cf_delta_hat if self.prediction_mode == "residual_delta" else s_hat_cf - query_s_ref
+            p = F.normalize(real_delta, dim=-1)
+            cf = F.normalize(cf_delta, dim=-1)
+            tn = F.normalize(target_delta, dim=-1)
             sim_real = (p * tn).sum(-1) / tau
             sim_cf = (cf * tn).sum(-1) / tau
             cf_logits = torch.stack([sim_real, sim_cf], dim=-1)
             cf_labels = torch.zeros(cf_logits.size(0), dtype=torch.long, device=cf_logits.device)
-            loss_cf = nn.functional.cross_entropy(cf_logits, cf_labels)
+            loss_cf = F.cross_entropy(cf_logits, cf_labels)
             components["action_counterfactual"] = loss_cf
             total = total + action_counterfactual_weight * loss_cf
 

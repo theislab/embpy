@@ -10,6 +10,7 @@ data:
   stack_size: 4
   sequence_length: 8
   n_pert: 2
+  incontext_support_strategy: "random"
   batch_size: 64
   num_workers: 4
   pin_memory: true
@@ -43,6 +44,9 @@ dynamics:
   dropout: 0.1
   max_sequence_length: 64
   use_action_token: true
+  latent_normalization: "none"
+  prediction_mode: "absolute"
+  residual_output_init_scale: 0.01
 
 loss:
   latent_mse: 1.0

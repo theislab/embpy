@@ -161,6 +161,33 @@ action_embedding.obsm_key=X_pert_esm2_650M
 query_action_embedding.obsm_key=X_pert_subcell_mae_rybg
 ```
 
+In-context latent-stability experiment matrix:
+
+```bash
+DRYRUN=1 DATASET=nadig EMB=borzoi_v0 STATE_OBSM_KEY=X_stack \
+  bash src/world_model/world_model/scripts/submit/submit_incontext_stability_experiments.sh
+```
+
+Submit after inspecting the dry run:
+
+```bash
+DATASET=nadig EMB=borzoi_v0 STATE_OBSM_KEY=X_stack \
+  bash src/world_model/world_model/scripts/submit/submit_incontext_stability_experiments.sh
+```
+
+The matrix runs `baseline`, `latent_norm`, `residual_delta`,
+`latent_norm_residual`, `action_sim_support`, and the auxiliary-loss
+variants `aux_A` through `aux_D`. If the ready AnnData is not at
+`runs/_cache/action_h5ad/<dataset>_<EMB>.h5ad`, pass `H5AD_PATH=/path/file.h5ad`
+for one dataset or `H5AD_TEMPLATE='/path/{dataset}_file.h5ad'` for both.
+Core switches are:
+
+```text
+dynamics.latent_normalization=none|layer_norm|l2
+dynamics.prediction_mode=absolute|residual_delta
+data.incontext_support_strategy=random|action_similarity
+```
+
 Generate STACK state embeddings and action perturbation embeddings first, then
 write final world-model-ready AnnData files:
 

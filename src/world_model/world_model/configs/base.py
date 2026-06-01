@@ -84,6 +84,19 @@ class DataConfig:
     """``context_mode="incontext_set"`` only -- number of support
     triplets per task. The query is one additional triplet."""
 
+    incontext_support_strategy: str = "random"
+    """``context_mode="incontext_set"`` only -- how support perturbations
+    are selected after the query perturbation has been chosen.
+
+    * ``"random"`` preserves the original behavior: draw support labels
+      at random from the same context bucket while excluding the query
+      perturbation whenever possible.
+    * ``"action_similarity"`` keeps the same bucket/leakage constraints
+      but ranks candidate support perturbations by cosine similarity in
+      the support action-embedding table and takes the nearest labels.
+      This tests whether in-context examples help when they are action
+      relevant instead of merely bucket-matched."""
+
     batch_size: int = 64
     num_workers: int = 4
     pin_memory: bool = True
@@ -127,6 +140,28 @@ class DynamicsConfig:
     dropout: float = 0.1
     max_sequence_length: int = 64
     use_action_token: bool = True
+    latent_normalization: str = "none"
+    """In-context only -- optional normalization of encoded state latents
+    before dynamics/loss. One of ``{"none", "layer_norm", "l2"}``.
+    ``"layer_norm"`` uses non-affine per-sample LayerNorm so the
+    normalization itself cannot learn a new scale."""
+
+    prediction_mode: str = "absolute"
+    """In-context only -- what the dynamics head predicts.
+
+    * ``"absolute"`` preserves the original behavior and predicts the
+      perturbed latent state directly.
+    * ``"residual_delta"`` predicts the perturbation effect
+      ``delta_hat`` and forms ``s_hat = query_s + delta_hat``. The
+      latent objective is then MSE against
+      ``delta_target = s_target - query_s`` while still logging absolute
+      ``latent_mse`` for comparability."""
+
+    residual_output_init_scale: float = 0.01
+    """In-context residual mode only -- multiplicative scale applied to
+    the freshly initialized dynamics output head. A small value makes
+    the initial residual close to zero without freezing gradients."""
+
 
 
 @dataclass
@@ -428,6 +463,13 @@ class WorldModelConfig:
         """Cross-field sanity checks. Called explicitly by training entrypoints."""
         if not self.data.state_obsm_key:
             raise ValueError("data.state_obsm_key is required; training reads states from adata.obsm.")
+        support_strategy = getattr(self.data, "incontext_support_strategy", "random")
+        if support_strategy not in {"random", "action_similarity"}:
+            raise ValueError(
+                "data.incontext_support_strategy must be one of "
+                "{'random', 'action_similarity'}, got "
+                f"{support_strategy!r}."
+            )
         if self.action_embedding.source != "anndata_obsm":
             raise ValueError(
                 "action_embedding.source must be 'anndata_obsm' for training. "
@@ -453,6 +495,22 @@ class WorldModelConfig:
                 )
         if self.mode != "single":
             raise ValueError("Only mode='single' is supported.")
+        latent_norm = getattr(self.dynamics, "latent_normalization", "none")
+        if latent_norm not in {"none", "layer_norm", "l2"}:
+            raise ValueError(
+                "dynamics.latent_normalization must be one of "
+                "{'none', 'layer_norm', 'l2'}, got "
+                f"{latent_norm!r}."
+            )
+        prediction_mode = getattr(self.dynamics, "prediction_mode", "absolute")
+        if prediction_mode not in {"absolute", "residual_delta"}:
+            raise ValueError(
+                "dynamics.prediction_mode must be one of "
+                "{'absolute', 'residual_delta'}, got "
+                f"{prediction_mode!r}."
+            )
+        if float(getattr(self.dynamics, "residual_output_init_scale", 0.01)) < 0.0:
+            raise ValueError("dynamics.residual_output_init_scale must be non-negative.")
         sb = self.state_backbone
         if sb.kind not in {"local", "state", "stack"}:
             raise ValueError(f"state_backbone.kind must be one of {{'local','state','stack'}}, got {sb.kind!r}")

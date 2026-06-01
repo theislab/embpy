@@ -220,6 +220,7 @@ def _predict_incontext(
     rng = np.random.default_rng(0)
     K = full.stack_size
     indexer = full.indexer
+    query_indexer = getattr(full, "query_indexer", indexer)
     n_pert = full.n_pert
     M = min(int(getattr(model, "default_support_size", 16)), len(support_labels_all))
     n_genes = int(full.expression.shape[1])
@@ -271,11 +272,21 @@ def _predict_incontext(
                 ctrl_pool = bucket_control[b]
                 sup_pool = [s for s in bucket_support[b] if s != str(pert)] or bucket_support[b]
                 m = min(M, len(sup_pool))
-                sup = list(rng.choice(np.asarray(sup_pool, dtype=object), size=m, replace=len(sup_pool) < m))
+                sup = full._select_incontext_support_labels(
+                    label_pool=list(sup_pool),
+                    query_label=str(pert),
+                    local=rng,
+                    size=m,
+                )
                 support_next = np.stack([_stack(cbl[b][s]) for s in sup])
             else:  # global fallback
                 ctrl_pool = control_pool
-                sup = list(rng.choice(support_labels_all, size=M, replace=len(support_labels_all) < M))
+                sup = full._select_incontext_support_labels(
+                    label_pool=list(support_labels_all),
+                    query_label=str(pert),
+                    local=rng,
+                    size=M,
+                )
                 support_next = np.stack([_stack(pool_by_label[s]) for s in sup])
             support_obs = np.stack([_stack(ctrl_pool) for _ in sup])
             support_act = np.stack([_action(str(s)) for s in sup])
