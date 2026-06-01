@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import csv
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -36,6 +37,19 @@ if TYPE_CHECKING:
     from torch.utils.tensorboard.writer import SummaryWriter
 
 logger = logging.getLogger(__name__)
+
+
+def _format_duration(seconds: float | None) -> str:
+    if seconds is None or seconds != seconds or seconds < 0:
+        return "n/a"
+    seconds_i = int(round(seconds))
+    h, rem = divmod(seconds_i, 3600)
+    m, s = divmod(rem, 60)
+    if h:
+        return f"{h:d}h{m:02d}m{s:02d}s"
+    if m:
+        return f"{m:d}m{s:02d}s"
+    return f"{s:d}s"
 
 
 @dataclass
@@ -89,21 +103,86 @@ class ConsoleLogger(Hook):
             return
         comp = " ".join(f"{k}={v:.4f}" for k, v in state.components.items())
         gn = "n/a" if state.grad_norm is None else f"{state.grad_norm:.3f}"
+        progress = self._progress_text(state)
         logger.info(
-            "epoch %d step %d lr=%.2e grad_norm=%s %s",
-            state.epoch, state.global_step, state.lr, gn, comp,
+            "epoch %d%s step %d%s lr=%.2e grad_norm=%s%s %s",
+            state.epoch,
+            self._total_epochs_text(state),
+            state.global_step,
+            progress,
+            state.lr,
+            gn,
+            self._eta_text(state),
+            comp,
         )
 
     def on_epoch_end(self, state: HookState) -> None:
+        epoch_time = _format_duration(state.extra.get("epoch_time_s"))
+        epoch_suffix = self._total_epochs_text(state)
         if state.val_loss is None:
             logger.info(
-                "[epoch %d] train=%.4f", state.epoch, state.train_loss or float("nan"),
+                "[epoch %d%s] train=%.4f epoch_time=%s",
+                state.epoch,
+                epoch_suffix,
+                state.train_loss or float("nan"),
+                epoch_time,
             )
         else:
             logger.info(
-                "[epoch %d] train=%.4f val=%.4f",
-                state.epoch, state.train_loss or float("nan"), state.val_loss,
+                "[epoch %d%s] train=%.4f val=%.4f epoch_time=%s",
+                state.epoch,
+                epoch_suffix,
+                state.train_loss or float("nan"),
+                state.val_loss,
+                epoch_time,
             )
+
+    @staticmethod
+    def _total_epochs_text(state: HookState) -> str:
+        total_epochs = state.extra.get("total_epochs")
+        if isinstance(total_epochs, int) and total_epochs > 0:
+            return f"/{total_epochs}"
+        return ""
+
+    @staticmethod
+    def _progress_text(state: HookState) -> str:
+        epoch_step = state.extra.get("epoch_step")
+        steps_per_epoch = state.extra.get("steps_per_epoch")
+        if not isinstance(epoch_step, int) or not isinstance(steps_per_epoch, int) or steps_per_epoch <= 0:
+            return ""
+        pct = 100.0 * min(max(epoch_step, 0), steps_per_epoch) / steps_per_epoch
+        return f" epoch_step={epoch_step}/{steps_per_epoch} ({pct:.1f}%)"
+
+    @staticmethod
+    def _eta_text(state: HookState) -> str:
+        epoch_step = state.extra.get("epoch_step")
+        steps_per_epoch = state.extra.get("steps_per_epoch")
+        epoch_start_time_s = state.extra.get("epoch_start_time_s")
+        fit_start_time_s = state.extra.get("fit_start_time_s")
+        total_steps = state.extra.get("total_steps")
+        if (
+            not isinstance(epoch_step, int)
+            or epoch_step <= 0
+            or not isinstance(steps_per_epoch, int)
+            or steps_per_epoch <= 0
+            or not isinstance(epoch_start_time_s, float)
+        ):
+            return ""
+        now = time.time()
+        epoch_elapsed = max(now - epoch_start_time_s, 0.0)
+        step_s = epoch_elapsed / max(epoch_step, 1)
+        epoch_remaining = max(steps_per_epoch - epoch_step, 0) * step_s
+        parts = [
+            f" step_s={step_s:.2f}",
+            f" elapsed_epoch={_format_duration(epoch_elapsed)}",
+            f" eta_epoch={_format_duration(epoch_remaining)}",
+        ]
+        if isinstance(fit_start_time_s, float) and isinstance(total_steps, int) and total_steps > 0:
+            train_elapsed = max(now - fit_start_time_s, 0.0)
+            avg_step_s = train_elapsed / max(state.global_step, 1)
+            train_remaining = max(total_steps - state.global_step, 0) * avg_step_s
+            parts.append(f" eta_train={_format_duration(train_remaining)}")
+        return "".join(parts)
 
 
 class CSVLossLogger(Hook):
