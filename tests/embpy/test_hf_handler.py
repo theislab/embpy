@@ -292,6 +292,8 @@ class TestAvailableEmbeddings:
     @patch("embpy.pp.hf_handler.list_repo_files")
     def test_detects_formats_and_ignores_index(self, mock_list, handler):
         mock_list.return_value = [
+            "embeddings/folder_model/values.zarr/zarr.json",
+            "embeddings/folder_model/metadata/metadata.json",
             "embeddings/genept.zarr/.zgroup",
             "embeddings/genept.zarr/obs/_index/.zarray",
             "embeddings/chemberta.parquet",
@@ -301,7 +303,7 @@ class TestAvailableEmbeddings:
             "raw/tahoe.h5ad",
         ]
         result = handler.available_embeddings()
-        assert sorted(result) == ["chemberta", "genept", "minimol", "mole"]
+        assert sorted(result) == ["chemberta", "folder_model", "genept", "minimol", "mole"]
 
 
 # =====================================================================
@@ -458,6 +460,15 @@ class TestDownloadMetadata:
 
 class TestResolveEmbeddingFilename:
     @patch("embpy.pp.hf_handler.list_repo_files")
+    def test_prefers_packaged_values_zarr(self, mock_list, handler):
+        mock_list.return_value = [
+            "embeddings/model/values.zarr/zarr.json",
+            "embeddings/model.zarr/.zgroup",
+            "embeddings/model.parquet",
+        ]
+        assert handler._resolve_embedding_filename("model") == "embeddings/model/values.zarr"
+
+    @patch("embpy.pp.hf_handler.list_repo_files")
     def test_prefers_zarr(self, mock_list, handler):
         mock_list.return_value = [
             "embeddings/model.zarr/.zgroup",
@@ -558,6 +569,36 @@ class TestDownloadEmbeddingNpz:
 
 
 class TestDownloadEmbeddingZarr:
+    def test_returns_dict_from_packaged_static_zarr(self, handler, tmp_dir):
+        from embpy.pp.static_embeddings import (
+            StaticEmbeddingSource,
+            read_static_embedding_table,
+            write_static_embedding_package,
+        )
+
+        source_path = tmp_dir / "source.csv"
+        pd.DataFrame(
+            [[1.0, 2.0], [3.0, 4.0]],
+            index=pd.Index(["TP53", "MYC"]),
+            columns=["0", "1"],
+        ).to_csv(source_path)
+        table = read_static_embedding_table(
+            StaticEmbeddingSource(key="genept", path=source_path, id_type="symbol")
+        )
+        package_root = tmp_dir / "package"
+        write_static_embedding_package(table, package_root)
+        model_dir = package_root / "embeddings" / "genept"
+
+        handler._resolve_embedding_filename = MagicMock(return_value="embeddings/genept/values.zarr")
+        handler._download_folder = MagicMock(return_value=model_dir)
+
+        result = handler.download_embedding("genept")
+        assert isinstance(result, dict)
+        assert result["format"] == "embpy_static_zarr"
+        assert result["id_type"] == "symbol"
+        assert list(result["ids"]) == ["TP53", "MYC"]
+        assert result["embeddings"].shape == (2, 2)
+
     def test_returns_dict_from_anndata_zarr(self, handler, tmp_dir):
         adata = AnnData(
             X=np.zeros((2, 0), dtype=np.float32),

@@ -67,6 +67,8 @@ DEFAULT_STATIC_EMBEDDING_MODELS = frozenset(
         "crispr_gene_effect",
         "crispr_gene_effect_1178",
         "crispr_gene_effect_205",
+        "omics",
+        "pops",
     }
 )
 

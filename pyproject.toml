@@ -65,6 +65,8 @@ dependencies = [
   "transformers>=4.45.0,<5.0.0",
 ]
 
+scripts.embpy-static-embeddings = "embpy.scripts.package_static_embeddings:main"
+
 optional-dependencies.torch = [
   "torch>=2.5.1",
 ]

@@ -485,6 +485,10 @@ class HFHandler:
             if not f.startswith("embeddings/"):
                 continue
             stem = f.removeprefix("embeddings/")
+            parts = stem.split("/")
+            if len(parts) >= 2 and parts[1] == "values.zarr":
+                out.add(parts[0])
+                continue
             if ".zarr/" in stem:
                 out.add(stem.split(".zarr/", 1)[0])
                 continue
@@ -658,6 +662,10 @@ class HFHandler:
     def _resolve_embedding_filename(self, model_key: str) -> str:
         """Find the actual embedding filename for a model key."""
         files = self.list_files()
+        package_zarr = f"embeddings/{model_key}/values.zarr"
+        if any(f == package_zarr or f.startswith(f"{package_zarr}/") for f in files):
+            return package_zarr
+
         zarr_prefix = f"embeddings/{model_key}.zarr"
         if any(f == zarr_prefix or f.startswith(f"{zarr_prefix}/") for f in files):
             return zarr_prefix
@@ -703,6 +711,13 @@ class HFHandler:
         ``embeddings`` / ``X`` and row-id arrays or attributes.
         """
         remote = self._resolve_embedding_filename(model_key)
+        if remote.endswith("/values.zarr"):
+            package_prefix = f"embeddings/{model_key}"
+            path = self._download_folder(package_prefix, cache_dir=cache_dir)
+            from .static_embeddings import load_static_embedding_package
+
+            return load_static_embedding_package(path).to_hf_dict()
+
         if remote.endswith(".zarr"):
             path = self._download_folder(remote, cache_dir=cache_dir)
             return _read_embedding_zarr(path, model_key=model_key)
