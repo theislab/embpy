@@ -72,7 +72,12 @@ if TYPE_CHECKING:
         ResolverError,
     )
     from .observability import log_event, time_block
-    from .pp.static_embeddings import StaticEmbeddingStore, load_static_embedding_package
+    from .pp.static_embeddings import (
+        StaticEmbeddingStore,
+        load_static_embedding_package,
+        render_static_embedding_dataset_card,
+        write_static_embedding_dataset_card,
+    )
     from .reporting import ResolutionRecord, ResolutionReport
     from .resources import DrugResolver, GeneResolver
     from .retry import embed_batch_with_oom_recovery, retry_with_backoff
@@ -118,6 +123,8 @@ _LAZY: dict[str, str] = {
     "log_event": "embpy.observability:log_event",
     "time_block": "embpy.observability:time_block",
     "load_static_embedding_package": "embpy.pp.static_embeddings:load_static_embedding_package",
+    "render_static_embedding_dataset_card": "embpy.pp.static_embeddings:render_static_embedding_dataset_card",
+    "write_static_embedding_dataset_card": "embpy.pp.static_embeddings:write_static_embedding_dataset_card",
 }
 
 

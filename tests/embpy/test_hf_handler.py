@@ -583,7 +583,8 @@ class TestDownloadEmbeddingZarr:
             columns=["0", "1"],
         ).to_csv(source_path)
         table = read_static_embedding_table(
-            StaticEmbeddingSource(key="genept", path=source_path, id_type="symbol")
+            StaticEmbeddingSource(key="genept", path=source_path, id_type="symbol"),
+            harmonize_ids=False,
         )
         package_root = tmp_dir / "package"
         write_static_embedding_package(table, package_root)

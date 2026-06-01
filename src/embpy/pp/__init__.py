@@ -23,9 +23,12 @@ from .static_embeddings import (
     StaticEmbeddingSource,
     StaticEmbeddingStore,
     discover_static_embedding_sources,
+    load_static_embedding_source_config,
     load_static_embedding_package,
     prepare_static_embedding_package,
+    render_static_embedding_dataset_card,
     validate_static_embedding_package,
+    write_static_embedding_dataset_card,
 )
 from .scperturb_handler import (
     ScPerturbDatasetCard,
@@ -66,6 +69,7 @@ __all__ = [
     "StaticEmbeddingStore",
     "depmap_info",
     "discover_static_embedding_sources",
+    "load_static_embedding_source_config",
     "lamin_info",
     "list_depmap_datasets",
     "list_lamin_datasets",
@@ -77,8 +81,10 @@ __all__ = [
     "prepare_static_embedding_package",
     "preprocess_counts",
     "reduce_embeddings",
+    "render_static_embedding_dataset_card",
     "scperturb_info",
     "validate_static_embedding_package",
+    "write_static_embedding_dataset_card",
     # morphology preprocessing
     "CELL_PAINTING_CHANNELS",
     "CELL_PAINTING_COLORS",
