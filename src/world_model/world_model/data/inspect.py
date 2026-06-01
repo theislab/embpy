@@ -29,12 +29,12 @@ def dump_sample_contexts(
 ) -> None:
     """Write the first ``n_sequences`` sample sequences to ``output_path``.
 
-    Each sequence is printed in three sections:
+    Each sequence/task is printed in three sections:
 
     1. Header: sequence index + bucket summary (id, value, n_cells,
        n_labels, n_control_cells).
-    2. Timesteps: for each ``t``, the chosen perturbation label and a
-       summary of the action indices.
+    2. Either trajectory timesteps or in-context support/query labels
+       and action-index summaries.
     3. Footer: blank line.
 
     Parameters
@@ -69,17 +69,17 @@ def dump_sample_contexts(
             f"# sampleable buckets = {len(dataset._sampleable_buckets)}  "  # noqa: SLF001
             f"(first 10 ids: {list(dataset._sampleable_buckets)[:10]})"  # noqa: SLF001
         )
-    lines.append(f"# T = {dataset.sequence_length}, K = {dataset.stack_size}, "
-                 f"n_pert = {dataset.n_pert}, control = {dataset.control_label!r}")
+    context_mode = getattr(dataset, "context_mode", "trajectory")
+    lines.append(
+        f"# context_mode = {context_mode}, T = {dataset.sequence_length}, K = {dataset.stack_size}, "
+        f"n_pert = {dataset.n_pert}, control = {dataset.control_label!r}"
+    )
     lines.append("")
 
     for i in range(n):
         sample = dataset[i]
         bucket_id = int(sample.get("bucket_id", -1))
         perts = sample.get("perturbations", [])
-        actions = sample["action_indices"].cpu().numpy() if hasattr(
-            sample["action_indices"], "cpu"
-        ) else sample["action_indices"]
 
         lines.append(f"=== sequence #{i} ===")
         if bucket_summary_fn is not None and bucket_id >= 0:
@@ -95,14 +95,41 @@ def dump_sample_contexts(
         elif bucket_id < 0:
             lines.append("  bucket_id=-1 (bucketing disabled)")
 
-        t_cap = len(perts) if n_steps_to_show is None else min(n_steps_to_show, len(perts))
-        for t in range(t_cap):
-            action_ids = list(actions[t]) if hasattr(actions[t], "__iter__") else [actions[t]]
-            lines.append(
-                f"  t={t:>2}  action_label={perts[t]!r:<30}  action_indices={action_ids}"
+        if "support_act" in sample and "query_act" in sample:
+            support_actions = (
+                sample["support_act"].cpu().numpy() if hasattr(sample["support_act"], "cpu") else sample["support_act"]
             )
-        if t_cap < len(perts):
-            lines.append(f"  ... ({len(perts) - t_cap} more timesteps elided) ...")
+            query_action = (
+                sample["query_act"].cpu().numpy() if hasattr(sample["query_act"], "cpu") else sample["query_act"]
+            )
+            support_labels = list(perts[:-1])
+            query_label = perts[-1] if perts else "<missing>"
+            s_cap = len(support_labels) if n_steps_to_show is None else min(n_steps_to_show, len(support_labels))
+            lines.append("  support:")
+            for s in range(s_cap):
+                action_ids = (
+                    list(support_actions[s]) if hasattr(support_actions[s], "__iter__") else [support_actions[s]]
+                )
+                lines.append(
+                    f"    m={s:>2}  action_label={support_labels[s]!r:<30}  action_indices={action_ids}"
+                )
+            if s_cap < len(support_labels):
+                lines.append(f"    ... ({len(support_labels) - s_cap} more support triplets elided) ...")
+            q_ids = list(query_action) if hasattr(query_action, "__iter__") else [query_action]
+            leak = query_label in support_labels
+            lines.append(f"  query: action_label={query_label!r:<30}  action_indices={q_ids}  in_support={leak}")
+        else:
+            actions = sample["action_indices"].cpu().numpy() if hasattr(
+                sample["action_indices"], "cpu"
+            ) else sample["action_indices"]
+            t_cap = len(perts) if n_steps_to_show is None else min(n_steps_to_show, len(perts))
+            for t in range(t_cap):
+                action_ids = list(actions[t]) if hasattr(actions[t], "__iter__") else [actions[t]]
+                lines.append(
+                    f"  t={t:>2}  action_label={perts[t]!r:<30}  action_indices={action_ids}"
+                )
+            if t_cap < len(perts):
+                lines.append(f"  ... ({len(perts) - t_cap} more timesteps elided) ...")
         lines.append("")
 
     output_path.write_text("\n".join(lines))

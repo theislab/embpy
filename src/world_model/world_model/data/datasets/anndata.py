@@ -28,6 +28,39 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_AUTO_BUCKET_GROUPS: tuple[tuple[str, ...], ...] = (
+    (
+        "cell_type",
+        "celltype",
+        "cell type",
+        "cell_type_major",
+        "celltype_major",
+        "major_cell_type",
+        "cell_type_coarse",
+        "celltype_coarse",
+        "cell_line",
+        "lineage",
+        "subtype",
+        "annotation",
+        "cell_annotation",
+    ),
+    (
+        "batch",
+        "batch_id",
+        "sample",
+        "sample_id",
+        "donor",
+        "donor_id",
+        "gem_group",
+        "library",
+        "library_id",
+        "plate",
+        "experiment",
+        "replicate",
+        "orig.ident",
+    ),
+)
+
 
 def _load_adata(path: str | Path):  # type: ignore[no-untyped-def]
     try:
@@ -124,26 +157,91 @@ def _extract_bucket_codes(
     adata,  # type: ignore[no-untyped-def]
     bucket_key: str | None,
 ) -> tuple[np.ndarray | None, dict[int, str] | None]:
-    """Convert ``adata.obs[bucket_key]`` into integer bucket ids."""
-    if bucket_key is None:
+    """Convert one or more ``adata.obs`` columns into integer bucket ids.
+
+    ``bucket_key`` supports three modes:
+
+    * ``None`` / ``""`` / ``"none"`` / ``"off"``: disable bucketing.
+    * ``"auto"``: choose common biological/technical columns from
+      ``.obs`` (cell type and batch/sample/donor when available).
+    * ``"col_a,col_b"`` or ``"col_a+col_b"``: build a composite bucket
+      from the exact intersection of the requested columns.
+    """
+    keys = _resolve_bucket_keys(adata, bucket_key)
+    if not keys:
         return None, None
-    if bucket_key not in adata.obs.columns:
-        raise KeyError(f"bucket_key={bucket_key!r} not in adata.obs (got {list(adata.obs.columns)})")
 
     import pandas as pd
 
-    cat = adata.obs[bucket_key].astype("category")
-    codes = np.asarray(cat.cat.codes, dtype=np.int64)
-    id_to_value = {int(i): str(v) for i, v in enumerate(cat.cat.categories)}
-    n_assigned = int((pd.Series(codes) >= 0).sum())
+    n = int(adata.n_obs)
+    valid = np.ones(n, dtype=bool)
+    parts: list[np.ndarray] = []
+    for key in keys:
+        series = adata.obs[key]
+        valid &= series.notna().to_numpy()
+        values = series.astype("string").fillna("<NA>").astype(str).to_numpy()
+        parts.append(np.char.add(f"{key}=", values))
+
+    labels = np.empty(n, dtype=object)
+    labels[:] = None
+    if parts:
+        composite = parts[0]
+        for part in parts[1:]:
+            composite = np.char.add(np.char.add(composite, "|"), part)
+        labels[valid] = composite[valid]
+
+    codes = np.full(n, -1, dtype=np.int64)
+    cat = pd.Categorical(labels[valid])
+    codes[valid] = np.asarray(cat.codes, dtype=np.int64)
+    id_to_value = {int(i): str(v) for i, v in enumerate(cat.categories)}
+    n_assigned = int(valid.sum())
     logger.info(
-        "AnnDataSequenceDataset: bucket_key=%r yields %d unique buckets across %d assigned cells "
+        "AnnDataSequenceDataset: bucket_key=%r resolved to obs columns %s; "
+        "built %d composite context buckets across %d assigned cells "
         "(NaN/unknown -> -1, skipped at sample time).",
         bucket_key,
+        keys,
         len(id_to_value),
         n_assigned,
     )
     return codes, id_to_value
+
+
+def _resolve_bucket_keys(
+    adata,  # type: ignore[no-untyped-def]
+    bucket_key: str | None,
+) -> list[str]:
+    if bucket_key is None:
+        return []
+    raw = str(bucket_key).strip()
+    if raw == "" or raw.lower() in {"none", "off", "false", "0"}:
+        return []
+    obs_columns = list(adata.obs.columns)
+    if raw.lower() == "auto":
+        found: list[str] = []
+        lower_to_real = {str(c).lower(): str(c) for c in obs_columns}
+        for group in _AUTO_BUCKET_GROUPS:
+            for candidate in group:
+                real = lower_to_real.get(candidate.lower())
+                if real is not None:
+                    found.append(real)
+                    break
+        if not found:
+            logger.warning(
+                "AnnDataSequenceDataset: bucket_key='auto' found none of the standard context columns "
+                "in adata.obs. Bucketing is disabled. Available obs columns: %s",
+                obs_columns,
+            )
+        return found
+
+    keys = [part.strip() for chunk in raw.split(",") for part in chunk.split("+") if part.strip()]
+    missing = [key for key in keys if key not in adata.obs.columns]
+    if missing:
+        raise KeyError(
+            f"bucket_key={bucket_key!r} requested missing adata.obs column(s) {missing}; "
+            f"available columns: {obs_columns}"
+        )
+    return keys
 
 
 def _resolve_provider(provider: ActionEmbeddingProvider | None) -> ActionEmbeddingProvider:

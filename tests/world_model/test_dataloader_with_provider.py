@@ -16,6 +16,7 @@ from world_model.configs import (  # noqa: E402
     SplitConfig,
 )
 from world_model.data.dataloader import build_dataloaders  # noqa: E402
+from world_model.data.inspect import dump_sample_contexts  # noqa: E402
 
 
 def _make_tiny_adata(tmp_path: Path) -> Path:
@@ -24,7 +25,11 @@ def _make_tiny_adata(tmp_path: Path) -> Path:
     x = rng.poisson(2.0, size=(n_cells, n_genes)).astype(np.float32)
     var_names = [f"GENE_{i:03d}" for i in range(n_genes)]
     perts = ["non-targeting"] * 30 + ["GENE_000"] * 20 + ["GENE_001"] * 15 + ["GENE_002"] * 15
-    obs = {"perturbation": perts}
+    obs = {
+        "perturbation": perts,
+        "cell_type": ["k562"] * n_cells,
+        "batch": ["batch0"] * n_cells,
+    }
     adata = anndata.AnnData(X=x, obs=obs, var={"gene_symbols": var_names})
     adata.var.index = var_names
     adata.obsm["X_state_tiny"] = x[:, :6].astype(np.float32)
@@ -97,6 +102,7 @@ def test_build_dataloaders_with_query_action_obsm_for_incontext(tmp_path: Path):
         state_obsm_key="X_state_tiny",
         context_mode="incontext_set",
         incontext_support_size=2,
+        sequence_bucket_key="auto",
         sequence_length=4,
         stack_size=2,
         n_pert=2,
@@ -121,7 +127,19 @@ def test_build_dataloaders_with_query_action_obsm_for_incontext(tmp_path: Path):
     assert artifacts.query_gene_table is not None
     assert artifacts.query_gene_table.shape == (4, 6)
     assert artifacts.full_dataset.query_indexer is artifacts.query_indexer
+    assert artifacts.train_dataset._cell_buckets is not None  # noqa: SLF001
+    bucket_values = list((artifacts.train_dataset._bucket_value_map or {}).values())  # noqa: SLF001
+    assert any("cell_type=k562" in v and "batch=batch0" in v for v in bucket_values)
     sample = artifacts.train_dataset[0]
     assert sample["support_act"].shape == (2, 2)
     assert sample["query_act"].shape == (2,)
+    support_labels = sample["perturbations"][:-1]
+    query_label = sample["perturbations"][-1]
+    assert query_label not in support_labels
+    context_report = tmp_path / "contexts.txt"
+    dump_sample_contexts(artifacts.train_dataset, context_report, n_sequences=1)
+    report = context_report.read_text()
+    assert "context_mode = incontext_set" in report
+    assert "query:" in report
+    assert "in_support=False" in report
     assert (tmp_path / "run_query" / "query_action_embedding_meta.json").exists()

@@ -102,6 +102,7 @@ TRAIN_CONTEXT_MODE="${TRAIN_CONTEXT_MODE:-incontext_set}"
 TRAIN_DYNAMICS_KIND="${TRAIN_DYNAMICS_KIND:-incontext_set}"
 TRAIN_INCONTEXT_SUPPORT_SIZE="${TRAIN_INCONTEXT_SUPPORT_SIZE:-16}"
 TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH="${TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH:-16}"
+TRAIN_SEQUENCE_BUCKET_KEY="${TRAIN_SEQUENCE_BUCKET_KEY:-auto}"
 TRAIN_RUN_PREFIX="${TRAIN_RUN_PREFIX:-incontext}"
 TRAIN_DEFAULT_OVERRIDES="${TRAIN_DEFAULT_OVERRIDES:-data.batch_size=16 data.num_workers=0 data.pin_memory=false eval.save_predictions=false eval.n_control_samples_per_pert=8 optim.lr=0.0001 optim.grad_clip=0.5 loss.info_nce=0.05 loss.action_counterfactual=0.05 loss.info_nce_temperature=0.1}"
 TRAIN_OVERRIDES="${TRAIN_OVERRIDES:-$TRAIN_DEFAULT_OVERRIDES}"
@@ -605,6 +606,7 @@ EOF
                 "data.state_obsm_key=${STATE_OBSM_KEY}" \
                 "data.context_mode=${TRAIN_CONTEXT_MODE}" \
                 "data.incontext_support_size=${TRAIN_INCONTEXT_SUPPORT_SIZE}" \
+                "data.sequence_bucket_key=${TRAIN_SEQUENCE_BUCKET_KEY}" \
                 "dynamics.kind=${TRAIN_DYNAMICS_KIND}" \
                 "dynamics.max_sequence_length=${TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH}" \
                 "state_backbone.kind=stack" \
