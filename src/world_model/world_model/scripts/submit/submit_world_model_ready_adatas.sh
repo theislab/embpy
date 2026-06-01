@@ -95,8 +95,10 @@ ASSEMBLE_PIXI_ENV="${ASSEMBLE_PIXI_ENV:-gpu}"
 TRAIN_PIXI_ENV="${TRAIN_PIXI_ENV:-gpu}"
 TRAIN_GPU_CONSTRAINT="${TRAIN_GPU_CONSTRAINT:-h100_80gb}"
 TRAIN_GRES="${TRAIN_GRES:-gpu:h100:1}"
+TRAIN_TIME="${TRAIN_TIME:-48:00:00}"
 TRAIN_MEM="${TRAIN_MEM:-128G}"
 TRAIN_CPUS="${TRAIN_CPUS:-8}"
+TRAIN_OVERRIDES="${TRAIN_OVERRIDES:-}"
 DRYRUN="${DRYRUN:-0}"
 RUN_TRAIN="${RUN_TRAIN:-0}"
 FAIL_ON_UNRESOLVED="${FAIL_ON_UNRESOLVED:-0}"
@@ -236,6 +238,11 @@ EMBEDDING_KEYS=()
 for key in $expanded_embeddings; do
     EMBEDDING_KEYS+=("$key")
 done
+
+TRAIN_EXTRA_ARGS=()
+if [[ -n "$TRAIN_OVERRIDES" ]]; then
+    read -r -a TRAIN_EXTRA_ARGS <<<"$TRAIN_OVERRIDES"
+fi
 
 if [[ "${#EMBEDDING_KEYS[@]}" -eq 0 ]]; then
     echo "ERROR: no action embeddings selected." >&2
@@ -583,7 +590,7 @@ EOF
                 --job-name="wm-${ds}-${emb}" \
                 --partition="$PARTITION" --qos="$QOS" \
                 --gres="$TRAIN_GRES" --constraint="$TRAIN_GPU_CONSTRAINT" \
-                --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" \
+                --time="$TRAIN_TIME" --mem="$TRAIN_MEM" --cpus-per-task="$TRAIN_CPUS" \
                 -o "${action_log_dir}/%x_%j.out" -e "${action_log_dir}/%x_%j.err" \
                 --dependency=afterok:"${assemble_jid}" \
                 --export=ALL,EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}" \
@@ -595,7 +602,8 @@ EOF
                 "action_embedding.obsm_key=${action_obsm_key}" \
                 "action_embedding.model_name=${emb}" \
                 "run_name=${run_name}" \
-                "output_dir=${out_dir}")
+                "output_dir=${out_dir}" \
+                "${TRAIN_EXTRA_ARGS[@]}")
             echo "[$ds][$emb]   train job: $train_jid -> $out_dir"
             link_job_logs "$action_log_dir" "wm-${ds}-${emb}" "$train_jid"
             manifest_add "$ds" "train" "$emb" "$train_jid" "afterok:${assemble_jid}" "$out_dir" \
