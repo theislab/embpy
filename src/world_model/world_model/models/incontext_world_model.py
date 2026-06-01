@@ -23,6 +23,8 @@ from typing import Any
 import torch
 from torch import nn
 
+from world_model.training.losses import info_nce
+
 from .dynamics.incontext_set import InContextSetDynamics
 
 
@@ -96,9 +98,12 @@ class InContextWorldModel(nn.Module):
     def predict(self, batch: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Encode the task and predict the query's perturbed latent.
 
-        Returns ``{"s_hat", "s_target", "x_hat"}`` (x_hat None if no
-        decoder). ``s_target`` is the encoded real query perturbed
-        state (used as the latent regression target).
+        Returns ``{"s_hat", "s_target", "query_s", "x_hat"}``
+        (x_hat None if no decoder). ``s_target`` is the encoded real
+        query perturbed state (used as the latent regression target).
+        ``query_s`` is returned so contrastive losses can compare
+        perturbation effects relative to the same pre-perturbation
+        state, rather than contrasting absolute state embeddings.
         """
         support_s = self._encode_stacks(batch["support_obs"])  # (B,M,d)
         support_sp = self._encode_stacks(batch["support_next"])  # (B,M,d)
@@ -120,7 +125,15 @@ class InContextWorldModel(nn.Module):
         s_target = self._encode_one_stack(batch["query_next"]) if "query_next" in batch else None
 
         x_hat = self.decode(s_hat) if self.decoder is not None else None
-        return {"s_hat": s_hat, "s_target": s_target, "x_hat": x_hat}
+        return {
+            "s_hat": s_hat,
+            "s_target": s_target,
+            "query_s": query_s,
+            "support_s": support_s,
+            "support_sp": support_sp,
+            "support_a": support_a,
+            "x_hat": x_hat,
+        }
 
     # ------------------------------------------------------------------
     # Loss (same call signature the trainer uses for WorldModel)
@@ -144,6 +157,7 @@ class InContextWorldModel(nn.Module):
         # BYOL-style stop-grad on the target (same as WorldModel).
         s_hat = out["s_hat"]
         s_target = out["s_target"].detach()
+        query_s_ref = out["query_s"].detach()
         loss_lat = nn.functional.mse_loss(s_hat, s_target)
         components["latent_mse"] = loss_lat
         total = latent_mse_weight * loss_lat
@@ -155,20 +169,33 @@ class InContextWorldModel(nn.Module):
             total = total + decoder_mse_weight * loss_dec
 
         if info_nce_weight > 0.0:
-            # Each query prediction must match its own target vs. the
-            # other queries in the batch (in-batch negatives).
-            p = nn.functional.normalize(s_hat, dim=-1)
-            t = nn.functional.normalize(s_target, dim=-1)
-            logits = (p @ t.T) / max(info_nce_temperature, 1e-8)
-            labels = torch.arange(p.size(0), device=p.device)
-            loss_nce = nn.functional.cross_entropy(logits, labels)
+            # Contrast perturbation effects, not absolute states. In
+            # these cell-state spaces absolute latents can all have very
+            # high cosine similarity; subtracting the query/control
+            # state asks InfoNCE to match "what changed under this
+            # perturbation", preserving the in-context prediction
+            # principle for both within- and cross-modality runs.
+            pred_delta = s_hat - query_s_ref
+            target_delta = s_target - query_s_ref
+            loss_nce = info_nce(pred_delta, target_delta, temperature=info_nce_temperature)
             components["info_nce"] = loss_nce
             total = total + info_nce_weight * loss_nce
             with torch.no_grad():
+                p = nn.functional.normalize(pred_delta, dim=-1)
+                t = nn.functional.normalize(target_delta, dim=-1)
                 sim = p @ t.T
                 eye = torch.eye(sim.size(0), dtype=torch.bool, device=sim.device)
-                components["pos_sim"] = sim[eye].mean()
-                components["neg_sim"] = sim[~eye].mean()
+                pos_sim = sim[eye].mean()
+                neg_sim = sim[~eye].mean()
+                pred_self = p @ p.T
+                target_self = t @ t.T
+                components["pos_sim"] = pos_sim
+                components["neg_sim"] = neg_sim
+                components["pos_minus_neg"] = pos_sim - neg_sim
+                components["pred_delta_self_offdiag"] = pred_self[~eye].mean()
+                components["target_delta_self_offdiag"] = target_self[~eye].mean()
+                components["delta_norm"] = pred_delta.norm(dim=-1).mean()
+                components["delta_dim_var"] = pred_delta.var(dim=0).mean()
                 components["s_hat_dim_var"] = s_hat.var(dim=0).mean()
 
         if action_counterfactual_weight > 0.0:
@@ -177,22 +204,21 @@ class InContextWorldModel(nn.Module):
             # real-action prediction must be closer to the target than
             # the counterfactual one -- forces action conditioning.
             perm = torch.randperm(s_hat.size(0), device=s_hat.device)
-            support_s = self._encode_stacks(batch["support_obs"])
-            support_sp = self._encode_stacks(batch["support_next"])
-            support_a = self._encode_actions(batch["support_act"])
-            query_s = self._encode_one_stack(batch["query_obs"])
             cf_a = self._encode_one_query_action(batch["query_act"][perm])
             s_hat_cf = self.dynamics(
-                support_s,
-                support_a,
-                support_sp,
-                query_s,
+                out["support_s"],
+                out["support_a"],
+                out["support_sp"],
+                out["query_s"],
                 cf_a,
             )
             tau = max(action_counterfactual_temperature, 1e-8)
-            p = nn.functional.normalize(s_hat, dim=-1)
-            cf = nn.functional.normalize(s_hat_cf, dim=-1)
-            tn = nn.functional.normalize(s_target, dim=-1)
+            real_delta = s_hat - query_s_ref
+            cf_delta = s_hat_cf - query_s_ref
+            target_delta = s_target - query_s_ref
+            p = nn.functional.normalize(real_delta, dim=-1)
+            cf = nn.functional.normalize(cf_delta, dim=-1)
+            tn = nn.functional.normalize(target_delta, dim=-1)
             sim_real = (p * tn).sum(-1) / tau
             sim_cf = (cf * tn).sum(-1) / tau
             cf_logits = torch.stack([sim_real, sim_cf], dim=-1)

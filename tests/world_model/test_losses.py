@@ -39,10 +39,10 @@ def test_gaussian_nll_decreases_with_log_var() -> None:
 def test_info_nce_diagonal_optimum() -> None:
     """When pred == target, InfoNCE should be near its lower bound (~0).
 
-    With float32 cosine similarities and a finite batch the exact zero
-    is only approached up to a few times the machine epsilon scaled by
-    the inverse temperature; 1e-2 is a safe ceiling for B=8.
+    Use orthogonal rows so off-diagonal cosine similarities are exactly
+    lower than the matched diagonal; random vectors can occasionally
+    produce close negatives and make this test depend on luck.
     """
-    x = torch.randn(8, 16)
+    x = torch.eye(8, 16)
     val = info_nce(x, x, temperature=0.1).item()
     assert val < 1e-2

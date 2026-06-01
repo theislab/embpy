@@ -119,8 +119,18 @@ def test_incontext_support_query_action_tables_have_independent_dims() -> None:
     batch = _make_incontext_batch()
     out = model.predict(batch)
     assert out["s_hat"].shape == (B, D)
+    assert out["query_s"].shape == (B, D)
     assert out["x_hat"].shape == (B, G)
-    loss, components = model.loss(batch, decoder_mse_weight=0.1)
+    loss, components = model.loss(
+        batch,
+        decoder_mse_weight=0.1,
+        info_nce_weight=0.1,
+        action_counterfactual_weight=0.1,
+    )
     assert torch.isfinite(loss)
     assert "latent_mse" in components
+    assert "info_nce" in components
+    assert "pos_minus_neg" in components
+    assert "delta_dim_var" in components
+    assert "action_counterfactual" in components
     loss.backward()
