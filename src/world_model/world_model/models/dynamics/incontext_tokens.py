@@ -20,6 +20,11 @@ Directionality ``s, a -> s'`` is taught WITHOUT a causal mask:
 
 Same ``forward`` signature as :class:`InContextSetDynamics`, so it is a
 drop-in alternative inside :class:`InContextWorldModel`.
+
+The training-time ``forward_autoregressive`` method implements the
+teacher-forced in-context SSL objective: predict support triplet 1 with
+no previous triplets, predict support triplet 2 with triplet 1 revealed,
+..., then predict the held-out query with all support triplets revealed.
 """
 
 from __future__ import annotations
@@ -114,6 +119,87 @@ class InContextTokensDynamics(nn.Module):
         h = self.norm(h)
         # Query's s' (MASK) token is the last position by construction.
         return self.head(h[:, -1])
+
+    def forward_autoregressive(
+        self,
+        support_s: torch.Tensor,   # (B, M, d)
+        support_a: torch.Tensor,   # (B, M, d)
+        support_sp: torch.Tensor,  # (B, M, d)
+        query_s: torch.Tensor,     # (B, d)
+        query_a: torch.Tensor,     # (B, d)
+        query_sp: torch.Tensor,    # (B, d)
+    ) -> torch.Tensor:
+        """Predict every triplet's next-state with teacher-forced context.
+
+        Returns one prediction per support triplet plus the final query,
+        shape ``(B, M + 1, d)``. For target triplet ``j`` the transformer
+        input contains all earlier triplets fully revealed, then the
+        current triplet as ``[s_j, a_j, MASK]``. Future triplets are
+        absent via an attention mask. This matches the in-context SSL
+        objective:
+
+        ``context_{j-1} + [s_j, a_j, MASK] -> s'_j``.
+        """
+        if support_s.ndim != 3:
+            raise ValueError(f"support_s must be (B, M, d), got {tuple(support_s.shape)}")
+        b, m, d = support_s.shape
+        n = m + 1
+        if n > self.max_set_size:
+            raise ValueError(f"set size {n} exceeds max_set_size {self.max_set_size}")
+        dev = support_s.device
+
+        s = torch.cat([support_s, query_s.unsqueeze(1)], dim=1)       # (B,n,d)
+        a = torch.cat([support_a, query_a.unsqueeze(1)], dim=1)       # (B,n,d)
+        sp = torch.cat([support_sp, query_sp.unsqueeze(1)], dim=1)    # (B,n,d)
+
+        max_len = 3 * n
+        mask = self.mask_token.to(dev).expand(b, d)
+        tokens = torch.zeros(b, n, max_len, d, dtype=s.dtype, device=dev)
+        attn_mask = torch.zeros(b, n, max_len, dtype=torch.bool, device=dev)
+        role_ids = torch.zeros(n, max_len, dtype=torch.long, device=dev)
+        group_ids = torch.zeros(n, max_len, dtype=torch.long, device=dev)
+        target_positions = torch.empty(n, dtype=torch.long, device=dev)
+
+        for j in range(n):
+            if j > 0:
+                prefix = torch.stack([s[:, :j], a[:, :j], sp[:, :j]], dim=2).reshape(b, 3 * j, d)
+                tokens[:, j, : 3 * j] = prefix
+                attn_mask[:, j, : 3 * j] = True
+
+            cur = 3 * j
+            tokens[:, j, cur] = s[:, j]
+            tokens[:, j, cur + 1] = a[:, j]
+            tokens[:, j, cur + 2] = mask
+            attn_mask[:, j, cur : cur + 3] = True
+            role_ids[j, cur : cur + 3] = 1
+            target_positions[j] = cur + 2
+
+            # Randomized group tags bind the local triplet tokens without
+            # introducing a stable absolute support position.
+            perm = torch.randperm(n, device=dev)
+            for i in range(j + 1):
+                group_ids[j, 3 * i : 3 * i + 3] = perm[i]
+
+        flat_tokens = tokens.reshape(b * n, max_len, d)
+        flat_attn = attn_mask.reshape(b * n, max_len)
+        type_ids = torch.tensor([0, 1, 2], device=dev).repeat(n)
+        flat_role_ids = role_ids.repeat(b, 1)
+        flat_group_ids = group_ids.repeat(b, 1)
+
+        h = (
+            flat_tokens
+            + self.type_embed(type_ids)[None]
+            + self.role_embed(flat_role_ids)
+            + self.group_embed(flat_group_ids)
+        )
+        for layer in self.layers:
+            h = layer(h, attn_mask=flat_attn)
+        h = self.norm(h)
+
+        flat_pos = target_positions.repeat(b)
+        rows = torch.arange(b * n, device=dev)
+        pred = self.head(h[rows, flat_pos])
+        return pred.view(b, n, d)
 
 
 __all__ = ["InContextTokensDynamics"]

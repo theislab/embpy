@@ -140,10 +140,12 @@ def test_incontext_support_query_action_tables_have_independent_dims() -> None:
 def test_incontext_tokens_explicit_triplet_model_runs() -> None:
     model = _make_incontext_model(decoder=True, dynamics_kind="incontext_tokens")
     batch = _make_incontext_batch()
+    support_size = batch["support_obs"].shape[1]
 
     assert hasattr(model.dynamics, "type_embed")
     assert hasattr(model.dynamics, "group_embed")
     assert hasattr(model.dynamics, "mask_token")
+    assert hasattr(model.dynamics, "forward_autoregressive")
 
     out = model.predict(batch)
     assert out["s_hat"].shape == (B, D)
@@ -159,6 +161,8 @@ def test_incontext_tokens_explicit_triplet_model_runs() -> None:
     )
     assert torch.isfinite(loss)
     assert "latent_mse" in components
+    assert "autoregressive_targets" in components
+    assert components["autoregressive_targets"].item() == support_size + 1
     assert "info_nce" in components
     assert "action_counterfactual" in components
     loss.backward()
