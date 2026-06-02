@@ -7,18 +7,11 @@ For per-function documentation, see the [API reference](api.md).
 
 ## Package Layout
 
-This repository contains two Python packages:
+This repository contains the public `embpy` Python package:
 
 | Package | Purpose | Source |
 | --- | --- | --- |
 | `embpy` | Embeddings, resolvers, annotations, preprocessing, plotting, and analysis utilities. | `src/embpy/` |
-| `world_model` | Perturbation world-model training, evaluation, Slurm submission, and report workflows. | `src/world_model/` |
-
-`world_model` depends on `embpy`. `embpy` should not import from
-`world_model`.
-
-The world-model documentation lives in
-[`src/world_model/README.md`](../src/world_model/README.md).
 
 ## Standardized Output Contract
 
@@ -204,22 +197,6 @@ Common functions include:
 - `pl.embedding_norms`
 
 See the [API reference](api.md) for the full list.
-
-## World Model Integration
-
-The world-model workflows consume AnnData files with explicit state and action
-embedding keys.
-
-Typical cross-modality setup:
-
-- cell state: `.obsm["X_stack"]`
-- support action: `.obsm["X_pert_esm2_650M"]`
-- query action: `.obsm["X_pert_subcell_mae_rybg"]`
-
-The world-model package has its own README with the current Slurm submission,
-output-layout, baseline, and report workflows:
-
-[`src/world_model/README.md`](../src/world_model/README.md)
 
 ## Developer Notes
 

@@ -84,24 +84,8 @@ tqdm = "*"
 # PyPI-only dependencies (no good conda-forge build available).
 # ---------------------------------------------------------------------------
 [pypi-dependencies]
-# Both packages install editable. Each uses a standard src-layout so
-# hatchling's PEP 660 editables backend can wire them up by removing the
-# `src/<pkg>/` prefix from on-disk paths -- no prefix-add rewrites,
-# which the editables backend rejects.
-#
-#   embpy        -- on-disk: src/embpy/<files>,        import: embpy
-#   world_model  -- on-disk: src/world_model/world_model/<files>,
-#                   import: world_model (with src/world_model/ as the
-#                   pyproject root)
-#
-# world_model's pyproject deliberately does NOT list "embpy" in its
-# `dependencies` (see the comment there) so uv's workspace resolver
-# does not try to resolve `embpy` a second time and clash with the
-# explicit editable install above. Inside this pixi workspace both
-# packages live in every env, so the runtime `import embpy` from
-# world_model code always resolves.
+# Install the public embpy package editable from this repository.
 embpy = { path = ".", editable = true }
-world_model = { path = "src/world_model", editable = true }
 # pure-Python / PyPI-only deps that embpy imports directly:
 broad-babel = ">=0.1"
 cirpy = "*"
@@ -236,10 +220,6 @@ no-build-isolation = ["flash-attn", "mamba-ssm", "transformer_engine"]
 # `evo2` (no flash-attn, no transformer_engine, no vortex-ai) -- so we
 # keep them in separate envs even though both ship mamba-ssm.
 #
-# Usage:
-#   pixi install -e caduceus
-#   pixi run -e caduceus -- python -m world_model.scripts.embed_perturbations \
-#       --model caduceus_ph_131k --dataset replogle ...
 # ---------------------------------------------------------------------------
 [feature.caduceus]
 platforms = ["linux-64"]
@@ -496,11 +476,7 @@ notebook = "*"
 
 # Docs / Dev: embpy is already installed as the workspace root (see the
 # top-level [pypi-dependencies] block). These per-feature blocks add the
-# corresponding extras on top of that base install. They are scoped to
-# the `docs` / `dev` envs (and any env that explicitly enables those
-# features); the `gpu`, `arc-gpu`, etc. envs do not include either
-# feature so the workspace=true install in src/world_model/pyproject.toml
-# never collides with these path-based entries.
+# corresponding extras on top of that base install.
 [feature.docs.pypi-dependencies]
 embpy = { path = ".", editable = true, extras = ["doc"] }
 
@@ -593,18 +569,11 @@ evo2 = { features = [
   "jupyter",
 ] }
 
-# Standalone env for Caduceus (Mamba-based DNA LMs). The world-model
-# sweep uses this env for caduceus_ph_131k / caduceus_ps_131k. Mirrors
-# the `gpu` env so embpy/world_model can still import their usual
-# scanpy / pertpy / morphology helpers, plus the `caduceus` feature for
-# the mamba-ssm + causal-conv1d CUDA kernels Caduceus needs at load
-# time. No solve-group shared with `gpu` because mamba-ssm pins a
-# slightly tighter torch ABI than the seqmodels / esm3 / helical stack
-# would tolerate.
-# Usage:
-#   pixi install -e caduceus
-#   pixi run -e caduceus -- python -m world_model.scripts.embed_perturbations \
-#       --model caduceus_ph_131k ...
+# Standalone env for Caduceus (Mamba-based DNA LMs). Mirrors the `gpu`
+# env with the `caduceus` feature for the mamba-ssm + causal-conv1d CUDA
+# kernels Caduceus needs at load time. No solve-group shared with `gpu`
+# because mamba-ssm pins a slightly tighter torch ABI than the seqmodels /
+# esm3 / helical stack would tolerate.
 caduceus = { features = [
   "gpu",
   "caduceus",
@@ -632,11 +601,9 @@ install-kernel = "python -m ipykernel install --user --name embpy --display-name
 # Launch jupyter-lab bound to this env. Override port/host with args:
 #   pixi run jupyter --port 8899 --ip 0.0.0.0
 jupyter = "jupyter lab --no-browser --ip 0.0.0.0"
-# Quick interactive shells for working in either package. They drop you
-# into the activated default env with PYTHONNOUSERSITE=1 already set;
-# `cd src/embpy` / `cd src/world_model` is purely cosmetic.
+# Quick interactive shell for working in the package. It drops you into
+# the activated default env with PYTHONNOUSERSITE=1 already set.
 embpy-shell = { cmd = "bash -c 'cd src/embpy && exec bash -i'", description = "Interactive bash, cwd=src/embpy/" }
-wm-shell    = { cmd = "bash -c 'cd src/world_model && exec bash -i'", description = "Interactive bash, cwd=src/world_model/" }
 
 [feature.gpu.tasks]
 # GPU smoke test (assumes CUDA is visible: run on a GPU node or with CUDA_VISIBLE_DEVICES set).
@@ -650,12 +617,6 @@ install-kernel-gpu = "python -m ipykernel install --user --name embpy-gpu --disp
 verify-mps = "python -c \"import torch; built=hasattr(torch.backends, 'mps') and torch.backends.mps.is_built(); available=hasattr(torch.backends, 'mps') and torch.backends.mps.is_available(); print(f'torch={torch.__version__} mps_built={built} mps_available={available}'); assert available, 'PyTorch MPS is not available in this pixi env'\""
 # Register this env as a separate Jupyter kernel so notebooks can select it explicitly.
 install-kernel-mps = "python -m ipykernel install --user --name embpy-mps --display-name 'Python (embpy-mps)'"
-# Convenience world-model commands. Extra CLI args are appended by pixi, e.g.
-#   pixi run -e mps wm-train-mps --config ... train.device=mps
-wm-train-mps = "python -m world_model.scripts.train"
-wm-smoke-mps = "python -m world_model.scripts.smoke_test train.device=mps"
-wm-sweep-mps = "env USE_PIXI=0 bash src/world_model/world_model/scripts/local/run_embedding_sweep_mps.sh"
-
 [feature.dev.tasks]
 test = "pytest -xvs tests/"
 lint = { cmd = "ruff check src/ tests/", description = "Ruff check (no autofix -- per user rule)" }

@@ -112,7 +112,7 @@ def test_materialize_perturbation_obsm_from_uns_aliases():
     materialize_perturbation_obsm(tgt, embedding_key="X_pert_m", perturbation_key="perturbation")
     assert "X_pert_m" in tgt.obsm
     np.testing.assert_allclose(tgt.obsm["X_pert_m"], np.array([[1, 2], [3, 4], [1, 2]], dtype=np.float32))
-    assert tgt.uns["world_model_action_embeddings"]["X_pert_m"]["source"] == "embpy_uns"
+    assert tgt.uns["embpy_action_embeddings"]["X_pert_m"]["source"] == "embpy_uns"
 
 
 def test_materialize_perturbation_obsm_reads_legacy_embpy_namespace():

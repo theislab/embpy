@@ -16,7 +16,7 @@ single cells; annotate the resulting objects; and compare embeddings with
 scverse-friendly plotting and analysis utilities.
 
 <p align="center">
-  <img src="docs/full_stack.png" alt="embpy overview" width="900"/>
+  <img src="docs/embpy_overview.png" alt="embpy overview" width="900"/>
 </p>
 
 ## What embpy Does
@@ -205,9 +205,7 @@ the full contract.
 
 - [API reference](docs/api.md): per-function reference generated from docstrings
 - [Technical guide](docs/technical.md): output contract, install matrix, package
-  layout, and world-model notes
-- [World model README](src/world_model/README.md): perturbation world-model
-  workflows
+  layout, and developer notes
 - [Contributing](docs/contributing.md)
 - [Changelog](docs/changelog.md)
 

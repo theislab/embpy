@@ -362,8 +362,8 @@ class DataError(EmbpyError):
 # symbols" upstream ValueError. The new typed exceptions below let the
 # embedder classify the failure *at the source*, so the operator (or
 # automation) can distinguish them without grepping tracebacks. See
-# ``world_model.scripts.embed_perturbations`` for the top-level handler
-# that converts these into category-specific SLURM exit codes.
+# Downstream batch workflows can use these typed exceptions to convert
+# failures into category-specific exit codes.
 
 
 class ModelOOMError(EmbpyError):

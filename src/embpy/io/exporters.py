@@ -892,7 +892,7 @@ def materialize_perturbation_obsm(
 
     adata.obsm[out_key] = out
     adata.obs[f"{out_key}_status"] = status
-    root = adata.uns.setdefault("world_model_action_embeddings", {})
+    root = adata.uns.setdefault("embpy_action_embeddings", {})
     root[out_key] = {
         "source": "embpy_uns",
         "uns_key": embedding_key,

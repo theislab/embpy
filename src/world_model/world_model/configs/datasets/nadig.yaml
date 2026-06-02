@@ -1,9 +1,0 @@
-extends: ../bases/single.yaml
-
-run_name: "single_nadig"
-output_dir: "runs/world_model/single_nadig"
-
-data:
-  dataset: "nadig"
-  h5ad_path: "data/crispr_datasets/nadig/NadigOConner2024_jurkat.h5ad"
-  control_label: "control"
