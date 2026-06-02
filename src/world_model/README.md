@@ -97,6 +97,12 @@ When `eval.require_cell_eval=false`, embpy keeps a small internal fallback so
 smoke tests and laptops without `cell-eval` can still run. Fallback results are
 not the full benchmark suite and should not be used for final comparisons.
 
+The SLURM stability submitter runs full `cell-eval` on CPU by default. The GPU
+training job sets `train.run_eval_after_fit=false`, releases the GPU after
+training, and submits a dependent CPU job through
+`scripts/slurm/eval_only_cpu.sbatch`. Override with `RUN_EVAL_ON_CPU=0` if you
+want the historical inline post-training evaluation.
+
 ## Attach Embeddings
 
 Attach action embeddings from a BioEmbedder model:

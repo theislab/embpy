@@ -211,6 +211,13 @@ class TrainConfig:
     amp: bool = True
     enable_tensorboard: bool = True
     enable_csv_log: bool = True
+    run_eval_after_fit: bool = True
+    """If False, skip the post-training evaluation/report step.
+
+    This is useful on SLURM when training should release its GPU as soon
+    as fitting finishes and a dependent CPU eval job should run the
+    full cell-eval/report pipeline from the final checkpoint.
+    """
 
 
 @dataclass

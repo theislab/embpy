@@ -71,6 +71,7 @@ train:
   amp: true
   enable_tensorboard: true
   enable_csv_log: true
+  run_eval_after_fit: true
 
 eval:
   n_control_samples_per_pert: 32

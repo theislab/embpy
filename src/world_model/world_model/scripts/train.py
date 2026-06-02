@@ -627,7 +627,13 @@ def main(argv: list[str] | None = None) -> None:
         if cfg.mode != "single":
             raise ValueError("Only mode='single' is supported.")
         model, artifacts = _run_single(cfg, output_dir)
-        _run_eval_and_report(cfg, output_dir, model, artifacts)
+        if cfg.train.run_eval_after_fit:
+            _run_eval_and_report(cfg, output_dir, model, artifacts)
+        else:
+            logger.info(
+                "Skipping post-training evaluation because train.run_eval_after_fit=false. "
+                "Run world_model.scripts.eval from a dependent CPU job to produce cell-eval metrics."
+            )
     except BaseException as exc:
         # Catch BaseException so SLURM-side SIGTERMs (KeyboardInterrupt,
         # SystemExit) also leave a "failed" marker on disk.

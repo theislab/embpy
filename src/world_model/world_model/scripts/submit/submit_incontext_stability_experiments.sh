@@ -181,6 +181,13 @@ TRAIN_TIME="${TRAIN_TIME:-24:00:00}"
 TRAIN_MEM="${TRAIN_MEM:-128G}"
 TRAIN_CPUS="${TRAIN_CPUS:-8}"
 
+RUN_EVAL_ON_CPU="${RUN_EVAL_ON_CPU:-1}"
+CPU_PARTITION="${CPU_PARTITION:-cpu_p}"
+CPU_QOS="${CPU_QOS:-cpu_normal}"
+CPU_EVAL_TIME="${CPU_EVAL_TIME:-12:00:00}"
+CPU_EVAL_MEM="${CPU_EVAL_MEM:-96G}"
+CPU_EVAL_CPUS="${CPU_EVAL_CPUS:-16}"
+
 SUPPORT_SIZE="${SUPPORT_SIZE:-16}"
 DYNAMICS_MAX_SEQUENCE_LENGTH="${DYNAMICS_MAX_SEQUENCE_LENGTH:-16}"
 SEQUENCE_BUCKET_KEY="${SEQUENCE_BUCKET_KEY:-auto}"
@@ -237,10 +244,12 @@ echo "  run root:     ${RUN_ROOT_BASE}/${WORKFLOW_LABEL}/<dataset>/${SUBMIT_STAM
 echo "  logs:         ${LOG_BASE}/${WORKFLOW_LABEL}/<dataset>/${SUBMIT_STAMP}"
 echo "  submit log:   $SUBMIT_LOG"
 echo "  cell-eval:    require=${REQUIRE_CELL_EVAL} profile=${CELL_EVAL_PROFILE} threads=${CELL_EVAL_NUM_THREADS}"
+echo "  cpu eval:     ${RUN_EVAL_ON_CPU} partition=${CPU_PARTITION} qos=${CPU_QOS} cpus=${CPU_EVAL_CPUS} mem=${CPU_EVAL_MEM}"
 echo "  dry run:      $DRYRUN"
 echo
 
 TRAIN_LAUNCHER="src/world_model/world_model/scripts/slurm/train_embedding.sbatch"
+CPU_EVAL_LAUNCHER="src/world_model/world_model/scripts/slurm/eval_only_cpu.sbatch"
 
 for ds in "${DATASETS[@]}"; do
     cfg="$(project_path "$(base_cfg_for "$ds")")"
@@ -301,6 +310,9 @@ for ds in "${DATASETS[@]}"; do
             "${TRAIN_EXTRA_ARGS[@]}"
             "${VARIANT_EXTRA_ARGS[@]}"
         )
+        if [[ "$RUN_EVAL_ON_CPU" == "1" ]]; then
+            train_args+=("train.run_eval_after_fit=false")
+        fi
         if [[ -n "$QUERY_ACTION_OBSM_KEY" ]]; then
             train_args+=(
                 "query_action_embedding.source=anndata_obsm"
@@ -316,6 +328,34 @@ for ds in "${DATASETS[@]}"; do
             "$SUBMITTED_AT" "$ds" "$variant" "$jid" "$out_dir" \
             "${dataset_log_dir}/jobs/${jid}/stdout" \
             "${dataset_log_dir}/jobs/${jid}/stderr" >>"$manifest"
+
+        if [[ "$RUN_EVAL_ON_CPU" == "1" ]]; then
+            eval_args=(
+                --job-name="ce-${ds}-${variant}"
+                --partition="$CPU_PARTITION"
+                --qos="$CPU_QOS"
+                --time="$CPU_EVAL_TIME"
+                --mem="$CPU_EVAL_MEM"
+                --cpus-per-task="$CPU_EVAL_CPUS"
+                -o "${dataset_log_dir}/%x_%j.out"
+                -e "${dataset_log_dir}/%x_%j.err"
+                --dependency=afterok:"${jid}"
+                --export=ALL,RUN_DIR="${out_dir}",EMBPY_PIXI_ENV="${TRAIN_PIXI_ENV}"
+                "$CPU_EVAL_LAUNCHER"
+                "train.device=cpu"
+                "eval.require_cell_eval=${REQUIRE_CELL_EVAL}"
+                "eval.cell_eval_profile=${CELL_EVAL_PROFILE}"
+                "eval.cell_eval_num_threads=${CPU_EVAL_CPUS}"
+                "eval.save_predictions=false"
+            )
+            eval_jid=$(submit_sbatch "${eval_args[@]}")
+            echo "[$ds] $variant CPU cell-eval job: $eval_jid (after $jid) -> $out_dir"
+            link_job_logs "$dataset_log_dir" "ce-${ds}-${variant}" "$eval_jid"
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+                "$SUBMITTED_AT" "$ds" "${variant}_cell_eval_cpu" "$eval_jid" "$out_dir" \
+                "${dataset_log_dir}/jobs/${eval_jid}/stdout" \
+                "${dataset_log_dir}/jobs/${eval_jid}/stderr" >>"$manifest"
+        fi
     done
     echo "[$ds] manifest: $manifest"
     echo
