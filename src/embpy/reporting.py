@@ -275,11 +275,8 @@ class ResolutionReport:
         """Write the report next to an NPZ artifact.
 
         Returns the sidecar path. The default suffix is
-        ``.resolution.json`` (distinct from the existing
-        ``.status.json`` written by
-        ``world_model.scripts.embed_perturbations`` so the two can
-        co-exist; the former is per-identifier, the latter is the
-        rolled-up status summary).
+        ``.resolution.json`` (distinct from any rolled-up
+        ``.status.json`` artifact a downstream workflow may write).
         """
         path = Path(str(npz_path) + suffix)
         path.parent.mkdir(parents=True, exist_ok=True)

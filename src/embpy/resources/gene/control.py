@@ -19,8 +19,8 @@ authors can either accept the curated defaults or override the patterns
 
 The module is intentionally dependency-free: it must be importable in
 environments without ``pyensembl``, ``boltz``, ``arc-state``, etc., so
-that the world-model dataloader can classify labels before deciding
-whether to call into any heavy embedder.
+that downstream data loaders can classify labels before deciding whether
+to call into any heavy embedder.
 """
 
 from __future__ import annotations
@@ -75,10 +75,11 @@ class ControlClassification:
     * ``"gene"``    -- no component is a control; the label should be
       passed to the gene embedder as-is.
     * ``"mixed"``   -- at least one control AND at least one non-control
-      component. The world-model contract treats this as "drop the
-      controls, keep the genes" but flags it so dataset curators can fix
-      ambiguous metadata (this is rare; in practice it happens when a
-      sgRNA library co-targets a real gene with a non-targeting guide).
+      component. Downstream perturbation workflows typically drop the
+      controls and keep the genes, but the mixed label is flagged so
+      dataset curators can fix ambiguous metadata (this is rare; in
+      practice it happens when a sgRNA library co-targets a real gene
+      with a non-targeting guide).
     """
 
     label: str
@@ -157,9 +158,9 @@ class ControlPolicy:
         * ``"TP53|MYC"`` (older scperturb exports)
 
         Whitespace inside components is stripped. Empty components are
-        dropped. The order of the returned list reflects the input order
-        (the world-model action encoder is order-invariant so this only
-        matters for human-readable logging).
+        dropped. The order of the returned list reflects the input order,
+        which can matter for human-readable logging even when downstream
+        encoders are order-invariant.
         """
         if label is None:
             return []

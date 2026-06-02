@@ -24,13 +24,6 @@ Backward compatibility:
   still work, including in ``from embpy import X`` form (PEP 562 makes
   ``from`` fall back to ``__getattr__`` when ``X`` is not yet in the
   module dict).
-* ``embpy.world_model`` no longer exists; it was promoted to the
-  top-level package ``world_model`` in the Part C split (see
-  ``docs/audit/package_split.md``). The transitional shim that
-  re-routed ``embpy.world_model`` -> ``world_model`` was removed
-  because the in-repo codemod rewrote every internal caller and
-  embpy is not externally distributed. Update any straggling
-  ``from embpy.world_model.X import Y`` to ``from world_model.X import Y``.
 """
 
 from __future__ import annotations
