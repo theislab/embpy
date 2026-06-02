@@ -188,7 +188,7 @@ The training overrides are:
 
 ```text
 data.context_mode=incontext_set
-dynamics.kind=incontext_set
+dynamics.kind=incontext_tokens
 action_embedding.obsm_key=X_pert_esm2_650M
 query_action_embedding.obsm_key=X_pert_subcell_mae_rybg
 ```

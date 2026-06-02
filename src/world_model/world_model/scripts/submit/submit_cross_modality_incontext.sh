@@ -349,7 +349,7 @@ EOF
             "data.context_mode=incontext_set"
             "data.incontext_support_size=${TRAIN_INCONTEXT_SUPPORT_SIZE}"
             "data.sequence_bucket_key=${TRAIN_SEQUENCE_BUCKET_KEY}"
-            "dynamics.kind=incontext_set"
+            "dynamics.kind=incontext_tokens"
             "dynamics.max_sequence_length=${TRAIN_DYNAMICS_MAX_SEQUENCE_LENGTH}"
             "state_backbone.kind=stack"
             "action_embedding.source=anndata_obsm"

@@ -297,7 +297,7 @@ for ds in "${DATASETS[@]}"; do
             "data.context_mode=incontext_set"
             "data.incontext_support_size=${SUPPORT_SIZE}"
             "data.sequence_bucket_key=${SEQUENCE_BUCKET_KEY}"
-            "dynamics.kind=incontext_set"
+            "dynamics.kind=incontext_tokens"
             "dynamics.max_sequence_length=${DYNAMICS_MAX_SEQUENCE_LENGTH}"
             "state_backbone.kind=${STATE_BACKBONE_KIND}"
             "action_embedding.source=anndata_obsm"

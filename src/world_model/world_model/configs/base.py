@@ -77,8 +77,12 @@ class DataConfig:
       SET of ``incontext_support_size`` support triplets
       ``(s_control, a_i, s_pert_i)`` plus ONE query triplet
       ``(s_control, a_q, ?)`` whose perturbed state is the target. Used
-      by the bidirectional in-context dynamics
-      (``dynamics.kind = "incontext_set"``)."""
+      by the bidirectional in-context dynamics. The preferred dynamics
+      path is ``dynamics.kind = "incontext_tokens"``, where every
+      triplet is represented as three local-position tokens
+      ``[s_control, action, s_perturbed]`` and the query third token is
+      masked. ``"incontext_set"`` remains available as a fused-token
+      ablation."""
 
     incontext_support_size: int = 16
     """``context_mode="incontext_set"`` only -- number of support

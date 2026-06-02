@@ -51,7 +51,7 @@ def _make_model(decoder: bool = True):
     )
 
 
-def _make_incontext_model(decoder: bool = True, **kwargs):
+def _make_incontext_model(decoder: bool = True, dynamics_kind: str = "incontext_set", **kwargs):
     return build_world_model(
         n_genes=G,
         gene_embedding_table=torch.randn(N_GENES_PERT + 1, 24),
@@ -63,7 +63,7 @@ def _make_incontext_model(decoder: bool = True, **kwargs):
         encoder_heads=2,
         dynamics_layers=1,
         dynamics_heads=2,
-        dynamics_kind="incontext_set",
+        dynamics_kind=dynamics_kind,
         incontext_support_size=3,
         max_sequence_length=8,
         enable_decoder=decoder,
@@ -133,6 +133,33 @@ def test_incontext_support_query_action_tables_have_independent_dims() -> None:
     assert "info_nce" in components
     assert "pos_minus_neg" in components
     assert "delta_dim_var" in components
+    assert "action_counterfactual" in components
+    loss.backward()
+
+
+def test_incontext_tokens_explicit_triplet_model_runs() -> None:
+    model = _make_incontext_model(decoder=True, dynamics_kind="incontext_tokens")
+    batch = _make_incontext_batch()
+
+    assert hasattr(model.dynamics, "type_embed")
+    assert hasattr(model.dynamics, "group_embed")
+    assert hasattr(model.dynamics, "mask_token")
+
+    out = model.predict(batch)
+    assert out["s_hat"].shape == (B, D)
+    assert out["delta_hat"].shape == (B, D)
+    assert out["query_s"].shape == (B, D)
+    assert out["x_hat"].shape == (B, G)
+
+    loss, components = model.loss(
+        batch,
+        decoder_mse_weight=0.1,
+        info_nce_weight=0.1,
+        action_counterfactual_weight=0.1,
+    )
+    assert torch.isfinite(loss)
+    assert "latent_mse" in components
+    assert "info_nce" in components
     assert "action_counterfactual" in components
     loss.backward()
 

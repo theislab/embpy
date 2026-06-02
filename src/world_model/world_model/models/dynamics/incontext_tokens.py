@@ -9,8 +9,8 @@ and read that triplet's ``s'``).
 
 Directionality ``s, a -> s'`` is taught WITHOUT a causal mask:
 
-* a **type** embedding tags each token's role inside its triplet
-  (``state`` / ``action`` / ``next_state``);
+* a local-position / **type** embedding tags each token's role inside
+  its triplet (``state`` / ``action`` / ``next_state``);
 * the **objective** only ever predicts the query's masked ``s'`` from
   its ``s, a`` (never the reverse);
 * a per-triplet **group** embedding (a random permutation each forward)
