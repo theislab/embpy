@@ -81,6 +81,7 @@ def test_plot_baseline_comparison_creates_files(tmp_path: Path):
     assert out.exists()
     assert out.with_suffix(".svg").exists()
     assert out.with_suffix(".csv").exists()
+    assert (tmp_path / "comparison_summary.csv").exists()
 
 
 def test_plot_baseline_comparison_prefers_per_perturbation_long(tmp_path: Path):
@@ -100,3 +101,7 @@ def test_plot_baseline_comparison_prefers_per_perturbation_long(tmp_path: Path):
     plot_baseline_comparison(aggregate, out, metrics=["r2"], per_perturbation_long=long)
     written = pd.read_csv(out.with_suffix(".csv"))
     assert written["value"].tolist() == [0.5, 0.9]
+    summary = pd.read_csv(tmp_path / "comparison_summary.csv")
+    assert summary["n"].tolist() == [2]
+    assert summary["mean"].tolist() == [0.7]
+    assert summary["std"].tolist() == pytest.approx([0.2828427125])

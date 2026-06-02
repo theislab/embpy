@@ -207,9 +207,10 @@ DATASET=nadig EMB=borzoi_v0 STATE_OBSM_KEY=X_stack \
   bash src/world_model/world_model/scripts/submit/submit_incontext_stability_experiments.sh
 ```
 
-The matrix runs `baseline`, `latent_norm`, `residual_delta`,
-`latent_norm_residual`, `action_sim_support`, and the auxiliary-loss
-variants `aux_A` through `aux_D`. If the ready AnnData is not at
+By default this submits a single standard setup named `standard`:
+`dynamics.kind=incontext_tokens`, `dynamics.latent_normalization=layer_norm`,
+`dynamics.prediction_mode=absolute`, and random same-bucket support sampling.
+If the ready AnnData is not at
 `runs/_cache/action_h5ad/<dataset>_<EMB>.h5ad`, pass `H5AD_PATH=/path/file.h5ad`
 for one dataset or `H5AD_TEMPLATE='/path/{dataset}_file.h5ad'` for both.
 Core switches are:

@@ -150,12 +150,17 @@ def plot_baseline_comparison(
     dataset: str = "unknown",
     seed: int | str | None = None,
 ) -> None:
-    """Boxplot comparison with one distribution per evaluator and metric.
+    """Bar comparison with uncertainty across perturbations.
 
     ``per_perturbation_long`` is preferred and should contain one row per
     ``dataset x model/baseline x seed x perturbation x metric``. When only an
     aggregate table is available, the helper falls back to one pseudo-point per
     evaluator/metric so legacy callers still get a reproducible figure plus CSV.
+
+    Bars show the mean metric value for each evaluator. Error bars show the
+    sample standard deviation across perturbations/seeds when more than one
+    value is available. This keeps the report compact while exposing the
+    variation behind a headline aggregate.
     """
     plt = _try_mpl()
     if plt is None or aggregate_table is None or aggregate_table.empty:
@@ -175,18 +180,23 @@ def plot_baseline_comparison(
     _write_plot_csv(long, out_path)
     if long.empty:
         return
+    summary = _summarize_long_metrics(long)
+    _write_plot_summary_csv(summary, out_path)
+    if summary.empty:
+        return
 
     fig, axes = plt.subplots(1, len(metrics), figsize=(4 * len(metrics), 4), squeeze=False)
     for j, m in enumerate(metrics):
         ax = axes[0, j]
-        sub = long[long["metric"] == m].dropna(subset=["value"]).copy()
+        sub = summary[summary["metric"] == m].dropna(subset=["mean"]).copy()
         if sub.empty:
             ax.set_axis_off()
             continue
-        _boxplot_long(ax, sub, group_col="model", value_col="value", point_col="seed", horizontal=True)
+        raw = long[long["metric"] == m].dropna(subset=["value"]).copy()
+        _barplot_summary(ax, sub, raw=raw, horizontal=True)
         ax.set_xlabel(m)
         ax.grid(alpha=0.3, axis="x")
-    fig.suptitle(title)
+    fig.suptitle(f"{title} (mean +/- SD)")
     fig.tight_layout()
     _save(fig, out_path)
     plt.close(fig)
@@ -308,6 +318,131 @@ def _write_plot_csv(long: pd.DataFrame, out_path: Path) -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     long.to_csv(csv_path, index=False)
     logger.info("Saved plot data %s", csv_path)
+
+
+def _write_plot_summary_csv(summary: pd.DataFrame, out_path: Path) -> None:
+    csv_path = out_path.with_name(f"{out_path.stem}_summary.csv")
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(csv_path, index=False)
+    logger.info("Saved plot summary %s", csv_path)
+
+
+def _summarize_long_metrics(long: pd.DataFrame) -> pd.DataFrame:
+    if long.empty:
+        return pd.DataFrame(
+            columns=[
+                "dataset",
+                "model",
+                "baseline",
+                "metric",
+                "mean",
+                "std",
+                "sem",
+                "n",
+                "min",
+                "max",
+            ]
+        )
+    grouped = (
+        long.groupby(["dataset", "model", "baseline", "metric"], dropna=False)["value"]
+        .agg(["mean", "std", "count", "min", "max"])
+        .reset_index()
+        .rename(columns={"count": "n"})
+    )
+    grouped["std"] = grouped["std"].fillna(0.0)
+    grouped["sem"] = grouped["std"] / np.sqrt(grouped["n"].clip(lower=1))
+    return grouped[
+        [
+            "dataset",
+            "model",
+            "baseline",
+            "metric",
+            "mean",
+            "std",
+            "sem",
+            "n",
+            "min",
+            "max",
+        ]
+    ]
+
+
+def _barplot_summary(
+    ax: Any,
+    summary: pd.DataFrame,
+    *,
+    raw: pd.DataFrame | None = None,
+    horizontal: bool = False,
+) -> None:
+    rows = summary.dropna(subset=["mean"]).copy()
+    if rows.empty:
+        ax.set_axis_off()
+        return
+    reverse = not _metric_lower_is_better(str(rows["metric"].iloc[0]))
+    rows = rows.sort_values("mean", ascending=not reverse)
+    labels = rows["model"].astype(str).tolist()
+    positions = np.arange(len(rows), dtype=float)
+    means = rows["mean"].astype(float).to_numpy()
+    errors = rows["std"].astype(float).to_numpy()
+    colors = ["#4C78A8" if label == "world_model" else "#B7C9DC" for label in labels]
+    edge_colors = ["#244A73" if label == "world_model" else "#6E839A" for label in labels]
+
+    if horizontal:
+        ax.barh(
+            positions,
+            means,
+            xerr=errors,
+            height=0.68,
+            color=colors,
+            edgecolor=edge_colors,
+            linewidth=1.0,
+            error_kw={"elinewidth": 1.2, "ecolor": "#333333", "capsize": 3, "capthick": 1.0},
+        )
+        _overlay_raw_points(ax, raw, labels=labels, positions=positions, horizontal=True)
+        ax.set_yticks(positions)
+        ax.set_yticklabels([f"{label} (n={n})" for label, n in zip(labels, rows["n"], strict=False)])
+        ax.axvline(0.0, color="#222222", linewidth=0.8, alpha=0.45)
+    else:
+        ax.bar(
+            positions,
+            means,
+            yerr=errors,
+            width=0.68,
+            color=colors,
+            edgecolor=edge_colors,
+            linewidth=1.0,
+            error_kw={"elinewidth": 1.2, "ecolor": "#333333", "capsize": 3, "capthick": 1.0},
+        )
+        _overlay_raw_points(ax, raw, labels=labels, positions=positions, horizontal=False)
+        ax.set_xticks(positions)
+        ax.set_xticklabels([f"{label}\nn={n}" for label, n in zip(labels, rows["n"], strict=False)])
+        ax.axhline(0.0, color="#222222", linewidth=0.8, alpha=0.45)
+
+
+def _overlay_raw_points(
+    ax: Any,
+    raw: pd.DataFrame | None,
+    *,
+    labels: list[str],
+    positions: np.ndarray,
+    horizontal: bool,
+) -> None:
+    if raw is None or raw.empty:
+        return
+    rng = np.random.default_rng(0)
+    lookup = dict(zip(labels, positions, strict=False))
+    for label, sub in raw.groupby("model"):
+        pos = lookup.get(str(label))
+        if pos is None:
+            continue
+        vals = sub["value"].astype(float).to_numpy()
+        if vals.size <= 1:
+            continue
+        jitter = rng.normal(0.0, 0.035, size=vals.size)
+        if horizontal:
+            ax.scatter(vals, pos + jitter, s=12, alpha=0.35, color="#333333", linewidths=0, zorder=3)
+        else:
+            ax.scatter(pos + jitter, vals, s=12, alpha=0.35, color="#333333", linewidths=0, zorder=3)
 
 
 def _boxplot_long(

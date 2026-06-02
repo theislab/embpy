@@ -2,13 +2,13 @@
 # =============================================================================
 # submit_incontext_stability_experiments.sh
 #
-# Submit the in-context stability experiment matrix:
-#   baseline
-#   latent_norm
-#   residual_delta
-#   latent_norm_residual
-#   action_sim_support
-#   aux_A / aux_B / aux_C / aux_D
+# Submit the standard in-context world-model setup:
+#   standard
+#
+# The standard dynamics path is the explicit autoregressive triplet-token
+# model (dynamics.kind=incontext_tokens) with layer-normalized latents
+# (dynamics.latent_normalization=layer_norm). Historical ablation variants
+# are intentionally not part of this submitter anymore.
 #
 # The script expects an AnnData that already contains:
 #   - state embeddings in obsm[$STATE_OBSM_KEY], usually X_stack
@@ -55,7 +55,17 @@ matrix_value() {
 }
 
 base_cfg_for() {
-    matrix_value base-config "$1"
+    local ds="$1"
+    local cfg
+    if ! cfg="$(matrix_value base-config "$ds")"; then
+        echo "ERROR: failed to resolve base config for dataset '$ds' with MATRIX_PIXI_ENV='$MATRIX_PIXI_ENV'." >&2
+        return 1
+    fi
+    if [[ -z "$cfg" ]]; then
+        echo "ERROR: empty base config path for dataset '$ds'." >&2
+        return 1
+    fi
+    printf "%s\n" "$cfg"
 }
 
 h5ad_for() {
@@ -130,32 +140,8 @@ link_job_logs() {
 
 variant_overrides() {
     case "$1" in
-        baseline)
-            echo "dynamics.latent_normalization=none dynamics.prediction_mode=absolute data.incontext_support_strategy=random loss.info_nce=0.05 loss.action_counterfactual=0.05"
-            ;;
-        latent_norm)
+        standard|latent_norm)
             echo "dynamics.latent_normalization=layer_norm dynamics.prediction_mode=absolute data.incontext_support_strategy=random loss.info_nce=0.05 loss.action_counterfactual=0.05"
-            ;;
-        residual_delta)
-            echo "dynamics.latent_normalization=none dynamics.prediction_mode=residual_delta data.incontext_support_strategy=random loss.info_nce=0.05 loss.action_counterfactual=0.05"
-            ;;
-        latent_norm_residual)
-            echo "dynamics.latent_normalization=layer_norm dynamics.prediction_mode=residual_delta data.incontext_support_strategy=random loss.info_nce=0.05 loss.action_counterfactual=0.05"
-            ;;
-        action_sim_support)
-            echo "dynamics.latent_normalization=layer_norm dynamics.prediction_mode=residual_delta data.incontext_support_strategy=action_similarity loss.info_nce=0.05 loss.action_counterfactual=0.05"
-            ;;
-        aux_A)
-            echo "dynamics.latent_normalization=layer_norm dynamics.prediction_mode=residual_delta data.incontext_support_strategy=random loss.info_nce=0.00 loss.action_counterfactual=0.00"
-            ;;
-        aux_B)
-            echo "dynamics.latent_normalization=layer_norm dynamics.prediction_mode=residual_delta data.incontext_support_strategy=random loss.info_nce=0.05 loss.action_counterfactual=0.00"
-            ;;
-        aux_C)
-            echo "dynamics.latent_normalization=layer_norm dynamics.prediction_mode=residual_delta data.incontext_support_strategy=random loss.info_nce=0.00 loss.action_counterfactual=0.05"
-            ;;
-        aux_D)
-            echo "dynamics.latent_normalization=layer_norm dynamics.prediction_mode=residual_delta data.incontext_support_strategy=random loss.info_nce=0.05 loss.action_counterfactual=0.05"
             ;;
         *)
             echo "ERROR: unknown variant '$1'." >&2
@@ -198,7 +184,7 @@ REQUIRE_CELL_EVAL="${REQUIRE_CELL_EVAL:-true}"
 CELL_EVAL_PROFILE="${CELL_EVAL_PROFILE:-full}"
 CELL_EVAL_NUM_THREADS="${CELL_EVAL_NUM_THREADS:-$TRAIN_CPUS}"
 TRAIN_OVERRIDES="${TRAIN_OVERRIDES:-$TRAIN_DEFAULT_OVERRIDES}"
-VARIANTS="${VARIANTS:-baseline latent_norm residual_delta latent_norm_residual action_sim_support aux_A aux_B aux_C aux_D}"
+VARIANTS="${VARIANTS:-standard}"
 
 DRYRUN="${DRYRUN:-0}"
 SUBMIT_STAMP="${SUBMIT_STAMP:-$(date '+%Y%m%d_%H%M%S')}"
@@ -255,7 +241,8 @@ TRAIN_LAUNCHER="src/world_model/world_model/scripts/slurm/train_embedding.sbatch
 CPU_EVAL_LAUNCHER="src/world_model/world_model/scripts/slurm/eval_only_cpu.sbatch"
 
 for ds in "${DATASETS[@]}"; do
-    cfg="$(project_path "$(base_cfg_for "$ds")")"
+    cfg_rel="$(base_cfg_for "$ds")" || exit 1
+    cfg="$(project_path "$cfg_rel")"
     h5ad="$(h5ad_for "$ds")"
     echo "[$ds] ready h5ad: $h5ad"
     if [[ "$DRYRUN" != "1" && ! -s "$h5ad" ]]; then

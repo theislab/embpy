@@ -144,10 +144,11 @@ class DynamicsConfig:
     dropout: float = 0.1
     max_sequence_length: int = 64
     use_action_token: bool = True
-    latent_normalization: str = "none"
+    latent_normalization: str = "layer_norm"
     """In-context only -- optional normalization of encoded state latents
     before dynamics/loss. One of ``{"none", "layer_norm", "l2"}``.
-    ``"layer_norm"`` uses non-affine per-sample LayerNorm so the
+    ``"layer_norm"`` is the standard path for the explicit in-context
+    triplet-token model. It uses non-affine per-sample LayerNorm so the
     normalization itself cannot learn a new scale."""
 
     prediction_mode: str = "absolute"
