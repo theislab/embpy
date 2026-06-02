@@ -159,6 +159,9 @@ optional-dependencies.pertpy = [
 optional-dependencies.scanpy = [
   "scanpy>=1.10",
 ]
+optional-dependencies.eval = [
+  "cell-eval>=0.7.2",
+]
 optional-dependencies.morphology = [
   "pillow>=10",
   "jump-portrait>=0.0.7",

@@ -476,6 +476,17 @@ jump-portrait = ">=0.1.0"
 [feature.ppi.dependencies]
 h5py = "*"
 
+# ArcInstitute cell-eval benchmark suite for perturbation prediction reports.
+# Kept as a feature so training/evaluation envs can require the real metric
+# suite while lighter embpy installs can still avoid the extra dependency set.
+[feature.cell_eval.dependencies]
+polars = "*"
+python-igraph = "*"
+scanpy = ">=1.10"
+
+[feature.cell_eval.pypi-dependencies]
+cell-eval = ">=0.7.2"
+
 # Jupyter (used by default/gpu/dev envs so notebooks work everywhere).
 [feature.jupyter.dependencies]
 jupyterlab = ">=4.0"
@@ -518,6 +529,7 @@ gpu = { features = [
   "scanpy",
   "pertpy",
   "ppi",
+  "cell_eval",
   "lamindb",
   "esm3",
   "seqmodels",
@@ -604,7 +616,7 @@ caduceus = { features = [
 ] }
 
 # CPU env that also pulls the docs + dev extras. Useful for tutorial work.
-dev = { features = ["cpu", "morphology", "jump", "scanpy", "esm3", "seqmodels", "jupyter", "dev", "docs"], solve-group = "cpu" }
+dev = { features = ["cpu", "morphology", "jump", "scanpy", "cell_eval", "esm3", "seqmodels", "jupyter", "dev", "docs"], solve-group = "cpu" }
 
 # Documentation build env.
 docs = { features = ["cpu", "morphology", "jump", "scanpy", "docs"], solve-group = "cpu" }

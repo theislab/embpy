@@ -246,6 +246,15 @@ class EvalConfig:
     use_cell_eval: bool = True
     """If True, attempt to import and run the ``cell_eval`` package."""
 
+    require_cell_eval: bool = False
+    """If True, fail evaluation instead of falling back when ``cell_eval`` is unavailable."""
+
+    cell_eval_profile: str = "full"
+    """Metric profile passed to ``cell_eval.MetricsEvaluator.compute``."""
+
+    cell_eval_num_threads: int = 1
+    """Number of threads passed to ``cell_eval`` for differential expression."""
+
     deg_top_k: int = 50
     save_predictions: bool = True
     """Persist real and predicted AnnData under runs/<run>/eval/."""

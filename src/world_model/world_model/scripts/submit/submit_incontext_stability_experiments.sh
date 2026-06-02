@@ -21,8 +21,12 @@
 #   DATASET=nadig EMB=borzoi_v0 STATE_OBSM_KEY=X_stack \
 #     bash src/world_model/world_model/scripts/submit/submit_incontext_stability_experiments.sh
 #
-# If your ready AnnData is not in runs/_cache/action_h5ad/<dataset>_<EMB>.h5ad,
-# pass H5AD_PATH for one dataset or H5AD_TEMPLATE with "{dataset}" inside.
+# Ready AnnData resolution order:
+#   1. H5AD_PATH, if set
+#   2. H5AD_TEMPLATE with "{dataset}" inside, if set
+#   3. runs/_cache/action_h5ad/<dataset>_<EMB>.h5ad
+#   4. latest stable ready AnnData under
+#      runs/_cache/world_model_ready_h5ad/stable_gene_embeddings/
 # =============================================================================
 
 set -euo pipefail
@@ -61,8 +65,42 @@ h5ad_for() {
     elif [[ -n "${H5AD_TEMPLATE:-}" ]]; then
         printf "%s\n" "$(project_path "${H5AD_TEMPLATE/\{dataset\}/$ds}")"
     else
-        printf "%s\n" "$(project_path "runs/_cache/action_h5ad/${ds}_${EMB}.h5ad")"
+        autodetect_h5ad_for "$ds"
     fi
+}
+
+autodetect_h5ad_for() {
+    local ds="$1"
+    local candidate
+    candidate="$(project_path "runs/_cache/action_h5ad/${ds}_${EMB}.h5ad")"
+    if [[ -s "$candidate" ]]; then
+        printf "%s\n" "$candidate"
+        return 0
+    fi
+
+    local latest=""
+    local p
+    for p in "$PROJECT_DIR"/runs/_cache/world_model_ready_h5ad/stable_gene_embeddings/*/"${ds}_stack_all_gene_embeddings.h5ad"; do
+        [[ -s "$p" ]] || continue
+        latest="$p"
+    done
+    if [[ -n "$latest" ]]; then
+        printf "%s\n" "$latest"
+        return 0
+    fi
+
+    for candidate in \
+        "$(project_path "runs/_cache/world_model_ready_h5ad/stable_gene_embeddings/${ds}_stack_all_gene_embeddings.h5ad")" \
+        "$(project_path "runs/_cache/world_model_ready_h5ad/${ds}_stack_all_gene_embeddings.h5ad")" \
+        "$(project_path "runs/_cache/world_model_ready_h5ad/${ds}_stack_existing_gene_embeddings.h5ad")"
+    do
+        if [[ -s "$candidate" ]]; then
+            printf "%s\n" "$candidate"
+            return 0
+        fi
+    done
+
+    printf "%s\n" "$(project_path "runs/_cache/action_h5ad/${ds}_${EMB}.h5ad")"
 }
 
 submit_sbatch() {
@@ -148,6 +186,9 @@ DYNAMICS_MAX_SEQUENCE_LENGTH="${DYNAMICS_MAX_SEQUENCE_LENGTH:-16}"
 SEQUENCE_BUCKET_KEY="${SEQUENCE_BUCKET_KEY:-auto}"
 STATE_BACKBONE_KIND="${STATE_BACKBONE_KIND:-stack}"
 TRAIN_DEFAULT_OVERRIDES="${TRAIN_DEFAULT_OVERRIDES:-data.batch_size=16 data.num_workers=0 data.pin_memory=false eval.save_predictions=false eval.n_control_samples_per_pert=8 optim.lr=0.0001 optim.grad_clip=0.5 loss.info_nce_temperature=0.1}"
+REQUIRE_CELL_EVAL="${REQUIRE_CELL_EVAL:-true}"
+CELL_EVAL_PROFILE="${CELL_EVAL_PROFILE:-full}"
+CELL_EVAL_NUM_THREADS="${CELL_EVAL_NUM_THREADS:-$TRAIN_CPUS}"
 TRAIN_OVERRIDES="${TRAIN_OVERRIDES:-$TRAIN_DEFAULT_OVERRIDES}"
 VARIANTS="${VARIANTS:-baseline latent_norm residual_delta latent_norm_residual action_sim_support aux_A aux_B aux_C aux_D}"
 
@@ -195,6 +236,7 @@ fi
 echo "  run root:     ${RUN_ROOT_BASE}/${WORKFLOW_LABEL}/<dataset>/${SUBMIT_STAMP}"
 echo "  logs:         ${LOG_BASE}/${WORKFLOW_LABEL}/<dataset>/${SUBMIT_STAMP}"
 echo "  submit log:   $SUBMIT_LOG"
+echo "  cell-eval:    require=${REQUIRE_CELL_EVAL} profile=${CELL_EVAL_PROFILE} threads=${CELL_EVAL_NUM_THREADS}"
 echo "  dry run:      $DRYRUN"
 echo
 
@@ -203,6 +245,7 @@ TRAIN_LAUNCHER="src/world_model/world_model/scripts/slurm/train_embedding.sbatch
 for ds in "${DATASETS[@]}"; do
     cfg="$(project_path "$(base_cfg_for "$ds")")"
     h5ad="$(h5ad_for "$ds")"
+    echo "[$ds] ready h5ad: $h5ad"
     if [[ "$DRYRUN" != "1" && ! -s "$h5ad" ]]; then
         echo "ERROR: ready AnnData not found for dataset '$ds': $h5ad" >&2
         echo "Pass H5AD_PATH=/path/file.h5ad or H5AD_TEMPLATE='/path/{dataset}_file.h5ad'." >&2
@@ -252,6 +295,9 @@ for ds in "${DATASETS[@]}"; do
             "action_embedding.model_name=${EMB}"
             "run_name=${run_name}"
             "output_dir=${out_dir}"
+            "eval.require_cell_eval=${REQUIRE_CELL_EVAL}"
+            "eval.cell_eval_profile=${CELL_EVAL_PROFILE}"
+            "eval.cell_eval_num_threads=${CELL_EVAL_NUM_THREADS}"
             "${TRAIN_EXTRA_ARGS[@]}"
             "${VARIANT_EXTRA_ARGS[@]}"
         )

@@ -16,11 +16,17 @@ The wrapper accepts the AnnData pair built by
 from __future__ import annotations
 
 import logging
+import tempfile
 from typing import Any
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+CELL_EVAL_INSTALL_HINT = (
+    "Install the ArcInstitute cell-eval package with `pixi install -e gpu` "
+    "inside this repository, or with `pip install cell-eval` in a plain Python environment."
+)
 
 
 def _try_import_cell_eval():  # type: ignore[no-untyped-def]
@@ -40,6 +46,10 @@ def run_cell_eval(
     control_label: str = "non-targeting",
     deg_top_k: int = 50,
     use_cell_eval: bool = True,
+    require_cell_eval: bool = False,
+    profile: str = "full",
+    num_threads: int = 1,
+    outdir: str | None = None,
 ):
     """Compute per-perturbation and aggregated metrics.
 
@@ -48,40 +58,44 @@ def run_cell_eval(
     per_perturbation : pandas.DataFrame
     aggregate : pandas.DataFrame
     """
-    import pandas as pd  # noqa: PLC0415
-
     if use_cell_eval:
         ce = _try_import_cell_eval()
         if ce is not None:
             try:
-                evaluator_cls = getattr(ce, "MetricsEvaluator", None) or getattr(ce, "CellEval", None)
-                if evaluator_cls is None:
-                    raise AttributeError("cell_eval has no MetricsEvaluator / CellEval class.")
-                evaluator = evaluator_cls(
-                    real=real_adata,
-                    pred=pred_adata,
-                    pert_col=perturbation_key,
-                    control_pert=control_label,
-                    profile="full",
+                per_pert, agg = _run_external_cell_eval(
+                    ce,
+                    real_adata,
+                    pred_adata,
+                    perturbation_key=perturbation_key,
+                    control_label=control_label,
+                    profile=profile,
+                    num_threads=num_threads,
+                    outdir=outdir,
                 )
-                if hasattr(evaluator, "compute"):
-                    result = evaluator.compute()
-                elif hasattr(evaluator, "evaluate"):
-                    result = evaluator.evaluate()
-                else:
-                    raise AttributeError("cell_eval evaluator has no compute()/evaluate() method.")
-                if isinstance(result, tuple) and len(result) == 2:
-                    per_pert, agg = result
-                else:
-                    per_pert = result
-                    agg = pd.DataFrame([per_pert.mean(numeric_only=True)])
+                logger.info(
+                    "cell_eval finished with profile=%r: %d per-perturbation rows, %d aggregate rows.",
+                    profile,
+                    len(per_pert),
+                    len(agg),
+                )
                 return per_pert, agg
             except Exception as e:
-                logger.warning(
-                    "cell_eval invocation failed (%s); falling back to internal metrics.", e,
+                message = (
+                    f"cell_eval is installed but failed to run with profile={profile!r}: {e}. "
+                    "Check that real/pred AnnData have matching shapes, compatible obs/var, "
+                    f"and perturbation column {perturbation_key!r}."
                 )
+                if require_cell_eval:
+                    raise RuntimeError(message) from e
+                logger.warning("%s Falling back to internal metrics.", message)
         else:
-            logger.warning("cell_eval not installed; using internal fallback metrics.")
+            message = f"cell_eval not installed; using internal fallback metrics. {CELL_EVAL_INSTALL_HINT}"
+            if require_cell_eval:
+                raise RuntimeError(
+                    "cell-eval is required for this evaluation but is not installed. "
+                    f"{CELL_EVAL_INSTALL_HINT}"
+                )
+            logger.warning(message)
 
     return _internal_metrics(
         real_adata, pred_adata,
@@ -89,6 +103,151 @@ def run_cell_eval(
         control_label=control_label,
         deg_top_k=deg_top_k,
     )
+
+
+def _run_external_cell_eval(
+    cell_eval_module: Any,
+    real_adata: Any,
+    pred_adata: Any,
+    *,
+    perturbation_key: str,
+    control_label: str,
+    profile: str,
+    num_threads: int,
+    outdir: str | None,
+):
+    """Run ArcInstitute cell-eval and normalize its output to pandas."""
+    evaluator_cls = getattr(cell_eval_module, "MetricsEvaluator", None) or getattr(cell_eval_module, "CellEval", None)
+    if evaluator_cls is None:
+        raise AttributeError("cell_eval has no MetricsEvaluator / CellEval class.")
+
+    if outdir is None:
+        with tempfile.TemporaryDirectory(prefix="embpy-cell-eval-") as tmpdir:
+            result = _compute_external_cell_eval(
+                evaluator_cls,
+                real_adata=real_adata,
+                pred_adata=pred_adata,
+                perturbation_key=perturbation_key,
+                control_label=control_label,
+                profile=profile,
+                num_threads=num_threads,
+                outdir=f"{tmpdir}/cell_eval",
+            )
+    else:
+        result = _compute_external_cell_eval(
+            evaluator_cls,
+            real_adata=real_adata,
+            pred_adata=pred_adata,
+            perturbation_key=perturbation_key,
+            control_label=control_label,
+            profile=profile,
+            num_threads=num_threads,
+            outdir=outdir,
+        )
+
+    return _normalize_cell_eval_result(result)
+
+
+def _compute_external_cell_eval(
+    evaluator_cls: Any,
+    *,
+    real_adata: Any,
+    pred_adata: Any,
+    perturbation_key: str,
+    control_label: str,
+    profile: str,
+    num_threads: int,
+    outdir: str,
+) -> Any:
+    evaluator = _build_cell_eval_evaluator(
+        evaluator_cls,
+        real_adata=real_adata,
+        pred_adata=pred_adata,
+        perturbation_key=perturbation_key,
+        control_label=control_label,
+        num_threads=num_threads,
+        outdir=outdir,
+    )
+
+    if hasattr(evaluator, "compute"):
+        return _call_cell_eval_compute(evaluator.compute, profile=profile)
+    if hasattr(evaluator, "evaluate"):
+        return evaluator.evaluate()
+    raise AttributeError("cell_eval evaluator has no compute()/evaluate() method.")
+
+
+def _build_cell_eval_evaluator(
+    evaluator_cls: Any,
+    *,
+    real_adata: Any,
+    pred_adata: Any,
+    perturbation_key: str,
+    control_label: str,
+    num_threads: int,
+    outdir: str,
+) -> Any:
+    """Instantiate current cell-eval API, with a legacy fallback."""
+    try:
+        return evaluator_cls(
+            adata_pred=pred_adata,
+            adata_real=real_adata,
+            control_pert=control_label,
+            pert_col=perturbation_key,
+            num_threads=num_threads,
+            outdir=outdir,
+        )
+    except TypeError as current_api_error:
+        try:
+            return evaluator_cls(
+                pred=pred_adata,
+                real=real_adata,
+                control_pert=control_label,
+                pert_col=perturbation_key,
+            )
+        except TypeError:
+            raise current_api_error
+
+
+def _call_cell_eval_compute(compute: Any, *, profile: str) -> Any:
+    """Call ``MetricsEvaluator.compute`` across supported cell-eval versions."""
+    try:
+        return compute(profile=profile, write_csv=False)
+    except TypeError as current_api_error:
+        try:
+            return compute(profile=profile)
+        except TypeError:
+            try:
+                return compute()
+            except TypeError:
+                raise current_api_error
+
+
+def _normalize_cell_eval_result(result: Any):
+    """Return ``(per_perturbation, aggregate)`` as pandas DataFrames."""
+    import pandas as pd  # noqa: PLC0415
+
+    if isinstance(result, tuple) and len(result) == 2:
+        per_pert, agg = result
+    else:
+        per_pert = result
+        per_pert_pd = _to_pandas_frame(per_pert)
+        agg = pd.DataFrame([per_pert_pd.mean(numeric_only=True)])
+        return per_pert_pd, agg
+
+    return _to_pandas_frame(per_pert), _to_pandas_frame(agg)
+
+
+def _to_pandas_frame(value: Any):
+    """Convert pandas / polars / lazy-polars results to pandas."""
+    import pandas as pd  # noqa: PLC0415
+
+    if isinstance(value, pd.DataFrame):
+        return value
+    if hasattr(value, "collect"):
+        value = value.collect()
+    if hasattr(value, "to_pandas"):
+        return value.to_pandas()
+    return pd.DataFrame(value)
 
 
 def _internal_metrics(

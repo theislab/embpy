@@ -75,5 +75,8 @@ train:
 eval:
   n_control_samples_per_pert: 32
   use_cell_eval: true
+  require_cell_eval: false
+  cell_eval_profile: full
+  cell_eval_num_threads: 1
   deg_top_k: 50
   save_predictions: true

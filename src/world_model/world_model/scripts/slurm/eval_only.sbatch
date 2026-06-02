@@ -29,10 +29,14 @@ export PROJECT_DIR
 
 CONFIG="${1:-${CONFIG:?CONFIG env var required}}"
 CKPT="${2:-${CKPT:?CKPT env var required}}"
+CELL_EVAL_OVERRIDES="${CELL_EVAL_OVERRIDES:-eval.require_cell_eval=true eval.cell_eval_profile=full eval.cell_eval_num_threads=${SLURM_CPUS_PER_TASK:-8}}"
+read -r -a CELL_EVAL_OVERRIDE_ARGS <<<"$CELL_EVAL_OVERRIDES"
 echo "Config: $CONFIG"
 echo "Checkpoint: $CKPT"
+echo "Cell-eval overrides: ${CELL_EVAL_OVERRIDE_ARGS[*]}"
 
 mkdir -p logs
 
 exec pixi run -e gpu -- python -m world_model.scripts.eval \
-    --config "$CONFIG" --checkpoint "$CKPT"
+    --config "$CONFIG" --checkpoint "$CKPT" \
+    "${CELL_EVAL_OVERRIDE_ARGS[@]}"

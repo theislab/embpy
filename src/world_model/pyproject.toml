@@ -75,6 +75,9 @@ optional-dependencies.seqmodels = [
   "borzoi-pytorch>=0.4.3",
   "enformer-pytorch>=0.8.10",
 ]
+optional-dependencies.eval = [
+  "cell-eval>=0.7.2",
+]
 optional-dependencies.test = [
   "pytest",
   "pytest-mock",

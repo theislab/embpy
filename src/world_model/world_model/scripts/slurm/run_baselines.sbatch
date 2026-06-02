@@ -50,13 +50,18 @@ CKPT="${2:-${CKPT:-}}"
 echo "Config: $CONFIG"
 echo "Checkpoint: ${CKPT:-<none>}"
 echo "Pixi env: $PIXI_ENV"
+CELL_EVAL_OVERRIDES="${CELL_EVAL_OVERRIDES:-eval.require_cell_eval=true eval.cell_eval_profile=full eval.cell_eval_num_threads=${SLURM_CPUS_PER_TASK:-8}}"
+read -r -a CELL_EVAL_OVERRIDE_ARGS <<<"$CELL_EVAL_OVERRIDES"
+echo "Cell-eval overrides: ${CELL_EVAL_OVERRIDE_ARGS[*]}"
 
 mkdir -p logs/slurm/run_baselines
 
 if [[ -n "${CKPT:-}" ]]; then
     exec pixi run -e "$PIXI_ENV" -- python -m world_model.scripts.run_baselines \
-        --config "$CONFIG" --checkpoint "$CKPT"
+        --config "$CONFIG" --checkpoint "$CKPT" \
+        "${CELL_EVAL_OVERRIDE_ARGS[@]}"
 else
     exec pixi run -e "$PIXI_ENV" -- python -m world_model.scripts.run_baselines \
-        --config "$CONFIG"
+        --config "$CONFIG" \
+        "${CELL_EVAL_OVERRIDE_ARGS[@]}"
 fi

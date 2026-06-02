@@ -71,6 +71,32 @@ pixi run -e gpu python -m world_model.scripts.train \
   action_embedding.model_name=esm2_650M
 ```
 
+## Cell-Eval Metrics
+
+The world-model evaluation uses ArcInstitute `cell-eval` when
+`eval.use_cell_eval=true`. The `gpu` and `dev` Pixi environments install it
+through the `cell_eval` feature:
+
+```bash
+pixi install -e gpu
+pixi run -e gpu python -c "import cell_eval; print(cell_eval.__file__)"
+```
+
+For cluster reports, prefer hard-failing if the package is missing:
+
+```bash
+pixi run -e gpu python -m world_model.scripts.eval \
+  --config runs/path/to/config.yaml \
+  --checkpoint runs/path/to/model_final.pt \
+  eval.require_cell_eval=true \
+  eval.cell_eval_profile=full \
+  eval.cell_eval_num_threads=8
+```
+
+When `eval.require_cell_eval=false`, embpy keeps a small internal fallback so
+smoke tests and laptops without `cell-eval` can still run. Fallback results are
+not the full benchmark suite and should not be used for final comparisons.
+
 ## Attach Embeddings
 
 Attach action embeddings from a BioEmbedder model:

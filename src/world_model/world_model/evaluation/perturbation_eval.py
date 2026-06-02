@@ -523,6 +523,10 @@ def run_evaluation(
             control_label=control_label,
             deg_top_k=eval_cfg.deg_top_k,
             use_cell_eval=eval_cfg.use_cell_eval,
+            require_cell_eval=eval_cfg.require_cell_eval,
+            profile=eval_cfg.cell_eval_profile,
+            num_threads=eval_cfg.cell_eval_num_threads,
+            outdir=str(eval_dir / "cell_eval_world_model"),
         )
         results["world_model"] = EvaluationResult(
             name="world_model",
@@ -565,6 +569,10 @@ def run_evaluation(
             control_label=control_label,
             deg_top_k=eval_cfg.deg_top_k,
             use_cell_eval=eval_cfg.use_cell_eval,
+            require_cell_eval=eval_cfg.require_cell_eval,
+            profile=eval_cfg.cell_eval_profile,
+            num_threads=eval_cfg.cell_eval_num_threads,
+            outdir=str(eval_dir / f"cell_eval_{name}"),
         )
         results[name] = EvaluationResult(
             name=name,
