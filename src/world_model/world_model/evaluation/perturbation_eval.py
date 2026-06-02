@@ -10,6 +10,7 @@ Public entry-point: :func:`run_evaluation`.
 
 from __future__ import annotations
 
+import gc
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +55,45 @@ def _control_template(artifacts: DataArtifacts) -> np.ndarray:
         raise RuntimeError("No control cells in train split.")
     expression = full.expression_view(train_idx[is_control])
     return expression.mean(axis=0).astype(np.float32)
+
+
+def _write_eval_tables(
+    eval_dir: Path,
+    name: str,
+    per_perturbation: Any,
+    aggregate: Any,
+) -> None:
+    """Persist cell-eval tables as soon as one evaluator finishes."""
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        if per_perturbation is not None and not per_perturbation.empty:
+            per_perturbation.to_csv(eval_dir / f"per_pert_{name}.csv", index=False)
+        if aggregate is not None and not aggregate.empty:
+            aggregate.to_csv(eval_dir / f"aggregate_{name}.csv", index=False)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Could not write immediate eval tables for %s (%s).", name, e)
+
+
+def _cell_eval_flags_for_space(
+    *,
+    use_cell_eval: bool,
+    require_cell_eval: bool,
+    gene_space_eval: bool,
+    backbone_name: str | None,
+) -> tuple[bool, bool]:
+    """Return external cell-eval flags appropriate for the chosen eval space."""
+    if gene_space_eval:
+        return bool(use_cell_eval), bool(require_cell_eval)
+    if use_cell_eval or require_cell_eval:
+        logger.warning(
+            "External cell_eval requested, but evaluation is running in "
+            "embedding space for state backbone %r. cell_eval expects "
+            "non-negative expression/log1p values and rejects arbitrary "
+            "latent embeddings, so external cell_eval will be disabled for "
+            "this run. Internal embedding-space metrics will still be written.",
+            backbone_name or "?",
+        )
+    return False, False
 
 
 def _build_perturbation_to_action(
@@ -392,6 +432,12 @@ def run_evaluation(
     embedding_eq_genes = (raw_exp is full.expression) or (raw_exp.shape[1] == full.expression.shape[1])
     backbone_supports_decode = bool(backbone is not None and getattr(backbone, "supports_decode", False))
     gene_space_eval = embedding_eq_genes or backbone_supports_decode
+    metric_use_cell_eval, metric_require_cell_eval = _cell_eval_flags_for_space(
+        use_cell_eval=eval_cfg.use_cell_eval,
+        require_cell_eval=eval_cfg.require_cell_eval,
+        gene_space_eval=gene_space_eval,
+        backbone_name=getattr(backbone, "name", None) if backbone is not None else None,
+    )
 
     if gene_space_eval:
         # If the backbone exposes a fixed training gene set (STACK), align
@@ -522,12 +568,13 @@ def run_evaluation(
             perturbation_key=perturbation_key,
             control_label=control_label,
             deg_top_k=eval_cfg.deg_top_k,
-            use_cell_eval=eval_cfg.use_cell_eval,
-            require_cell_eval=eval_cfg.require_cell_eval,
+            use_cell_eval=metric_use_cell_eval,
+            require_cell_eval=metric_require_cell_eval,
             profile=eval_cfg.cell_eval_profile,
             num_threads=eval_cfg.cell_eval_num_threads,
             outdir=str(eval_dir / "cell_eval_world_model"),
         )
+        _write_eval_tables(eval_dir, "world_model", per_pert, agg)
         results["world_model"] = EvaluationResult(
             name="world_model",
             per_perturbation=per_pert,
@@ -568,24 +615,27 @@ def run_evaluation(
             perturbation_key=perturbation_key,
             control_label=control_label,
             deg_top_k=eval_cfg.deg_top_k,
-            use_cell_eval=eval_cfg.use_cell_eval,
-            require_cell_eval=eval_cfg.require_cell_eval,
+            use_cell_eval=metric_use_cell_eval,
+            require_cell_eval=metric_require_cell_eval,
             profile=eval_cfg.cell_eval_profile,
             num_threads=eval_cfg.cell_eval_num_threads,
             outdir=str(eval_dir / f"cell_eval_{name}"),
         )
+        _write_eval_tables(eval_dir, name, per_pert, agg)
         results[name] = EvaluationResult(
             name=name,
             per_perturbation=per_pert,
             aggregate=agg,
-            real_adata=real_adata,
-            pred_adata=pred_adata,
+            real_adata=None,
+            pred_adata=None,
         )
         if eval_cfg.save_predictions:
             try:
                 pred_adata.write(eval_dir / f"pred_{name}.h5ad")
             except Exception as e:  # noqa: BLE001
                 logger.warning("Could not write pred_%s.h5ad (%s).", name, e)
+        del per_cell, preds_dict, pred_adata
+        gc.collect()
 
     return results
 

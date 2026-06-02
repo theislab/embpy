@@ -8,6 +8,7 @@ from pathlib import Path
 from anndata import AnnData
 
 from world_model.evaluation import cell_eval_runner
+from world_model.evaluation.perturbation_eval import _cell_eval_flags_for_space
 
 
 def _toy_anndatas() -> tuple[AnnData, AnnData]:
@@ -147,3 +148,21 @@ def test_required_cell_eval_raises_when_external_call_fails(monkeypatch: pytest.
             use_cell_eval=True,
             require_cell_eval=True,
         )
+
+
+def test_embedding_space_eval_disables_external_cell_eval() -> None:
+    assert _cell_eval_flags_for_space(
+        use_cell_eval=True,
+        require_cell_eval=True,
+        gene_space_eval=False,
+        backbone_name="stack",
+    ) == (False, False)
+
+
+def test_gene_space_eval_preserves_external_cell_eval_flags() -> None:
+    assert _cell_eval_flags_for_space(
+        use_cell_eval=True,
+        require_cell_eval=True,
+        gene_space_eval=True,
+        backbone_name="state",
+    ) == (True, True)
