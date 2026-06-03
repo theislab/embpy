@@ -208,8 +208,8 @@ optional-dependencies.test = [
 
 # https://docs.pypi.org/project_metadata/#project-urls
 urls.Documentation = "https://embpy.readthedocs.io/"
-urls.Homepage = "https://github.com/grpinto/embpy"
-urls.Source = "https://github.com/grpinto/embpy"
+urls.Homepage = "https://github.com/theislab/embpy"
+urls.Source = "https://github.com/theislab/embpy"
 
 [tool.hatch.metadata]
 allow-direct-references = true
