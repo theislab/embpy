@@ -16,7 +16,7 @@ single cells; annotate the resulting objects; and compare embeddings with
 scverse-friendly plotting and analysis utilities.
 
 <p align="center">
-  <img src="docs/embpy_overview.png" alt="embpy overview" width="900"/>
+  <img src="docs/embpy_architecture.png" alt="embpy architecture" width="900"/>
 </p>
 
 ## What embpy Does
