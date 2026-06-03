@@ -617,6 +617,14 @@ install-kernel-gpu = "python -m ipykernel install --user --name embpy-gpu --disp
 verify-mps = "python -c \"import torch; built=hasattr(torch.backends, 'mps') and torch.backends.mps.is_built(); available=hasattr(torch.backends, 'mps') and torch.backends.mps.is_available(); print(f'torch={torch.__version__} mps_built={built} mps_available={available}'); assert available, 'PyTorch MPS is not available in this pixi env'\""
 # Register this env as a separate Jupyter kernel so notebooks can select it explicitly.
 install-kernel-mps = "python -m ipykernel install --user --name embpy-mps --display-name 'Python (embpy-mps)'"
+
+[feature.helical.tasks]
+# Helical backs single-cell foundation models such as scGPT, Geneformer, UCE,
+# Tahoe, and TranscriptFormer. This env is Linux-only and intentionally
+# separate from default/dev/gpu because Helical pins torch/scipy/transformers.
+verify-helical = "python -c \"import importlib.metadata as md; import torch; import helical; from embpy import BioEmbedder; e=BioEmbedder(device='auto'); print(f'helical={md.version(\\\"helical\\\")} torch={torch.__version__} cuda={torch.cuda.is_available()} device={e.device}')\""
+install-kernel-helical = "python -m ipykernel install --user --name embpy-helical --display-name 'Python (embpy-helical)'"
+
 [feature.dev.tasks]
 test = "pytest -xvs tests/"
 lint = { cmd = "ruff check src/ tests/", description = "Ruff check (no autofix -- per user rule)" }
