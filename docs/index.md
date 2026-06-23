@@ -24,4 +24,5 @@ notebooks/genes
 notebooks/proteins
 notebooks/small_molecules
 notebooks/cells
+notebooks/variant_effects
 ```
