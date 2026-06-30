@@ -47,6 +47,7 @@ from .embedder_registry.flat import (
     HUMAN_ONLY_MODELS,
     MODEL_REGISTRY,
     MOUSE_ONLY_MODELS,
+    MULTI_SPECIES_DNA,
 )
 from .models.api_models import APIEmbeddingWrapper
 from .models.morphology_models import SubCellWrapper

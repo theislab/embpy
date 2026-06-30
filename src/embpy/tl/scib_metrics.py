@@ -179,6 +179,12 @@ def _score_one_embedding(
     # Work on a shallow copy so the per-embedding neighbours graph / clustering
     # does not leak between embeddings or mutate the caller's AnnData.
     ad = adata.copy()
+    # scib metrics require the label / batch columns to be categorical
+    # (they use the ``.cat`` accessor); real AnnData often stores them as
+    # plain strings, so coerce here.
+    ad.obs[label_key] = ad.obs[label_key].astype("category")
+    if batch_key is not None:
+        ad.obs[batch_key] = ad.obs[batch_key].astype("category")
     sc.pp.neighbors(ad, use_rep=embed_key, n_neighbors=n_neighbors)
 
     out: dict[str, float] = {}
@@ -192,28 +198,54 @@ def _score_one_embedding(
         resolutions=_resolutions(cluster_resolution_range),
         verbose=verbose,
     )
-    out["nmi"] = float(scib.metrics.nmi(ad, "scib_cluster", label_key))
-    out["ari"] = float(scib.metrics.ari(ad, "scib_cluster", label_key))
-    out["asw_label"] = float(scib.metrics.silhouette(ad, label_key, embed_key))
-    out["isolated_label_asw"] = float(
-        scib.metrics.isolated_labels(ad, label_key, batch_key, embed_key, cluster=False, verbose=verbose)
+    # Every scib metric is computed best-effort: the scib suite is sensitive to
+    # the installed scib / scanpy / pandas versions and platform (its LISI
+    # metrics shell out to a precompiled binary that only ships for some
+    # platforms, and older scib releases call APIs removed in pandas >= 2). A
+    # failure in any single metric reports NaN -- with a warning -- rather than
+    # sinking the whole comparison; the aggregate scores skip NaNs.
+    out["nmi"] = _safe_metric("nmi", embed_key, lambda: scib.metrics.nmi(ad, "scib_cluster", label_key))
+    out["ari"] = _safe_metric("ari", embed_key, lambda: scib.metrics.ari(ad, "scib_cluster", label_key))
+    out["asw_label"] = _safe_metric("asw_label", embed_key, lambda: scib.metrics.silhouette(ad, label_key, embed_key))
+    out["isolated_label_asw"] = _safe_metric(
+        "isolated_label_asw",
+        embed_key,
+        lambda: scib.metrics.isolated_labels(ad, label_key, batch_key, embed_key, cluster=False, verbose=verbose),
     )
-    out["clisi"] = float(scib.metrics.clisi_graph(ad, label_key, type_="embed", use_rep=embed_key))
+    out["clisi"] = _safe_metric(
+        "clisi", embed_key, lambda: scib.metrics.clisi_graph(ad, label_key, type_="embed", use_rep=embed_key)
+    )
 
     # --- Batch correction (needs a batch covariate) ------------------------
     if batch_key is not None:
-        out["asw_batch"] = float(
-            scib.metrics.silhouette_batch(ad, batch_key, label_key, embed_key, verbose=verbose)
+        out["asw_batch"] = _safe_metric(
+            "asw_batch", embed_key, lambda: scib.metrics.silhouette_batch(ad, batch_key, label_key, embed_key, verbose=verbose)
         )
-        out["graph_conn"] = float(scib.metrics.graph_connectivity(ad, label_key))
-        out["ilisi"] = float(scib.metrics.ilisi_graph(ad, batch_key, type_="embed", use_rep=embed_key))
-        try:
-            out["kbet"] = float(scib.metrics.kBET(ad, batch_key, label_key, type_="embed", embed=embed_key))
-        except Exception as e:  # kBET is the most fragile metric; never fail the whole report.
-            logger.warning("kBET failed for %r (%s); reporting NaN.", embed_key, e)
-            out["kbet"] = float("nan")
+        out["graph_conn"] = _safe_metric(
+            "graph_conn", embed_key, lambda: scib.metrics.graph_connectivity(ad, label_key)
+        )
+        out["ilisi"] = _safe_metric(
+            "ilisi", embed_key, lambda: scib.metrics.ilisi_graph(ad, batch_key, type_="embed", use_rep=embed_key)
+        )
+        out["kbet"] = _safe_metric(
+            "kbet", embed_key, lambda: scib.metrics.kBET(ad, batch_key, label_key, type_="embed", embed=embed_key)
+        )
 
     return out
+
+
+def _safe_metric(name: str, embed_key: str, fn) -> float:
+    """Run a single scIB metric, returning NaN (with a warning) on any failure.
+
+    scib metrics vary in their compatibility with the installed scanpy / pandas
+    versions and the host platform, so a failure in one metric must not abort
+    the whole embedding comparison.
+    """
+    try:
+        return float(fn())
+    except Exception as e:  # noqa: BLE001 - any failure degrades to NaN, never fatal
+        logger.warning("scIB metric %r failed for %r (%s); reporting NaN.", name, embed_key, e)
+        return float("nan")
 
 
 def _resolutions(rng: tuple[float, float, float]) -> list[float]:
