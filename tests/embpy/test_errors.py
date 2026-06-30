@@ -23,7 +23,7 @@ class TestConfigError:
 class TestIdentifierError:
     def test_default_message(self):
         err = IdentifierError()
-        assert str(err) == "Invalid identifier"
+        assert str(err) == "Invalid or unresolvable identifier"
 
     def test_custom_message(self):
         err = IdentifierError("Gene not found: FAKEGENE")

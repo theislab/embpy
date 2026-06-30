@@ -7,10 +7,26 @@ from typing import Literal
 
 import pandas as pd
 import requests
-from Bio import SeqIO
 
 from embpy.observability import log_event, time_block
 from embpy.retry import retry_with_backoff
+
+
+def _load_seqio():
+    """Lazily import ``Bio.SeqIO`` (biopython is an optional dependency).
+
+    Kept out of module top-level so ``import embpy`` and the lightweight
+    core install stay free of biopython. Only FASTA-parsing code paths
+    (e.g. reading a downloaded transcript record) pay for it.
+    """
+    try:
+        from Bio import SeqIO
+    except ImportError as e:  # pragma: no cover - exercised via DependencyError tests
+        raise ImportError(
+            "biopython is required for FASTA sequence parsing. "
+            "Install with: pip install embpy[bio]  (or: pip install biopython)"
+        ) from e
+    return SeqIO
 
 
 class _SafeFormatDict(dict):
@@ -290,6 +306,16 @@ class GeneResolver:
         import shutil
         import urllib.request
 
+        # Validate the requested species before importing the optional pysam
+        # dependency, so an unsupported species reports a clear ValueError even
+        # when pysam isn't installed.
+        species_key = self.species.lower()
+        if species_key not in self._SPECIES_ASSEMBLY:
+            raise ValueError(
+                f"Unsupported species '{self.species}' for genome download. "
+                f"Supported: {list(self._SPECIES_ASSEMBLY.keys())}"
+            )
+
         try:
             import pysam
         except ImportError as e:
@@ -297,13 +323,6 @@ class GeneResolver:
                 "pysam is required for local genome access. "
                 "Install with: pip install pysam"
             ) from e
-
-        species_key = self.species.lower()
-        if species_key not in self._SPECIES_ASSEMBLY:
-            raise ValueError(
-                f"Unsupported species '{self.species}' for genome download. "
-                f"Supported: {list(self._SPECIES_ASSEMBLY.keys())}"
-            )
 
         species_name, assembly = self._SPECIES_ASSEMBLY[species_key]
         release = self.release_version
@@ -493,7 +512,7 @@ class GeneResolver:
 
         # Load chromosome FASTA
         fasta_path = os.path.join(self.chrom_folder, f"chr{chrom}.fa")
-        rec = SeqIO.read(fasta_path, "fasta")
+        rec = _load_seqio().read(fasta_path, "fasta")
         full_seq = str(rec.seq).upper()
 
         # Slice sequence (1-based inclusive)
@@ -1323,7 +1342,7 @@ class GeneResolver:
                 if not os.path.isfile(fasta_path):
                     n_skipped += 1
                     continue
-                rec = SeqIO.read(fasta_path, "fasta")
+                rec = _load_seqio().read(fasta_path, "fasta")
                 chrom_cache[chrom] = str(rec.seq).upper()
 
             full_seq = chrom_cache[chrom]

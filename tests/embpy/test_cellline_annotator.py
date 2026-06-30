@@ -1,4 +1,4 @@
-"""Tests for embpy.resources.cellline_annotator.CellLineAnnotator."""
+"""Tests for embpy.resources.cellline.annotator.CellLineAnnotator."""
 
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ class TestIdentifierHelpers:
 
 
 class TestCellosaurusSource:
-    @patch("embpy.resources.cellline_annotator._get_json")
+    @patch("embpy.resources.cellline.annotator._get_json")
     def test_get_cellosaurus_info(self, mock_get, annotator):
         mock_get.side_effect = [CELLOSAURUS_SEARCH, CELLOSAURUS_ENTRY]
         info = annotator.get_cellosaurus_info("A549")
@@ -92,14 +92,14 @@ class TestCellosaurusSource:
         assert info["cross_references"]["ATCC"] == "CCL-185"
         assert info["is_problematic"] is False
 
-    @patch("embpy.resources.cellline_annotator._get_json", return_value=None)
+    @patch("embpy.resources.cellline.annotator._get_json", return_value=None)
     def test_cellosaurus_not_found(self, mock_get, annotator):
         info = annotator.get_cellosaurus_info("NONEXISTENT_CELL_LINE")
         assert info == {}
 
 
 class TestDepMapSource:
-    @patch("embpy.resources.cellline_annotator._get_json", return_value=DEPMAP_RESPONSE)
+    @patch("embpy.resources.cellline.annotator._get_json", return_value=DEPMAP_RESPONSE)
     def test_get_depmap_info(self, mock_get, annotator):
         info = annotator.get_depmap_info("A549")
         assert info["depmap_id"] == "ACH-000681"
@@ -107,14 +107,14 @@ class TestDepMapSource:
         assert info["primary_disease"] == "Lung Cancer"
         assert info["growth_pattern"] == "Adherent"
 
-    @patch("embpy.resources.cellline_annotator._get_json", return_value=None)
+    @patch("embpy.resources.cellline.annotator._get_json", return_value=None)
     def test_depmap_not_found(self, mock_get, annotator):
         info = annotator.get_depmap_info("NONEXISTENT")
         assert info == {}
 
 
 class TestPassportsSource:
-    @patch("embpy.resources.cellline_annotator._get_json", return_value=CMP_RESPONSE)
+    @patch("embpy.resources.cellline.annotator._get_json", return_value=CMP_RESPONSE)
     def test_get_passports_info(self, mock_get, annotator):
         info = annotator.get_passports_info("A549")
         assert info["model_name"] == "A549"
@@ -122,14 +122,14 @@ class TestPassportsSource:
         assert info["model_type"] == "Cell Line"
         assert info["msi_status"] == "MSS"
 
-    @patch("embpy.resources.cellline_annotator._get_json", return_value={"data": []})
+    @patch("embpy.resources.cellline.annotator._get_json", return_value={"data": []})
     def test_passports_not_found(self, mock_get, annotator):
         info = annotator.get_passports_info("NONEXISTENT")
         assert info == {}
 
 
 class TestAnnotateCombined:
-    @patch("embpy.resources.cellline_annotator._get_json")
+    @patch("embpy.resources.cellline.annotator._get_json")
     def test_annotate_all_sources(self, mock_get, annotator):
         mock_get.side_effect = [
             CELLOSAURUS_SEARCH, CELLOSAURUS_ENTRY,
@@ -146,7 +146,7 @@ class TestAnnotateCombined:
         assert "depmap" in ann["sources"]
         assert "passports" in ann["sources"]
 
-    @patch("embpy.resources.cellline_annotator._get_json")
+    @patch("embpy.resources.cellline.annotator._get_json")
     def test_annotate_single_source(self, mock_get, annotator):
         mock_get.side_effect = [CELLOSAURUS_SEARCH, CELLOSAURUS_ENTRY]
         ann = annotator.annotate("A549", sources=["cellosaurus"])
@@ -155,7 +155,7 @@ class TestAnnotateCombined:
 
 
 class TestAnnotateAdata:
-    @patch("embpy.resources.cellline_annotator._get_json")
+    @patch("embpy.resources.cellline.annotator._get_json")
     def test_annotate_adata(self, mock_get, annotator):
         mock_get.side_effect = [
             CELLOSAURUS_SEARCH, CELLOSAURUS_ENTRY,
@@ -175,7 +175,7 @@ class TestAnnotateAdata:
 
 
 class TestWikipediaSource:
-    @patch("embpy.resources.cellline_annotator._get_json")
+    @patch("embpy.resources.cellline.annotator._get_json")
     def test_get_wikipedia_info(self, mock_get, annotator):
         mock_get.return_value = {
             "extract": "HeLa is an immortal cell line derived from cervical cancer cells.",
@@ -184,7 +184,7 @@ class TestWikipediaSource:
         text = annotator.get_wikipedia_info("HeLa")
         assert "immortal cell line" in text
 
-    @patch("embpy.resources.cellline_annotator._get_json")
+    @patch("embpy.resources.cellline.annotator._get_json")
     def test_wikipedia_fallback_cell_line_suffix(self, mock_get, annotator):
         mock_get.side_effect = [
             {"extract": "", "type": "disambiguation"},
@@ -193,14 +193,14 @@ class TestWikipediaSource:
         text = annotator.get_wikipedia_info("K562")
         assert "myeloid" in text.lower()
 
-    @patch("embpy.resources.cellline_annotator._get_json", return_value=None)
+    @patch("embpy.resources.cellline.annotator._get_json", return_value=None)
     def test_wikipedia_not_found(self, mock_get, annotator):
         text = annotator.get_wikipedia_info("NONEXISTENT_CELL_XYZ")
         assert text == ""
 
 
 class TestTextDescription:
-    @patch("embpy.resources.cellline_annotator._get_json")
+    @patch("embpy.resources.cellline.annotator._get_json")
     def test_get_text_description(self, mock_get, annotator):
         wiki_response = {"extract": "A549 cells are adenocarcinomic alveolar basal epithelial cells.", "type": "standard"}
         mock_get.side_effect = [

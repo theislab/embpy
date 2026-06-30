@@ -64,6 +64,40 @@ extensions = [
 
 autosummary_generate = True
 autodoc_member_order = "groupwise"
+# Heavy / optional third-party packages that the docs build (Read the Docs runs
+# `pip install .[doc]`, i.e. the lightweight core) does not install. autodoc
+# imports modules to read their docstrings, so without these mocks the API
+# pages for the model wrappers / resolvers would fail to import. Keep this in
+# sync with the optional extras in pyproject.toml.
+autodoc_mock_imports = [
+    "torch",
+    "torch_geometric",
+    "transformers",
+    "sentencepiece",
+    "pysam",
+    "pyensembl",
+    "Bio",
+    "scanpy",
+    "scib",
+    "xgboost",
+    "esm",
+    "helical",
+    "evo",
+    "evo2",
+    "mamba_ssm",
+    "causal_conv1d",
+    "borzoi_pytorch",
+    "enformer_pytorch",
+    "minimol",
+    "boltz",
+    "arc_state",
+    "arc_stack",
+    "lamindb",
+    "pertpy",
+    "cell_eval",
+    "jump_portrait",
+    "h5py",
+]
 default_role = "literal"
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True

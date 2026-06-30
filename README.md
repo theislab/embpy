@@ -33,20 +33,51 @@ scverse-friendly plotting and analysis utilities.
 
 ## Install
 
-Pixi is recommended for development and GPU work:
+### pip / uv
 
-```bash
-pixi install -e default
-pixi run -e default verify
-```
-
-For a pip install:
+The default install is lightweight and always builds (no compiler, no GPU):
 
 ```bash
 pip install embpy
 ```
 
-For optional GPU/model extras, see the
+This gives you the resolvers, IO, annotation, plotting and analysis layers. To
+compute embeddings, add the model backends (PyTorch + transformers):
+
+```bash
+pip install "embpy[models]"      # deep-learning embedding backends
+```
+
+Other features live behind their own extras, installed independently — you only
+pull what you need:
+
+```bash
+pip install "embpy[bio]"         # biopython (FASTA parsing)
+pip install "embpy[genome]"      # pysam + pyensembl (local genome access)
+pip install "embpy[scanpy]"      # single-cell preprocessing
+pip install "embpy[scib]"        # scIB metrics for single-cell embeddings
+pip install "embpy[models,bio,scanpy]"   # combine as needed
+```
+
+### Pixi
+
+Each pixi environment is independent — install **just the one you need**, you do
+not have to be able to solve all of them:
+
+```bash
+pixi install -e default          # CPU/dev
+pixi run -e default verify
+```
+
+If re-solving every environment is slow or an unrelated environment (e.g. a
+CUDA-only one) fails to solve on your machine, install from the committed lock
+without re-solving the others:
+
+```bash
+pixi install -e default --frozen
+```
+
+For the full GPU/model environment matrix, see the
 [technical guide](docs/technical.md#environments-and-installation).
 
 ## Quick Start
@@ -164,6 +195,7 @@ The tutorials are organized by biological entity:
 - [Proteins](docs/notebooks/proteins.ipynb)
 - [Small molecules](docs/notebooks/small_molecules.ipynb)
 - [Cells](docs/notebooks/cells.ipynb)
+- [Validating single-cell embeddings with scIB](docs/notebooks/scib_validation.ipynb)
 
 Each notebook uses real `BioEmbedder.embed(...)` calls, real annotation APIs,
 and embpy plotting/comparison utilities.

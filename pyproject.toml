@@ -27,9 +27,19 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
 ]
+# ---------------------------------------------------------------------------
+# Core (default) dependencies. Intentionally LIGHTWEIGHT: everything here
+# ships reliable, pre-built wheels on all platforms, so `pip install embpy`
+# always succeeds and the core test suite runs without a compiler or GPU.
+#
+# Heavy / build-fragile dependencies (torch, transformers, torch-geometric,
+# biopython, pysam, pyensembl, sentencepiece) live in the optional extras
+# below and are imported lazily by the code that needs them. A bare
+# `pip install embpy` gives you the resolvers, IO, annotation, plotting and
+# analysis layers; `pip install embpy[models]` adds the embedding backends.
+# ---------------------------------------------------------------------------
 dependencies = [
   "anndata",
-  "biopython",
   "broad-babel>=0.1",
   "cirpy",
   "huggingface-hub>=0.35,<1.0.0",
@@ -38,20 +48,16 @@ dependencies = [
   # Intentionally permissive: scipy 1.13 (needed by helical) pre-dates numpy 2,
   # while modern torch / transformers work fine with numpy 2. Both are ok.
   "numpy>=1.26,<3",
-  "pysam>=0.22",
   "pandas>=2.2",
   "pyarrow>=14.0.2",
-  "pyensembl>=2.3.13",
+  # rdkit + scikit-learn ship reliable wheels and are used broadly (molecule
+  # fingerprints, classical PCA baselines), so they stay in core.
   "rdkit",
   "requests",
   "scikit-learn>=1.3",
   "scipy>=1.11",
   "seaborn",
-  "sentencepiece>=0.1.99",
-  "protobuf>=3.20",
   "session-info",
-  "torch-geometric>=2.5",
-  "transformers>=4.45.0,<5.0.0",
 ]
 
 scripts.embpy-static-embeddings = "embpy.scripts.package_static_embeddings:main"
@@ -76,6 +82,33 @@ optional-dependencies.torch-cu128 = [
 ]
 optional-dependencies.torch-cu130 = [
   "torch>=2.5.1",
+]
+# ---------------------------------------------------------------------------
+# Core feature extras. These pull the heavy/build-fragile deps that used to
+# live in [project.dependencies]. They are imported lazily by the code that
+# needs them, so a bare `pip install embpy` stays lightweight.
+# ---------------------------------------------------------------------------
+# Embedding backends: the deep-learning stack behind BioEmbedder and the
+# HuggingFace / PyG model wrappers. `pip install embpy[models]` is the usual
+# "I actually want to compute embeddings" install.
+optional-dependencies.models = [
+  "embpy[torch]",
+  "transformers>=4.45.0,<5.0.0",
+  "sentencepiece>=0.1.99",
+  "protobuf>=3.20",
+  "torch-geometric>=2.5",
+]
+# Sequence / FASTA parsing (biopython). Needed by the gene and protein
+# resolvers when reading transcript / protein FASTA records.
+optional-dependencies.bio = [
+  "biopython",
+]
+# Local genome access: pull transcript sequences straight from indexed FASTA
+# (pysam) and Ensembl annotations (pyensembl). Optional because pysam needs a
+# C toolchain on some platforms.
+optional-dependencies.genome = [
+  "pysam>=0.22",
+  "pyensembl>=2.3.13",
 ]
 # ESM-3 / ESM-C wrappers. Kept separate because `esm>=3.2.0` hard-pins
 # `transformers<4.48.2`, which conflicts with helical (needs >=4.49.0) and a
@@ -147,6 +180,16 @@ optional-dependencies.pertpy = [
 optional-dependencies.scanpy = [
   "scanpy>=1.10",
 ]
+# scIB metrics for validating single-cell foundation-model embeddings
+# (embpy.tl.compute_scib_metrics). Pulls scanpy + the scib metric suite.
+optional-dependencies.scib = [
+  "scib>=1.1.5",
+  "scanpy>=1.10",
+]
+# Optional regressor backend for tl.benchmark_embeddings(models=[..., "xgboost"]).
+optional-dependencies.benchmark = [
+  "xgboost>=2.0",
+]
 optional-dependencies.eval = [
   "cell-eval>=0.7.2",
 ]
@@ -165,7 +208,7 @@ optional-dependencies.morphology = [
 #   * minimol -- transitive torch-sparse build chain; use conda/pixi instead
 # Install those explicitly in a separate env if you need them.
 optional-dependencies.all = [
-  "embpy[torch,ppi,lamindb,pertpy,scanpy,morphology,seqmodels]",
+  "embpy[models,bio,genome,ppi,lamindb,pertpy,scanpy,scib,benchmark,morphology,seqmodels]",
 ]
 # Convenience bundles that combine "all" with a specific torch build. These
 # intentionally omit caduceus/evo2 so a plain `pip install embpy[all-cu124]`
@@ -354,6 +397,12 @@ testpaths = [ "tests" ]
 xfail_strict = true
 addopts = [
   "--import-mode=importlib",
+]
+# Markers for tests that need heavy optional dependencies. The root conftest
+# auto-skips whole files (via collect_ignore_glob) when the dep is absent, so
+# the core suite runs on a lightweight `pip install embpy[test]` install.
+markers = [
+  "requires_torch: test needs the optional 'torch' dependency (pip install embpy[models])",
 ]
 
 [tool.coverage.run]

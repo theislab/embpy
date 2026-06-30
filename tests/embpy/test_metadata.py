@@ -20,7 +20,7 @@ from anndata import AnnData
 # Load metadata module directly from file (avoids embpy.__init__ imports)
 # ---------------------------------------------------------------------------
 
-_MOD_PATH = Path(__file__).resolve().parent.parent / "src" / "embpy" / "tl" / "metadata.py"
+_MOD_PATH = Path(__file__).resolve().parents[2] / "src" / "embpy" / "tl" / "metadata.py"
 _spec = importlib.util.spec_from_file_location("embpy.tl.metadata", _MOD_PATH)
 assert _spec is not None and _spec.loader is not None
 metadata = importlib.util.module_from_spec(_spec)

@@ -47,7 +47,7 @@ class TestIsEnsemblId:
 
 
 class TestGeneResolverSpecies:
-    @patch("embpy.resources.gene_resolver._ensembl_get")
+    @patch("embpy.resources.gene.resolver._ensembl_get")
     def test_fetch_region_uses_species(self, mock_get):
         from embpy.resources.gene_resolver import GeneResolver
 
@@ -65,7 +65,7 @@ class TestGeneResolverSpecies:
         call_url = mock_get.call_args[0][0]
         assert "/sequence/region/mouse/" in call_url
 
-    @patch("embpy.resources.gene_resolver._ensembl_get")
+    @patch("embpy.resources.gene.resolver._ensembl_get")
     def test_fetch_region_default_species(self, mock_get):
         from embpy.resources.gene_resolver import GeneResolver
 
@@ -168,6 +168,7 @@ class TestProteinAnnotatorSpecies:
         assert not re.match(pattern, "P04637", re.IGNORECASE)
 
 
+@pytest.mark.requires_torch
 class TestBioEmbedderOrganism:
     @patch("embpy.embedder.GeneResolver")
     @patch("embpy.embedder.ProteinResolver")

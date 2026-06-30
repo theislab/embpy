@@ -52,7 +52,7 @@ class TestPhysicochemicalProperties:
 
 
 class TestBioactivities:
-    @patch("embpy.resources.molecule_annotator._get_json")
+    @patch("embpy.resources.molecule.annotator._get_json")
     def test_get_bioactivities(self, mock_get, annotator):
         mock_get.side_effect = [
             {"molecules": [{"molecule_chembl_id": "CHEMBL25"}]},
@@ -74,7 +74,7 @@ class TestBioactivities:
         assert len(activities) == 1
         assert activities[0]["activity_type"] == "IC50"
 
-    @patch("embpy.resources.molecule_annotator._get_json")
+    @patch("embpy.resources.molecule.annotator._get_json")
     def test_no_chembl_id(self, mock_get, annotator):
         mock_get.return_value = None
         activities = annotator.get_bioactivities("INVALID")
@@ -82,7 +82,7 @@ class TestBioactivities:
 
 
 class TestTargetProteins:
-    @patch("embpy.resources.molecule_annotator._get_json")
+    @patch("embpy.resources.molecule.annotator._get_json")
     def test_get_targets(self, mock_get, annotator):
         mock_get.side_effect = [
             {"molecules": [{"molecule_chembl_id": "CHEMBL25"}]},
@@ -102,7 +102,7 @@ class TestTargetProteins:
 
 
 class TestCrossReferences:
-    @patch("embpy.resources.molecule_annotator._get_json")
+    @patch("embpy.resources.molecule.annotator._get_json")
     def test_get_cross_references(self, mock_get, annotator):
         mock_get.side_effect = [
             {"IdentifierList": {"CID": [702]}},

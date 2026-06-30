@@ -91,7 +91,7 @@ class TestTPMWeighted:
 
 
 class TestAnnotationWeighted:
-    @patch("embpy.resources.protein_annotator.ProteinAnnotator._fetch_uniprot_entry")
+    @patch("embpy.resources.protein.annotator.ProteinAnnotator._fetch_uniprot_entry")
     def test_annotation_weighted(self, mock_fetch, wpe):
         mock_fetch.return_value = {
             "features": [
@@ -118,7 +118,7 @@ class TestExpressionContext:
         )
         assert emb.shape == (EMB_DIM + 54,)
 
-    @patch("embpy.resources.gene_annotator.GeneAnnotator.get_tissue_expression")
+    @patch("embpy.resources.gene.annotator.GeneAnnotator.get_tissue_expression")
     def test_with_gtex(self, mock_gtex, wpe):
         mock_gtex.return_value = [
             {"tissue": f"tissue_{i}", "median_tpm": float(i)} for i in range(54)

@@ -42,6 +42,13 @@ class EmbpyError(Exception):
     category: str = "embpy"
     exit_code: int = 1
 
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+        # Expose the human-readable message as ``.message`` for callers and
+        # tests that introspect it (all subclasses pass a single formatted
+        # string to ``super().__init__``).
+        self.message = str(args[0]) if args else ""
+
 
 # ── Configuration ───────────────────────────────────────────────────
 

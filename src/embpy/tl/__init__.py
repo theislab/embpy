@@ -31,6 +31,8 @@ __all__ = [
     "basic_tool",
     # benchmark
     "benchmark_embeddings",
+    # scib
+    "compute_scib_metrics",
     # metadata
     "annotate_bulk_rna",
     "annotate_cell_lines",
@@ -143,6 +145,7 @@ from .protein.cross_species import (
     ortholog_similarity_matrix,
 )
 from .protein.weighted_embedding import WeightedProteinEmbedder
+from .scib_metrics import compute_scib_metrics
 from .similarity import (
     aggregate_embedding_table,
     compare_embedding_matrices,

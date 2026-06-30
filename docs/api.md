@@ -242,6 +242,7 @@ Resolvers fetch biological sequences and identifiers; annotators add rich metada
     :toctree: generated
 
     tl.benchmark_embeddings
+    tl.compute_scib_metrics
     tl.compute_metrics
     tl.cell_eval
     tl.run_cell_eval

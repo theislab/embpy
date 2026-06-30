@@ -299,6 +299,7 @@ def test_species_sets_owned_by_dna(live_registry):
     assert live_registry.MULTI_SPECIES_DNA is dna.MULTI_SPECIES_DNA
 
 
+@pytest.mark.requires_torch
 def test_embedder_re_export_is_same_object(live_registry):
     """`from embpy.embedder import MODEL_REGISTRY` returns the same dict.
 

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import importlib.util
 import io
 import textwrap
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+
+_HAS_BIOPYTHON = importlib.util.find_spec("Bio") is not None
 
 from embpy.tl.snp_utils import (
     SNPContext,
@@ -529,6 +532,7 @@ class TestEmbedVCF:
         assert len(results) == 2
 
 
+@pytest.mark.skipif(not _HAS_BIOPYTHON, reason="biopython not installed (pip install embpy[bio])")
 class TestSequenceProvider:
 
     def _write_fasta(self, path, chrom_name: str, seq: str) -> None:

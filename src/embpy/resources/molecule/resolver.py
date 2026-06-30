@@ -10,6 +10,11 @@ from urllib.parse import quote as _url_quote
 
 import requests
 
+try:
+    import cirpy  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - cirpy is an optional fallback
+    cirpy = None  # type: ignore[assignment]
+
 MoleculeSource = Literal[
     "pubchem_name", "pubchem_cid", "cactus", "cirpy", "none"
 ]
@@ -123,12 +128,8 @@ class DrugResolver:
             self._rdkit_available = False
             logging.info("RDKit not available; proceeding without SMILES canonicalization.")
 
-        try:
-            import cirpy  # noqa: F401  # type: ignore[import-not-found]
-
-            self._cirpy_available = True
-        except ImportError:
-            self._cirpy_available = False
+        self._cirpy_available = cirpy is not None
+        if not self._cirpy_available:
             logging.info("CIRpy not available; CIR fallback disabled.")
 
     # ---------- Helpers ----------
@@ -352,11 +353,9 @@ class DrugResolver:
             pass
 
         # 4) CIRpy — tries multiple CIR resolvers (name_by_opsin, etc.)
-        if self._cirpy_available:
+        if self._cirpy_available and cirpy is not None:
             self._sleep()
             try:
-                import cirpy  # type: ignore[import-not-found]
-
                 smi = cirpy.resolve(name, "smiles")
                 if smi:
                     return DrugResolution(self.canonicalize_smiles(smi) or smi, "cirpy")

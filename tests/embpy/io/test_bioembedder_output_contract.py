@@ -83,6 +83,7 @@ def test_table_written_to_path(tmp_path):
     assert p.exists() and (tmp_path / "out.npz.meta.json").exists()
 
 
+@pytest.mark.requires_torch
 def test_bioembedder_embed_supports_perturbation_morphology_payload(monkeypatch):
     from embpy.embedder import BioEmbedder
 

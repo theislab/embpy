@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from ...models.base import BaseModelWrapper
+if TYPE_CHECKING:
+    # Only used in type annotations (strings under `from __future__ import
+    # annotations`). Importing it eagerly would pull `models.base` -> torch,
+    # which defeats the lightweight `import embpy.tl` path.
+    from ...models.base import BaseModelWrapper
 
 
 import os
