@@ -1,0 +1,15 @@
+# uv project for the Arc STACK backbone (embpy).
+# Isolated: arc-stack + scvi-tools bring their own resolution axis.
+[project]
+name = "embpy-env-stack"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "embpy[stack,torch]",
+]
+
+[tool.uv.sources]
+embpy = { path = "../..", editable = true }
+
+[tool.uv]
+package = false

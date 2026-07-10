@@ -1,0 +1,15 @@
+# uv project for the seqmodels family (Borzoi, Enformer) (embpy).
+# Isolated because borzoi-pytorch hard-pins transformers<4.51.0.
+[project]
+name = "embpy-env-seqmodels"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "embpy[seqmodels,torch]",
+]
+
+[tool.uv.sources]
+embpy = { path = "../..", editable = true }
+
+[tool.uv]
+package = false

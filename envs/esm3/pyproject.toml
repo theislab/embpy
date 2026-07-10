@@ -1,0 +1,16 @@
+# uv project for the ESM3 / ESM-C family (embpy).
+# Isolated because `esm>=3.2.0` hard-pins transformers<4.48.2, which conflicts
+# with helical (>=4.53) and the base range in a shared env.
+[project]
+name = "embpy-env-esm3"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "embpy[esm3,torch]",
+]
+
+[tool.uv.sources]
+embpy = { path = "../..", editable = true }
+
+[tool.uv]
+package = false

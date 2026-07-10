@@ -1,0 +1,25 @@
+# uv project for MiniMol (embpy).
+# Isolated: transitively needs torch-sparse/scatter/cluster/pyg-lib, which don't
+# declare torch as a build dep -> inject it into build isolation. Linux-only lock
+# (no macOS wheels for the PyG C-extensions).
+[project]
+name = "embpy-env-minimol"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "embpy[minimol,torch]",
+]
+
+[tool.uv.sources]
+embpy = { path = "../..", editable = true }
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.extra-build-dependencies]
+torch-sparse = [{ requirement = "torch>=2.5.1", match-runtime = true }]
+torch-scatter = [{ requirement = "torch>=2.5.1", match-runtime = true }]
+torch-cluster = [{ requirement = "torch>=2.5.1", match-runtime = true }]
+torch-spline-conv = [{ requirement = "torch>=2.5.1", match-runtime = true }]
+pyg-lib = [{ requirement = "torch>=2.5.1", match-runtime = true }]

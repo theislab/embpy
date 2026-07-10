@@ -1,0 +1,16 @@
+# uv project for Boltz-2 (structure) (embpy).
+# Isolated because `boltz>=2.0` hard-pins numpy<2, conflicting with the base
+# numpy>=2 world.
+[project]
+name = "embpy-env-boltz"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "embpy[boltz,torch]",
+]
+
+[tool.uv.sources]
+embpy = { path = "../..", editable = true }
+
+[tool.uv]
+package = false

@@ -1,0 +1,20 @@
+# uv project for Evo2 (embpy) -- THE documented holdout.
+# evo2 pulls transformer_engine, which is the one dependency that does NOT reduce
+# to a uv-only lock (old TE needs nvcc to build; latest TE force-upgrades torch and
+# hits a cublasLt ABI mismatch). Per the lab handbook (Ch. 9) this family's real
+# "lockfile" is a CUDA container image (uv INSIDE an nvcr.io image). This pyproject
+# is kept for the non-TE deps / documentation; do not expect a clean bare-node lock.
+[project]
+name = "embpy-env-evo2"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "embpy[evo2,torch]",
+]
+
+[tool.uv.sources]
+embpy = { path = "../..", editable = true }
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux'"]

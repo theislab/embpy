@@ -1,0 +1,16 @@
+# uv project for the Arc STATE backbone (embpy).
+# Isolated because arc-state pins torch>=2.7 (a different torch axis than the
+# older transformers-pinned families).
+[project]
+name = "embpy-env-state"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "embpy[state,torch]",
+]
+
+[tool.uv.sources]
+embpy = { path = "../..", editable = true }
+
+[tool.uv]
+package = false

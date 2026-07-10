@@ -1,0 +1,23 @@
+# uv project for Caduceus (embpy).
+# Isolated: mamba-ssm is a CUDA extension. Prebuilt wheels exist for the right
+# torch/cu/cxx11abi combo (cluster-verified), so no nvcc needed -- but there are
+# no macOS wheels, hence the linux-only lock. torch is injected into the build
+# isolation of the C-extensions (they don't declare it themselves).
+[project]
+name = "embpy-env-caduceus"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "embpy[caduceus,torch]",
+]
+
+[tool.uv.sources]
+embpy = { path = "../..", editable = true }
+
+[tool.uv]
+package = false
+environments = ["sys_platform == 'linux'"]
+
+[tool.uv.extra-build-dependencies]
+mamba-ssm = [{ requirement = "torch>=2.5.1", match-runtime = true }]
+causal-conv1d = [{ requirement = "torch>=2.5.1", match-runtime = true }]

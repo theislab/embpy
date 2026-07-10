@@ -1,0 +1,17 @@
+# uv project for the helical single-cell family (embpy).
+# Isolated because helical needs transformers>=4.53 (conflicts with esm3/seqmodels)
+# and pulls igraph/louvain. If the igraph C library fails to build under uv on a
+# bare node, install the system lib (or fall back to a container for this family).
+[project]
+name = "embpy-env-helical"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "embpy[helical,torch]",
+]
+
+[tool.uv.sources]
+embpy = { path = "../..", editable = true }
+
+[tool.uv]
+package = false

@@ -1,0 +1,16 @@
+# uv project for NucleotideTransformer v3 (embpy).
+# Isolated because it needs transformers>=5.0.0, which the base project pins out
+# (transformers<5). This is the conflict that makes a single embpy lock impossible.
+[project]
+name = "embpy-env-ntv3"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+    "embpy[ntv3,torch]",
+]
+
+[tool.uv.sources]
+embpy = { path = "../..", editable = true }
+
+[tool.uv]
+package = false
