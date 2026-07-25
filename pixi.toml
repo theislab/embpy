@@ -21,6 +21,8 @@
 #   pixi shell -e gpu              # activate the CUDA 12.4 env
 #   pixi run -e dev test           # run the test suite in the dev env
 #   pixi run -e docs build-docs    # build the Sphinx docs
+#   pixi install -e alphagenome    # AlphaGenome cloud API client (opt-in)
+#   pixi install -e scooby         # Scooby single-cell DNA model (opt-in, git install)
 # ---------------------------------------------------------------------------
 
 [workspace]
@@ -157,6 +159,30 @@ transformers = ">=4.45,<4.51"
 [feature.seqmodels.pypi-dependencies]
 borzoi-pytorch = ">=0.4.3"
 enformer-pytorch = ">=0.8.10"
+
+# AlphaGenome (Google DeepMind cloud API client). No local weights are
+# downloaded; inference runs against Google's servers and needs
+# ALPHAGENOME_API_KEY set in the environment. Pure-Python with no CUDA/build
+# requirements -- kept opt-in (rather than folded into default/gpu/dev) so
+# the main envs don't gain a hard dependency on an external API account.
+[feature.alphagenome.pypi-dependencies]
+alphagenome = ">=0.7"
+
+# Scooby (single-cell-resolution DNA sequence model, gagneurlab/scooby).
+# Installed from git because PyPI's `scooby` package name is already taken
+# by an unrelated project (a pyvista/VTK system-report utility) -- the real
+# package has to be pulled from the gagneurlab fork by URL, not by name. It
+# also pulls in a patched `peft` fork via git (scooby's own setup.py) plus
+# `borzoi-pytorch`/`enformer-pytorch`, which pin `transformers<4.51.0` --
+# mirrored on the conda side here like `seqmodels`.
+# Kept as its own standalone environment (see `[environments]` below) so the
+# git-based resolve doesn't slow down or destabilize the main envs.
+[feature.scooby.dependencies]
+transformers = ">=4.45,<4.51"
+
+[feature.scooby.pypi-dependencies]
+snapatac2-scooby = "*"
+scooby = { git = "https://github.com/gagneurlab/scooby.git" }
 
 # ---------------------------------------------------------------------------
 # Evo 2 (Arc Institute long-context DNA LM, StripedHyena 2 architecture via
@@ -583,6 +609,21 @@ caduceus = { features = [
   "pertpy",
   "jupyter",
 ] }
+
+# Standalone env for AlphaGenome (cloud API client, no local weights). Kept
+# out of default/gpu/dev so those envs don't gain a hard dependency on an
+# external API account; CPU-only since there's no local inference. Usage:
+#   pixi install -e alphagenome && pixi shell -e alphagenome
+#   export ALPHAGENOME_API_KEY=...
+alphagenome = { features = ["cpu", "alphagenome", "morphology", "jupyter"], solve-group = "cpu" }
+
+# Standalone env for Scooby (single-cell-resolution DNA sequence model).
+# Kept separate from `default`/`gpu` because it installs from a git URL (see
+# `[feature.scooby]` above), which would slow down/destabilize the main
+# solve-groups. GPU only in practice -- Scooby shares Borzoi's trunk, which
+# needs a GPU for reasonable runtime. Usage:
+#   pixi install -e scooby && pixi shell -e scooby
+scooby = { features = ["gpu", "scooby", "morphology", "jupyter"] }
 
 # CPU env that also pulls the docs + dev extras. Useful for tutorial work.
 dev = { features = ["cpu", "morphology", "jump", "scanpy", "cell_eval", "esm3", "seqmodels", "jupyter", "dev", "docs"], solve-group = "cpu" }
