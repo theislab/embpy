@@ -531,6 +531,58 @@ def profile_variant_effect_score(
     return np.log2((alt_sum + pseudocount) / (ref_sum + pseudocount))
 
 
+def profile_variant_effect_score_l2(
+    ref_profile: np.ndarray,
+    alt_profile: np.ndarray,
+    bin_indices: Sequence[int] | None = None,
+    pseudocount: float = 1.0,
+) -> np.ndarray:
+    """Gene-level variant-effect statistic, L2-norm convention (the "l2 score"
+    of Linder et al. 2025, adopted by TraitGym (Benegas et al., bioRxiv
+    2025.02.11.637758) for benchmarking Borzoi/Enformer on causal regulatory
+    variant classification -- distinct from :func:`profile_variant_effect_score`,
+    which is the sum-then-ratio statistic Scooby's own paper (Hilgers et al.)
+    uses and reports as giving 91.6% sign concordance with observed eQTLs.
+
+    Computes the per-bin log2 fold-change first (not summed), then takes the
+    Euclidean norm of that vector over ``bin_indices`` -- scale-invariant per
+    bin, so a small region with a large *relative* change contributes as
+    much as a large region with a small relative change, unlike the
+    sum-then-ratio statistic which is dominated by whichever bins have the
+    highest absolute (baseline) coverage.
+
+    Note: TraitGym's own published "l2 score" is reported computed over a
+    wide, fixed window (not necessarily restricted to a gene's own exon
+    bins); this implementation is deliberately restricted to the same
+    ``bin_indices`` as :func:`profile_variant_effect_score` so the two can be
+    compared as a pure aggregation-method contrast (sum vs. L2 norm) with the
+    window held constant, not conflated with a window-size difference.
+
+    Parameters
+    ----------
+    ref_profile, alt_profile
+        Arrays of shape ``(num_tracks, num_bins)``, same convention as
+        :func:`profile_variant_effect_score`.
+    bin_indices
+        Bins to compute the per-bin log2FC over before taking the L2 norm.
+        ``None`` uses the entire profile.
+    pseudocount
+        Added to both ref and alt at each bin before taking the log2 ratio.
+
+    Returns
+    -------
+    np.ndarray
+        Shape ``(num_tracks,)``: ``sqrt(sum_bin(log2((alt[bin]+pseudocount)/(ref[bin]+pseudocount))**2))``.
+    """
+    if bin_indices is not None:
+        idx = np.asarray(bin_indices, dtype=int)
+        ref_sel, alt_sel = ref_profile[:, idx], alt_profile[:, idx]
+    else:
+        ref_sel, alt_sel = ref_profile, alt_profile
+    per_bin_log2fc = np.log2((alt_sel + pseudocount) / (ref_sel + pseudocount))
+    return np.sqrt(np.sum(per_bin_log2fc**2, axis=1))
+
+
 class SNPEmbedder:
     """Compute variant-effect embeddings for SNPs using any DNA/protein model.
 
