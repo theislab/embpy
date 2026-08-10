@@ -20,15 +20,6 @@ from embpy.models.dna_models import (
 )
 
 
-def _mlm_output(hidden_dim: int, seq_len: int = 20) -> MagicMock:
-    """Mimic MaskedLMOutput: hidden_states tuple, no last_hidden_state."""
-    h = torch.randn(1, seq_len, hidden_dim)
-    out = MagicMock()
-    out.hidden_states = (h, h)   # (layer0, layer1); [-1] is last
-    out.last_hidden_state = None
-    return out
-
-
 def _base_output(hidden_dim: int, seq_len: int = 20) -> MagicMock:
     """Mimic BaseModelOutput: last_hidden_state present."""
     h = torch.randn(1, seq_len, hidden_dim)
@@ -39,13 +30,94 @@ def _base_output(hidden_dim: int, seq_len: int = 20) -> MagicMock:
 
 
 def _tok(seq_len: int = 20, has_mask: bool = True) -> MagicMock:
-    """Return a mock tokeniser that returns fixed-size tensors."""
-    enc: dict = {"input_ids": torch.ones(1, seq_len, dtype=torch.long)}
-    if has_mask:
-        enc["attention_mask"] = torch.ones(1, seq_len, dtype=torch.long)
-    mock = MagicMock()
-    mock.return_value = enc
+    """Return a mock tokeniser matching the real HF contract.
+
+    ``_hf_batched_embed`` calls the tokenizer with ``return_tensors=None``,
+    which a real HF tokenizer answers with plain ``list[int]`` -- not tensors.
+    It then does its own chunking, special-token insertion and padding, and
+    builds the ``input_ids``/``attention_mask`` tensors itself. So the mock
+    must hand back lists: a tensor here makes the ``if ids and ...`` coercion
+    guard raise "Boolean value of Tensor with more than one value is
+    ambiguous", which is not a failure mode real tokenizers can produce.
+
+    The special-token ids are real ints rather than auto-created MagicMock
+    attributes so the chunk-size arithmetic (``inner_max = ctx - head - tail``)
+    is deterministic and the constructed chunk length is predictable.
+    """
+    def _encode(*args: Any, **kwargs: Any) -> dict:
+        # A real tokenizer switches container type on return_tensors: "pt"
+        # yields batched tensors, None yields plain python lists. Wrappers use
+        # both -- embed() tokenizes straight to tensors, while the chunking
+        # helper asks for lists so it can pad and add special tokens itself.
+        if kwargs.get("return_tensors") == "pt":
+            enc: dict = {"input_ids": torch.ones(1, seq_len, dtype=torch.long)}
+            if has_mask:
+                enc["attention_mask"] = torch.ones(1, seq_len, dtype=torch.long)
+            return enc
+        enc = {"input_ids": [1] * seq_len}
+        if has_mask:
+            enc["attention_mask"] = [1] * seq_len
+        return enc
+
+    mock = MagicMock(side_effect=_encode)
+    mock.cls_token_id = 2
+    mock.sep_token_id = 3
+    mock.bos_token_id = None
+    mock.eos_token_id = None
+    mock.pad_token_id = 0
+    mock.model_max_length = 512
     return mock
+
+
+# Number of special tokens _tok() causes _hf_batched_embed to prepend/append
+# (one cls head + one sep tail), i.e. len(chunk) == len(input_ids) + _TOK_SPECIALS.
+_TOK_SPECIALS = 2
+
+
+def _dyn_model(
+    hidden_dim: int,
+    *,
+    last_hidden: bool = False,
+    layers: int = 2,
+    fill: float | None = None,
+    layer_fills: tuple[float, ...] | None = None,
+) -> MagicMock:
+    """Model mock whose output is shaped from the input it actually receives.
+
+    A real transformer returns ``(batch, n_tokens_in, hidden)``. A mock with a
+    static ``return_value`` cannot do that, so once ``_hf_batched_embed`` adds
+    special tokens (or batches several chunks together) the mocked hidden
+    state no longer lines up with the attention mask the helper built, and
+    pooling dies with a tensor-size mismatch. Deriving the shape from
+    ``input_ids`` keeps the mock faithful for any input length or batch size.
+    """
+
+    def _forward(*args: Any, **kwargs: Any) -> MagicMock:
+        ids = kwargs.get("input_ids")
+        if ids is None and args:
+            ids = args[0]
+        n_batch, n_tok = (int(ids.shape[0]), int(ids.shape[1])) if ids is not None else (1, 20)
+
+        def _layer(value: float | None) -> torch.Tensor:
+            if value is None:
+                return torch.randn(n_batch, n_tok, hidden_dim)
+            return torch.full((n_batch, n_tok, hidden_dim), float(value))
+
+        if layer_fills is not None:
+            stack = tuple(_layer(v) for v in layer_fills)
+        else:
+            # Distinct draws per layer so target_layer selection is observable.
+            stack = tuple(_layer(fill) for _ in range(layers))
+
+        out = MagicMock()
+        out.hidden_states = stack
+        out.last_hidden_state = stack[-1] if last_hidden else None
+        return out
+
+    model = MagicMock(side_effect=_forward)
+    model.config = MagicMock()
+    model.config.max_position_embeddings = 512
+    return model
 
 class TestEnformerWrapper:
     def test_init_defaults(self):
@@ -397,7 +469,7 @@ class TestEvoWrapper:
         assert "evo-1-8k-transposon" in EvoWrapper.AVAILABLE_MODELS
 
     def test_pooling_strategies(self):
-        assert EvoWrapper.available_pooling_strategies == ["mean", "max", "cls"]
+        assert EvoWrapper.available_pooling_strategies == ["mean", "max", "cls", "none"]
 
     # --- Error handling (before load) ---
 
@@ -672,6 +744,7 @@ class TestGENALMWrapper:
     def test_embed_batch_empty_returns_empty(self):
         w = GENALMWrapper()
         w.model = MagicMock()
+        w.tokenizer = _tok()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
@@ -692,7 +765,7 @@ class TestGENALMWrapper:
         w = GENALMWrapper()
         w.device = torch.device("cpu")
         w.tokenizer = _tok(seq_len)
-        w.model = MagicMock(return_value=_mlm_output(hidden_dim, seq_len))
+        w.model = _dyn_model(hidden_dim)
         return w
 
     def test_embed_mean_returns_correct_shape(self):
@@ -718,12 +791,7 @@ class TestGENALMWrapper:
         w = self._loaded(hidden_dim, seq_len)
 
         # last layer is all-ones so we can verify it was used (not zero layer)
-        zero_layer = torch.zeros(1, seq_len, hidden_dim)
-        real_layer = torch.ones(1, seq_len, hidden_dim)
-        out = MagicMock()
-        out.last_hidden_state = None
-        out.hidden_states = (zero_layer, real_layer)
-        w.model = MagicMock(return_value=out)
+        w.model = _dyn_model(hidden_dim, layer_fills=(0.0, 1.0))
 
         result = w.embed("ACGT", pooling_strategy="mean")
         assert result.shape == (hidden_dim,)
@@ -736,15 +804,14 @@ class TestGENALMWrapper:
         seq_len = 20
         w = self._loaded(hidden_dim, seq_len)
 
-        layer0 = torch.randn(1, seq_len, hidden_dim)
-        layer1 = torch.randn(1, seq_len, hidden_dim)
-        out = MagicMock()
-        out.hidden_states = (layer0, layer1)
-        out.last_hidden_state = None
-        w.model = MagicMock(return_value=out)
+        # Distinct constant per layer so we can assert layer 0 was the one used.
+        w.model = _dyn_model(hidden_dim, layer_fills=(7.0, -3.0))
 
         result = w.embed("ACGT", target_layer=0)
         assert result.shape == (hidden_dim,)
+        assert np.allclose(result, 7.0, atol=1e-4), (
+            "target_layer=0 should select hidden_states[0], not the last layer"
+        )
 
     def test_embed_batch_multiple(self):
         hidden_dim = 768
@@ -794,6 +861,7 @@ class TestNucleotideTransformerWrapper:
     def test_embed_batch_empty_returns_empty(self):
         w = NucleotideTransformerWrapper()
         w.model = MagicMock()
+        w.tokenizer = _tok()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
@@ -814,7 +882,7 @@ class TestNucleotideTransformerWrapper:
         w = NucleotideTransformerWrapper()
         w.device = torch.device("cpu")
         w.tokenizer = _tok(seq_len)
-        w.model = MagicMock(return_value=_mlm_output(hidden_dim, seq_len))
+        w.model = _dyn_model(hidden_dim)
         return w
 
     def test_embed_mean_returns_correct_shape(self):
@@ -934,6 +1002,7 @@ class TestHyenaDNAWrapper:
     def test_embed_batch_empty_returns_empty(self):
         w = HyenaDNAWrapper()
         w.model = MagicMock()
+        w.tokenizer = _tok(has_mask=False)
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
@@ -955,11 +1024,7 @@ class TestHyenaDNAWrapper:
         w.device = torch.device("cpu")
 
         w.tokenizer = _tok(seq_len, has_mask=False)
-        h = torch.randn(1, seq_len, hidden_dim)
-        out = MagicMock()
-        out.hidden_states = (h, h)
-        out.last_hidden_state = None
-        w.model = MagicMock(return_value=out)
+        w.model = _dyn_model(hidden_dim)
         return w
 
     def test_embed_mean_returns_correct_shape(self):
@@ -1039,6 +1104,7 @@ class TestCaduceusWrapper:
     def test_embed_batch_empty_returns_empty(self):
         w = CaduceusWrapper()
         w.model = MagicMock()
+        w.tokenizer = _tok()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
@@ -1060,11 +1126,7 @@ class TestCaduceusWrapper:
         w.device = torch.device("cpu")
 
         w.tokenizer = _tok(seq_len, has_mask=True)
-        h = torch.randn(1, seq_len, hidden_dim)
-        out = MagicMock()
-        out.hidden_states = (h, h)
-        out.last_hidden_state = None
-        w.model = MagicMock(return_value=out)
+        w.model = _dyn_model(hidden_dim)
         return w
 
     def test_embed_mean_returns_correct_shape(self):
