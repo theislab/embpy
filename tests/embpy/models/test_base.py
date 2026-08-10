@@ -73,6 +73,47 @@ class TestApplyPooling:
         result = wrapper._apply_pooling(tensor, "cls")
         np.testing.assert_allclose(result, [[1.0, 2.0]], atol=1e-6)
 
+    def test_median_pooling_2d(self, wrapper):
+        """Median over the token axis, not the first token (see base.py)."""
+        tensor = torch.arange(15, dtype=torch.float32).reshape(5, 3)
+        result = wrapper._apply_pooling(tensor, "median")
+        assert isinstance(result, np.ndarray)
+        assert result.shape == (3,)
+        np.testing.assert_allclose(result, np.median(tensor.numpy(), axis=0), atol=1e-6)
+        # Guard against the old bug, which returned the first token.
+        assert not np.allclose(result, tensor.numpy()[0])
+
+    def test_median_pooling_3d(self, wrapper):
+        """Batched median pools per item over the token axis."""
+        tensor = torch.arange(30, dtype=torch.float32).reshape(2, 5, 3)
+        result = wrapper._apply_pooling(tensor, "median")
+        assert isinstance(result, np.ndarray)
+        np.testing.assert_allclose(result, np.median(tensor.numpy(), axis=1), atol=1e-6)
+
+    def test_median_pooling_3d_shape_matches_mean_and_max(self, wrapper):
+        """Median must reduce (batch, seq_len, hidden) -> (batch, hidden) like mean/max."""
+        batch, seq_len, hidden = 2, 5, 3
+        tensor = torch.arange(batch * seq_len * hidden, dtype=torch.float32).reshape(
+            batch, seq_len, hidden
+        )
+        median = wrapper._apply_pooling(tensor, "median")
+        assert median.shape == (batch, hidden)
+        assert median.shape == wrapper._apply_pooling(tensor, "mean").shape
+        assert median.shape == wrapper._apply_pooling(tensor, "max").shape
+
+    def test_median_pooling_even_length_uses_lower_middle(self, wrapper):
+        """torch.median takes the lower middle value; np.median averages the two.
+
+        The base wrapper deliberately follows torch semantics, matching the
+        median pooling already implemented in the Enformer/Borzoi wrappers.
+        This test pins that choice so a future switch is a conscious one.
+        """
+        tensor = torch.tensor([[1.0, 10.0], [2.0, 20.0], [3.0, 30.0], [4.0, 40.0]])
+        result = wrapper._apply_pooling(tensor, "median")
+        np.testing.assert_allclose(result, [2.0, 20.0], atol=1e-6)
+        # np.median would give [2.5, 25.0] here.
+        assert not np.allclose(result, np.median(tensor.numpy(), axis=0))
+
     def test_invalid_strategy_raises(self, wrapper):
         tensor = torch.tensor([[1.0, 2.0]])
         with pytest.raises(ValueError, match="Invalid pooling strategy"):

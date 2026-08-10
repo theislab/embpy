@@ -117,14 +117,27 @@ class BaseModelWrapper(ABC):
         embeddings : torch.Tensor
             Tensor of shape ``(batch, seq_len, hidden_dim)`` or ``(seq_len, hidden_dim)``.
         strategy : str
-            Pooling strategy (``'mean'``, ``'max'``, ``'cls'``, ``'median'``,
-            ``'none'``).  ``'none'`` returns the raw tensor as-is.
+            Pooling strategy. Must also be listed in this wrapper's
+            ``available_pooling_strategies``, otherwise a ``ValueError`` is
+            raised — subclasses expose different subsets. Supported here:
+
+            * ``'mean'`` — arithmetic mean over the token axis.
+            * ``'max'`` — element-wise maximum over the token axis.
+            * ``'median'`` — element-wise median over the token axis, using
+              :func:`torch.median` semantics: for an *even* number of tokens
+              this is the **lower** of the two middle values rather than
+              their average, so it can differ from :func:`numpy.median`.
+              (This matches the median pooling in the Enformer and Borzoi
+              wrappers.)
+            * ``'cls'`` — the first token's embedding, no aggregation.
+            * ``'none'`` — the raw tensor, unpooled.
 
         Returns
         -------
         np.ndarray
-            Pooled embedding of shape ``(hidden_dim,)`` or ``(batch, hidden_dim)``,
-            or raw ``(seq_len, hidden_dim)`` when ``strategy='none'``.
+            Pooled embedding of shape ``(hidden_dim,)`` for a 2D input, or
+            ``(batch, hidden_dim)`` for a 3D input. When ``strategy='none'``
+            the tensor is returned with its original shape, unpooled.
         """
         if strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling strategy '{strategy}'. Available: {self.available_pooling_strategies}")
@@ -140,7 +153,7 @@ class BaseModelWrapper(ABC):
             elif strategy == "cls":
                 pooled = embeddings[:, 0, :]
             elif strategy == "median":
-                pooled = embeddings[0, :]
+                pooled = embeddings.median(dim=1).values
             else:
                 raise ValueError(f"Pooling strategy '{strategy}' not implemented for batched tensors.")
         elif embeddings.dim() == 2:  # No batch dimension
@@ -151,7 +164,7 @@ class BaseModelWrapper(ABC):
             elif strategy == "cls":
                 pooled = embeddings[0, :]
             elif strategy == "median":
-                pooled = embeddings[0, :]
+                pooled = embeddings.median(dim=0).values
             else:
                 raise ValueError(f"Pooling strategy '{strategy}' not implemented for single tensors.")
         else:
