@@ -250,6 +250,50 @@ class TestBorzoiWrapper:
         result = w._preprocess_sequence(seq)
         assert result.shape == (1, 4, w.SEQUENCE_LENGTH)
 
+    def test_preprocess_n_is_all_zero_not_adenine(self):
+        """N must encode as an all-zero column, never as adenine.
+
+        Mapping unknown bases to index 0 silently turns every masked, soft-masked
+        or IUPAC-ambiguous base into a real A, fabricating sequence content the
+        caller never supplied.
+        """
+        w = BorzoiWrapper()
+        result = w._preprocess_sequence("ACGTN")
+
+        # The 5 informative columns sit at the centre of the padded window.
+        start = (w.SEQUENCE_LENGTH - 5) // 2
+        window = result[0, :, start : start + 5]
+
+        assert window[:, 0].tolist() == [1.0, 0.0, 0.0, 0.0]  # A
+        assert window[:, 1].tolist() == [0.0, 1.0, 0.0, 0.0]  # C
+        assert window[:, 2].tolist() == [0.0, 0.0, 1.0, 0.0]  # G
+        assert window[:, 3].tolist() == [0.0, 0.0, 0.0, 1.0]  # T
+        assert window[:, 4].tolist() == [0.0, 0.0, 0.0, 0.0], (
+            "N encoded as a real nucleotide instead of an all-zero column"
+        )
+
+    def test_preprocess_unknown_characters_are_all_zero(self):
+        """IUPAC codes and soft-masked bases follow the same rule as N."""
+        w = BorzoiWrapper()
+        # R/Y/S/W are IUPAC ambiguity codes; lowercase acgt is soft-masking and
+        # must survive the upper() call as real bases.
+        result = w._preprocess_sequence("RYSWacgt")
+        start = (w.SEQUENCE_LENGTH - 8) // 2
+        window = result[0, :, start : start + 8]
+
+        assert window[:, :4].sum() == 0.0, "IUPAC ambiguity codes must be all-zero"
+        # Soft-masked acgt are still real nucleotides after uppercasing.
+        assert window[:, 4:].sum() == 4.0
+        assert torch.equal(window[:, 4:], torch.eye(4))
+
+    def test_preprocess_n_matches_padding_encoding(self):
+        """An explicit N and an implicit pad column must be indistinguishable."""
+        w = BorzoiWrapper()
+        result = w._preprocess_sequence("N")
+        # Every column, informative or padding, is all-zero for a lone N.
+        assert result.shape == (1, 4, w.SEQUENCE_LENGTH)
+        assert result.sum() == 0.0
+
     def test_embed_with_mocked_model(self):
         w = BorzoiWrapper()
         w.device = torch.device("cpu")

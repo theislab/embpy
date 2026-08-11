@@ -656,7 +656,12 @@ class BorzoiWrapper(BaseModelWrapper):
     NUM_CHANNELS : int
         Number of one-hot channels (4 for A/C/G/T).
     ALPHABET_MAP : dict[str, int]
-        Mapping from nucleotide characters to indices (A=0, C=1, G=2, T=3). Others default to 0.
+        Mapping from nucleotide characters to indices (A=0, C=1, G=2, T=3).
+    UNKNOWN_INDEX : int
+        Sentinel index for ``N`` and any other non-ACGT character. One-hot
+        encoding uses ``NUM_CHANNELS + 1`` classes and then drops this channel,
+        so an ambiguous base becomes an all-zero column -- the same encoding the
+        padding path produces, and Baskerville's default for ``N``.
     model_type : Literal["dna"]
         Indicates that this wrapper expects DNA sequence inputs.
     available_pooling_strategies : list[str]
@@ -669,6 +674,7 @@ class BorzoiWrapper(BaseModelWrapper):
     SEQUENCE_LENGTH = 524_288
     NUM_CHANNELS = 4
     ALPHABET_MAP = {"A": 0, "C": 1, "G": 2, "T": 3}
+    UNKNOWN_INDEX = 4
 
     def __init__(self, model_path_or_name: str = "johahi/borzoi-replicate-0", **kwargs):
         """
@@ -738,9 +744,14 @@ class BorzoiWrapper(BaseModelWrapper):
         (1, NUM_CHANNELS, SEQUENCE_LENGTH), padding with zero-vectors if necessary.
 
         Steps:
-        1. Uppercase the input string and map characters A/C/G/T → 0/1/2/3; others → 0.
+        1. Uppercase the input string and map characters A/C/G/T → 0/1/2/3;
+           every other character (``N``, IUPAC ambiguity codes, soft-masked
+           bases) → ``UNKNOWN_INDEX``.
         2. Build an index tensor of shape (1, L_in).
-        3. One-hot encode → (1, L_in, NUM_CHANNELS), then permute → (1, NUM_CHANNELS, L_in).
+        3. One-hot encode over ``NUM_CHANNELS + 1`` classes and drop the sentinel
+           channel → (1, L_in, NUM_CHANNELS), then permute → (1, NUM_CHANNELS, L_in).
+           Ambiguous bases therefore become all-zero columns, identical to the
+           padding representation, rather than being read as adenine.
         4. If L_in < SEQUENCE_LENGTH, pad on the last axis with [0,0,0,0] columns.
             If L_in > SEQUENCE_LENGTH, center-crop the last axis to exactly SEQUENCE_LENGTH.
         5. Return the resulting float tensor of shape (1, NUM_CHANNELS, SEQUENCE_LENGTH).
@@ -761,11 +772,36 @@ class BorzoiWrapper(BaseModelWrapper):
             If after padding/cropping the final length is not exactly SEQUENCE_LENGTH.
         """
         seq = sequence.upper()
-        # 1) Map to integer indices
-        idx = torch.tensor([self.ALPHABET_MAP.get(b, 0) for b in seq], dtype=torch.long).unsqueeze(0)  # (1, L_in)
+        # 1) Map to integer indices. Anything that is not A/C/G/T -- N, IUPAC
+        # ambiguity codes, soft-masked residues -- maps to UNKNOWN_INDEX so it
+        # becomes an all-zero column below. Defaulting these to 0 would silently
+        # read them as adenine, which fabricates sequence content the caller
+        # never supplied.
+        idx = torch.tensor(
+            [self.ALPHABET_MAP.get(b, self.UNKNOWN_INDEX) for b in seq],
+            dtype=torch.long,
+        ).unsqueeze(0)  # (1, L_in)
 
-        # 2) One-hot → (1, L_in, 4) then permute → (1, 4, L_in)
-        oh = F.one_hot(idx, num_classes=self.NUM_CHANNELS).permute(0, 2, 1).float()  # (1, 4, L_in)
+        n_unknown = int((idx == self.UNKNOWN_INDEX).sum())
+        if n_unknown:
+            logging.warning(
+                "Borzoi input contains %d non-ACGT character(s) (%.2f%% of %d); "
+                "encoding them as all-zero columns.",
+                n_unknown,
+                100.0 * n_unknown / idx.shape[1],
+                idx.shape[1],
+            )
+
+        # 2) One-hot over NUM_CHANNELS + 1 classes, then drop the sentinel
+        #    channel so UNKNOWN_INDEX yields [0, 0, 0, 0]. This mirrors
+        #    enformer-pytorch's seq_indices_to_one_hot and matches the zero
+        #    columns used for padding below.
+        #    → (1, L_in, 4) then permute → (1, 4, L_in)
+        oh = (
+            F.one_hot(idx, num_classes=self.NUM_CHANNELS + 1)[..., : self.NUM_CHANNELS]
+            .permute(0, 2, 1)
+            .float()
+        )  # (1, 4, L_in)
 
         L_in = oh.shape[2]
         L_tar = self.SEQUENCE_LENGTH
