@@ -47,10 +47,12 @@ from .embedder_registry.flat import (
     HUMAN_ONLY_MODELS,
     MODEL_REGISTRY,
     MOUSE_ONLY_MODELS,
-    MULTI_SPECIES_DNA,
+    # Unlike its three siblings this one is not referenced in this module, so
+    # ruff reads it as unused -- but the re-export is asserted by
+    # tests/embpy/test_registry_split.py::test_embedder_re_export_is_same_object.
+    MULTI_SPECIES_DNA,  # noqa: F401
 )
 from .models.api_models import APIEmbeddingWrapper
-from .models.morphology_models import SubCellWrapper
 from .models.text_models import TextLLMWrapper
 from .resources.gene_resolver import GeneResolver
 from .resources.protein_resolver import ProteinResolver
@@ -377,8 +379,6 @@ class BioEmbedder:
                     extra_kwargs["output_type"] = "pairwise"
                 elif model_name == "boltz2_both":
                     extra_kwargs["output_type"] = "both"
-                if WrapperClass is SubCellWrapper:
-                    pass
                 if WrapperClass is APIEmbeddingWrapper:
                     provider_map = {
                         "openai_small": "openai",

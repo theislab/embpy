@@ -311,9 +311,26 @@ class SubCellWrapper(BaseModelWrapper):
             )
 
         for c in range(self._num_channels):
-            cmin, cmax = tensor[c].min(), tensor[c].max()
+            channel = tensor[c]
+            cmin, cmax = channel.min(), channel.max()
             if cmax > cmin:
-                tensor[c] = (tensor[c] - cmin) / (cmax - cmin)
+                tensor[c] = (channel - cmin) / (cmax - cmin)
+            elif torch.isfinite(cmin):
+                # Constant channel (dead detector, saturated field): min-max is
+                # undefined, so zero it instead of passing the raw magnitude
+                # through. Keeps the documented [0, 1] contract and matches
+                # pp.normalize_channels, which is what the PNG canvas path
+                # already hands us for a blank channel.
+                tensor[c] = 0.0
+            else:
+                # Non-finite. Zeroing here would turn an obviously-broken NaN
+                # embedding into a plausible-looking wrong one, so leave it
+                # visible.
+                logger.warning(
+                    "Channel %d contains non-finite values; leaving it unnormalized "
+                    "(the embedding will be NaN). Clean the image before embedding.",
+                    c,
+                )
 
         if tensor.shape[1] != self.image_size or tensor.shape[2] != self.image_size:
             tensor = torch.nn.functional.interpolate(

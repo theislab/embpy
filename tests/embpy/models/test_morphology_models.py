@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
@@ -68,6 +68,36 @@ class TestSubCellPreprocessing:
         img = np.random.rand(4, 448, 448).astype(np.float32)
         tensor = wrapper._preprocess_image(img)
         assert tensor.shape == (1, 4, 448, 448)
+
+    def test_constant_channels_normalized_to_zero(self, wrapper):
+        """A constant channel has no min-max range, so it must become 0.0.
+
+        Leaving it at its raw magnitude broke the documented [0, 1] contract and
+        made the embedding depend on acquisition gain.
+        """
+        img = np.full((4, 32, 32), 4095.0, dtype=np.float32)
+        tensor = wrapper._preprocess_image(img)
+        assert tensor.shape == (1, 4, 448, 448)
+        np.testing.assert_allclose(tensor.numpy(), 0.0, atol=1e-6)
+
+    def test_constant_channel_among_live_channels(self, wrapper):
+        """One dead channel is zeroed without disturbing the live ones."""
+        img = (np.random.rand(4, 32, 32) * 100.0).astype(np.float32)
+        img[2] = 500.0
+        tensor = wrapper._preprocess_image(img)
+        np.testing.assert_allclose(tensor[0, 2].numpy(), 0.0, atol=1e-6)
+        assert tensor.min() >= 0.0
+        assert tensor.max() <= 1.0
+        # The live channels keep their contrast.
+        assert tensor[0, 0].max() > tensor[0, 0].min()
+
+    def test_nan_channel_is_not_silently_zeroed(self, wrapper):
+        """Non-finite data must stay visible, not be blanked into plausible zeros."""
+        img = (np.random.rand(4, 32, 32) * 100.0).astype(np.float32)
+        img[1, 0, 0] = np.nan
+        tensor = wrapper._preprocess_image(img)
+        assert torch.isnan(tensor[0, 1]).any()
+        assert not torch.all(tensor[0, 1] == 0.0)
 
 
 class TestSubCellEmbed:
