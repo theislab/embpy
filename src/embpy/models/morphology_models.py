@@ -276,6 +276,8 @@ class SubCellWrapper(BaseModelWrapper):
         checkpoint expects (``self._num_channels``); a mismatch raises rather
         than being padded or truncated to fit.
 
+        The input is never modified, whatever its dtype.
+
         Returns a tensor of shape (1, C, 448, 448) normalized to [0, 1].
         """
         if isinstance(image, str):
@@ -309,6 +311,12 @@ class SubCellWrapper(BaseModelWrapper):
                 "truncating to fit would silently produce a meaningless embedding. "
                 "Pick the checkpoint matching your channel count (see SUBCELL_MODELS)."
             )
+
+        # The normalization below writes in place, and for float32 input `tensor`
+        # still shares memory with what the caller handed us -- `.float()` is a
+        # no-op at that dtype and `torch.from_numpy` aliases. Copy first so
+        # embedding an image never rewrites the caller's array.
+        tensor = tensor.clone()
 
         for c in range(self._num_channels):
             channel = tensor[c]

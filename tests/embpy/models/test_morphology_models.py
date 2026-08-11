@@ -91,6 +91,28 @@ class TestSubCellPreprocessing:
         # The live channels keep their contrast.
         assert tensor[0, 0].max() > tensor[0, 0].min()
 
+    def test_float32_numpy_input_is_not_mutated(self, wrapper):
+        """float32 aliases the tensor, so in-place normalization must not write back."""
+        img = (np.random.rand(4, 32, 32) * 100.0).astype(np.float32)
+        original = img.copy()
+        wrapper._preprocess_image(img)
+        np.testing.assert_array_equal(img, original)
+
+    def test_float32_torch_input_is_not_mutated(self, wrapper):
+        """Same aliasing hazard via the torch path, where .float() is a no-op."""
+        img = torch.rand(4, 32, 32) * 100.0
+        original = img.clone()
+        wrapper._preprocess_image(img)
+        torch.testing.assert_close(img, original)
+
+    def test_constant_channel_input_is_not_mutated(self, wrapper):
+        """The constant-channel branch zeroes a channel; not in the caller's array."""
+        img = (np.random.rand(4, 32, 32) * 100.0).astype(np.float32)
+        img[2] = 500.0
+        original = img.copy()
+        wrapper._preprocess_image(img)
+        np.testing.assert_array_equal(img, original)
+
     def test_nan_channel_is_not_silently_zeroed(self, wrapper):
         """Non-finite data must stay visible, not be blanked into plausible zeros."""
         img = (np.random.rand(4, 32, 32) * 100.0).astype(np.float32)
