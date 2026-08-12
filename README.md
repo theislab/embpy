@@ -189,13 +189,26 @@ pl.plot_embedding_space(
 
 ## Tutorials
 
-The tutorials are organized by biological entity:
+**Start here** — a short, goal-oriented path (the first two run in seconds with no
+model downloads):
+
+1. [Embed anything in 60 seconds](docs/notebooks/01_embed_in_60_seconds.ipynb) — one
+   call, any modality, into an AnnData.
+2. [Where embeddings live](docs/notebooks/02_output_contract.ipynb) — the
+   `.obsm` / `.varm` / `.uns` storage contract and provenance.
+3. [Compare embedding spaces across models](docs/notebooks/03_compare_models.ipynb) —
+   do two models see your biology the same way?
+4. [Which model captures *my* biology?](docs/notebooks/04_benchmark_models.ipynb) —
+   rank models on your own labelled task.
+
+**By modality** — deeper, domain-specific workflows:
 
 - [Genes](docs/notebooks/genes.ipynb)
 - [Proteins](docs/notebooks/proteins.ipynb)
 - [Small molecules](docs/notebooks/small_molecules.ipynb)
 - [Cells](docs/notebooks/cells.ipynb)
 - [Validating single-cell embeddings with scIB](docs/notebooks/scib_validation.ipynb)
+- [Variant effects](docs/notebooks/variant_effects.ipynb)
 
 Each notebook uses real `BioEmbedder.embed(...)` calls, real annotation APIs,
 and embpy plotting/comparison utilities.
