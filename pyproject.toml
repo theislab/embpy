@@ -93,6 +93,20 @@ optional-dependencies.seqmodels = [
   "borzoi-pytorch>=0.4.3",
   "enformer-pytorch>=0.8.10",
 ]
+# AlphaGenome (Google DeepMind cloud API client). No local weights are
+# downloaded; inference runs against Google's servers and requires an
+# `ALPHAGENOME_API_KEY` in the environment. Pure-Python, no CUDA/compiler
+# needed -- kept out of "all" anyway (see below) since it implies an
+# external API account rather than a local model.
+optional-dependencies.alphagenome = [
+  "alphagenome>=0.7",
+]
+# Scooby (gagneurlab/scooby): single-cell-resolution DNA sequence model built
+# on the Borzoi trunk, conditioned on a precomputed per-cell embedding. 
+optional-dependencies.scooby = [
+  "snapatac2-scooby",
+  "scooby @ git+https://github.com/gagneurlab/scooby.git",
+]
 # MiniMol molecule GNN. Kept separate because it transitively depends on
 # `torch-sparse`, `torch-scatter` etc. which fail to build via pip unless
 # torch is pre-installed (the packages don't declare torch as a build-time
@@ -163,6 +177,10 @@ optional-dependencies.morphology = [
 #   * helical -- transitively needs the igraph C library (louvain) which
 #     pip cannot build; use conda/pixi for helical instead
 #   * minimol -- transitive torch-sparse build chain; use conda/pixi instead
+#   * scooby -- pulls in `scooby` and `peft` via direct git references (see
+#     the scooby extra above); install it explicitly if you need it
+#   * alphagenome -- calls a hosted API and needs an ALPHAGENOME_API_KEY;
+#     kept opt-in so "all" doesn't imply an external API account
 # Install those explicitly in a separate env if you need them.
 optional-dependencies.all = [
   "embpy[torch,ppi,lamindb,pertpy,scanpy,morphology,seqmodels]",

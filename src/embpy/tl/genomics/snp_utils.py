@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -245,19 +246,29 @@ class SNPEmbeddingResult:
     alt_sequences : list[str]
         Alternate context sequences, one per alt allele.
     ref_embedding : np.ndarray
-        Embedding of the reference sequence.
+        Embedding of the reference sequence. Always populated.
     alt_embeddings : list[np.ndarray]
-        Embeddings of each alternate sequence.
+        Embeddings of each alternate sequence. Always populated.
     delta_embeddings : list[np.ndarray]
-        ``alt_emb - ref_emb`` for each alternate allele.
+        ``alt_emb - ref_emb`` for each alternate allele. Opt-in via ``compute_delta=True``.
+    concat_embeddings : list[np.ndarray]
+        ``concatenate([ref_emb, alt_emb])`` for each alternate allele --
+        handy as a single feature vector for downstream ML. Opt-in via
+        ``compute_concat=True``.
     delta_norms : list[float]
         L2 norm of each delta embedding (scalar summary of effect size).
+        Empty when ``compute_delta=False``.
     cosine_similarities : list[float]
         Cosine similarity between reference and each alternate embedding.
     model_name : str
         Name of the model used.
     pooling_strategy : str
         Pooling strategy used.
+    compute_delta : bool
+        Whether ``delta_embeddings``/``delta_norms`` were (or should be)
+        auto-computed from ``ref_embedding``/``alt_embeddings``.
+    compute_concat : bool
+        Whether ``concat_embeddings`` were (or should be) auto-computed.
     """
 
     snp: SNPContext
@@ -266,16 +277,23 @@ class SNPEmbeddingResult:
     ref_embedding: np.ndarray
     alt_embeddings: list[np.ndarray]
     delta_embeddings: list[np.ndarray] = field(default_factory=list)
+    concat_embeddings: list[np.ndarray] = field(default_factory=list)
     delta_norms: list[float] = field(default_factory=list)
     cosine_similarities: list[float] = field(default_factory=list)
     model_name: str = ""
     pooling_strategy: str = "mean"
+    compute_delta: bool = False
+    compute_concat: bool = False
 
     def __post_init__(self) -> None:
         # Auto-compute deltas and summaries if not provided
-        if not self.delta_embeddings:
+        if self.compute_delta and not self.delta_embeddings:
             self.delta_embeddings = [a - self.ref_embedding for a in self.alt_embeddings]
-        if not self.delta_norms:
+        if self.compute_concat and not self.concat_embeddings:
+            self.concat_embeddings = [
+                np.concatenate([self.ref_embedding, a]) for a in self.alt_embeddings
+            ]
+        if not self.delta_norms and self.delta_embeddings:
             self.delta_norms = [float(np.linalg.norm(d)) for d in self.delta_embeddings]
         if not self.cosine_similarities:
             ref_norm = float(np.linalg.norm(self.ref_embedding))
@@ -362,6 +380,209 @@ def _apply_snp(sequence: str, offset: int, ref: str, alt: str) -> str:
     return sequence[:offset] + alt + sequence[offset + len(ref) :]
 
 
+@dataclass
+class VariantEffectResult:
+    """Profile-based variant-effect prediction (Borzoi-style).
+
+    Holds the predicted reference/alternate coverage profiles plus a
+    per-track effect score, following the gene-level statistic used for
+    RNA-seq/ATAC/ChIP variant-effect prediction in the Borzoi paper
+    (Linder et al. 2025, *Nat. Genet.*): summed predicted coverage over a set of bins
+    (typically a gene's exon-overlapping bins) on the linear (unsquashed)
+    scale, compared between alleles via a log2 fold-change with pseudocount.
+
+    Attributes
+    ----------
+    snp : SNPContext
+        The input variant descriptor.
+    ref_profile : np.ndarray
+        Reference predicted profile, shape ``(num_tracks, num_bins)``.
+    alt_profiles : list[np.ndarray]
+        Alternate predicted profiles, one per alt allele.
+    bin_indices : np.ndarray, optional
+        Bins the effect score was aggregated over (``None`` means "all bins").
+    effect_scores : list[np.ndarray]
+        Per-track log2 fold-change effect score, one array (shape
+        ``(num_tracks,)``) per alt allele.
+    track_names : list[str], optional
+        Track identifiers aligned with the channel axis of the profiles,
+        if the model wrapper exposes ``get_track_metadata()``.
+    model_name : str
+        Name of the model used.
+    """
+
+    snp: SNPContext
+    ref_profile: np.ndarray
+    alt_profiles: list[np.ndarray]
+    bin_indices: np.ndarray | None = None
+    effect_scores: list[np.ndarray] = field(default_factory=list)
+    track_names: list[str] | None = None
+    model_name: str = ""
+
+    def top_tracks(self, alt_index: int = 0, n: int = 10) -> list[tuple[str, float]]:
+        """Return the ``n`` tracks with the largest absolute effect size.
+
+        Parameters
+        ----------
+        alt_index
+            Which alt allele's effect scores to rank (default: the first).
+        n
+            Number of tracks to return.
+
+        Returns
+        -------
+        list[(str, float)]
+            ``(track_name, effect_score)`` pairs sorted by ``|effect_score|``
+            descending. Track names fall back to stringified indices if
+            ``track_names`` is unavailable.
+        """
+        scores = self.effect_scores[alt_index]
+        order = np.argsort(-np.abs(scores))[:n]
+        names = self.track_names if self.track_names is not None else [str(i) for i in range(len(scores))]
+        return [(names[i], float(scores[i])) for i in order]
+
+
+def genomic_to_bin_indices(
+    intervals: list[tuple[int, int]],
+    window_start: int,
+    bin_size: int,
+    profile_offset_bp: int = 0,
+    num_bins: int | None = None,
+) -> np.ndarray:
+    """Convert genomic intervals (e.g. exon coordinates) into profile bin indices.
+
+    Use this to translate a gene's exon coordinates into the bin indices
+    needed by :func:`profile_variant_effect_score` / ``predict_variant_effect``.
+
+    Parameters
+    ----------
+    intervals
+        List of 0-based, half-open ``(start, end)`` genomic intervals, in the
+        same coordinate system as ``window_start`` (i.e. ``start``/``end``
+        are absolute chromosome coordinates if ``window_start`` is too).
+    window_start
+        0-based genomic coordinate of the first base of the sequence window
+        passed to the model.
+    bin_size
+        Model bin width in bp (e.g. ``BorzoiWrapper.BIN_SIZE`` == 32).
+    profile_offset_bp
+        bp offset of profile bin 0 relative to ``window_start`` (e.g.
+        ``BorzoiWrapper.profile_offset_bp``); Borzoi crops both ends of its
+        receptive field before predicting, so bin 0 is not at the window
+        start.
+    num_bins
+        If given, drop any bins outside ``[0, num_bins)``.
+
+    Returns
+    -------
+    np.ndarray
+        Sorted, de-duplicated array of bin indices overlapping ``intervals``.
+    """
+    bins: set[int] = set()
+    for start, end in intervals:
+        rel_start = start - window_start - profile_offset_bp
+        rel_end = end - window_start - profile_offset_bp
+        b0 = int(rel_start // bin_size)
+        b1 = -(-int(rel_end) // bin_size)  # ceil division
+        for b in range(max(b0, 0), b1):
+            if num_bins is None or 0 <= b < num_bins:
+                bins.add(b)
+    return np.array(sorted(bins), dtype=int)
+
+
+def profile_variant_effect_score(
+    ref_profile: np.ndarray,
+    alt_profile: np.ndarray,
+    bin_indices: Sequence[int] | None = None,
+    pseudocount: float = 1.0,
+) -> np.ndarray:
+    """Gene-level variant-effect statistic from predicted coverage profiles.
+
+    Sums the (linear-scale) predicted coverage over ``bin_indices`` for both
+    alleles, then returns the log2 fold-change with a pseudocount -- the
+    statistic used for RNA-seq/ATAC/ChIP variant-effect scoring in the
+    Borzoi papers.
+
+    Parameters
+    ----------
+    ref_profile, alt_profile
+        Arrays of shape ``(num_tracks, num_bins)`` as returned by
+        ``BorzoiWrapper.predict_profile`` (pass ``undo_squashed_scale=True``
+        when predicting so the values are on the linear scale this statistic
+        assumes).
+    bin_indices
+        Bins to sum over, e.g. from :func:`genomic_to_bin_indices`. ``None``
+        sums over the entire profile.
+    pseudocount
+        Added to both sums before taking the log2 ratio.
+
+    Returns
+    -------
+    np.ndarray
+        Shape ``(num_tracks,)``: ``log2((alt_sum + pseudocount) / (ref_sum + pseudocount))``.
+    """
+    if bin_indices is not None:
+        idx = np.asarray(bin_indices, dtype=int)
+        ref_sum = ref_profile[:, idx].sum(axis=1)
+        alt_sum = alt_profile[:, idx].sum(axis=1)
+    else:
+        ref_sum = ref_profile.sum(axis=1)
+        alt_sum = alt_profile.sum(axis=1)
+    return np.log2((alt_sum + pseudocount) / (ref_sum + pseudocount))
+
+
+def profile_variant_effect_score_l2(
+    ref_profile: np.ndarray,
+    alt_profile: np.ndarray,
+    bin_indices: Sequence[int] | None = None,
+    pseudocount: float = 1.0,
+) -> np.ndarray:
+    """Gene-level variant-effect statistic, L2-norm convention (the "l2 score"
+    of Linder et al. 2025, adopted by TraitGym (Benegas et al., bioRxiv
+    2025.02.11.637758) for benchmarking Borzoi/Enformer on causal regulatory
+    variant classification -- distinct from :func:`profile_variant_effect_score`,
+    which is the sum-then-ratio statistic Scooby's own paper (Hilgers et al.)
+    uses and reports as giving 91.6% sign concordance with observed eQTLs.
+
+    Computes the per-bin log2 fold-change first (not summed), then takes the
+    Euclidean norm of that vector over ``bin_indices`` -- scale-invariant per
+    bin, so a small region with a large *relative* change contributes as
+    much as a large region with a small relative change, unlike the
+    sum-then-ratio statistic which is dominated by whichever bins have the
+    highest absolute (baseline) coverage.
+
+    Note: TraitGym's own published "l2 score" is reported computed over a
+    wide, fixed window (not necessarily restricted to a gene's own exon
+    bins); this implementation is deliberately restricted to the same
+    ``bin_indices`` as :func:`profile_variant_effect_score` so the two can be
+    compared as a pure aggregation-method contrast (sum vs. L2 norm) with the
+    window held constant, not conflated with a window-size difference.
+
+    Parameters
+    ----------
+    ref_profile, alt_profile
+        Arrays of shape ``(num_tracks, num_bins)``, same convention as
+        :func:`profile_variant_effect_score`.
+    bin_indices
+        Bins to compute the per-bin log2FC over before taking the L2 norm.
+        ``None`` uses the entire profile.
+    pseudocount
+        Added to both ref and alt at each bin before taking the log2 ratio.
+
+    Returns
+    -------
+    np.ndarray
+        Shape ``(num_tracks,)``: ``sqrt(sum_bin(log2((alt[bin]+pseudocount)/(ref[bin]+pseudocount))**2))``.
+    """
+    if bin_indices is not None:
+        idx = np.asarray(bin_indices, dtype=int)
+        ref_sel, alt_sel = ref_profile[:, idx], alt_profile[:, idx]
+    else:
+        ref_sel, alt_sel = ref_profile, alt_profile
+    per_bin_log2fc = np.log2((alt_sel + pseudocount) / (ref_sel + pseudocount))
+    return np.sqrt(np.sum(per_bin_log2fc**2, axis=1))
+
+
 class SNPEmbedder:
     """Compute variant-effect embeddings for SNPs using any DNA/protein model.
 
@@ -445,9 +666,17 @@ class SNPEmbedder:
         snp: SNPContext,
         chromosome_sequence: str,
         pooling_strategy: str | None = None,
+        compute_delta: bool = False,
+        compute_concat: bool = False,
         **kwargs: Any,
     ) -> SNPEmbeddingResult:
         """Embed a single SNP and return full result.
+
+        By default the result always carries the reference and every
+        alternate-allele embedding (``ref_embedding``/``alt_embeddings``).
+        Delta vectors (``alt - ref``) re opt-in via
+        ``compute_delta=True``. Concatenated ``[ref, alt]``
+        feature vectors are opt-in via ``compute_concat=True``.
 
         Parameters
         ----------
@@ -460,6 +689,10 @@ class SNPEmbedder:
             or a pre-sliced region for efficiency.
         pooling_strategy
             Overrides ``self.pooling_strategy`` for this call only.
+        compute_delta
+            Whether to compute ``delta_embeddings``/``delta_norms``.
+        compute_concat
+            Whether to compute ``concat_embeddings`` (``[ref, alt]`` per allele).
         **kwargs
             Additional arguments forwarded to the model's ``embed`` method
             (e.g. ``target_layer``, ``layer_name``).
@@ -492,6 +725,8 @@ class SNPEmbedder:
             alt_embeddings=[np.asarray(e, dtype=np.float32) for e in alt_embs],
             model_name=getattr(self.wrapper, "model_name", ""),
             pooling_strategy=pool,
+            compute_delta=compute_delta,
+            compute_concat=compute_concat,
         )
 
     def embed_snps_batch(
@@ -605,6 +840,81 @@ class SNPEmbedder:
             chromosome_sequence=chromosome_sequence,
             pooling_strategy=pooling_strategy,
             **kwargs,
+        )
+
+    def predict_variant_effect(
+        self,
+        snp: SNPContext,
+        chromosome_sequence: str,
+        bin_indices: Sequence[int] | None = None,
+        pseudocount: float = 1.0,
+        **kwargs: Any,
+    ) -> VariantEffectResult:
+        """Profile-based variant-effect prediction (Borzoi-style).
+
+        Requires a model wrapper that implements ``predict_profile`` (e.g.
+        :class:`~embpy.models.dna_models.BorzoiWrapper`). Computes the
+        reference and alternate predicted coverage profiles and aggregates
+        them into a per-track log2 fold-change effect score via
+        :func:`profile_variant_effect_score` -- the same statistic used for
+        gene-level variant-effect prediction in the Borzoi papers.
+
+        Parameters
+        ----------
+        snp
+            Variant descriptor. For exact bin alignment with
+            :func:`genomic_to_bin_indices`, set ``snp.context_window`` equal
+            to the model's fixed input length (e.g.
+            ``BorzoiWrapper.SEQUENCE_LENGTH``).
+        chromosome_sequence
+            Chromosome (or pre-sliced region) sequence; ``snp.position`` is
+            relative to its start.
+        bin_indices
+            Output bins to aggregate over (e.g. a gene's exon bins, see
+            :func:`genomic_to_bin_indices`). ``None`` sums over all bins.
+        pseudocount
+            Forwarded to :func:`profile_variant_effect_score`.
+        **kwargs
+            Forwarded to the wrapper's ``predict_profile`` (e.g.
+            ``track_indices``, ``undo_squashed_scale``).
+
+        Returns
+        -------
+        VariantEffectResult
+        """
+        if not hasattr(self.wrapper, "predict_profile"):
+            raise TypeError(
+                f"{type(self.wrapper).__name__} does not implement predict_profile(); "
+                "profile-based variant-effect prediction requires a model such as "
+                "BorzoiWrapper."
+            )
+
+        ref_ctx, alt_ctxs, _ = self._build_sequences(snp, chromosome_sequence)
+
+        ref_profile = np.asarray(self.wrapper.predict_profile(ref_ctx, **kwargs))
+        alt_profiles = [np.asarray(self.wrapper.predict_profile(a, **kwargs)) for a in alt_ctxs]
+
+        scores = [
+            profile_variant_effect_score(ref_profile, alt_profile, bin_indices, pseudocount)
+            for alt_profile in alt_profiles
+        ]
+
+        track_names: list[str] | None = None
+        get_track_metadata = getattr(self.wrapper, "get_track_metadata", None)
+        if callable(get_track_metadata):
+            try:
+                track_names = list(get_track_metadata()["identifier"])
+            except Exception as exc:
+                logging.debug(f"Could not load track metadata: {exc}")
+
+        return VariantEffectResult(
+            snp=snp,
+            ref_profile=ref_profile,
+            alt_profiles=alt_profiles,
+            bin_indices=np.asarray(bin_indices) if bin_indices is not None else None,
+            effect_scores=scores,
+            track_names=track_names,
+            model_name=getattr(self.wrapper, "model_name", ""),
         )
 
 

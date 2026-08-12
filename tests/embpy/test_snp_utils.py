@@ -12,6 +12,9 @@ from embpy.tl.snp_utils import (
     SNPEmbeddingResult,
     SNPEmbedder,
     SequenceProvider,
+    VariantEffectResult,
+    genomic_to_bin_indices,
+    profile_variant_effect_score,
     _apply_snp,
     _extract_context,
 )
@@ -370,6 +373,40 @@ class TestSNPEmbedderEmbedSNP:
         assert result.ref_embedding.dtype == np.float32
         assert result.alt_embeddings[0].dtype == np.float32
 
+    def test_ref_and_alt_always_present(self):
+        """ref/alt embeddings are always returned regardless of compute_delta/concat."""
+        result = SNPEmbedder(_make_wrapper()).embed_snp(
+            _make_snp(), chromosome_sequence=CHR_SEQ, compute_delta=False, compute_concat=False
+        )
+        assert result.ref_embedding is not None
+        assert len(result.alt_embeddings) == 1
+
+    def test_compute_delta_false_skips_delta(self):
+        result = SNPEmbedder(_make_wrapper()).embed_snp(
+            _make_snp(), chromosome_sequence=CHR_SEQ, compute_delta=False
+        )
+        assert result.delta_embeddings == []
+        assert result.delta_norms == []
+
+    def test_compute_delta_true_is_default(self):
+        result = SNPEmbedder(_make_wrapper()).embed_snp(_make_snp(), chromosome_sequence=CHR_SEQ)
+        assert len(result.delta_embeddings) == 1
+        assert len(result.delta_norms) == 1
+
+    def test_compute_concat_default_false(self):
+        result = SNPEmbedder(_make_wrapper()).embed_snp(_make_snp(), chromosome_sequence=CHR_SEQ)
+        assert result.concat_embeddings == []
+
+    def test_compute_concat_true_builds_ref_alt_concat(self):
+        hidden_dim = 64
+        result = SNPEmbedder(_make_wrapper(hidden_dim)).embed_snp(
+            _make_snp(), chromosome_sequence=CHR_SEQ, compute_concat=True
+        )
+        assert len(result.concat_embeddings) == 1
+        assert result.concat_embeddings[0].shape == (2 * hidden_dim,)
+        np.testing.assert_allclose(result.concat_embeddings[0][:hidden_dim], result.ref_embedding)
+        np.testing.assert_allclose(result.concat_embeddings[0][hidden_dim:], result.alt_embeddings[0])
+
 
 class TestEmbedSNPFromVCFRow:
 
@@ -642,3 +679,135 @@ class TestSequenceProvider:
                 except Exception:
                     pass
                 m.assert_called()
+
+
+class TestGenomicToBinIndices:
+
+    def test_single_interval_within_one_bin(self):
+        bins = genomic_to_bin_indices([(100, 110)], window_start=0, bin_size=32)
+        assert list(bins) == [3]   # 100//32 = 3, ceil(110/32) = 4 -> bin 3 only
+
+    def test_interval_spanning_multiple_bins(self):
+        bins = genomic_to_bin_indices([(0, 70)], window_start=0, bin_size=32)
+        assert list(bins) == [0, 1, 2]
+
+    def test_window_start_offset(self):
+        # window starts at genomic position 1000; interval at 1032-1064 -> bin 1
+        bins = genomic_to_bin_indices([(1032, 1064)], window_start=1000, bin_size=32)
+        assert list(bins) == [1]
+
+    def test_profile_offset_shifts_bins(self):
+        bins = genomic_to_bin_indices(
+            [(32, 64)], window_start=0, bin_size=32, profile_offset_bp=32
+        )
+        assert list(bins) == [0]
+
+    def test_multiple_intervals_deduplicated_and_sorted(self):
+        bins = genomic_to_bin_indices(
+            [(64, 96), (0, 32), (0, 32)], window_start=0, bin_size=32
+        )
+        assert list(bins) == [0, 2]
+
+    def test_num_bins_clips_out_of_range(self):
+        bins = genomic_to_bin_indices(
+            [(0, 320)], window_start=0, bin_size=32, num_bins=5
+        )
+        assert all(b < 5 for b in bins)
+
+    def test_negative_relative_start_clamped_to_zero(self):
+        bins = genomic_to_bin_indices([(-100, 32)], window_start=0, bin_size=32)
+        assert bins[0] == 0
+
+
+class TestProfileVariantEffectScore:
+
+    def test_no_change_gives_zero_score(self):
+        ref = np.ones((3, 10), dtype=np.float32) * 5
+        alt = ref.copy()
+        scores = profile_variant_effect_score(ref, alt)
+        np.testing.assert_allclose(scores, 0.0, atol=1e-6)
+
+    def test_doubling_coverage_gives_score_near_one(self):
+        ref = np.ones((2, 1), dtype=np.float32) * 100
+        alt = ref * 2
+        scores = profile_variant_effect_score(ref, alt, pseudocount=1.0)
+        # log2((200+1)/(100+1)) ~ log2(2) for large counts
+        assert np.allclose(scores, np.log2(201 / 101), atol=1e-5)
+
+    def test_bin_indices_restrict_aggregation(self):
+        ref = np.array([[1.0, 1.0, 100.0]])
+        alt = np.array([[1.0, 1.0, 200.0]])
+        score_all = profile_variant_effect_score(ref, alt)
+        score_subset = profile_variant_effect_score(ref, alt, bin_indices=[0, 1])
+        assert score_subset[0] != score_all[0]
+        assert pytest.approx(score_subset[0], abs=1e-6) == 0.0
+
+    def test_output_shape_matches_num_tracks(self):
+        ref = np.random.rand(5, 8).astype(np.float32)
+        alt = np.random.rand(5, 8).astype(np.float32)
+        scores = profile_variant_effect_score(ref, alt)
+        assert scores.shape == (5,)
+
+
+class TestPredictVariantEffect:
+
+    def _profile_wrapper(self, num_tracks: int = 4, num_bins: int = 6) -> MagicMock:
+        wrapper = MagicMock()
+        wrapper.model_name = "mock_profile_model"
+        rng = np.random.default_rng(0)
+        wrapper.predict_profile.side_effect = lambda *a, **kw: rng.random(
+            (num_tracks, num_bins)
+        ).astype(np.float32)
+        del wrapper.get_track_metadata  # simulate models without track metadata
+        return wrapper
+
+    def test_raises_without_predict_profile(self):
+        wrapper = MagicMock(spec=["embed"])
+        embedder = SNPEmbedder(wrapper)
+        with pytest.raises(TypeError, match="predict_profile"):
+            embedder.predict_variant_effect(_make_snp(), chromosome_sequence=CHR_SEQ)
+
+    def test_returns_variant_effect_result(self):
+        wrapper = self._profile_wrapper()
+        embedder = SNPEmbedder(wrapper)
+        result = embedder.predict_variant_effect(_make_snp(), chromosome_sequence=CHR_SEQ)
+        assert isinstance(result, VariantEffectResult)
+        assert result.ref_profile.shape == (4, 6)
+        assert len(result.alt_profiles) == 1
+        assert len(result.effect_scores) == 1
+        assert result.effect_scores[0].shape == (4,)
+
+    def test_multi_allelic_returns_one_score_per_alt(self):
+        wrapper = self._profile_wrapper()
+        embedder = SNPEmbedder(wrapper)
+        snp = _make_snp(alts=["T", "G"])
+        result = embedder.predict_variant_effect(snp, chromosome_sequence=CHR_SEQ)
+        assert len(result.alt_profiles) == 2
+        assert len(result.effect_scores) == 2
+
+    def test_track_names_from_metadata_when_available(self):
+        import pandas as pd
+
+        wrapper = MagicMock()
+        wrapper.model_name = "mock_profile_model"
+        rng = np.random.default_rng(0)
+        wrapper.predict_profile.side_effect = lambda *a, **kw: rng.random((3, 4)).astype(np.float32)
+        wrapper.get_track_metadata.return_value = pd.DataFrame(
+            {"identifier": ["a", "b", "c"]}
+        )
+        embedder = SNPEmbedder(wrapper)
+        result = embedder.predict_variant_effect(_make_snp(), chromosome_sequence=CHR_SEQ)
+        assert result.track_names == ["a", "b", "c"]
+
+    def test_top_tracks_ranks_by_absolute_score(self):
+        snp = _make_snp()
+        result = VariantEffectResult(
+            snp=snp,
+            ref_profile=np.zeros((4, 2)),
+            alt_profiles=[np.zeros((4, 2))],
+            effect_scores=[np.array([0.1, -5.0, 2.0, -0.5])],
+            track_names=["w", "x", "y", "z"],
+        )
+        top = result.top_tracks(n=2)
+        assert top[0][0] == "x"
+        assert top[1][0] == "y"
