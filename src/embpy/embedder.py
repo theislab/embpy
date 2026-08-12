@@ -2553,7 +2553,15 @@ class BioEmbedder:
 
         logging.info(f"Embedding {len(valid_inputs)} valid SMILES with model '{model}'")
         try:
-            batch_embs = inst.embed_batch(input=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
+            # Wrappers disagree on the batch parameter name: most declare
+            # ``inputs`` (base.py), while ChemBERTa declares ``input``. Try the
+            # common spelling first and fall back, mirroring the generic embed
+            # path -- otherwise every molecule model except ChemBERTa raises a
+            # TypeError that is silently swallowed as "all inputs failed".
+            try:
+                batch_embs = inst.embed_batch(inputs=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
+            except TypeError:
+                batch_embs = inst.embed_batch(input=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
             for out_idx, emb in zip(valid_indices, batch_embs, strict=False):
                 results[out_idx] = emb
         except Exception as e:  # noqa: BLE001
