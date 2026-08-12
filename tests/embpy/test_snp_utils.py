@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import io
 import textwrap
 from unittest.mock import MagicMock, patch
@@ -18,6 +19,12 @@ from embpy.tl.snp_utils import (
     _apply_snp,
     _extract_context,
 )
+
+# SequenceProvider reads local FASTA via ``Bio.SeqIO``; biopython is the
+# optional ``[bio]`` extra, not part of the lightweight core. Without it the
+# reader degrades to N-runs, so the FASTA-reading tests must skip rather than
+# fail in a core-only install.
+_HAVE_BIO = importlib.util.find_spec("Bio") is not None
 
 
 CHR_SEQ = "ACGT" * 100          
@@ -566,6 +573,9 @@ class TestEmbedVCF:
         assert len(results) == 2
 
 
+@pytest.mark.skipif(
+    not _HAVE_BIO, reason="biopython not installed (pip install embpy[bio])"
+)
 class TestSequenceProvider:
 
     def _write_fasta(self, path, chrom_name: str, seq: str) -> None:
