@@ -8,12 +8,12 @@ called out that the species sets are consumed only inside
 ``BioEmbedder.embed_gene``'s human/mouse guard and should live next to
 the DNA registry; they do, now.
 
-The optional ``EvoWrapper`` / ``Evo2Wrapper`` gating uses the
-``_HAVE_*`` flag pattern so the entire dict can be constructed even
-when the optional dependency is missing -- the wrapper slot for
-unavailable models is ``None`` and the per-call dispatch (see
-``BioEmbedder._discover_models``) drops the entry from the user-facing
-listing.
+The optional ``EvoWrapper`` / ``Evo2Wrapper`` / ``AlphaGenomeWrapper`` /
+``ScoobyWrapper`` gating uses the ``_HAVE_*`` flag pattern so the entire
+dict can be constructed even when the optional dependency is missing --
+the wrapper slot for unavailable models is ``None`` and the per-call
+dispatch (see ``BioEmbedder._discover_models``) drops the entry from the
+user-facing listing.
 """
 
 from __future__ import annotations
@@ -44,6 +44,22 @@ try:
 except ImportError:
     _HAVE_EVO2 = False
     Evo2Wrapper = None  # type: ignore
+
+try:
+    from ..models.alphagenome_models import AlphaGenomeWrapper
+
+    _HAVE_ALPHAGENOME = True
+except ImportError:
+    _HAVE_ALPHAGENOME = False
+    AlphaGenomeWrapper = None  # type: ignore
+
+try:
+    from ..models.scooby_models import ScoobyWrapper
+
+    _HAVE_SCOOBY = True
+except ImportError:
+    _HAVE_SCOOBY = False
+    ScoobyWrapper = None  # type: ignore
 
 
 DNA_MODELS: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
@@ -140,6 +156,18 @@ DNA_MODELS: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     "caduceus_ps_131k": (
         CaduceusWrapper,
         "kuleshov-group/caduceus-ps_seqlen-131k_d_model-256_n_layer-16",
+    ),
+    # AlphaGenome (Google DeepMind cloud API client) -- pip install embpy[alphagenome]
+    "alphagenome": (AlphaGenomeWrapper if _HAVE_ALPHAGENOME else None, "alphagenome"),
+    # Scooby (gagneurlab/scooby) -- pip install embpy[scooby]. Single-cell-resolution
+    # DNA sequence model conditioned on a precomputed per-cell embedding; the model
+    # path selects the checkpoint (and, via ScoobyWrapper.KNOWN_CHECKPOINTS, its
+    # architecture hyperparameters).
+    "scooby_onek1k": (ScoobyWrapper if _HAVE_SCOOBY else None, "lauradmartens/onek1k-scooby"),
+    "scooby_neurips": (ScoobyWrapper if _HAVE_SCOOBY else None, "johahi/neurips-scooby"),
+    "scooby_epicardioids": (
+        ScoobyWrapper if _HAVE_SCOOBY else None,
+        "lauradmartens/epicardioids-scooby",
     ),
 }
 

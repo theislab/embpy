@@ -131,6 +131,10 @@ EXPECTED_ENTRIES: list[tuple[str, str, str]] = [
         "CaduceusWrapper",
         "kuleshov-group/caduceus-ps_seqlen-131k_d_model-256_n_layer-16",
     ),
+    ("alphagenome", "AlphaGenomeWrapper", "alphagenome"),
+    ("scooby_onek1k", "ScoobyWrapper", "lauradmartens/onek1k-scooby"),
+    ("scooby_neurips", "ScoobyWrapper", "johahi/neurips-scooby"),
+    ("scooby_epicardioids", "ScoobyWrapper", "lauradmartens/epicardioids-scooby"),
     # --- Protein ---
     ("esm1b", "ESM2Wrapper", "facebook/esm-1b"),
     ("esm1v_1", "ESM2Wrapper", "facebook/esm1v_t33_650M_UR90S_1"),

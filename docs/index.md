@@ -25,4 +25,5 @@ notebooks/proteins
 notebooks/small_molecules
 notebooks/cells
 notebooks/scib_validation
+notebooks/variant_effects
 ```

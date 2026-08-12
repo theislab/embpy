@@ -312,6 +312,90 @@ class TestBorzoiWrapper:
         assert result.shape == (hidden_dim,)
         assert not np.isnan(result).any()
 
+    def test_predict_profile_without_load_raises(self):
+        w = BorzoiWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.predict_profile("ACGT")
+
+    def test_predict_profile_returns_tracks_by_bins(self):
+        w = BorzoiWrapper()
+        w.device = torch.device("cpu")
+
+        num_tracks, num_bins = 7611, 50
+        mock_model = MagicMock()
+        mock_model.forward.return_value = torch.rand(1, num_tracks, num_bins)
+        w.model = mock_model
+
+        profile = w.predict_profile("ACGT")
+        assert isinstance(profile, np.ndarray)
+        assert profile.shape == (num_tracks, num_bins)
+        mock_model.forward.assert_called_once()
+        assert mock_model.forward.call_args.kwargs.get("is_human") is True
+
+    def test_predict_profile_track_subset(self):
+        w = BorzoiWrapper()
+        w.device = torch.device("cpu")
+
+        mock_model = MagicMock()
+        mock_model.forward.return_value = torch.rand(1, 10, 5)
+        w.model = mock_model
+
+        profile = w.predict_profile("ACGT", track_indices=[0, 2, 4])
+        assert profile.shape == (3, 5)
+
+    def test_predict_profile_undo_squashed_scale_without_package_raises(self):
+        w = BorzoiWrapper()
+        w.device = torch.device("cpu")
+        mock_model = MagicMock()
+        mock_model.forward.return_value = torch.rand(1, 4, 5)
+        w.model = mock_model
+
+        with patch("embpy.models.dna_models._undo_squashed_scale", None):
+            with pytest.raises(ImportError):
+                w.predict_profile("ACGT", undo_squashed_scale=True)
+
+    def test_embed_return_profile_runs_second_forward(self):
+        w = BorzoiWrapper()
+        w.device = torch.device("cpu")
+
+        hidden_dim, num_bins = 32, 10
+        num_tracks = 7611
+        mock_model = MagicMock()
+        mock_model.get_embs_after_crop.return_value = torch.randn(1, hidden_dim, num_bins)
+        mock_model.forward.return_value = torch.rand(1, num_tracks, num_bins)
+        w.model = mock_model
+
+        embedding, profile = w.embed("ACGT", return_profile=True)
+        assert embedding.shape == (hidden_dim,)
+        assert profile.shape == (num_tracks, num_bins)
+
+    def test_embed_default_does_not_call_forward(self):
+        w = BorzoiWrapper()
+        w.device = torch.device("cpu")
+        mock_model = MagicMock()
+        mock_model.get_embs_after_crop.return_value = torch.randn(1, 32, 10)
+        w.model = mock_model
+
+        w.embed("ACGT")
+        mock_model.forward.assert_not_called()
+
+    def test_profile_offset_bp_computed_from_crop(self):
+        w = BorzoiWrapper()
+        mock_model = MagicMock()
+        mock_model.crop.target_length = 16352  # 16384 - 32, as in real Borzoi
+        w.model = mock_model
+        assert w.profile_offset_bp == (524_288 - 16352 * 32) // 2
+
+    def test_profile_offset_bp_without_load_raises(self):
+        w = BorzoiWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            _ = w.profile_offset_bp
+
+    def test_get_track_metadata_returns_dataframe(self):
+        df = BorzoiWrapper.get_track_metadata()
+        assert "identifier" in df.columns
+        assert len(df) > 0
+
 
 class TestEvo2Wrapper:
     """Tests for the Evo2Wrapper (mocked, since evo2 may not be installed)."""

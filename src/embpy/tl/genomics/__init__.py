@@ -3,9 +3,12 @@ from .snp_utils import (
     SNPEmbedder,
     SNPEmbeddingResult,
     SequenceProvider,
+    VariantEffectResult,
     download_hg38_per_chrom,
     download_hg38_single_fasta,
     embed_vcf,
+    genomic_to_bin_indices,
+    profile_variant_effect_score,
 )
 
 __all__ = [
@@ -13,7 +16,10 @@ __all__ = [
     "SNPEmbedder",
     "SNPEmbeddingResult",
     "SequenceProvider",
+    "VariantEffectResult",
     "download_hg38_per_chrom",
     "download_hg38_single_fasta",
     "embed_vcf",
+    "genomic_to_bin_indices",
+    "profile_variant_effect_score",
 ]

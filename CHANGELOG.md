@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning][].
 
 - `embpy.store.actions.compile_action_table` is now the shared headless action compiler, with explicit RESOLVED / CONTROL / UNRESOLVED status accounting and JSON sidecars.
 - `embpy.resources.gene.control.ControlPolicy` and status-aware embedding APIs add clearer handling for control and unresolved identifiers.
+- `AlphaGenomeWrapper` (Google DeepMind's cloud-API DNA model) and `ScoobyWrapper` (gagneurlab/scooby, single-cell-resolution DNA sequence model) are now registered in `DNA_MODELS`/`MODEL_REGISTRY` under the keys `alphagenome`, `scooby_onek1k`, `scooby_neurips`, and `scooby_epicardioids`, reachable through `BioEmbedder.embed(model=...)` and `list_available_models()` like any other model. Each is gated behind its own optional extra (`embpy[alphagenome]`, `embpy[scooby]`) and standalone pixi environment (`pixi install -e alphagenome` / `-e scooby`) -- neither is pulled in by `embpy[all]` or the default/gpu/dev pixi environments, since AlphaGenome needs an external `ALPHAGENOME_API_KEY` and Scooby installs from a git URL.
 
 ### Changed
 

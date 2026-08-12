@@ -63,6 +63,18 @@ from .singlecell_models import (
     singlecell_info,
 )
 
+# AlphaGenome is optional (requires: pip install alphagenome)
+try:
+    from .alphagenome_models import AlphaGenomeWrapper
+except ImportError:
+    AlphaGenomeWrapper = None  # type: ignore
+
+# Scooby is optional (requires: pip install snapatac2-scooby && pip install git+https://github.com/gagneurlab/scooby.git)
+try:
+    from .scooby_models import ScoobyWrapper
+except ImportError:
+    ScoobyWrapper = None  # type: ignore
+
 __all__ = [
     "BorzoiWrapper",
     "EnformerWrapper",
@@ -100,4 +112,7 @@ __all__ = [
     "get_singlecell_wrapper",
     "list_singlecell_models",
     "singlecell_info",
+    "AlphaGenomeWrapper",
+    "ScoobyWrapper"
 ]
+

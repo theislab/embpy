@@ -634,9 +634,13 @@ class EnformerWrapper(BaseModelWrapper):
 
 try:
     from borzoi_pytorch import Borzoi
+    from borzoi_pytorch.pytorch_borzoi_model import TRACKS_DF as _BORZOI_TRACKS_DF
+    from borzoi_pytorch.pytorch_borzoi_utils import undo_squashed_scale as _undo_squashed_scale
 except ImportError:
     logging.warning("borzoi_pytorch not installed; BorzoiWrapper will be nonfunctional.")
     Borzoi = None  # type: ignore
+    _BORZOI_TRACKS_DF = None  # type: ignore
+    _undo_squashed_scale = None  # type: ignore
 
 
 class BorzoiWrapper(BaseModelWrapper):
@@ -675,6 +679,10 @@ class BorzoiWrapper(BaseModelWrapper):
     NUM_CHANNELS = 4
     ALPHABET_MAP = {"A": 0, "C": 1, "G": 2, "T": 3}
     UNKNOWN_INDEX = 4
+    # Borzoi predicts coverage tracks at 32 bp resolution (see borzoi_pytorch's
+    # `Borzoi.crop`, which crops the trunk to `target_length` bins before the
+    # final head convs).
+    BIN_SIZE = 32
 
     def __init__(self, model_path_or_name: str = "johahi/borzoi-replicate-0", **kwargs):
         """
@@ -828,8 +836,12 @@ class BorzoiWrapper(BaseModelWrapper):
         self,
         input: str,
         pooling_strategy: str = "mean",
+        return_profile: bool = False,
+        is_human: bool = True,
+        track_indices: Sequence[int] | None = None,
+        undo_squashed_scale: bool = False,
         **kwargs: Any,
-    ) -> np.ndarray:
+    ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
         """
         Compute Borzoi embeddings for a single DNA sequence.
 
@@ -844,13 +856,23 @@ class BorzoiWrapper(BaseModelWrapper):
             The DNA sequence string.
         pooling_strategy : str, default "mean"
             “mean” or “max” pooling over genomic bins.
+        return_profile : bool, default False
+            If True, also run the model's prediction head (see
+            :meth:`predict_profile`) and return ``(embedding, profile)``
+            instead of just the embedding. This costs a second forward pass.
+        is_human, track_indices, undo_squashed_scale
+            Forwarded to :meth:`predict_profile` when ``return_profile=True``;
+            ignored otherwise.
         **kwargs : Any
             Currently unused but accepted for interface consistency.
 
         Returns
         -------
         np.ndarray
-            A 1D NumPy array of length hidden_dim representing the pooled Borzoi embedding.
+            A 1D NumPy array of length hidden_dim representing the pooled
+            Borzoi embedding, or, if ``return_profile=True``, a tuple
+            ``(embedding, profile)`` where ``profile`` is the array returned
+            by :meth:`predict_profile`.
 
         Raises
         ------
@@ -875,13 +897,118 @@ class BorzoiWrapper(BaseModelWrapper):
 
         trunk = embs.squeeze(0)  # (hidden_dim, num_bins)
         if pooling_strategy == "none":
-            return trunk.T.cpu().numpy()  # (num_bins, hidden_dim)
+            pooled_np = trunk.T.cpu().numpy()  # (num_bins, hidden_dim)
         elif pooling_strategy == "mean":
-            pooled = trunk.mean(dim=1)  # (hidden_dim,)
+            pooled_np = trunk.mean(dim=1).to(torch.float32).cpu().numpy()  # (hidden_dim,)
         else:
-            pooled = trunk.max(dim=1).values  # (hidden_dim,)
+            pooled_np = trunk.max(dim=1).values.to(torch.float32).cpu().numpy()
 
-        return pooled.to(torch.float32).cpu().numpy()
+        if not return_profile:
+            return pooled_np
+
+        profile = self.predict_profile(
+            input,
+            is_human=is_human,
+            track_indices=track_indices,
+            undo_squashed_scale=undo_squashed_scale,
+        )
+        return pooled_np, profile
+
+    @property
+    def profile_offset_bp(self) -> int:
+        """bp offset of profile bin 0 relative to the start of the model's input window.
+
+        Borzoi crops both ends of its receptive field before the prediction
+        head, so the first predicted bin does not start at position 0 of the
+        524,288 bp input. This is only exact when the sequence passed to
+        :meth:`predict_profile` is exactly ``SEQUENCE_LENGTH`` long (i.e. no
+        additional padding/cropping was applied by :meth:`_preprocess_sequence`).
+        """
+        if self.model is None:
+            raise RuntimeError("Borzoi model not loaded. Call load() first.")
+        crop_length = self.model.crop.target_length
+        return (self.SEQUENCE_LENGTH - crop_length * self.BIN_SIZE) // 2
+
+    def predict_profile(
+        self,
+        input: str,
+        is_human: bool = True,
+        track_indices: Sequence[int] | None = None,
+        undo_squashed_scale: bool = False,
+    ) -> np.ndarray:
+        """Predict Borzoi's full coverage profile (RNA-seq/ATAC/ChIP tracks).
+
+        Unlike :meth:`embed`, which pools the pre-head trunk embedding, this
+        runs the model's human/mouse head (``model.forward``) to obtain the
+        actual predicted per-track, per-bin coverage.
+
+        Parameters
+        ----------
+        input : str
+            Raw DNA sequence string.
+        is_human : bool, default True
+            Use the human head (7,611 tracks) or the mouse head (2,608 tracks).
+        track_indices : sequence of int, optional
+            Restrict the output to these track indices (saves memory if only
+            a handful of assays are of interest). Default: all tracks.
+        undo_squashed_scale : bool, default False
+            Borzoi targets are stored on a "squashed" (soft-clipped,
+            power-transformed) scale during training; set True to invert
+            that transform and recover approximate linear-scale coverage,
+            which is required before summing bins for variant-effect scoring.
+
+        Returns
+        -------
+        np.ndarray
+            Array of shape ``(num_tracks, num_bins)``. With the default
+            settings ``num_bins == model.crop.target_length`` and each bin
+            spans :attr:`BIN_SIZE` (32) bp; see :attr:`profile_offset_bp` for
+            how bin 0 maps back to genomic coordinates.
+        """
+        if self.model is None or self.device is None:
+            raise RuntimeError("Borzoi model not loaded. Call load() first.")
+
+        one_hot = self._preprocess_sequence(input).to(self.device)  # (1, 4, 524288)
+
+        with torch.no_grad():
+            model: Any = self.model
+            tracks = model.forward(one_hot, is_human=is_human)
+
+        if not isinstance(tracks, torch.Tensor) or tracks.dim() != 3:
+            raise RuntimeError(
+                f"Unexpected Borzoi profile output: {type(tracks)}, "
+                f"shape={getattr(tracks, 'shape', None)}"
+            )
+
+        tracks = tracks.squeeze(0)  # (num_tracks, num_bins)
+        if track_indices is not None:
+            idx = torch.as_tensor(list(track_indices), dtype=torch.long, device=tracks.device)
+            tracks = tracks.index_select(0, idx)
+        if undo_squashed_scale:
+            if _undo_squashed_scale is None:
+                raise ImportError("borzoi_pytorch not installed; cannot undo squashed scale.")
+            tracks = _undo_squashed_scale(tracks.unsqueeze(0)).squeeze(0)
+
+        return tracks.to(torch.float32).cpu().numpy()
+
+    @staticmethod
+    def get_track_metadata() -> Any:
+        """Return Borzoi's bundled track metadata (one row per output channel).
+
+        Columns include ``identifier``, ``description``, ``file``,
+        ``strand_pair``, ``sum_stat`` and ``scale`` -- the same
+        ``targets.txt`` table used internally by ``borzoi_pytorch`` to decode
+        and unsquash predictions. Useful for mapping :meth:`predict_profile`
+        track indices to assay names (e.g. "RNA:liver" or "ATAC:PBMC").
+
+        Returns
+        -------
+        pandas.DataFrame
+            A copy of the bundled track annotation table.
+        """
+        if _BORZOI_TRACKS_DF is None:
+            raise ImportError("borzoi_pytorch not installed; cannot load track metadata.")
+        return _BORZOI_TRACKS_DF.copy()
 
     # Conservative default chosen for a 80 GB H100 / A100.
     # Borzoi's first conv expands a (B, 4, 524288) input into roughly

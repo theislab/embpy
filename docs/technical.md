@@ -151,12 +151,14 @@ Each pixi environment is self-contained and installed independently — you do
 **not** need every environment to solve in order to use one:
 
 ```bash
-pixi install -e default   # CPU/dev
+pixi install -e default      # CPU/dev
 pixi run -e default verify
-pixi install -e mps       # Apple Silicon/PyTorch MPS
-pixi install -e gpu       # Linux CUDA GPU
+pixi install -e mps          # Apple Silicon/PyTorch MPS
+pixi install -e gpu          # Linux CUDA GPU
 pixi install -e helical-gpu  # single-cell foundation models (scGPT, Geneformer, ...)
-pixi install -e boltz     # Boltz-specific examples
+pixi install -e boltz        # Boltz-specific examples
+pixi install -e alphagenome  # AlphaGenome cloud API client (opt-in)
+pixi install -e scooby       # Scooby single-cell DNA model (opt-in, git install)
 ```
 
 Pixi keeps a single lockfile for the whole workspace, so regenerating it solves
@@ -171,6 +173,29 @@ pixi install -e default --frozen
 The CPU environments (`default`, `dev`, `docs`) share one solve group and are
 kept independent from the GPU/CUDA-only ones, so a failure in a GPU environment
 never blocks a CPU install.
+
+Pip extras for individual model families (see `pyproject.toml` for the full,
+up-to-date list and per-extra caveats):
+
+```bash
+pip install "embpy[seqmodels]"     # Borzoi, Enformer
+pip install "embpy[alphagenome]"   # AlphaGenome (cloud API; needs ALPHAGENOME_API_KEY)
+pip install "embpy[scooby]"        # Scooby (installs from git; see pyproject.toml)
+pip install "embpy[esm3]"          # ESM-3 / ESM-C
+pip install "embpy[helical]"       # Helical-backed single-cell models
+pip install "embpy[state]"         # Arc STATE
+pip install "embpy[stack]"         # Arc STACK
+pip install "embpy[all]"           # every extra that installs cleanly via plain pip
+```
+
+`embpy[all]` intentionally excludes extras that need a compiler/CUDA toolchain
+or pre-built C library (`caduceus`, `evo2`, `helical`), need torch
+pre-installed to build (`minimol`), pin incompatible dependency versions
+(`esm3`, `boltz`), install from a git URL (`scooby`), or call an external
+hosted API (`alphagenome`) -- install those explicitly.
+
+`AlphaGenomeWrapper` calls a hosted API rather than loading local weights, so
+set `ALPHAGENOME_API_KEY` in the environment before calling `.load()`.
 
 ## Model Keys
 

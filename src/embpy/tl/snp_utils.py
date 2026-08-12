@@ -1,7 +1,7 @@
 # Backward compatibility -- code lives in tl/genomics/snp_utils.py
-from .genomics.snp_utils import *  # noqa: F401,F403
+# (re-exports private helpers too, since existing tests import e.g. `_apply_snp`
+# directly from this module).
+from .genomics import snp_utils as _snp_utils
 
-# `import *` skips underscore-prefixed names; re-export the internal helpers
-# explicitly so existing call sites (and unit tests) that imported them from
-# this shim keep working.
-from .genomics.snp_utils import _apply_snp, _extract_context  # noqa: F401
+globals().update({k: v for k, v in vars(_snp_utils).items() if not k.startswith("__")})
+del _snp_utils
