@@ -70,7 +70,11 @@ autodoc_member_order = "groupwise"
 # pages for the model wrappers / resolvers would fail to import. Keep this in
 # sync with the optional extras in pyproject.toml.
 autodoc_mock_imports = [
-    "torch",
+    # NOTE: torch is intentionally NOT mocked. Mocking it makes ``torch.Tensor``
+    # a non-class Mock, and modern scipy/array-api-compat (pulled in transitively
+    # by seaborn -> scipy.stats) calls ``issubclass(x, torch.Tensor)`` at import
+    # time, which then raises "issubclass() arg 2 must be a class...". The docs
+    # build installs a real CPU-only torch instead (see .readthedocs.yaml).
     "torch_geometric",
     "transformers",
     "sentencepiece",
