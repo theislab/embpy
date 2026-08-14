@@ -100,7 +100,12 @@ autodoc_mock_imports = [
     "pertpy",
     "cell_eval",
     "jump_portrait",
-    "h5py",
+    # NOTE: h5py is intentionally NOT mocked. anndata (a hard dependency, so
+    # always installed) registers a singledispatch handler on
+    # ``h5py.AttributeManager`` at import time; when h5py is mocked, Sphinx's
+    # autodoc mock recurses in ``_make_subclass`` under ``typing.get_type_hints``
+    # and the build hangs until Read the Docs kills it at the 900s limit. The
+    # real h5py is small and present, so import it for real.
 ]
 default_role = "literal"
 napoleon_google_docstring = False
