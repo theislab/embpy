@@ -16,7 +16,7 @@ single cells; annotate the resulting objects; and compare embeddings with
 scverse-friendly plotting and analysis utilities.
 
 <p align="center">
-  <img src="docs/embpy_architecture.png" alt="embpy architecture" width="900"/>
+  <img src="docs/embpy_architecture.svg" alt="embpy architecture" width="900"/>
 </p>
 
 ## What embpy Does
@@ -189,11 +189,10 @@ pl.plot_embedding_space(
 
 ## Tutorials
 
-**Start here** — a short, goal-oriented path (the first two run in seconds with no
-model downloads):
+**Start here** — a short, goal-oriented path:
 
-1. [Embed anything in 60 seconds](docs/notebooks/01_embed_in_60_seconds.ipynb) — one
-   call, any modality, into an AnnData.
+1. [Embed with any model](docs/notebooks/01_embed_any_model.ipynb) — the full model
+   catalog, then one embedding call per family (DNA, protein, molecule, text, …).
 2. [Where embeddings live](docs/notebooks/02_output_contract.ipynb) — the
    `.obsm` / `.varm` / `.uns` storage contract and provenance.
 3. [Compare embedding spaces across models](docs/notebooks/03_compare_models.ipynb) —

@@ -20,7 +20,7 @@ references.md
 :maxdepth: 1
 :caption: Get started
 
-notebooks/01_embed_in_60_seconds
+notebooks/01_embed_any_model
 notebooks/02_output_contract
 notebooks/03_compare_models
 notebooks/04_benchmark_models

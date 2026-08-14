@@ -116,7 +116,7 @@ for i, line in enumerate(["one entry point", "device auto · batching",
     text(HUBX + HUBW / 2, HUBY + 92 + i * 22, line, size=12, fill="#eafafb",
          anchor="middle")
 
-card(xs["registry"], Y, WID["registry"], HGT, "registry", "Model registry · ~142",
+card(xs["registry"], Y, WID["registry"], HGT, "registry", "Model registry · ~150",
      ["Protein — ESM2 · ESMC · ProtT5", "DNA — Enformer · Borzoi · NT · Evo",
       "Molecule — ChemBERTa · RDKit", "Single-cell — scGPT · Geneformer · scVI",
       "Morphology — SubCell · Structure"], sub="one key selects the backend")
@@ -155,7 +155,7 @@ text(40, H - 22,
 svg = (
     f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" '
     f'role="img" aria-label="embpy architecture: BioEmbedder.embed routes any '
-    f'biological entity through resolve and preprocess to one of ~142 models across '
+    f'biological entity through resolve and preprocess to one of ~150 models across '
     f'seven modality families, writing embeddings into typed AnnData slots, with '
     f'annotation feeding in and tl/pl analysis reading out." '
     f'style="max-width:100%;height:auto">\n' + "\n".join(_parts) + "\n</svg>\n"
