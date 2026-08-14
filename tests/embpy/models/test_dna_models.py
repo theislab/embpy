@@ -392,6 +392,7 @@ class TestBorzoiWrapper:
             _ = w.profile_offset_bp
 
     def test_get_track_metadata_returns_dataframe(self):
+        pytest.importorskip("borzoi_pytorch")  # get_track_metadata loads the real package
         df = BorzoiWrapper.get_track_metadata()
         assert "identifier" in df.columns
         assert len(df) > 0

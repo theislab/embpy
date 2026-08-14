@@ -485,6 +485,7 @@ class TestESM3Wrapper:
             w.embed("MTEYKLVVVG")
 
     def test_embed_with_mock(self):
+        pytest.importorskip("esm.sdk.api")  # ESM3Wrapper.embed builds an ESMProtein
         from embpy.models.protein_models import ESM3Wrapper
 
         w = ESM3Wrapper()
@@ -504,6 +505,7 @@ class TestESM3Wrapper:
         assert emb.ndim == 1
 
     def test_embed_batch(self):
+        pytest.importorskip("esm.sdk.api")  # ESM3Wrapper.embed builds an ESMProtein
         from embpy.models.protein_models import ESM3Wrapper
 
         w = ESM3Wrapper()

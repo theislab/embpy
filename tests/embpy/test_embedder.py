@@ -469,6 +469,7 @@ class TestEmbedCells:
 
     @patch("embpy.embedder.GeneResolver")
     def test_embed_cells_pca(self, mock_resolver_cls):
+        pytest.importorskip("scanpy")  # standard cell preprocessing requires scanpy
         from embpy.embedder import BioEmbedder
 
         embedder = BioEmbedder(device="cpu")
@@ -512,6 +513,7 @@ class TestEmbedCells:
 
     @patch("embpy.embedder.GeneResolver")
     def test_embed_cells_metadata(self, mock_resolver_cls):
+        pytest.importorskip("scanpy")  # standard cell preprocessing requires scanpy
         from embpy.embedder import BioEmbedder
 
         embedder = BioEmbedder(device="cpu")
@@ -610,6 +612,7 @@ class TestEmbedCells:
 
     @patch("embpy.embedder.GeneResolver")
     def test_embed_cells_copy(self, mock_resolver_cls):
+        pytest.importorskip("scanpy")  # standard cell preprocessing requires scanpy
         from embpy.embedder import BioEmbedder
 
         embedder = BioEmbedder(device="cpu")
@@ -706,6 +709,7 @@ class TestEmbedAdata:
 
     @patch("embpy.embedder.GeneResolver")
     def test_cell_models_only(self, mock_resolver_cls):
+        pytest.importorskip("scanpy")  # standard cell preprocessing requires scanpy
         from embpy.embedder import BioEmbedder
 
         embedder = BioEmbedder(device="cpu")
@@ -780,6 +784,7 @@ class TestEmbedAdata:
 
     @patch("embpy.embedder.GeneResolver")
     def test_combined_cell_and_perturbation(self, mock_resolver_cls):
+        pytest.importorskip("scanpy")  # standard cell preprocessing requires scanpy
         from embpy.embedder import BioEmbedder
 
         embedder = BioEmbedder(device="cpu")
