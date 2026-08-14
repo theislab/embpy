@@ -43,7 +43,14 @@ class TestGetDnaSequence:
         seq_mock.raise_for_status = MagicMock()
         seq_mock.text = "ACGTACGTACGT"
 
-        with patch("embpy.resources.gene.resolver.requests.get", side_effect=[lookup_mock, seq_mock]):
+        # The "symbol" path first runs the alias chain (resolve_symbol) to
+        # canonicalise names like KARS -> KARS1; that makes its own network
+        # calls and would consume the two mocked responses below (-> StopIteration).
+        # Stub it so this test covers only the Ensembl lookup + sequence fetch.
+        with (
+            patch.object(resolver, "resolve_symbol", return_value="TP53"),
+            patch("embpy.resources.gene.resolver.requests.get", side_effect=[lookup_mock, seq_mock]),
+        ):
             result = resolver.get_dna_sequence("TP53", "symbol")
             assert result == "ACGTACGTACGT"
 

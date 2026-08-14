@@ -254,6 +254,12 @@ class TestNameToSmilesSaltFallback:
     """Verify salt-stripping fallback in name_to_smiles."""
 
     def test_falls_back_to_cleaned_name(self, resolver):
+        # The CIRpy fallback uses the cirpy library's own network stack, which
+        # the requests.get patch below does not intercept. Left live, it resolves
+        # the salted name directly (e.g. "ethanol (hydrochloride)" -> "Cl.CCO")
+        # and short-circuits the salt-stripping retry this test exercises. Disable
+        # it so the fallback chain is fully deterministic.
+        resolver._cirpy_available = False
         call_count = [0]
 
         def side_effect(url, **kwargs):
