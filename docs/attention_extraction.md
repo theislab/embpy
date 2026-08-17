@@ -44,11 +44,25 @@ Verified by reading the installed packages (`arc-gpu` and `helical-gpu` environm
 | **Geneformer** | HuggingFace BERT | ✅ yes, native | `output_attentions` supported |
 | **TranscriptFormer** | explicit `F.softmax` in a module | ✅ yes, via hook | `transcriptformer/model_dir/layers.py:252` |
 | **UCE** | `torch.nn.TransformerEncoderLayer` | ✅ yes, via pre-hook | `uce/uce_model.py:74-75` |
-| **Tahoe** | `attn_impl` switch; torch path is eager | ⚠️ likely, untested on GPU | LLM-Foundry vendored code; the fast CUDA path is not taken under `attn_impl="torch"` |
+| **Tahoe** | `attn_impl="torch"` + `needs_weights` | ✅ **yes, verified on cluster** | 12 eager `GroupedQueryAttention`; captured `(4, 8, 1606, 1606)` from a real `embed_cells` run |
 | **scGPT** | `FlashMHA`, unconditionally | ❌ no | `scgpt/model_dir/model.py:625` constructs `FlashMHA` with no torch fallback |
 | **STATE** | `F.scaled_dot_product_attention` | ❌ no | `state/emb/nn/flash_transformer.py:67` |
 | HyenaDNA, Caduceus | attention-free (long convolution / SSM) | ❌ n/a | `has_attention = False` |
 | MiniMol, MHG-GNN | message-passing GNNs | ❌ n/a | `has_attention = False` |
+
+**Tahoe** was verified end to end on the cluster rather than inferred. The run also
+corrected the earlier guess: `attn_impl="torch"` is **necessary but not sufficient**.
+helical's `GroupedQueryAttention.forward` takes `needs_weights` -- note the *s*, not
+torch's `need_weights` -- and defaults it to `False`, so
+`scaled_multihead_dot_product_attention` computes `attn_weight` and then returns
+`None` for it. A forward pass with plain hooks therefore captures nothing. embpy's
+pre-hook now inspects each module's signature and sets whichever flag it accepts, so
+the weights come back: a 4-cell `embed_cells` yielded `(4, 8, 1606, 1606)`.
+
+Note the capture came from the model's `nn.TransformerEncoder` self-attention rather
+than from all 12 `GroupedQueryAttention` blocks, so coverage within Tahoe is partial;
+treat "Tahoe attention is available" as established and "which blocks" as
+model-specific detail worth checking for your use.
 
 **scGPT** deserves a note: its `transformer.py` contains a `need_weights=True` path,
 but the encoder layer actually used by `model.py` builds `FlashMHA` in `__init__` with
