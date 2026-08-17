@@ -2191,6 +2191,9 @@ class HyenaDNAWrapper(BaseModelWrapper):
 
     model_type = "dna"
     available_pooling_strategies = ["mean", "max", "cls", "last", "none"]
+    # HyenaDNA replaces attention with an implicit long convolution (the Hyena
+    # operator), so there are no attention weights to extract.
+    has_attention = False
 
     _CHAR_TO_ID: dict[str, int] = {
         "A": 7,
@@ -2317,6 +2320,9 @@ class CaduceusWrapper(BaseModelWrapper):
 
     model_type = "dna"
     available_pooling_strategies = ["mean", "max", "cls", "none"]
+    # Caduceus is built on the Mamba/SSM architecture (bi-directional, RC-equivariant)
+    # and has no attention mechanism, so there are no attention weights to extract.
+    has_attention = False
 
     def __init__(
         self,

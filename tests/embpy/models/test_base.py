@@ -522,3 +522,165 @@ class TestEmbedFromLayer:
         w = ConcreteWrapper()
         result = w.embed_from_layer("hello", layer=3, pooling_strategy="mean")
         assert isinstance(result, np.ndarray)
+
+
+# =====================================================================
+# extract_attention tests
+# =====================================================================
+
+
+class AttentionFreeWrapper(ConcreteWrapper):
+    """Stand-in for state-space / convolution / GNN architectures."""
+
+    has_attention = False
+
+
+class TestExtractAttention:
+    N_LAYERS = 6
+    N_HEADS = 4
+    SEQ = 5
+
+    @pytest.fixture
+    def hf_wrapper(self):
+        """Wrapper whose mock HF model returns one attention tensor per layer."""
+        w = ConcreteWrapper()
+        attns = tuple(torch.rand(1, self.N_HEADS, self.SEQ, self.SEQ) for _ in range(self.N_LAYERS))
+
+        mock_model = MagicMock()
+        mock_model.config.num_hidden_layers = self.N_LAYERS
+        mock_output = MagicMock()
+        mock_output.attentions = attns
+        mock_model.return_value = mock_output
+        w.model = mock_model
+        w.device = torch.device("cpu")
+        return w, attns
+
+    @property
+    def ids(self):
+        return torch.zeros(1, self.SEQ, dtype=torch.long)
+
+    # -- guard rails ---------------------------------------------------
+
+    def test_not_loaded_raises(self):
+        w = ConcreteWrapper()
+        with pytest.raises(RuntimeError, match="not loaded"):
+            w.extract_attention(self.ids)
+
+    def test_attention_free_architecture_raises(self):
+        w = AttentionFreeWrapper()
+        w.model = MagicMock()
+        w.model.config.num_hidden_layers = 4
+        w.device = torch.device("cpu")
+        with pytest.raises(NotImplementedError, match="attention-free"):
+            w.extract_attention(self.ids)
+
+    def test_non_huggingface_model_raises(self):
+        class _Opaque:  # no .config -> not a HF model
+            pass
+
+        w = ConcreteWrapper()
+        w.model = _Opaque()
+        w.device = torch.device("cpu")
+        with pytest.raises(NotImplementedError, match="only supported for HuggingFace"):
+            w.extract_attention(self.ids)
+
+    def test_fused_kernel_none_attentions_raises(self, hf_wrapper):
+        """SDPA / FlashAttention return no weights -> loud error, not silence."""
+        w, _ = hf_wrapper
+        w.model.return_value.attentions = None
+        with pytest.raises(RuntimeError, match="no attention weights"):
+            w.extract_attention(self.ids)
+
+    def test_partially_none_attentions_raises(self, hf_wrapper):
+        w, attns = hf_wrapper
+        w.model.return_value.attentions = (attns[0], None, *attns[2:])
+        with pytest.raises(RuntimeError, match="no attention weights"):
+            w.extract_attention(self.ids)
+
+    # -- behaviour -----------------------------------------------------
+
+    def test_extract_all_layers(self, hf_wrapper):
+        w, _ = hf_wrapper
+        result = w.extract_attention(self.ids, layers=None)
+        assert set(result.keys()) == set(range(self.N_LAYERS))
+
+    def test_no_embedding_layer_offset(self, hf_wrapper):
+        """Unlike hidden states, attentions have NO embedding-layer entry."""
+        w, _ = hf_wrapper
+        result = w.extract_attention(self.ids, layers=None)
+        assert len(result) == self.N_LAYERS  # not N_LAYERS + 1
+
+    def test_attention_shape_is_batch_heads_seq_seq(self, hf_wrapper):
+        w, _ = hf_wrapper
+        result = w.extract_attention(self.ids, layers=[0])
+        assert result[0].shape == (1, self.N_HEADS, self.SEQ, self.SEQ)
+
+    def test_extract_specific_layers(self, hf_wrapper):
+        w, _ = hf_wrapper
+        result = w.extract_attention(self.ids, layers=[0, 2, 5])
+        assert set(result.keys()) == {0, 2, 5}
+
+    def test_negative_index_maps_to_last_layer(self, hf_wrapper):
+        w, attns = hf_wrapper
+        result = w.extract_attention(self.ids, layers=[-1])
+        assert set(result.keys()) == {self.N_LAYERS - 1}
+        torch.testing.assert_close(result[self.N_LAYERS - 1], attns[-1])
+
+    def test_layer_index_maps_to_that_transformer_block(self, hf_wrapper):
+        w, attns = hf_wrapper
+        result = w.extract_attention(self.ids, layers=[3])
+        torch.testing.assert_close(result[3], attns[3])
+
+    def test_out_of_range_raises(self, hf_wrapper):
+        w, _ = hf_wrapper
+        with pytest.raises(IndexError, match="out of range"):
+            w.extract_attention(self.ids, layers=[99])
+
+    def test_negative_out_of_range_raises(self, hf_wrapper):
+        w, _ = hf_wrapper
+        with pytest.raises(IndexError, match="out of range"):
+            w.extract_attention(self.ids, layers=[-99])
+
+    def test_attention_mask_is_forwarded(self, hf_wrapper):
+        w, _ = hf_wrapper
+        mask = torch.ones(1, self.SEQ, dtype=torch.long)
+        w.extract_attention(self.ids, attention_mask=mask)
+        kwargs = w.model.call_args.kwargs
+        assert kwargs["output_attentions"] is True
+        torch.testing.assert_close(kwargs["attention_mask"], mask)
+
+
+class TestHasAttentionFlags:
+    """Attention-free architectures must be declared, not discovered at runtime."""
+
+    def test_default_is_true(self):
+        assert BaseModelWrapper.has_attention is True
+
+    @pytest.mark.parametrize(
+        ("module", "cls_name"),
+        [
+            ("embpy.models.dna_models", "HyenaDNAWrapper"),  # implicit long convolution
+            ("embpy.models.dna_models", "CaduceusWrapper"),  # Mamba / SSM
+            ("embpy.models.molecule_models", "MiniMolWrapper"),  # message-passing GNN
+            ("embpy.models.molecule_models", "MHGGNNWrapper"),  # GIN graph autoencoder
+        ],
+    )
+    def test_attention_free_wrappers_declare_false(self, module, cls_name):
+        import importlib
+
+        cls = getattr(importlib.import_module(module), cls_name)
+        assert cls.has_attention is False, f"{cls_name} must declare has_attention = False"
+
+    @pytest.mark.parametrize(
+        ("module", "cls_name"),
+        [
+            ("embpy.models.protein_models", "ESM2Wrapper"),
+            ("embpy.models.molecule_models", "ChembertaWrapper"),
+            ("embpy.models.dna_models", "NucleotideTransformerWrapper"),
+        ],
+    )
+    def test_transformer_wrappers_keep_attention(self, module, cls_name):
+        import importlib
+
+        cls = getattr(importlib.import_module(module), cls_name)
+        assert cls.has_attention is True

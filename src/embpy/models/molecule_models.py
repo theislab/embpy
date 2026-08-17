@@ -645,6 +645,9 @@ class MiniMolWrapper(BaseModelWrapper):
     model_type: str = "molecule"  # type: ignore[assignment]
     available_pooling_strategies: list[str] = ["flat"]
     EMBEDDING_DIM: int = 512
+    # MiniMol is a message-passing GNN (GIN with edge features), not a transformer,
+    # so it has no attention weights to extract.
+    has_attention = False
 
     def __init__(
         self,
@@ -749,6 +752,9 @@ class MHGGNNWrapper(BaseModelWrapper):
 
     model_type: str = "molecule"  # type: ignore[assignment]
     available_pooling_strategies: list[str] = ["flat"]
+    # MHG-GNN is a GIN-based graph autoencoder over molecular hypergraphs, not a
+    # transformer, so it has no attention weights to extract.
+    has_attention = False
 
     def __init__(
         self,

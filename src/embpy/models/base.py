@@ -31,6 +31,14 @@ class BaseModelWrapper(ABC):
     model_type: Literal["dna", "protein", "molecule", "text", "ppi", "unknown"] = "unknown"
     available_pooling_strategies: list[str] = ["mean", "max", "median", "none"]  # Common defaults
 
+    #: Whether the wrapped architecture computes attention weights that can be
+    #: extracted via :meth:`extract_attention`. Set to ``False`` for
+    #: attention-free architectures (state-space models such as Caduceus,
+    #: implicit long-convolution models such as HyenaDNA, message-passing GNNs
+    #: such as MiniMol), where attention weights do not exist and a request must
+    #: fail loudly rather than return something meaningless.
+    has_attention: bool = True
+
     def __init__(self, model_path_or_name: str | None = None, **kwargs: Any):
         """
         Initialize the wrapper.
@@ -440,6 +448,114 @@ class BaseModelWrapper(ABC):
                 h.remove()
 
         return captured
+
+    # =================================================================
+    # Attention extraction
+    # =================================================================
+
+    def extract_attention(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        layers: list[int] | None = None,
+    ) -> dict[int, torch.Tensor]:
+        """
+        Extract per-layer attention weight matrices.
+
+        Only HuggingFace models expose attention weights in a uniform way, via
+        ``output_attentions=True``. The returned tuple has exactly one entry per
+        transformer layer (there is **no** embedding-layer entry, unlike
+        :meth:`extract_hidden_states`), so layer index ``i`` maps directly to
+        the ``i``-th transformer block's attention.
+
+        Parameters
+        ----------
+        input_ids : torch.Tensor
+            Tokenised input of shape ``(batch, seq_len)``.
+        attention_mask : torch.Tensor, optional
+            Attention mask of shape ``(batch, seq_len)``. Pass it for padded
+            batches so masked positions do not leak attention mass.
+        layers : list[int], optional
+            Layer indices to return. Negative values count from the end
+            (``-1`` = last layer). If ``None``, every layer is returned.
+
+        Returns
+        -------
+        dict[int, torch.Tensor]
+            Mapping from normalised layer index to an attention tensor of shape
+            ``(batch, n_heads, seq_len, seq_len)``. Each query row sums to 1.
+
+        Raises
+        ------
+        RuntimeError
+            If the model is not loaded, or if the model produced no attention
+            weights (typically because it is using a fused attention kernel
+            such as SDPA or FlashAttention that does not expose them).
+        NotImplementedError
+            If the wrapped architecture has no attention
+            (:attr:`has_attention` is ``False``) or is not a HuggingFace model.
+        IndexError
+            If a requested layer index is out of range.
+
+        Examples
+        --------
+        >>> wrapper.load(torch.device("cpu"))
+        >>> ids = tok("MKT", return_tensors="pt")["input_ids"]
+        >>> attn = wrapper.extract_attention(ids, layers=[-1])
+        >>> attn[next(iter(attn))].shape  # (batch, heads, seq, seq)
+        torch.Size([1, 20, 5, 5])
+        """
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+
+        if not self.has_attention:
+            raise NotImplementedError(
+                f"{type(self).__name__} wraps an attention-free architecture "
+                "(state-space, implicit convolution, or graph message passing), "
+                "so attention weights do not exist. Use extract_hidden_states() "
+                "for per-layer activations instead."
+            )
+
+        if not self._is_huggingface_model():
+            raise NotImplementedError(
+                f"Attention extraction is only supported for HuggingFace models; "
+                f"{type(self).__name__} is not one. Use extract_hidden_states() "
+                "for per-layer activations instead."
+            )
+
+        model: Any = self.model
+        with torch.no_grad():
+            outputs = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_attentions=True,
+                output_hidden_states=False,
+            )
+
+        attns: tuple[torch.Tensor, ...] | None = getattr(outputs, "attentions", None)
+        if attns is None or any(a is None for a in attns):
+            raise RuntimeError(
+                "The model returned no attention weights. This usually means it "
+                "is using a fused attention kernel (SDPA or FlashAttention) that "
+                "does not expose per-head weights. Reload the model with "
+                "attn_implementation='eager' to make them available."
+            )
+
+        n = len(attns)  # one entry per transformer layer; NO embedding offset
+        target_layers = list(range(n)) if layers is None else list(layers)
+
+        result: dict[int, torch.Tensor] = {}
+        for idx in target_layers:
+            norm_idx = idx if idx >= 0 else n + idx
+            if not (0 <= norm_idx < n):
+                raise IndexError(
+                    f"Layer index {idx} out of range. "
+                    f"Model has {n} attention layers (indices 0 to {n - 1}, "
+                    f"or -{n} to -1)."
+                )
+            result[norm_idx] = attns[norm_idx]
+
+        return result
 
     # =================================================================
     # Convenience: embed from a specific layer
