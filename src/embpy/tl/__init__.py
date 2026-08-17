@@ -3,6 +3,12 @@
 #   tl/genomics/  - SNP/variant embedding utilities
 
 __all__ = [
+    # attention summaries (2-D, exporter-compatible)
+    "attention_entropy",
+    "attention_to_gene_set",
+    "head_uniformity",
+    "received_attention",
+    "summarize_attention",
     # alignment (representation-similarity metrics)
     "alignment_matrix",
     "block_to_attention_index",
@@ -106,6 +112,13 @@ from .alignment import (
     rank_layers,
     sample_size_for,
     tsi,
+)
+from .attention import (
+    attention_entropy,
+    attention_to_gene_set,
+    head_uniformity,
+    received_attention,
+    summarize_attention,
 )
 from .basic import basic_tool
 from .benchmark import benchmark_embeddings

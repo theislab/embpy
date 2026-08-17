@@ -9,6 +9,7 @@
 
 api.md
 technical.md
+attention_extraction.md
 static_embeddings.md
 changelog.md
 contributing.md

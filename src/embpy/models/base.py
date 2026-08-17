@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, Literal
@@ -449,6 +448,118 @@ class BaseModelWrapper(ABC):
 
         return captured
 
+    @staticmethod
+    def _looks_like_attention(tensor: Any) -> bool:
+        """Whether ``tensor`` has the shape and normalisation of attention weights.
+
+        Attention is ``(batch, heads, seq, seq)`` or ``(batch, seq, seq)`` and each
+        query row sums to 1. Checking the row sums matters: a hook sees every tensor a
+        module emits, and a square activation would otherwise be mistaken for
+        attention.
+        """
+        if not isinstance(tensor, torch.Tensor) or tensor.ndim not in (3, 4):
+            return False
+        if tensor.shape[-1] != tensor.shape[-2]:
+            return False
+        with torch.no_grad():
+            sums = tensor.float().sum(dim=-1)
+            return bool(torch.allclose(sums, torch.ones_like(sums), atol=1e-3))
+
+    def _extract_attention_hook(
+        self,
+        input_tensor: torch.Tensor,
+        layers: list[int] | None,
+    ) -> dict[int, torch.Tensor]:
+        """Extract attention from non-HuggingFace models using forward hooks.
+
+        The counterpart to :meth:`_extract_hidden_states_hook`, using the same
+        :meth:`_get_layer_modules` discovery. Two things make attention harder than
+        hidden states:
+
+        * Some modules only return weights when asked. ``torch.nn.MultiheadAttention``
+          takes ``need_weights``, and ``nn.TransformerEncoderLayer`` hardcodes it to
+          ``False`` internally, so a plain forward hook sees ``None``. A forward
+          *pre*-hook flips that kwarg back on without touching the model definition.
+        * Fused kernels never materialise the matrix at all. If a layer routes through
+          ``F.scaled_dot_product_attention``, FlashAttention or a Triton kernel, the
+          weights exist only inside the kernel and **no hook can recover them** -- such
+          layers are simply absent from the returned dict.
+
+        Returns
+        -------
+        dict[int, torch.Tensor]
+            Layer index -> attention tensor, for whichever layers yielded one. Layers
+            whose attention could not be observed are omitted rather than faked.
+        """
+        layer_modules = self._get_layer_modules()
+        n = len(layer_modules)
+
+        target_layers = list(range(n)) if layers is None else list(layers)
+        norm_layers: list[int] = []
+        for idx in target_layers:
+            norm_idx = idx if idx >= 0 else n + idx
+            if not (0 <= norm_idx < n):
+                raise IndexError(
+                    f"Layer index {idx} out of range. "
+                    f"Model has {n} layers (indices 0 to {n - 1}, or -{n} to -1)."
+                )
+            norm_layers.append(norm_idx)
+
+        captured: dict[int, torch.Tensor] = {}
+        handles: list[Any] = []
+
+        def _find_attention(obj: Any, depth: int = 0) -> torch.Tensor | None:
+            if depth > 2:
+                return None
+            if BaseModelWrapper._looks_like_attention(obj):
+                return obj  # type: ignore[return-value]
+            if isinstance(obj, tuple | list):
+                for item in obj:
+                    found = _find_attention(item, depth + 1)
+                    if found is not None:
+                        return found
+            return None
+
+        def _make_pre_hook() -> Any:
+            # Ask modules that can return weights to actually do so.
+            def pre_hook(module: Any, args: Any, kwargs: Any) -> Any:
+                if "need_weights" in kwargs or isinstance(module, torch.nn.MultiheadAttention):
+                    kwargs = {**kwargs, "need_weights": True, "average_attn_weights": False}
+                return args, kwargs
+
+            return pre_hook
+
+        def _make_hook(li: int) -> Any:
+            def hook_fn(module: Any, inp: Any, output: Any) -> None:
+                found = _find_attention(output)
+                if found is not None:
+                    captured[li] = found.detach()
+
+            return hook_fn
+
+        for layer_idx in norm_layers:
+            module = layer_modules[layer_idx]
+            handles.append(module.register_forward_hook(_make_hook(layer_idx)))
+            # Attach to submodules too: the attention weights are usually emitted by an
+            # inner attention module, not by the encoder layer wrapping it.
+            for sub in module.modules():
+                if sub is module:
+                    continue
+                handles.append(sub.register_forward_hook(_make_hook(layer_idx)))
+                if isinstance(sub, torch.nn.MultiheadAttention):
+                    handles.append(
+                        sub.register_forward_pre_hook(_make_pre_hook(), with_kwargs=True)
+                    )
+
+        try:
+            with torch.no_grad():
+                self.model(input_tensor)  # type: ignore[misc]
+        finally:
+            for h in handles:
+                h.remove()
+
+        return captured
+
     # =================================================================
     # Attention extraction
     # =================================================================
@@ -517,11 +628,22 @@ class BaseModelWrapper(ABC):
             )
 
         if not self._is_huggingface_model():
-            raise NotImplementedError(
-                f"Attention extraction is only supported for HuggingFace models; "
-                f"{type(self).__name__} is not one. Use extract_hidden_states() "
-                "for per-layer activations instead."
-            )
+            # Non-HF models have no uniform output_attentions flag, so fall back to
+            # forward hooks (mirroring extract_hidden_states). This succeeds only for
+            # architectures that actually materialise the matrix; fused-kernel
+            # attention (SDPA / FlashAttention / Triton) cannot be observed by any
+            # hook, and yields nothing.
+            captured = self._extract_attention_hook(input_ids, layers)
+            if not captured:
+                raise NotImplementedError(
+                    f"{type(self).__name__} is not a HuggingFace model and no attention "
+                    "weights could be captured by forward hooks. This normally means the "
+                    "model uses a fused attention kernel (torch SDPA, FlashAttention or "
+                    "Triton), which never materialises the attention matrix, so it cannot "
+                    "be recovered without changing the model. Use extract_hidden_states() "
+                    "for per-layer activations instead."
+                )
+            return captured
 
         model: Any = self.model
         with torch.no_grad():

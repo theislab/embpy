@@ -574,14 +574,20 @@ class TestExtractAttention:
         with pytest.raises(NotImplementedError, match="attention-free"):
             w.extract_attention(self.ids)
 
-    def test_non_huggingface_model_raises(self):
-        class _Opaque:  # no .config -> not a HF model
+    def test_non_huggingface_model_falls_back_to_hooks_then_raises(self):
+        """Non-HF models now try the hook path first (see _extract_attention_hook).
+
+        This model exposes no layer modules, so the hook path finds nothing and the
+        error explains why rather than claiming HuggingFace is required.
+        """
+
+        class _Opaque:  # no .config -> not a HF model, and no layer container
             pass
 
         w = ConcreteWrapper()
         w.model = _Opaque()
         w.device = torch.device("cpu")
-        with pytest.raises(NotImplementedError, match="only supported for HuggingFace"):
+        with pytest.raises(NotImplementedError):
             w.extract_attention(self.ids)
 
     def test_fused_kernel_none_attentions_raises(self, hf_wrapper):
@@ -684,3 +690,124 @@ class TestHasAttentionFlags:
 
         cls = getattr(importlib.import_module(module), cls_name)
         assert cls.has_attention is True
+
+
+# =====================================================================
+# hook-based attention extraction (non-HuggingFace models)
+# =====================================================================
+
+
+class TestExtractAttentionHook:
+    """Non-HF fallback: hooks can see materialised attention, never fused kernels."""
+
+    SEQ = 6
+    HEADS = 2
+
+    def _wrapper_with(self, block_cls, n_layers=3):
+        """A non-HF model (no .config) whose layers are `block_cls`."""
+
+        class TinyModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layers = torch.nn.ModuleList([block_cls() for _ in range(n_layers)])
+
+            def forward(self, x):
+                for layer in self.layers:
+                    out = layer(x)
+                    # blocks may return (hidden, attn); chain on the hidden state
+                    x = out[0] if isinstance(out, tuple) else out
+                return x
+
+        w = ConcreteWrapper()
+        w.model = TinyModel().eval()
+        w.device = torch.device("cpu")
+        return w
+
+    def test_captures_attention_from_explicit_softmax_block(self):
+        """TranscriptFormer-style: attention materialised by an explicit softmax."""
+        seq, heads = self.SEQ, self.HEADS
+
+        class ExplicitAttnBlock(torch.nn.Module):
+            def forward(self, x):
+                scores = torch.rand(x.shape[0], heads, seq, seq)
+                weights = torch.softmax(scores, dim=-1)
+                self._w = weights
+                return x, weights
+
+        w = self._wrapper_with(ExplicitAttnBlock)
+        # model returns a tuple; drive the hook directly
+        out = w._extract_attention_hook(torch.zeros(1, seq, 4), layers=None)
+        assert set(out) == {0, 1, 2}
+        for tensor in out.values():
+            assert tensor.shape == (1, heads, seq, seq)
+
+    def test_fused_kernel_yields_nothing(self):
+        """STATE-style: F.scaled_dot_product_attention never materialises weights."""
+        seq = self.SEQ
+
+        class FusedBlock(torch.nn.Module):
+            def forward(self, x):
+                q = k = v = x.unsqueeze(1)
+                return torch.nn.functional.scaled_dot_product_attention(q, k, v).squeeze(1)
+
+        w = self._wrapper_with(FusedBlock)
+        out = w._extract_attention_hook(torch.rand(1, seq, 4), layers=None)
+        assert out == {}, "a fused kernel cannot expose weights; nothing should be captured"
+
+    def test_extract_attention_raises_informatively_for_fused_models(self):
+        seq = self.SEQ
+
+        class FusedBlock(torch.nn.Module):
+            def forward(self, x):
+                q = k = v = x.unsqueeze(1)
+                return torch.nn.functional.scaled_dot_product_attention(q, k, v).squeeze(1)
+
+        w = self._wrapper_with(FusedBlock)
+        with pytest.raises(NotImplementedError, match="fused attention kernel"):
+            w.extract_attention(torch.rand(1, seq, 4))
+
+    def test_square_non_attention_output_is_not_mistaken_for_attention(self):
+        """A square activation whose rows do not sum to 1 must be rejected."""
+
+        class SquareButNotAttention(torch.nn.Module):
+            def forward(self, x):
+                return torch.full((1, 4, 4), 3.0)
+
+        w = self._wrapper_with(SquareButNotAttention)
+        assert w._extract_attention_hook(torch.zeros(1, 4), layers=None) == {}
+
+    def test_layer_subset_and_negative_index(self):
+        seq, heads = self.SEQ, self.HEADS
+
+        class ExplicitAttnBlock(torch.nn.Module):
+            def forward(self, x):
+                return x, torch.softmax(torch.rand(1, heads, seq, seq), dim=-1)
+
+        w = self._wrapper_with(ExplicitAttnBlock, n_layers=4)
+        assert set(w._extract_attention_hook(torch.zeros(1, seq, 4), layers=[0, 2])) == {0, 2}
+        assert set(w._extract_attention_hook(torch.zeros(1, seq, 4), layers=[-1])) == {3}
+
+    def test_out_of_range_layer_raises(self):
+        class ExplicitAttnBlock(torch.nn.Module):
+            def forward(self, x):
+                return x, torch.softmax(torch.rand(1, 2, 6, 6), dim=-1)
+
+        w = self._wrapper_with(ExplicitAttnBlock)
+        with pytest.raises(IndexError, match="out of range"):
+            w._extract_attention_hook(torch.zeros(1, 6, 4), layers=[99])
+
+    def test_multihead_attention_need_weights_is_forced_on(self):
+        """nn.TransformerEncoderLayer hardcodes need_weights=False internally."""
+        d_model, heads, seq = 8, 2, self.SEQ
+
+        def block():
+            return torch.nn.TransformerEncoderLayer(
+                d_model=d_model, nhead=heads, dim_feedforward=16, batch_first=True
+            )
+
+        w = self._wrapper_with(block, n_layers=2)
+        out = w._extract_attention_hook(torch.rand(1, seq, d_model), layers=None)
+        # the pre-hook flips need_weights back on, so weights become observable
+        assert out, "pre-hook should have forced need_weights=True on MultiheadAttention"
+        for tensor in out.values():
+            assert tensor.shape[-1] == tensor.shape[-2] == seq
