@@ -452,6 +452,14 @@ class SingleCellWrapper(ABC):
     supports_decode: bool = False
     supports_generation: bool = False
 
+    #: Scale of the matrix returned by :meth:`decode_cells`. Decoders disagree --
+    #: STATE returns log-probabilities, the scVI family returns NB/ZINB rates, PCA
+    #: returns a linear inverse transform -- so a caller combining decoded matrices
+    #: across wrappers needs to know which it holds. ``None`` means the wrapper does
+    #: not decode. Machine-readable counterpart to the warning on
+    #: :meth:`decode_cells`.
+    decode_scale: Literal["log_prob", "rate", "linear"] | None = None
+
     def __init__(
         self,
         model_name: str | None = None,
@@ -498,6 +506,26 @@ class SingleCellWrapper(ABC):
         (PCA, scVI family, STATE). For foundation encoders without a
         reusable decoder head (scGPT, Geneformer, UCE, ...), calling
         this raises :class:`NotImplementedError`.
+
+        .. warning::
+
+           **The output scale differs by wrapper, and the values are not
+           comparable across them.** Check :attr:`decode_scale` before combining,
+           averaging or plotting decoded matrices from different models:
+
+           ===================== ==================== =============================
+           Wrapper               ``decode_scale``     Returned values
+           ===================== ==================== =============================
+           STATE                 ``"log_prob"``       per-gene log-probabilities
+           scVI family           ``"rate"``           NB/ZINB mean ``px_rate``
+                                                      (``library_size * px_scale``)
+           PCA                   ``"linear"``         inverse-transformed HVG matrix
+           ===================== ==================== =============================
+
+           Averaging a STATE decode with an scVI decode mixes log-probabilities
+           with expression rates and is meaningless. Convert deliberately --
+           e.g. ``np.exp`` on a ``"log_prob"`` matrix -- rather than assuming a
+           shared scale.
 
         Parameters
         ----------
@@ -837,6 +865,8 @@ class StateEmbeddingWrapper(SingleCellWrapper):
     """
 
     supports_decode: bool = True
+    #: STATE's decoder emits per-gene log-probabilities.
+    decode_scale: Literal["log_prob", "rate", "linear"] | None = "log_prob"
 
     def __init__(
         self,
@@ -1344,6 +1374,8 @@ class PCAEmbedding(SingleCellWrapper):
     """
 
     supports_decode: bool = True
+    #: PCA inverse-transforms back to the (scaled) HVG matrix.
+    decode_scale: Literal["log_prob", "rate", "linear"] | None = "linear"
 
     def __init__(
         self,
@@ -1528,6 +1560,8 @@ class ScVIToolsWrapper(SingleCellWrapper):
     """
 
     supports_decode: bool = True
+    #: scvi-tools returns the NB/ZINB mean px_rate.
+    decode_scale: Literal["log_prob", "rate", "linear"] | None = "rate"
 
     def __init__(
         self,

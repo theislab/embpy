@@ -199,6 +199,8 @@ pl.plot_embedding_space(
    do two models see your biology the same way?
 4. [Which model captures *my* biology?](docs/notebooks/04_benchmark_models.ipynb) —
    rank models on your own labelled task.
+5. [Do these models encode the same information?](docs/notebooks/05_compare_representations.ipynb) —
+   compare representations with TSI/QSI/CKA and pick a layer from evidence.
 
 **By modality** — deeper, domain-specific workflows:
 
