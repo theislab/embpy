@@ -3,6 +3,13 @@
 #   tl/genomics/  - SNP/variant embedding utilities
 
 __all__ = [
+    # alignment (representation-similarity metrics)
+    "alignment_matrix",
+    "linear_cka",
+    "mutual_knn",
+    "qsi",
+    "sample_size_for",
+    "tsi",
     # clustering
     "cluster_annotation_enrichment",
     "cluster_embeddings",
@@ -86,6 +93,14 @@ __all__ = [
 ]
 
 from .activity import phenotypic_activity
+from .alignment import (
+    alignment_matrix,
+    linear_cka,
+    mutual_knn,
+    qsi,
+    sample_size_for,
+    tsi,
+)
 from .basic import basic_tool
 from .benchmark import benchmark_embeddings
 from .clustering import (
