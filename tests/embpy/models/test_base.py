@@ -811,3 +811,20 @@ class TestExtractAttentionHook:
         assert out, "pre-hook should have forced need_weights=True on MultiheadAttention"
         for tensor in out.values():
             assert tensor.shape[-1] == tensor.shape[-2] == seq
+
+    def test_llm_foundry_needs_weights_spelling_is_forced_on(self):
+        """Tahoe's GroupedQueryAttention takes `needs_weights` (with an s), not
+        `need_weights`, and returns None for the weights unless it is set."""
+        seq, heads = self.SEQ, self.HEADS
+
+        class GroupedQueryAttentionLike(torch.nn.Module):
+            def forward(self, x, needs_weights: bool = False):
+                weights = torch.softmax(torch.rand(1, heads, seq, seq), dim=-1)
+                # mirrors LLM-Foundry: computed either way, returned only if asked
+                return x, (weights if needs_weights else None), None
+
+        w = self._wrapper_with(GroupedQueryAttentionLike, n_layers=2)
+        out = w._extract_attention_hook(torch.rand(1, seq, 4), layers=None)
+        assert out, "pre-hook must force needs_weights=True for LLM-Foundry blocks"
+        for tensor in out.values():
+            assert tensor.shape == (1, heads, seq, seq)

@@ -545,12 +545,39 @@ class BaseModelWrapper(ABC):
                         return found
             return None
 
-        def _make_pre_hook() -> Any:
+        def _weight_flags(module: Any) -> dict[str, Any]:
+            """Kwargs that make ``module`` return its attention weights.
+
+            Attention modules that *can* hand back weights default to not doing so,
+            and they do not agree on the spelling: ``torch.nn.MultiheadAttention``
+            takes ``need_weights``, while LLM-Foundry-derived blocks (Tahoe's
+            ``GroupedQueryAttention``) take ``needs_weights``. Both compute the
+            matrix either way and simply drop it, so flipping the flag recovers it
+            without touching the model.
+            """
+            import inspect
+
+            try:
+                params = inspect.signature(module.forward).parameters
+            except (TypeError, ValueError):  # pragma: no cover - C-implemented forward
+                params = {}
+
+            flags: dict[str, Any] = {}
+            if "need_weights" in params or isinstance(module, torch.nn.MultiheadAttention):
+                flags["need_weights"] = True
+                if "average_attn_weights" in params or isinstance(
+                    module, torch.nn.MultiheadAttention
+                ):
+                    # Keep per-head resolution; averaged weights lose the head axis.
+                    flags["average_attn_weights"] = False
+            if "needs_weights" in params:
+                flags["needs_weights"] = True
+            return flags
+
+        def _make_pre_hook(flags: dict[str, Any]) -> Any:
             # Ask modules that can return weights to actually do so.
             def pre_hook(module: Any, args: Any, kwargs: Any) -> Any:
-                if "need_weights" in kwargs or isinstance(module, torch.nn.MultiheadAttention):
-                    kwargs = {**kwargs, "need_weights": True, "average_attn_weights": False}
-                return args, kwargs
+                return args, {**kwargs, **flags}
 
             return pre_hook
 
@@ -564,16 +591,15 @@ class BaseModelWrapper(ABC):
 
         for layer_idx in norm_layers:
             module = layer_modules[layer_idx]
-            handles.append(module.register_forward_hook(_make_hook(layer_idx)))
-            # Attach to submodules too: the attention weights are usually emitted by an
-            # inner attention module, not by the encoder layer wrapping it.
+            # module.modules() yields the module itself first, then its descendants.
+            # Both are candidates: the weights are usually emitted by an inner
+            # attention module, but a layer can also be the attention module itself.
             for sub in module.modules():
-                if sub is module:
-                    continue
                 handles.append(sub.register_forward_hook(_make_hook(layer_idx)))
-                if isinstance(sub, torch.nn.MultiheadAttention):
+                flags = _weight_flags(sub)
+                if flags:
                     handles.append(
-                        sub.register_forward_pre_hook(_make_pre_hook(), with_kwargs=True)
+                        sub.register_forward_pre_hook(_make_pre_hook(flags), with_kwargs=True)
                     )
 
         try:
