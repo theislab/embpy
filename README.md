@@ -201,6 +201,8 @@ pl.plot_embedding_space(
    rank models on your own labelled task.
 5. [Do these models encode the same information?](docs/notebooks/05_compare_representations.ipynb) —
    compare representations with TSI/QSI/CKA and pick a layer from evidence.
+6. [Reading a model's attention](docs/notebooks/06_attention_weights.ipynb) —
+   extract per-layer attention and reduce it to AnnData-ready summaries.
 
 **By modality** — deeper, domain-specific workflows:
 

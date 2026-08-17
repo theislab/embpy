@@ -437,6 +437,9 @@ class RDKitWrapper(BaseModelWrapper):
 
     model_type = "molecule"
     available_pooling_strategies = ["flat"]
+    # Structural fingerprints (Morgan, MACCS, atom-pair) are hand-computed bit
+    # vectors, not neural networks, so there is nothing to attend with.
+    has_attention = False
 
     _VALID_FP_TYPES = (
         "morgan",

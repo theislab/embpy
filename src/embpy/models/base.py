@@ -237,6 +237,26 @@ class BaseModelWrapper(ABC):
             "Override get_num_layers() in your wrapper subclass."
         )
 
+    def _model_device(self) -> torch.device:
+        """Device the model's parameters actually live on.
+
+        Preferred over ``self.device``, which records what was *requested* and can
+        disagree with reality (e.g. a wrapper that falls back to CPU). Extraction
+        inputs are usually built by a tokenizer, which returns CPU tensors, so they
+        must be moved here or the forward pass fails on MPS/CUDA.
+        """
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+        try:
+            device = next(self.model.parameters()).device
+        except (StopIteration, AttributeError, TypeError):  # paramless or non-Module
+            device = None
+        # Guard the isinstance: mocks and stand-ins return something that is not a
+        # real torch.device, and passing that to .to() fails confusingly.
+        if isinstance(device, torch.device):
+            return device
+        return self.device if isinstance(self.device, torch.device) else torch.device("cpu")
+
     def _get_layer_modules(self) -> torch.nn.ModuleList:
         """
         Return the sequential layer modules of the model.
@@ -364,6 +384,10 @@ class BaseModelWrapper(ABC):
         ``(N+1)`` tensors (embedding output + N layer outputs).
         """
         model: Any = self.model
+        device = self._model_device()
+        input_ids = input_ids.to(device)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device)
         with torch.no_grad():
             outputs = model(
                 input_ids=input_ids,
@@ -440,6 +464,7 @@ class BaseModelWrapper(ABC):
             handles.append(handle)
 
         try:
+            input_tensor = input_tensor.to(self._model_device())
             with torch.no_grad():
                 self.model(input_tensor)  # type: ignore[misc]
         finally:
@@ -552,6 +577,7 @@ class BaseModelWrapper(ABC):
                     )
 
         try:
+            input_tensor = input_tensor.to(self._model_device())
             with torch.no_grad():
                 self.model(input_tensor)  # type: ignore[misc]
         finally:
@@ -646,6 +672,10 @@ class BaseModelWrapper(ABC):
             return captured
 
         model: Any = self.model
+        device = self._model_device()
+        input_ids = input_ids.to(device)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device)
         with torch.no_grad():
             outputs = model(
                 input_ids=input_ids,

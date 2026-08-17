@@ -664,6 +664,47 @@ class BioEmbedder:
         self._singlecell_cache[cache_key] = wrapper
         return wrapper
 
+    def get_model(self, model: str, *, load: bool = True) -> Any:
+        """Return the model wrapper behind a model key, for direct introspection.
+
+        ``embed()`` covers the common path, but the wrappers expose more than a
+        pooled vector -- per-layer hidden states, per-layer attention, and pooled
+        embeddings for every layer at once. Reaching those used to require the
+        private ``_get_model``; this is the supported way.
+
+        Parameters
+        ----------
+        model
+            A key from :meth:`list_available_models`.
+        load
+            Load the weights onto this embedder's device if they are not loaded
+            yet. Pass ``False`` to inspect class-level attributes (such as
+            ``has_attention``) without paying for a download.
+
+        Returns
+        -------
+        BaseModelWrapper
+            The wrapper, loaded unless ``load=False``. Wrappers are cached, so
+            repeated calls return the same instance.
+
+        Examples
+        --------
+        >>> embedder = BioEmbedder(device="cpu")               # doctest: +SKIP
+        >>> wrapper = embedder.get_model("esm2_8M")            # doctest: +SKIP
+        >>> ids = wrapper.tokenizer("MTEYKLVVVG", return_tensors="pt")["input_ids"]
+        >>> attn = wrapper.extract_attention(ids, layers=[-1])  # doctest: +SKIP
+
+        See Also
+        --------
+        embpy.models.base.BaseModelWrapper.extract_attention
+        embpy.models.base.BaseModelWrapper.extract_hidden_states
+        embpy.models.base.BaseModelWrapper.embed_all_layers
+        """
+        inst = self._get_model(model)
+        if load and getattr(inst, "model", None) is None:
+            inst.load(self.device)
+        return inst
+
     def clear_model_cache(self, *, which: Literal["all", "singlecell", "other"] = "all") -> None:
         """Drop cached model wrappers and free associated GPU memory.
 
