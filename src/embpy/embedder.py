@@ -350,6 +350,52 @@ class BioEmbedder:
 
         return available
 
+    @staticmethod
+    def _wrapper_supports_layer_selection(wrapper: Any) -> bool:
+        """Whether ``wrapper`` (class or instance) can embed from a chosen layer.
+
+        The wrapper must declare ``target_layer`` explicitly on ``embed`` or
+        ``embed_batch``. A bare ``**kwargs`` does not count: it swallows the
+        argument and returns default-layer vectors, which is exactly the silent
+        wrong answer this check exists to prevent.
+        """
+        import inspect
+
+        for method_name in ("embed_batch", "embed"):
+            method = getattr(wrapper, method_name, None)
+            if method is None:
+                continue
+            try:
+                params = inspect.signature(method).parameters
+            except (TypeError, ValueError):  # pragma: no cover - builtins/C funcs
+                continue
+            if "target_layer" in params:
+                return True
+        return False
+
+    def _assert_layer_selection_supported(self, model: str, layer: int) -> None:
+        """Fail loudly when a layer was requested but the model cannot honour it."""
+        entry = self._available_models.get(model)
+        wrapper: Any = entry[0] if entry else self.model_cache.get(model)
+
+        if wrapper is not None and self._wrapper_supports_layer_selection(wrapper):
+            return
+
+        if entry is None and model not in self.model_cache:
+            hint = (
+                f"'{model}' resolves to a static lookup table or a non-wrapper "
+                "embedding source, which has no layers to choose from."
+            )
+        else:
+            name = wrapper.__name__ if isinstance(wrapper, type) else type(wrapper).__name__
+            hint = f"{name} does not implement layer selection (no 'target_layer' argument)."
+
+        raise ValueError(
+            f"layer={layer} was requested but model '{model}' cannot provide it. {hint} "
+            "Re-run without 'layer' to use the model's default output, or pick a model "
+            "that supports it (protein, DNA and text transformer wrappers do)."
+        )
+
     def _get_model(self, model_name: str) -> BaseModelWrapper:
         """Loads a model or retrieves it from the cache using the registry or direct HF loading for text models."""
         if model_name in self.model_cache:
@@ -669,6 +715,7 @@ class BioEmbedder:
         id_type: str | Mapping[str, str] | None = None,
         organism: str | None = None,
         pooling_strategy: str = "mean",
+        layer: int | None = None,
         output: Literal["anndata", "table", "payload"] | None = None,
         target: Any = None,
         input_path: str | os.PathLike[str] | None = None,
@@ -732,9 +779,45 @@ class BioEmbedder:
         returned. Multiple models or multiple entity types return the
         same output family with deterministic keys that include entity
         type and model name.
+
+        ``layer`` selects which transformer layer the embedding is pooled
+        from, instead of the default final layer. Intermediate layers often
+        transfer better to downstream tasks than the last one, which is
+        specialised for the pretraining objective. Negative values count
+        from the end, so ``layer=-1`` reproduces the default and ``layer=-4``
+        takes the fourth-from-last::
+
+            embedder.embed(adata, entity_type="protein", model="esm2_650M", layer=-4)
+
+        Not every architecture supports this. Models that cannot select a
+        layer (fingerprints, static lookup tables, and wrappers that have not
+        implemented it) raise a :class:`ValueError` rather than silently
+        returning default-layer embeddings. Use
+        :meth:`~embpy.models.base.BaseModelWrapper.extract_hidden_states` for
+        finer-grained access to every layer at once.
         """
         from .io.exporters import route_output
         from .io.normalize import normalize_embedding_input
+
+        # ``layer`` is the documented, discoverable spelling; ``target_layer``
+        # is what the wrappers accept. Normalise here so both work and the
+        # downstream support check sees a single canonical key.
+        if layer is not None:
+            embed_kwargs.setdefault("target_layer", layer)
+
+        # Validate here, at the single public entry point, so static lookup
+        # tables and other sources that bypass _embed_to_result are covered too.
+        requested_layer = next(
+            (
+                embed_kwargs[k]
+                for k in ("target_layer", "layer", "embedding_layer", "layer_name")
+                if embed_kwargs.get(k) is not None
+            ),
+            None,
+        )
+        if requested_layer is not None:
+            for _m in [model] if isinstance(model, str) else list(model):
+                self._assert_layer_selection_supported(str(_m), requested_layer)
 
         org = organism or self.organism
         out_path = output_path if output_path is not None else path
@@ -1042,12 +1125,19 @@ class BioEmbedder:
             "is_perturbation": bool(is_perturbation),
             "n_requested_inputs": requested_n,
         }
-        layer = (
-            embed_kwargs.get("target_layer")
-            or embed_kwargs.get("layer")
-            or embed_kwargs.get("embedding_layer")
-            or embed_kwargs.get("layer_name")
+        # First key that is actually present -- not ``or``-chained, because
+        # layer 0 is a legitimate (and falsy) selection that must not be
+        # mistaken for "no layer requested".
+        layer = next(
+            (
+                embed_kwargs[k]
+                for k in ("target_layer", "layer", "embedding_layer", "layer_name")
+                if embed_kwargs.get(k) is not None
+            ),
+            None,
         )
+        if layer is not None:
+            self._assert_layer_selection_supported(model, layer)
         if "region" in embed_kwargs:
             extra["region"] = embed_kwargs["region"]
         if "isoform" in embed_kwargs:
