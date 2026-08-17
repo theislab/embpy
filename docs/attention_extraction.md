@@ -54,16 +54,20 @@ Verified by reading the installed packages (`arc-gpu` and `helical-gpu` environm
 but the encoder layer actually used by `model.py` builds `FlashMHA` in `__init__` with
 no conditional, so the eager path is unreachable without patching the package.
 
-### A structural caveat
+### Single-cell wrappers
 
-The single-cell wrappers (`ScGPTWrapper`, `GeneformerWrapper`, `UCEWrapper`,
-`TranscriptFormerWrapper`, `TahoeWrapper`, `StateEmbeddingWrapper`) inherit
-`SingleCellWrapper`, which is a **separate hierarchy from `BaseModelWrapper`** and
-exposes only `load` / `embed_cells` / `decode_cells`. It has no `self.model`
-convention and no layer-introspection methods, so `extract_attention` is not
-available on them today even where the underlying architecture would allow it. The
-table above therefore describes *architectural* feasibility; wiring it into the
-single-cell hierarchy is separate work.
+`SingleCellWrapper` is a **separate hierarchy from `BaseModelWrapper`** and
+originally exposed only `load` / `embed_cells` / `decode_cells`, so none of these
+models could reach `extract_attention` regardless of architecture. They now can:
+`SingleCellWrapper.extract_attention` / `.extract_hidden_states` resolve the
+underlying `torch.nn.Module` via `torch_module()` — which handles both the direct
+case (STATE) and the helical convention of nesting it at `._model.model` — and
+delegate to `BaseModelWrapper`'s extractors through a thin adapter, so the
+extraction logic lives in one tested place.
+
+`ScGPTWrapper` and `StateEmbeddingWrapper` declare `has_attention = False` for the
+reasons in the table, so they fail fast with an explanation rather than running a
+forward pass that cannot produce weights.
 
 ## Getting attention into an AnnData
 

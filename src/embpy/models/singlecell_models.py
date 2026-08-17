@@ -492,6 +492,113 @@ class SingleCellWrapper(ABC):
         np.ndarray of shape ``(n_cells, embedding_dim)``
         """
 
+    # =================================================================
+    # Model introspection (layers / attention)
+    # =================================================================
+
+    #: Whether the wrapped architecture exposes attention weights. ``False`` for
+    #: models whose attention runs in a fused kernel (scGPT builds FlashMHA
+    #: unconditionally; STATE uses F.scaled_dot_product_attention), where the
+    #: matrix is never materialised and no hook can observe it. See
+    #: ``docs/attention_extraction.md`` for the per-model evidence.
+    has_attention: bool = True
+
+    def torch_module(self) -> Any:
+        """Return the underlying :class:`torch.nn.Module`, or ``None``.
+
+        Single-cell wrappers hold heterogeneous objects in ``self._model``: helical
+        wrappers keep the network one level down (``._model.model``), while STATE
+        stores the module directly. This resolves the common shapes so introspection
+        does not need to know which backend it is looking at. Override when a wrapper
+        nests it somewhere else.
+        """
+        import torch
+
+        candidate = getattr(self, "_model", None)
+        if candidate is None:
+            return None
+        if isinstance(candidate, torch.nn.Module):
+            return candidate
+        for attr in ("model", "module", "net", "encoder"):
+            inner = getattr(candidate, attr, None)
+            if isinstance(inner, torch.nn.Module):
+                return inner
+        return None
+
+    def _introspection_wrapper(self) -> Any:
+        """Adapt this wrapper so ``BaseModelWrapper``'s extractors can drive it.
+
+        The two hierarchies are disjoint -- ``SingleCellWrapper`` does not inherit
+        ``BaseModelWrapper`` -- so rather than duplicating the extraction logic, the
+        resolved module is handed to a thin adapter that already implements it.
+        """
+        import torch
+
+        from .base import BaseModelWrapper
+
+        module = self.torch_module()
+        if module is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not expose a torch module for "
+                "introspection (torch_module() returned None). The backend may not be "
+                "loaded yet -- call load() first -- or it may not be a PyTorch model."
+            )
+
+        class _Adapter(BaseModelWrapper):
+            has_attention = type(self).has_attention
+
+            def load(self, device: Any) -> None:  # pragma: no cover - already loaded
+                return None
+
+            def embed(self, input: Any, pooling_strategy: str = "mean", **kwargs: Any) -> Any:
+                raise NotImplementedError("Adapter is for introspection only.")
+
+            def embed_batch(self, inputs: Any, pooling_strategy: str = "mean", **kwargs: Any) -> Any:
+                raise NotImplementedError("Adapter is for introspection only.")
+
+        adapter = _Adapter(getattr(self, "_model_name", None))
+        adapter.model = module
+        dev = getattr(self, "device", "cpu")
+        adapter.device = torch.device(dev) if isinstance(dev, str) else dev
+        return adapter
+
+    def extract_attention(
+        self,
+        input_ids: Any,
+        attention_mask: Any = None,
+        layers: list[int] | None = None,
+    ) -> dict[int, Any]:
+        """Extract per-layer attention weights, where the architecture allows it.
+
+        Mirrors :meth:`embpy.models.base.BaseModelWrapper.extract_attention`: returns
+        ``{layer_index: (batch, heads, seq, seq)}`` with one entry per transformer
+        block. Reduce the result with :mod:`embpy.tl.attention` to get something that
+        fits the 2-D output contract.
+
+        Raises
+        ------
+        NotImplementedError
+            If the architecture is attention-free or fuses attention into a kernel
+            (scGPT, STATE), or if no torch module could be resolved.
+        """
+        return self._introspection_wrapper().extract_attention(input_ids, attention_mask=attention_mask, layers=layers)
+
+    def extract_hidden_states(
+        self,
+        input_ids: Any,
+        attention_mask: Any = None,
+        layers: list[int] | None = None,
+    ) -> dict[int, Any]:
+        """Extract per-layer hidden states.
+
+        Mirrors :meth:`embpy.models.base.BaseModelWrapper.extract_hidden_states`. Note
+        the index convention differs from :meth:`extract_attention`: index 0 is the
+        embedding layer and index ``b+1`` is transformer block ``b``.
+        """
+        return self._introspection_wrapper().extract_hidden_states(
+            input_ids, attention_mask=attention_mask, layers=layers
+        )
+
     def decode_cells(
         self,
         latent: np.ndarray,
@@ -611,6 +718,10 @@ class ScGPTWrapper(SingleCellWrapper):
         wrapper.load("cuda")
         embs = wrapper.embed_cells(adata)  # (n_cells, 512)
     """
+
+    #: scGPT builds FlashMHA unconditionally (helical scgpt model.py:625), so
+    #: the attention matrix is never materialised and no hook can observe it.
+    has_attention: bool = False
 
     def load(self, device: str = "cpu") -> None:  # noqa: D102
         _require_helical()
@@ -863,6 +974,10 @@ class StateEmbeddingWrapper(SingleCellWrapper):
         # decode to the same gene panel that was used at encode time
         logprobs = wrapper.decode_cells(z, gene_names=adata.var_names)
     """
+
+    #: STATE uses F.scaled_dot_product_attention (state/emb/nn/flash_transformer.py:67),
+    #: a fused kernel that never materialises the attention matrix.
+    has_attention: bool = False
 
     supports_decode: bool = True
     #: STATE's decoder emits per-gene log-probabilities.
