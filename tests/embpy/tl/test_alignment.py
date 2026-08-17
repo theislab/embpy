@@ -18,7 +18,17 @@ import numpy as np
 import pytest
 from scipy.spatial.distance import pdist, squareform
 
-from embpy.tl import alignment_matrix, linear_cka, mutual_knn, qsi, sample_size_for, tsi
+from embpy.tl import (
+    alignment_matrix,
+    block_to_attention_index,
+    block_to_hidden_state_index,
+    linear_cka,
+    mutual_knn,
+    qsi,
+    rank_layers,
+    sample_size_for,
+    tsi,
+)
 
 # ---------------------------------------------------------------------------
 # naive reference implementations (definitions straight from the paper)
@@ -315,3 +325,120 @@ class TestInputValidation:
     def test_too_few_entities_raises(self, rng):
         with pytest.raises(ValueError, match="At least 3"):
             tsi(rng.normal(size=(2, 4)), rng.normal(size=(2, 4)))
+
+
+class TestLayerIndexConventions:
+    """extract_hidden_states and extract_attention do NOT share an index convention."""
+
+    def test_block_to_hidden_state_is_offset_by_one(self):
+        # hidden states: index 0 is the embedding layer, so block b is at b+1
+        assert block_to_hidden_state_index(0) == 1
+        assert block_to_hidden_state_index(5) == 6
+
+    def test_block_to_attention_is_identity(self):
+        # attention: one entry per block, no embedding entry
+        assert block_to_attention_index(0) == 0
+        assert block_to_attention_index(5) == 5
+
+    def test_the_two_conventions_differ(self):
+        """The off-by-one this guards against."""
+        assert block_to_hidden_state_index(3) != block_to_attention_index(3)
+
+    @pytest.mark.parametrize("fn", [block_to_hidden_state_index, block_to_attention_index])
+    def test_negative_block_raises(self, fn):
+        with pytest.raises(ValueError, match="non-negative"):
+            fn(-1)
+
+
+class TestRankLayers:
+    @pytest.fixture
+    def layers(self):
+        """4 layers that progressively rotate away from layer 0."""
+        rng = np.random.default_rng(0)
+        base = rng.normal(size=(80, 6))
+        out = {0: base}
+        cur = base
+        for i in range(1, 4):
+            cur = cur + 0.6 * rng.normal(size=base.shape)
+            out[i] = cur
+        return out
+
+    def test_returns_row_per_layer_indexed_by_layer(self, layers):
+        df = rank_layers(layers)
+        assert list(df.index) == [0, 1, 2, 3]
+        assert df.index.name == "layer"
+
+    def test_structural_columns_without_target(self, layers):
+        df = rank_layers(layers)
+        assert list(df.columns) == ["to_final", "to_previous"]
+
+    def test_probe_and_target_columns_with_target(self, layers):
+        rng = np.random.default_rng(1)
+        y = layers[3] @ rng.normal(size=(6,))  # predictable from the last layer
+        df = rank_layers(layers, target=y)
+        assert {"probe_score", "to_final", "to_target", "to_previous"} <= set(df.columns)
+
+    def test_final_layer_aligns_perfectly_with_itself(self, layers):
+        df = rank_layers(layers)
+        assert df.loc[3, "to_final"] == pytest.approx(1.0)
+
+    def test_first_layer_has_no_previous(self, layers):
+        df = rank_layers(layers)
+        assert np.isnan(df.loc[0, "to_previous"])
+
+    def test_alignment_to_final_increases_with_depth(self, layers):
+        """Later layers are progressively closer to the final representation."""
+        df = rank_layers(layers)
+        assert df.loc[0, "to_final"] < df.loc[2, "to_final"]
+
+    def test_probe_recovers_a_learnable_target(self, layers):
+        rng = np.random.default_rng(2)
+        y = layers[0] @ rng.normal(size=(6,))  # linear in layer 0
+        df = rank_layers(layers, target=y)
+        assert df.loc[0, "probe_score"] > 0.9
+
+    def test_classification_target_uses_accuracy(self, layers):
+        y = np.array(["a", "b"] * 40)
+        df = rank_layers(layers, target=y)
+        assert (df["probe_score"] >= 0.0).all() and (df["probe_score"] <= 1.0).all()
+
+    def test_layers_subset(self, layers):
+        df = rank_layers(layers, layers=[0, 2])
+        assert list(df.index) == [0, 2]
+
+    def test_metric_is_configurable(self, layers):
+        a = rank_layers(layers, metric="tsi").loc[0, "to_final"]
+        b = rank_layers(layers, metric="cka").loc[0, "to_final"]
+        assert a != b
+
+    def test_target_length_mismatch_raises(self, layers):
+        with pytest.raises(ValueError, match="target has"):
+            rank_layers(layers, target=np.zeros(5))
+
+    def test_empty_raises(self):
+        with pytest.raises(ValueError, match="nothing to rank"):
+            rank_layers({})
+
+    def test_missing_layer_raises(self, layers):
+        with pytest.raises(KeyError, match="not present"):
+            rank_layers(layers, layers=[0, 99])
+
+    def test_wrapper_form_requires_inputs(self):
+        class FakeWrapper:
+            def embed_all_layers(self, ids):
+                return {0: np.zeros((5, 3))}
+
+        with pytest.raises(ValueError, match="also pass inputs"):
+            rank_layers(FakeWrapper())
+
+    def test_wrapper_form_calls_embed_all_layers(self):
+        rng = np.random.default_rng(3)
+        made = {i: rng.normal(size=(40, 5)) for i in range(3)}
+
+        class FakeWrapper:
+            def embed_all_layers(self, ids):
+                assert ids == "TOKENS"
+                return made
+
+        df = rank_layers(FakeWrapper(), inputs="TOKENS")
+        assert list(df.index) == [0, 1, 2]

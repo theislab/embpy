@@ -5,9 +5,12 @@
 __all__ = [
     # alignment (representation-similarity metrics)
     "alignment_matrix",
+    "block_to_attention_index",
+    "block_to_hidden_state_index",
     "linear_cka",
     "mutual_knn",
     "qsi",
+    "rank_layers",
     "sample_size_for",
     "tsi",
     # clustering
@@ -95,9 +98,12 @@ __all__ = [
 from .activity import phenotypic_activity
 from .alignment import (
     alignment_matrix,
+    block_to_attention_index,
+    block_to_hidden_state_index,
     linear_cka,
     mutual_knn,
     qsi,
+    rank_layers,
     sample_size_for,
     tsi,
 )

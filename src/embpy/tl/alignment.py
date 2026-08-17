@@ -69,9 +69,12 @@ from scipy.stats import kendalltau
 
 __all__ = [
     "alignment_matrix",
+    "block_to_attention_index",
+    "block_to_hidden_state_index",
     "linear_cka",
     "mutual_knn",
     "qsi",
+    "rank_layers",
     "sample_size_for",
     "tsi",
 ]
@@ -479,3 +482,205 @@ def alignment_matrix(
             out.iloc[a_i, b_i] = value
             out.iloc[b_i, a_i] = value
     return out
+
+
+# ---------------------------------------------------------------------------
+# layer indexing -- the two extractors do NOT share a convention
+# ---------------------------------------------------------------------------
+#
+# ``BaseModelWrapper.extract_hidden_states`` returns ``n_blocks + 1`` tensors:
+# index 0 is the embedding-layer output, and index ``b + 1`` is the output of
+# transformer block ``b``. ``BaseModelWrapper.extract_attention`` returns exactly
+# ``n_blocks`` tensors, so index ``b`` is block ``b`` -- there is no embedding entry
+# (an embedding layer computes no attention).
+#
+# Anything joining the two must convert explicitly, or an off-by-one shows up as a
+# silent misattribution: "layer 5 attention" paired with block 4's hidden state.
+# Use the two helpers below and state which convention you report.
+
+
+def block_to_hidden_state_index(block: int) -> int:
+    """Index into :meth:`extract_hidden_states` output for transformer ``block``.
+
+    Blocks are 0-based, so block 0 -- the first transformer block -- is hidden-state
+    index 1; index 0 is the embedding layer, which is not a block.
+    """
+    if block < 0:
+        raise ValueError(f"block must be non-negative, got {block}. Resolve negatives first.")
+    return block + 1
+
+
+def block_to_attention_index(block: int) -> int:
+    """Index into :meth:`extract_attention` output for transformer ``block``.
+
+    Identity, because attention has one entry per block and no embedding entry. It
+    exists so call sites name the convention instead of assuming it.
+    """
+    if block < 0:
+        raise ValueError(f"block must be non-negative, got {block}. Resolve negatives first.")
+    return block
+
+
+# ---------------------------------------------------------------------------
+# layer selection
+# ---------------------------------------------------------------------------
+
+
+def _probe_score(
+    X: np.ndarray,
+    y: np.ndarray,
+    probe: str,
+    cv: int,
+    random_state: int,
+) -> float:
+    """Cross-validated score of a simple probe predicting ``y`` from ``X``."""
+    from sklearn.linear_model import LogisticRegression, Ridge
+    from sklearn.model_selection import cross_val_score
+    from sklearn.pipeline import make_pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    y = np.asarray(y)
+    classification = y.dtype.kind in "USObu" or (y.dtype.kind in "iu" and len(np.unique(y)) <= max(2, len(y) // 10))
+    if probe == "ridge":
+        estimator = LogisticRegression(max_iter=1000) if classification else Ridge(alpha=1.0, random_state=random_state)
+    elif probe == "logistic":
+        estimator = LogisticRegression(max_iter=1000)
+        classification = True
+    else:
+        raise ValueError(f"probe must be 'ridge' or 'logistic', got {probe!r}.")
+
+    folds = int(min(cv, len(y) if not classification else np.bincount(_encode(y)).min()))
+    if folds < 2:
+        return float("nan")
+    pipe = make_pipeline(StandardScaler(), estimator)
+    scoring = "accuracy" if classification else "r2"
+    scores = cross_val_score(pipe, X, y, cv=folds, scoring=scoring)
+    return float(np.mean(scores))
+
+
+def _encode(y: np.ndarray) -> np.ndarray:
+    _, inv = np.unique(y, return_inverse=True)
+    return inv
+
+
+def rank_layers(
+    layer_embeddings: Mapping[int, Any] | Any,
+    target: Any = None,
+    *,
+    inputs: Any = None,
+    probe: str = "ridge",
+    metric: Literal["tsi", "qsi", "cka", "linear_cka", "mutual_knn"] = "tsi",
+    distance: str | Callable[..., float] = "euclidean",
+    layers: Sequence[int] | None = None,
+    cv: int = 5,
+    random_state: int = 0,
+    **metric_kwargs: Any,
+) -> pd.DataFrame:
+    """Score every layer of a model so you can pick one from data instead of by default.
+
+    The last layer of a foundation model is routinely *not* the best for transfer --
+    it is specialised toward the pretraining objective -- so "which layer should I
+    cache?" deserves an answer measured on your own task.
+
+    Parameters
+    ----------
+    layer_embeddings
+        Either a mapping ``{layer_index: (n_entities, n_features) array}`` -- exactly
+        what :meth:`~embpy.models.base.BaseModelWrapper.embed_all_layers` returns --
+        or a model wrapper, in which case ``inputs`` must be given and
+        ``embed_all_layers`` is called for you.
+    target
+        Optional per-entity label to probe for: numeric for regression, categorical
+        for classification. When omitted, the probe and target columns are skipped
+        and only the structural comparisons are reported.
+    inputs
+        Token tensor for the wrapper form, forwarded to ``embed_all_layers``.
+    probe
+        ``"ridge"`` (default; switches to logistic regression for categorical
+        targets) or ``"logistic"``.
+    metric, distance
+        Alignment metric and the distance used inside it, as in
+        :func:`alignment_matrix`.
+    layers
+        Restrict to these layer indices. Defaults to all, in sorted order.
+    cv
+        Cross-validation folds for the probe.
+
+    Returns
+    -------
+    pandas.DataFrame
+        One row per layer, indexed by layer, with columns:
+
+        ``probe_score``
+            Cross-validated R^2 (regression) or accuracy (classification). Absent
+            when ``target`` is None.
+        ``to_final``
+            Alignment with the last layer -- low means this layer carries something
+            the final representation has discarded.
+        ``to_target``
+            Alignment between the layer's geometry and the target's. Absent when
+            ``target`` is None.
+        ``to_previous``
+            Alignment with the preceding layer. High means the layer is largely
+            redundant, so caching it buys little over its neighbour.
+
+    Notes
+    -----
+    Layer indices are reported exactly as they appear in ``layer_embeddings``. For
+    ``embed_all_layers`` that is the hidden-state convention, where **index 0 is the
+    embedding layer and index b+1 is transformer block b** -- which is *not* the
+    convention used by :meth:`~embpy.models.base.BaseModelWrapper.extract_attention`.
+    Convert with :func:`block_to_hidden_state_index` /
+    :func:`block_to_attention_index` before joining the two.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from embpy.tl import rank_layers
+    >>> rng = np.random.default_rng(0)
+    >>> embs = {i: rng.normal(size=(60, 8)) for i in range(4)}
+    >>> df = rank_layers(embs)
+    >>> list(df.columns)
+    ['to_final', 'to_previous']
+    """
+    if not isinstance(layer_embeddings, Mapping):
+        wrapper = layer_embeddings
+        if inputs is None:
+            raise ValueError(
+                "When passing a model wrapper, also pass inputs= (the token tensor) so embed_all_layers can be called."
+            )
+        layer_embeddings = wrapper.embed_all_layers(inputs)
+
+    if not layer_embeddings:
+        raise ValueError("layer_embeddings is empty; nothing to rank.")
+
+    idx = sorted(layer_embeddings) if layers is None else list(layers)
+    missing = [i for i in idx if i not in layer_embeddings]
+    if missing:
+        raise KeyError(f"Layers not present in layer_embeddings: {missing}.")
+
+    mats = {i: _as_matrix(layer_embeddings[i], f"layer {i}") for i in idx}
+    final = mats[idx[-1]]
+
+    fn = _METRICS[metric]
+    align_kw = dict(metric_kwargs) if fn is linear_cka else {"metric": distance, **metric_kwargs}
+
+    y = None if target is None else np.asarray(target)
+    if y is not None and y.shape[0] != final.shape[0]:
+        raise ValueError(f"target has {y.shape[0]} entries but the embeddings have {final.shape[0]} rows.")
+    target_space = None
+    if y is not None and y.dtype.kind in "fiu":
+        target_space = y.reshape(len(y), -1).astype(np.float64)
+
+    rows: list[dict[str, float]] = []
+    for pos, i in enumerate(idx):
+        row: dict[str, float] = {}
+        if y is not None:
+            row["probe_score"] = _probe_score(mats[i], y, probe, cv, random_state)
+        row["to_final"] = 1.0 if i == idx[-1] else float(fn(mats[i], final, **align_kw))
+        if target_space is not None:
+            row["to_target"] = float(fn(mats[i], target_space, **align_kw))
+        row["to_previous"] = float("nan") if pos == 0 else float(fn(mats[i], mats[idx[pos - 1]], **align_kw))
+        rows.append(row)
+
+    return pd.DataFrame(rows, index=pd.Index(idx, name="layer"))
