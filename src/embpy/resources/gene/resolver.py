@@ -262,7 +262,11 @@ class GeneResolver:
                     logging.warning("You may need to run 'pyensembl install' manually or check internet connection.")
 
         except ImportError:
-            logging.warning("pyensembl library not found. Running in API-only mode.")
+            logging.warning(
+        "pyensembl not found, so gene lookups use the Ensembl REST API instead of a local "
+        "cache. This still works but is slower and needs network access. For offline/local "
+        'resolution: pip install "embpy[genome]"'
+    )
             self.ensembl = None
         except Exception as e:
             logging.warning(f"Failed to initialize pyensembl: {e}")

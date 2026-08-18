@@ -3869,6 +3869,67 @@ class BioEmbedder:
                 result.append(name)
         return sorted(result)
 
+    def model_catalog(
+        self,
+        category: str = "all",
+        *,
+        summary: bool = False,
+    ) -> Any:
+        """Return the available models as a table.
+
+        The tabular counterpart to :meth:`list_available_models`, which returns bare
+        strings. In a notebook this renders as a proper table rather than printed
+        text, and being a DataFrame it can be filtered, sorted and exported.
+
+        Parameters
+        ----------
+        category
+            Restrict to one family (``"dna"``, ``"protein"``, ``"molecule"``,
+            ``"text"``, ``"morphology"``, ``"single_cell"``, ``"static"``), or
+            ``"all"`` for everything.
+        summary
+            ``False`` (default) gives one row per model with its family. ``True``
+            gives one row per family with a count and a few example keys -- the
+            quick "what can this package do?" view.
+
+        Returns
+        -------
+        pandas.DataFrame
+            With ``summary=False``: columns ``model``, ``family``.
+            With ``summary=True``: columns ``family``, ``n_models``, ``examples``.
+
+        Examples
+        --------
+        >>> embedder.model_catalog(summary=True)          # doctest: +SKIP
+        >>> embedder.model_catalog("protein").head()      # doctest: +SKIP
+        """
+        import pandas as pd
+
+        families = ["static", "dna", "protein", "molecule", "text", "single_cell", "morphology"]
+        wanted = families if category == "all" else [category]
+
+        rows: list[dict[str, Any]] = []
+        for fam in wanted:
+            for name in self.list_available_models(fam):  # type: ignore[arg-type]
+                rows.append({"model": name, "family": fam})
+
+        frame = pd.DataFrame(rows, columns=["model", "family"])
+        # A model can appear under more than one family (e.g. a text encoder used
+        # for genes); keep the first family so counts stay interpretable.
+        frame = frame.drop_duplicates(subset="model", keep="first").reset_index(drop=True)
+
+        if not summary:
+            return frame.sort_values(["family", "model"]).reset_index(drop=True)
+
+        grouped = (
+            frame.groupby("family")["model"]
+            .agg(n_models="size", examples=lambda s: ", ".join(sorted(s)[:4]))
+            .reset_index()
+            .sort_values("n_models", ascending=False)
+            .reset_index(drop=True)
+        )
+        return grouped
+
     # ------------------------------------------------------------------
     # Morphological embedding API
     # ------------------------------------------------------------------

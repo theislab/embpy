@@ -44,7 +44,10 @@ except ImportError:
 try:
     from enformer_pytorch import from_pretrained, seq_indices_to_one_hot
 except ImportError:
-    logging.warning("enformer-pytorch not found. EnformerWrapper will not be functional.")
+    logging.warning(
+        "enformer-pytorch not found, so EnformerWrapper is unavailable. It ships in an "
+        'optional extra to keep the base install light: pip install "embpy[seqmodels]"'
+    )
     from_pretrained = None  # type: ignore
     seq_indices_to_one_hot = None  # type: ignore
 
@@ -637,7 +640,10 @@ try:
     from borzoi_pytorch.pytorch_borzoi_model import TRACKS_DF as _BORZOI_TRACKS_DF
     from borzoi_pytorch.pytorch_borzoi_utils import undo_squashed_scale as _undo_squashed_scale
 except ImportError:
-    logging.warning("borzoi_pytorch not installed; BorzoiWrapper will be nonfunctional.")
+    logging.warning(
+        "borzoi_pytorch not installed, so BorzoiWrapper is unavailable. It ships in an "
+        'optional extra to keep the base install light: pip install "embpy[seqmodels]"'
+    )
     Borzoi = None  # type: ignore
     _BORZOI_TRACKS_DF = None  # type: ignore
     _undo_squashed_scale = None  # type: ignore

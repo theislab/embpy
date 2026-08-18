@@ -14,7 +14,10 @@ try:
     from scooby.modeling import Scooby
     from scooby.utils.utils import undo_squashed_scale as _scooby_undo_squashed_scale
 except ImportError:
-    logging.warning("scooby not installed; ScoobyWrapper will be nonfunctional.")
+    logging.warning(
+        "scooby not installed, so ScoobyWrapper is unavailable. It is an optional extra "
+        'because it installs from a git URL: pip install "embpy[scooby]"'
+    )
     Scooby = None  # type: ignore
     _scooby_undo_squashed_scale = None  # type: ignore
 
