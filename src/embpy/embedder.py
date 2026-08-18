@@ -52,6 +52,7 @@ from .embedder_registry.flat import (
     # tests/embpy/test_registry_split.py::test_embedder_re_export_is_same_object.
     MULTI_SPECIES_DNA,  # noqa: F401
 )
+from .embedder_registry.extras import WRAPPER_EXTRAS
 from .models.api_models import APIEmbeddingWrapper
 from .models.text_models import TextLLMWrapper
 from .resources.gene_resolver import GeneResolver
@@ -142,6 +143,27 @@ def _guess_missing_package(msg: str) -> str | None:
     return None
 
 
+def _missing_package_from_exception(exc: BaseException) -> str | None:
+    """Extract a missing module name from an exception *or any of its causes*.
+
+    Wrappers routinely catch a bare ``ModuleNotFoundError`` and re-raise a
+    friendlier ``ImportError`` that names no importable module -- Boltz-2 raises
+    ``"Boltz-2 is not installed. Install with: pip install boltz[cuda]"``. Every
+    pattern in :func:`_guess_missing_package` misses that text, but the chained
+    cause still carries ``"No module named 'boltz'"``, so walk the chain before
+    giving up. Returns ``None`` only when no link names a module.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        found = _guess_missing_package(str(current))
+        if found:
+            return found
+        current = current.__cause__ or current.__context__
+    return None
+
+
 def _parse_oom_attempted_bytes(msg: str) -> int | None:
     """Extract ``B`` from CUDA OOM messages like "Tried to allocate 33.87 GiB".
 
@@ -214,7 +236,7 @@ def _classify_embedder_exception(
     #    deferred import inside the forward pass).
     if isinstance(exc, ImportError):
         return DependencyError(
-            package=_guess_missing_package(msg) or "unknown",
+            package=_missing_package_from_exception(exc) or "unknown",
             feature=f"model '{model_name}'",
         )
 
@@ -396,8 +418,15 @@ class BioEmbedder:
             "that supports it (protein, DNA and text transformer wrappers do)."
         )
 
-    def _get_model(self, model_name: str) -> BaseModelWrapper:
-        """Loads a model or retrieves it from the cache using the registry or direct HF loading for text models."""
+    def _get_model(self, model_name: str, *, load: bool = True) -> BaseModelWrapper:
+        """Loads a model or retrieves it from the cache using the registry or direct HF loading for text models.
+
+        With ``load=False`` the wrapper is constructed but its weights are not
+        fetched, so class-level attributes (``has_attention``, ``model_type``)
+        can be read without paying for a download. Such an instance is NOT
+        cached: callers that later want a working model must go through the
+        normal path and get one that is actually loaded.
+        """
         if model_name in self.model_cache:
             return self.model_cache[model_name]
 
@@ -437,6 +466,8 @@ class BioEmbedder:
                     }
                     extra_kwargs["provider"] = provider_map.get(model_name, "openai")
                 model_instance = WrapperClass(model_path_or_name=model_path_or_name, **extra_kwargs)
+                if not load:
+                    return model_instance
                 model_instance.load(self.device)
                 self.model_cache[model_name] = model_instance
                 logging.info(f"Model '{model_name}' loaded successfully.")
@@ -446,7 +477,15 @@ class BioEmbedder:
                 # so the operator (and SLURM exit code) can distinguish
                 # "needs `pixi install` of a different env" from "the model
                 # is genuinely broken on HF".
-                pkg = _guess_missing_package(str(e)) or "unknown"
+                #
+                # Prefer the embpy extra: it is the install line that actually
+                # works (`boltz` alone is not enough for Boltz-2, which needs
+                # `boltz[cuda]`). Fall back to the module named anywhere in the
+                # exception chain, and only then to a placeholder.
+                extra = WRAPPER_EXTRAS.get(getattr(WrapperClass, "__name__", ""))
+                pkg = f"embpy[{extra}]" if extra else (
+                    _missing_package_from_exception(e) or "unknown"
+                )
                 logging.error(f"Failed to load model '{model_name}': missing dependency '{pkg}'.")
                 raise DependencyError(package=pkg, feature=f"model '{model_name}'") from e
             except Exception as e:
@@ -463,6 +502,8 @@ class BioEmbedder:
             logging.info(f"Model '{model_name}' not in registry. Attempting to load as text model from Hugging Face...")
             try:
                 model_instance = TextLLMWrapper(model_path_or_name=model_name)
+                if not load:
+                    return model_instance
                 model_instance.load(self.device)
                 self.model_cache[model_name] = model_instance
                 logging.info(f"Successfully loaded text model '{model_name}' from Hugging Face.")
@@ -700,7 +741,7 @@ class BioEmbedder:
         embpy.models.base.BaseModelWrapper.extract_hidden_states
         embpy.models.base.BaseModelWrapper.embed_all_layers
         """
-        inst = self._get_model(model)
+        inst = self._get_model(model, load=load)
         if load and getattr(inst, "model", None) is None:
             inst.load(self.device)
         return inst
