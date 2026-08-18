@@ -79,6 +79,46 @@ class TestComputeUMAP:
             result = compute_umap(adata, "X_emb", output_key="my_umap")
             assert "my_umap" in result.obsm
 
+    @patch("embpy.tl.dimred._require_scanpy")
+    def test_spectral_init_on_a_normal_sized_input(self, mock_sc):
+        sc = MagicMock()
+        mock_sc.return_value = sc
+        adata = _make_adata(n=30)
+        adata.obsm["X_umap"] = np.random.randn(30, 2).astype(np.float32)
+
+        compute_umap(adata, "X_emb")
+        assert sc.tl.umap.call_args[1]["init_pos"] == "spectral"
+
+    @patch("embpy.tl.dimred._require_scanpy")
+    def test_tiny_input_falls_back_to_random_init(self, mock_sc):
+        """Regression: spectral init needs more rows than components.
+
+        UMAP solves for ``n_components + 1`` eigenvectors of the neighbour
+        graph, so at three observations scipy raised "Cannot use
+        scipy.linalg.eigh for sparse A with k >= N" from inside the solver --
+        which is what ``pl.plot_species_umap`` hit whenever an ortholog lookup
+        returned only a couple of species.
+        """
+        sc = MagicMock()
+        mock_sc.return_value = sc
+        adata = _make_adata(n=3)
+        adata.obsm["X_umap"] = np.random.randn(3, 2).astype(np.float32)
+
+        compute_umap(adata, "X_emb")
+        assert sc.tl.umap.call_args[1]["init_pos"] == "random"
+        # n_neighbors must also fit inside the graph.
+        assert sc.pp.neighbors.call_args[1]["n_neighbors"] <= 2
+
+    @patch("embpy.tl.dimred._require_scanpy")
+    def test_n_neighbors_never_exceeds_the_row_count(self, mock_sc):
+        sc = MagicMock()
+        mock_sc.return_value = sc
+        adata = _make_adata(n=6)
+        adata.obsm["X_umap"] = np.random.randn(6, 2).astype(np.float32)
+
+        compute_umap(adata, "X_emb", n_neighbors=15)   # more than there are rows
+        assert sc.pp.neighbors.call_args[1]["n_neighbors"] == 5
+
 
 class TestComputeTSNE:
     @patch("embpy.tl.dimred._require_scanpy")
