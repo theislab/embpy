@@ -104,6 +104,13 @@ optional-dependencies.torch-cu130 = [
 # alphagenome (heavy or pinned stacks). pysam/pyensembl ARE included -- they ship
 # wheels on Linux and macOS, so no compiler is needed. Install those individually when needed --
 # see the README.
+#
+# `esm` (ESM-C / ESM3) is excluded from BOTH for a different reason: it is easy to
+# install but declares `transformers<4.48.2`, so putting it in a bundle silently
+# downgrades transformers for every other HuggingFace backend in the same
+# environment. It used to be in [gpu] and not [cpu], which made the two bundles
+# disagree about which models exist. See the `esm3` extra for the install recipe
+# that keeps both.
 optional-dependencies.cpu = [
   "pysam>=0.22; platform_system != 'Windows'",
   "pyensembl>=2.3.13; platform_system != 'Windows'",
@@ -119,6 +126,17 @@ optional-dependencies.cpu = [
   "h5py",
   "pillow>=10",
   "xgboost>=2.0",
+  # Annotation and metrics layers, not just embedding backends: pertpy powers
+  # tl.annotate_cell_lines / annotate_drugs / lookup_*, and scib powers
+  # tl.compute_scib_metrics. Without them those functions raise DependencyError
+  # on an otherwise complete install.
+  "pertpy",
+  "scib>=1.1.5",
+  # tl.leiden / tl.cluster_embeddings(method="leiden") are public API, and
+  # scanpy's leiden backend needs these two at runtime. Without them the
+  # functions raise ModuleNotFoundError on an otherwise complete install.
+  "leidenalg>=0.10",
+  "igraph>=0.11",
 ]
 optional-dependencies.gpu = [
   "pysam>=0.22; platform_system != 'Windows'",
@@ -135,7 +153,17 @@ optional-dependencies.gpu = [
   "h5py",
   "pillow>=10",
   "xgboost>=2.0",
-  "esm>=3.2.0",
+  # Annotation and metrics layers, not just embedding backends: pertpy powers
+  # tl.annotate_cell_lines / annotate_drugs / lookup_*, and scib powers
+  # tl.compute_scib_metrics. Without them those functions raise DependencyError
+  # on an otherwise complete install.
+  "pertpy",
+  "scib>=1.1.5",
+  # tl.leiden / tl.cluster_embeddings(method="leiden") are public API, and
+  # scanpy's leiden backend needs these two at runtime. Without them the
+  # functions raise ModuleNotFoundError on an otherwise complete install.
+  "leidenalg>=0.10",
+  "igraph>=0.11",
 ]
 optional-dependencies.models = [
   "embpy[torch]",
@@ -160,6 +188,17 @@ optional-dependencies.genome = [
 # `transformers<4.48.2`, which conflicts with helical (needs >=4.49.0) and a
 # few other packages. ESM-2 / ProtT5 do NOT need this extra -- they go through
 # HuggingFace `transformers` directly.
+#
+# That pin is conservative rather than real. Verified 2026-08-18: esm 3.2.3 and
+# transformers 4.57.6 coexist fine -- `esmc_300m` embedded a 64-residue sequence
+# to a 960-dim vector, and esm2/prot_t5 kept working alongside it. So to get
+# ESM-C without dragging transformers back two years:
+#
+#   pip install "embpy[cpu]"      # or [gpu]
+#   pip install esm --no-deps     # skips the over-tight transformers pin
+#
+# `--no-deps` is safe here because every other esm runtime dep is already in the
+# bundle. Plain `pip install embpy[esm3]` still works, it just pins transformers.
 optional-dependencies.esm3 = [
   "esm>=3.2.0",
 ]
