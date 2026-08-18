@@ -91,6 +91,47 @@ optional-dependencies.torch-cu130 = [
 # Embedding backends: the deep-learning stack behind BioEmbedder and the
 # HuggingFace / PyG model wrappers. `pip install embpy[models]` is the usual
 # "I actually want to compute embeddings" install.
+# ---------------------------------------------------------------------------
+# The two supported installs. Everything below them is fine-grained plumbing that
+# these two compose; users should only ever need `cpu` or `gpu`.
+#
+#   pip install "embpy[cpu]"   -> CPU-only torch + every backend that runs on CPU
+#   pip install "embpy[gpu]"   -> CUDA torch + the same backends, GPU-accelerated
+#
+# A few backends are deliberately NOT in either, because pip cannot install them
+# on an arbitrary machine: scooby (git URL), caduceus/mamba-ssm and evo2 (need a
+# CUDA toolchain at build time), boltz, minimol, helical, arc-state, arc-stack and
+# alphagenome (heavy or pinned stacks). Install those individually when needed --
+# see the README.
+optional-dependencies.cpu = [
+  "embpy[torch-cpu]",
+  "transformers>=4.45.0,<5.0.0",
+  "sentencepiece>=0.1.99",
+  "protobuf>=3.20",
+  "torch-geometric>=2.5",
+  "borzoi-pytorch>=0.4.3",
+  "enformer-pytorch>=0.8.10",
+  "biopython",
+  "scanpy>=1.10",
+  "h5py",
+  "pillow>=10",
+  "xgboost>=2.0",
+]
+optional-dependencies.gpu = [
+  "embpy[torch]",
+  "transformers>=4.45.0,<5.0.0",
+  "sentencepiece>=0.1.99",
+  "protobuf>=3.20",
+  "torch-geometric>=2.5",
+  "borzoi-pytorch>=0.4.3",
+  "enformer-pytorch>=0.8.10",
+  "biopython",
+  "scanpy>=1.10",
+  "h5py",
+  "pillow>=10",
+  "xgboost>=2.0",
+  "esm>=3.2.0",
+]
 optional-dependencies.models = [
   "embpy[torch]",
   "transformers>=4.45.0,<5.0.0",

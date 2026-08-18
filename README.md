@@ -35,50 +35,89 @@ scverse-friendly plotting and analysis utilities.
 
 ### pip / uv
 
-The default install is lightweight and always builds (no compiler, no GPU):
+There are **two supported installs**. Both work with `pip` and `uv` — these are
+standard extras, not tool-specific.
 
 ```bash
-pip install embpy
+pip install "embpy[cpu]"
 ```
-
-This gives you the resolvers, IO, annotation, plotting and analysis layers. To
-compute embeddings, add the model backends (PyTorch + transformers):
 
 ```bash
-pip install "embpy[models]"      # deep-learning embedding backends
+pip install "embpy[gpu]"
 ```
 
-Other features live behind their own extras, installed independently — you only
-pull what you need:
+`[cpu]` pulls CPU-only PyTorch plus every backend that runs on CPU — enough for all
+the tutorials. `[gpu]` pulls CUDA PyTorch and the same backends, GPU-accelerated.
+Pick `[gpu]` on a machine with an NVIDIA card, `[cpu]` otherwise.
+
+Installing the bare package (`pip install embpy`) gives the lightweight core —
+resolvers, IO, annotation, plotting and analysis — but no embedding backends. It
+exists so the docs build and CI stay fast; for real use, pick `[cpu]` or `[gpu]`.
+
+<details>
+<summary>Backends that must be installed separately</summary>
+
+A few backends cannot be installed by pip on an arbitrary machine, so they are in
+neither extra. embpy degrades gracefully without them and the warning it logs names
+the command to run:
+
+| Backend | Install | Why it is separate |
+| --- | --- | --- |
+| Caduceus | `pip install "embpy[caduceus]"` | `mamba-ssm` needs a CUDA toolchain at build time |
+| Scooby | `pip install "embpy[scooby]"` | installs from a git URL |
+| Evo / Evo2 | `pip install "embpy[evo]"` | CUDA toolchain |
+| Boltz-2 | `pip install "embpy[boltz]"` | heavy structure stack |
+| MiniMol | `pip install "embpy[minimol]"` | pinned graphium stack |
+| AlphaGenome | `pip install "embpy[alphagenome]"` | API client, needs a key |
+| single-cell FMs | `pip install "embpy[helical]"` | pins torch/transformers |
+| local genome | `pip install "embpy[genome]"` | `pysam` compiles C extensions |
+
+Without `[genome]`, gene lookups fall back to the Ensembl REST API — slower and
+network-dependent, but fully functional.
+
+</details>
+
+### On an HPC cluster (Slurm)
+
+Verified on Helmholtz Munich HPC; adjust partition/QoS names for your site.
+
+**1. Grab an interactive CPU node.** The tutorials are small enough for CPU:
 
 ```bash
-pip install "embpy[bio]"         # biopython (FASTA parsing)
-pip install "embpy[genome]"      # pysam + pyensembl (local genome access)
-pip install "embpy[scanpy]"      # single-cell preprocessing
-pip install "embpy[scib]"        # scIB metrics for single-cell embeddings
-pip install "embpy[models,bio,scanpy]"   # combine as needed
+srun --partition=interactive_cpu_p --qos=interactive_cpu --cpus-per-task=8 --mem=16G --time=04:00:00 --pty bash
 ```
 
-### Pixi
+If you see `QOSMaxMemoryPerJob`, that is a **policy cap, not a shortage** — ask for
+less memory, not more. 16G is enough here.
 
-Each pixi environment is independent — install **just the one you need**, you do
-not have to be able to solve all of them:
+**2. Create and activate an environment:**
 
 ```bash
-pixi install -e default          # CPU/dev
-pixi run -e default verify
+export UV_LINK_MODE=copy && uv venv .venv --python 3.12 && source .venv/bin/activate
 ```
 
-If re-solving every environment is slow or an unrelated environment (e.g. a
-CUDA-only one) fails to solve on your machine, install from the committed lock
-without re-solving the others:
+**3. Install:**
 
 ```bash
-pixi install -e default --frozen
+uv pip install -e ".[cpu]" ipykernel jupyter
 ```
 
-For the full GPU/model environment matrix, see the
-[technical guide](docs/technical.md#environments-and-installation).
+**4. Run the notebooks headless:**
+
+```bash
+jupyter nbconvert --to notebook --execute docs/notebooks/01_embed_any_model.ipynb --output /tmp/out.ipynb
+```
+
+**Or run them interactively.** Start a server on the compute node:
+
+```bash
+jupyter lab --no-browser --ip=0.0.0.0 --port=8899 --IdentityProvider.token=embpy
+```
+
+Then point your notebook client at `http://<compute-node>:8899/lab?token=embpy`
+(`hostname` gives the node). Do not background it with `Ctrl+Z` — that suspends the
+process, which keeps the port open while answering nothing; use `nohup ... &` if you
+need the prompt back.
 
 ## Quick Start
 
