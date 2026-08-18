@@ -101,9 +101,12 @@ optional-dependencies.torch-cu130 = [
 # A few backends are deliberately NOT in either, because pip cannot install them
 # on an arbitrary machine: scooby (git URL), caduceus/mamba-ssm and evo2 (need a
 # CUDA toolchain at build time), boltz, minimol, helical, arc-state, arc-stack and
-# alphagenome (heavy or pinned stacks). Install those individually when needed --
+# alphagenome (heavy or pinned stacks). pysam/pyensembl ARE included -- they ship
+# wheels on Linux and macOS, so no compiler is needed. Install those individually when needed --
 # see the README.
 optional-dependencies.cpu = [
+  "pysam>=0.22; platform_system != 'Windows'",
+  "pyensembl>=2.3.13; platform_system != 'Windows'",
   "embpy[torch-cpu]",
   "transformers>=4.45.0,<5.0.0",
   "sentencepiece>=0.1.99",
@@ -118,6 +121,8 @@ optional-dependencies.cpu = [
   "xgboost>=2.0",
 ]
 optional-dependencies.gpu = [
+  "pysam>=0.22; platform_system != 'Windows'",
+  "pyensembl>=2.3.13; platform_system != 'Windows'",
   "embpy[torch]",
   "transformers>=4.45.0,<5.0.0",
   "sentencepiece>=0.1.99",

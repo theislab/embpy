@@ -70,10 +70,6 @@ the command to run:
 | MiniMol | `pip install "embpy[minimol]"` | pinned graphium stack |
 | AlphaGenome | `pip install "embpy[alphagenome]"` | API client, needs a key |
 | single-cell FMs | `pip install "embpy[helical]"` | pins torch/transformers |
-| local genome | `pip install "embpy[genome]"` | `pysam` compiles C extensions |
-
-Without `[genome]`, gene lookups fall back to the Ensembl REST API — slower and
-network-dependent, but fully functional.
 
 </details>
 
