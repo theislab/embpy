@@ -230,13 +230,11 @@ pl.plot_embedding_space(
    catalog, then one embedding call per family (DNA, protein, molecule, text, …).
 2. [Where embeddings live](docs/notebooks/02_output_contract.ipynb) — the
    `.obsm` / `.varm` / `.uns` storage contract and provenance.
-3. [Compare embedding spaces across models](docs/notebooks/03_compare_models.ipynb) —
-   do two models see your biology the same way?
+3. [Comparing embeddings](docs/notebooks/03_compare_embeddings.ipynb) — every metric
+   for asking whether two models encode the same structure, and which to use when.
 4. [Which model captures *my* biology?](docs/notebooks/04_benchmark_models.ipynb) —
    rank models on your own labelled task.
-5. [Do these models encode the same information?](docs/notebooks/05_compare_representations.ipynb) —
-   compare representations with TSI/QSI/CKA and pick a layer from evidence.
-6. [Reading a model's attention](docs/notebooks/06_attention_weights.ipynb) —
+5. [Reading a model's attention](docs/notebooks/06_attention_weights.ipynb) —
    extract per-layer attention and reduce it to AnnData-ready summaries.
 
 **By modality** — deeper, domain-specific workflows:
