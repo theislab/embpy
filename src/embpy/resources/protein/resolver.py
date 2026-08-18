@@ -263,13 +263,20 @@ class ProteinResolver:
         scope = scopes.get(id_type)
         if scope is None:
             return None
+        # MyGene accepts common names ("zebrafish") or taxids, and rejects the
+        # Ensembl-style binomials that OrthologResolver produces: species=
+        # "danio_rerio" returns HTTP 400 "cannot map some species to taxid".
+        # Because the failure is swallowed below, that silently disabled this
+        # whole leg for every cross-species lookup. Send the taxid, which
+        # ORGANISM_TAXON already knows.
+        species = ORGANISM_TAXON.get(organism.lower(), organism)
         try:
             resp = requests.get(
                 f"{MYGENE_REST}/query",
                 params={
                     "q": identifier,
                     "scopes": scope,
-                    "species": organism,
+                    "species": species,
                     "fields": "uniprot.Swiss-Prot",
                     "size": 1,
                 },
@@ -300,29 +307,49 @@ class ProteinResolver:
             return None
 
         if id_type == "symbol":
-            query = f"gene_exact:{identifier} AND organism_id:{taxon} AND reviewed:true"
+            field = f"gene_exact:{identifier}"
         elif id_type == "ensembl_id":
-            query = f"xref:{identifier} AND organism_id:{taxon} AND reviewed:true"
+            field = f"xref:{identifier}"
         else:
             return None
 
-        try:
-            resp = requests.get(
-                f"{UNIPROT_REST}/uniprotkb/search",
-                params={
-                    "query": query,
-                    "format": "json",
-                    "size": 1,
-                    "fields": "accession",
-                },
-                timeout=self.timeout,
-            )
-            resp.raise_for_status()
-            results = resp.json().get("results", [])
+        # Reviewed (Swiss-Prot) first, unreviewed (TrEMBL) only as a fallback.
+        #
+        # Restricting to reviewed entries is right for well-curated proteomes
+        # and wrong outside them: zebrafish cdk1, mapk1, jun and casp3 have no
+        # Swiss-Prot entry at all, so a reviewed-only query returned nothing and
+        # the ortholog was silently dropped. But dropping the restriction
+        # outright is worse -- an unreviewed search for human tp53 returns the
+        # TrEMBL fragment K7PPA8 instead of canonical P04637. Ordering the two
+        # keeps canonical answers where they exist and still finds the rest.
+        for reviewed_only in (True, False):
+            query = f"{field} AND organism_id:{taxon}"
+            if reviewed_only:
+                query += " AND reviewed:true"
+            try:
+                resp = requests.get(
+                    f"{UNIPROT_REST}/uniprotkb/search",
+                    params={
+                        "query": query,
+                        "format": "json",
+                        "size": 1,
+                        "fields": "accession",
+                    },
+                    timeout=self.timeout,
+                )
+                resp.raise_for_status()
+                results = resp.json().get("results", [])
+            except Exception as e:  # noqa: BLE001
+                logger.debug("UniProt search failed for %s: %s", identifier, e)
+                return None
             if results:
+                if not reviewed_only:
+                    logger.info(
+                        "No reviewed UniProt entry for %s in organism %s; "
+                        "using unreviewed (TrEMBL) entry %s",
+                        identifier, organism, results[0]["primaryAccession"],
+                    )
                 return results[0]["primaryAccession"]
-        except Exception as e:  # noqa: BLE001
-            logger.debug("UniProt search failed for %s: %s", identifier, e)
         return None
 
     # ------------------------------------------------------------------
@@ -403,8 +430,17 @@ class ProteinResolver:
 
         Returns
         -------
-        Dict mapping isoform accession (e.g. ``"P04637-1"``) to
-        amino acid sequence.  Empty dict on failure.
+        Dict mapping accession to amino acid sequence. The canonical
+        ("displayed") sequence is keyed by the bare accession (``"P04637"``),
+        and each additional isoform by its suffixed accession (``"P04637-2"``,
+        ``"P04637-3"``, ...). Empty dict on failure.
+
+        Notes
+        -----
+        UniProt only serves sequences for isoforms it has a distinct FASTA
+        record for, so the number of entries here can be smaller than the
+        isoform count that :class:`ProteinAnnotator` reports from the
+        ALTERNATIVE PRODUCTS annotation. For TP53 the two agree at nine.
         """
         accession = self.resolve_uniprot_id(identifier, id_type, organism)
         if accession is None:
@@ -412,9 +448,19 @@ class ProteinResolver:
             return {}
 
         try:
+            # `includeIsoform` is a SEARCH parameter. On the single-entry
+            # retrieval route (/uniprotkb/{accession}.fasta) UniProt ignores it
+            # silently and returns only the canonical sequence -- which used to
+            # make isoform="all" a no-op. Verified against P04637 (TP53):
+            # retrieval returns 1 entry, search returns 9, and 9 is what
+            # ProteinAnnotator's ALTERNATIVE PRODUCTS count reports.
             resp = requests.get(
-                f"{UNIPROT_REST}/uniprotkb/{accession}.fasta",
-                params={"includeIsoform": "true"},
+                f"{UNIPROT_REST}/uniprotkb/search",
+                params={
+                    "query": f"accession:{accession}",
+                    "format": "fasta",
+                    "includeIsoform": "true",
+                },
                 timeout=self.timeout,
             )
             resp.raise_for_status()
