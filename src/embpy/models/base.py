@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from typing import Any, Literal
 
 import numpy as np
@@ -616,6 +617,39 @@ class BaseModelWrapper(ABC):
     # Attention extraction
     # =================================================================
 
+    @staticmethod
+    @contextmanager
+    def _eager_attention(model: Any) -> Iterator[None]:
+        """Force eager attention for the duration of a forward pass.
+
+        Yields with ``model`` configured to materialise attention weights, then
+        restores whatever implementation it was using before. Older transformers
+        releases have no ``set_attn_implementation``; there the config attribute
+        is the supported switch, and releases predating both already default to
+        eager, so the fallback is a no-op.
+        """
+        config = getattr(model, "config", None)
+        previous = getattr(config, "_attn_implementation", None) if config is not None else None
+        if previous is None or previous == "eager":
+            yield
+            return
+
+        setter = getattr(model, "set_attn_implementation", None)
+        try:
+            if callable(setter):
+                setter("eager")
+            else:
+                config._attn_implementation = "eager"
+            yield
+        finally:
+            if callable(setter):
+                try:
+                    setter(previous)
+                except Exception:  # noqa: BLE001 - restoring is best-effort
+                    config._attn_implementation = previous
+            else:
+                config._attn_implementation = previous
+
     def extract_attention(
         self,
         input_ids: torch.Tensor,
@@ -668,16 +702,23 @@ class BaseModelWrapper(ABC):
         >>> attn[next(iter(attn))].shape  # (batch, heads, seq, seq)
         torch.Size([1, 20, 5, 5])
         """
-        if self.model is None:
-            raise RuntimeError("Model not loaded. Call load() first.")
-
+        # has_attention is a class attribute, so it is knowable without weights.
+        # Check it before the load guard: an architecture that cannot produce
+        # attention at all should say so, rather than telling the caller to load
+        # a model that would not help. This also gives the right answer for
+        # wrappers that keep their module somewhere other than .model.
         if not self.has_attention:
             raise NotImplementedError(
-                f"{type(self).__name__} wraps an attention-free architecture "
-                "(state-space, implicit convolution, or graph message passing), "
-                "so attention weights do not exist. Use extract_hidden_states() "
-                "for per-layer activations instead."
+                f"{type(self).__name__} wraps an architecture whose attention "
+                "weights are not observable -- either it is attention-free "
+                "(state-space, implicit convolution, graph message passing) or it "
+                "computes attention with a fused kernel that never materialises "
+                "the matrix. Use extract_hidden_states() for per-layer "
+                "activations instead."
             )
+
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
 
         if not self._is_huggingface_model():
             # Non-HF models have no uniform output_attentions flag, so fall back to
@@ -702,7 +743,13 @@ class BaseModelWrapper(ABC):
         input_ids = input_ids.to(device)
         if attention_mask is not None:
             attention_mask = attention_mask.to(device)
-        with torch.no_grad():
+        # transformers >= 4.48 defaults most architectures to SDPA, and that fused
+        # kernel returns no per-head weights: output_attentions=True then yields
+        # None, which is indistinguishable from an architecture that has no
+        # attention at all. Eager exists for every HF architecture that does have
+        # attention, so run the forward pass under eager and restore the model's
+        # own implementation afterwards.
+        with self._eager_attention(model), torch.no_grad():
             outputs = model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
@@ -713,10 +760,12 @@ class BaseModelWrapper(ABC):
         attns: tuple[torch.Tensor, ...] | None = getattr(outputs, "attentions", None)
         if attns is None or any(a is None for a in attns):
             raise RuntimeError(
-                "The model returned no attention weights. This usually means it "
-                "is using a fused attention kernel (SDPA or FlashAttention) that "
-                "does not expose per-head weights. Reload the model with "
-                "attn_implementation='eager' to make them available."
+                "The model returned no attention weights even under eager "
+                "attention. This means the architecture hard-codes a fused "
+                "attention kernel (FlashAttention or a Triton kernel) that never "
+                "materialises the per-head matrix, so it cannot be recovered "
+                "without changing the model. Use extract_hidden_states() for "
+                "per-layer activations instead."
             )
 
         n = len(attns)  # one entry per transformer layer; NO embedding offset

@@ -15,6 +15,12 @@ attn = wrapper.extract_attention(input_ids, layers=[-1])
 Two paths are tried in order:
 
 1. **HuggingFace models** — `output_attentions=True`, the one uniform interface.
+   Recent `transformers` releases default most architectures to the **SDPA**
+   kernel, which returns no weights, so `output_attentions=True` on its own comes
+   back empty. `extract_attention` therefore switches the model to eager attention
+   for the duration of the extraction forward pass and restores the original
+   setting afterwards — your `embed()` calls keep the faster kernel, and
+   extraction works on a default-loaded model with no flags to remember.
 2. **Non-HF models** — forward hooks on the layer modules found by
    `_get_layer_modules()`, mirroring the hidden-state fallback. Where a module can
    return weights on request (`torch.nn.MultiheadAttention` takes `need_weights`,
@@ -35,12 +41,28 @@ change and out of scope.
 Note this is not merely a performance flag: even forcing the math backend still
 returns only the output, never the weights.
 
+Two cases look identical at the call site but are not:
+
+* **Fused by default** — the architecture supports eager attention but ships with
+  SDPA selected (every HuggingFace model, since `transformers` 4.48). Recoverable:
+  embpy flips the implementation for the extraction pass, as described above.
+* **Fused by construction** — the architecture calls the fused kernel
+  unconditionally, with no eager path to select (scGPT's `FlashMHA`, STATE, and the
+  ESM SDK's shared attention layer). Not recoverable without patching the package,
+  so those wrappers declare `has_attention = False` and fail fast with the reason.
+
+`has_attention` is a class attribute, so it is answerable without downloading
+weights: `embedder.get_model(key, load=False).has_attention`.
+
 ## Per-model findings
 
 Verified by reading the installed packages (`arc-gpu` and `helical-gpu` environments).
 
 | Model | Attention implementation | Extractable | Evidence |
 |---|---|---|---|
+| **ESM-2, ESM-1b, ESM-1v** | HuggingFace `EsmModel` | ✅ yes, via eager switch | SDPA by default; eager path exists and is used for extraction |
+| **ProtT5** | HuggingFace T5 encoder | ✅ yes, via eager switch | same as above |
+| **ESM-C, ESM3** | ESM SDK, fused unconditionally | ❌ no | `esm/layers/attention.py:70,76` — `F.scaled_dot_product_attention` in both the masked and unmasked branch |
 | **Geneformer** | HuggingFace BERT | ✅ yes, native | `output_attentions` supported |
 | **TranscriptFormer** | explicit `F.softmax` in a module | ✅ yes, via hook | `transcriptformer/model_dir/layers.py:252` |
 | **UCE** | `torch.nn.TransformerEncoderLayer` | ✅ yes, via pre-hook | `uce/uce_model.py:74-75` |
