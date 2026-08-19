@@ -14,14 +14,7 @@ from pathlib import Path
 
 import pytest
 
-# embpy.embedder does an unguarded `import torch`, so this module cannot even be
-# collected in the lightweight core env (CI installs ".[test]" with no torch).
-pytest.importorskip("torch")
-
-from embpy.embedder import (  # noqa: E402
-    _guess_missing_package,
-    _missing_package_from_exception,
-)
+from embpy.embedder import _guess_missing_package, _missing_package_from_exception
 from embpy.embedder_registry.extras import WRAPPER_EXTRAS
 from embpy.errors import DependencyError
 

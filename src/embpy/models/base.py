@@ -3,10 +3,21 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
-import torch
+
+from embpy._lazy import lazy_module
+
+if TYPE_CHECKING:
+    import torch
+else:
+    # `BaseModelWrapper` is an ABC over torch models, but importing it must not
+    # require torch: `embpy.embedder` (and therefore the resolver / IO / analysis
+    # layers) reaches this module on the lightweight core install where torch is
+    # absent. Every `torch.` reference below is inside a method body, so the real
+    # import happens on the first tensor operation, not here. See `embpy._lazy`.
+    torch = lazy_module("torch")
 
 
 class BaseModelWrapper(ABC):

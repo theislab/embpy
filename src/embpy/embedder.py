@@ -11,9 +11,9 @@ from hashlib import sha1
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
-import torch
 from rdkit import Chem
 
+from ._lazy import lazy_module
 from .errors import (
     ConfigError,
     ContextOverflowError,
@@ -24,13 +24,32 @@ from .errors import (
     ModelNotFoundError,
     ModelOOMError,
 )
-from .models.base import BaseModelWrapper
 from .observability import log_event, time_block
 from .reporting import ResolutionReport
 from .retry import embed_batch_with_oom_recovery
 
 if TYPE_CHECKING:
-    pass
+    import torch
+
+    # Declared for type checkers / IDE intellisense only. At runtime these four
+    # are served by the PEP 562 `__getattr__` below, which ruff cannot see --
+    # hence the noqa.
+    from .embedder_registry.flat import (
+        HUMAN_ONLY_MODELS,  # noqa: F401
+        MODEL_REGISTRY,  # noqa: F401
+        MOUSE_ONLY_MODELS,  # noqa: F401
+        MULTI_SPECIES_DNA,  # noqa: F401
+    )
+    from .models.base import BaseModelWrapper
+else:
+    # Every ``torch.`` reference in this module is inside a method body, so the
+    # real import can wait for the first tensor operation. See ``embpy._lazy``.
+    torch = lazy_module("torch")
+
+from .resources.gene_resolver import GeneResolver
+from .resources.protein_resolver import ProteinResolver
+from .resources.text_resolver import TextResolver
+
 # MODEL_REGISTRY + the three DNA species sets live in
 # `embpy.embedder_registry` (audit steps 2 + 3). The DNA / Protein /
 # Molecule / Text / Morphology / Single-cell / API entries are split
@@ -43,21 +62,42 @@ if TYPE_CHECKING:
 # (dna.py / protein.py) because they are an implementation detail of
 # the registry; no consumer outside embpy.embedder_registry references
 # them.
-from .embedder_registry.flat import (
-    HUMAN_ONLY_MODELS,
-    MODEL_REGISTRY,
-    MOUSE_ONLY_MODELS,
-    # Unlike its three siblings this one is not referenced in this module, so
-    # ruff reads it as unused -- but the re-export is asserted by
-    # tests/embpy/test_registry_split.py::test_embedder_re_export_is_same_object.
-    MULTI_SPECIES_DNA,  # noqa: F401
-)
-from .embedder_registry.extras import WRAPPER_EXTRAS
-from .models.api_models import APIEmbeddingWrapper
-from .models.text_models import TextLLMWrapper
-from .resources.gene_resolver import GeneResolver
-from .resources.protein_resolver import ProteinResolver
-from .resources.text_resolver import TextResolver
+#
+# The re-export is now deferred rather than eager. `flat` maps model keys to
+# wrapper *classes*, so importing it pulls torch and transformers -- which made
+# `import embpy.embedder` (and therefore every resolver / IO / analysis module
+# that reaches BioEmbedder) fail outright on the lightweight core install,
+# where those are not present. The four symbols resolve through the PEP 562
+# `__getattr__` below; `WRAPPER_EXTRAS`, `APIEmbeddingWrapper` and
+# `TextLLMWrapper`, each referenced at exactly one call site in `_get_model`,
+# are imported there instead.
+_LAZY_REGISTRY: dict[str, str] = {
+    "MODEL_REGISTRY": "MODEL_REGISTRY",
+    "HUMAN_ONLY_MODELS": "HUMAN_ONLY_MODELS",
+    "MOUSE_ONLY_MODELS": "MOUSE_ONLY_MODELS",
+    "MULTI_SPECIES_DNA": "MULTI_SPECIES_DNA",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """PEP 562 re-export of the registry symbols from ``embedder_registry.flat``.
+
+    Importing ``flat`` builds ``MODEL_REGISTRY``, whose values are the wrapper
+    classes themselves -- so it pulls torch. Deferring it to attribute access
+    keeps ``import embpy.embedder`` torch-free while leaving
+    ``embpy.embedder.MODEL_REGISTRY`` (and the ``from embpy.embedder import
+    MODEL_REGISTRY`` form) returning the very same dict object as before, which
+    ``tests/embpy/test_registry_split.py`` asserts by identity.
+    """
+    attr = _LAZY_REGISTRY.get(name)
+    if attr is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from .embedder_registry import flat
+
+    value = getattr(flat, attr)
+    globals()[name] = value
+    return value
+
 
 DEFAULT_STATIC_EMBEDDING_REPO = "theislab/Embpy_Data"
 DEFAULT_STATIC_EMBEDDING_MODELS = frozenset(
@@ -349,6 +389,12 @@ class BioEmbedder:
 
     def _discover_models(self) -> dict[str, tuple[type[BaseModelWrapper], str]]:
         """Filters the MODEL_REGISTRY based on available wrapper classes."""
+        # Deferred (see the import note at the top of this module): building
+        # the registry imports every wrapper module, so it happens here -- at
+        # BioEmbedder construction -- rather than at `import embpy.embedder`.
+        from .embedder_registry.flat import MODEL_REGISTRY
+        from .models.base import BaseModelWrapper
+
         available = {}
         for name, (wrapper_class, model_path) in MODEL_REGISTRY.items():
             if wrapper_class is None:
@@ -430,6 +476,8 @@ class BioEmbedder:
         if model_name in self.model_cache:
             return self.model_cache[model_name]
 
+        from .embedder_registry.flat import HUMAN_ONLY_MODELS, MOUSE_ONLY_MODELS
+
         is_human = self.organism.lower() in ("human", "homo_sapiens")
         is_mouse = self.organism.lower() in ("mouse", "mus_musculus")
         if not is_human and model_name in HUMAN_ONLY_MODELS:
@@ -454,6 +502,8 @@ class BioEmbedder:
                     extra_kwargs["output_type"] = "pairwise"
                 elif model_name == "boltz2_both":
                     extra_kwargs["output_type"] = "both"
+                from .models.api_models import APIEmbeddingWrapper
+
                 if WrapperClass is APIEmbeddingWrapper:
                     provider_map = {
                         "openai_small": "openai",
@@ -482,6 +532,8 @@ class BioEmbedder:
                 # works (`boltz` alone is not enough for Boltz-2, which needs
                 # `boltz[cuda]`). Fall back to the module named anywhere in the
                 # exception chain, and only then to a placeholder.
+                from .embedder_registry.extras import WRAPPER_EXTRAS
+
                 extra = WRAPPER_EXTRAS.get(getattr(WrapperClass, "__name__", ""))
                 pkg = f"embpy[{extra}]" if extra else (
                     _missing_package_from_exception(e) or "unknown"
@@ -501,6 +553,8 @@ class BioEmbedder:
         else:
             logging.info(f"Model '{model_name}' not in registry. Attempting to load as text model from Hugging Face...")
             try:
+                from .models.text_models import TextLLMWrapper
+
                 model_instance = TextLLMWrapper(model_path_or_name=model_name)
                 if not load:
                     return model_instance
