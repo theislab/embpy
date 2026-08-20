@@ -285,12 +285,24 @@ class DrugResolver:
     def _extract_smiles(props: list[dict]) -> str | None:
         """Extract a SMILES string from a PubChem Properties response.
 
-        Prefers ``IsomericSMILES`` (preserves stereochemistry) over
-        ``CanonicalSMILES`` / ``ConnectivitySMILES`` (which drop it).
+        Prefers stereochemistry-preserving keys (``IsomericSMILES``, and its
+        current name ``SMILES``) over the flat ones (``CanonicalSMILES``,
+        ``ConnectivitySMILES``).
+
+        PubChem renamed these properties without changing the request
+        vocabulary: asking for ``IsomericSMILES`` now yields a key named
+        ``SMILES``, and asking for ``CanonicalSMILES`` yields
+        ``ConnectivitySMILES``. Both old and new names are accepted here
+        because the response key no longer matches what was requested.
         """
         if not props:
             return None
-        for key in ("IsomericSMILES", "CanonicalSMILES", "ConnectivitySMILES"):
+        for key in (
+            "IsomericSMILES",
+            "SMILES",
+            "CanonicalSMILES",
+            "ConnectivitySMILES",
+        ):
             if key in props[0]:
                 return props[0][key]
         return None

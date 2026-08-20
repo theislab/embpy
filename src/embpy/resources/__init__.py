@@ -2,7 +2,7 @@
 #
 # Domain subpackages:
 #   resources.protein   -- ProteinResolver, ProteinAnnotator, OrthologResolver
-#   resources.molecule  -- DrugResolver, MoleculeAnnotator
+#   resources.molecule  -- DrugResolver, MoleculeAnnotator, ChEMBLAnnotator
 #   resources.gene      -- GeneResolver, GeneAnnotator
 #   resources.morphology -- HPA images, JUMP metadata
 #   resources.text      -- TextResolver
@@ -10,7 +10,12 @@
 
 from .cellline import CellLineAnnotator
 from .gene import GeneAnnotator, GeneResolver, detect_identifier_type
-from .molecule import DrugResolver, MoleculeAnnotator
+from .molecule import (
+    ChEMBLAnnotator,
+    ChEMBLResolution,
+    DrugResolver,
+    MoleculeAnnotator,
+)
 from .morphology import (
     HPA_IF_CHANNELS,
     HPA_IMAGE_BASE,
@@ -34,6 +39,8 @@ from .text import TextResolver
 
 __all__ = [
     "CellLineAnnotator",
+    "ChEMBLAnnotator",
+    "ChEMBLResolution",
     "DrugResolver",
     "GeneAnnotator",
     "GeneResolver",

@@ -52,6 +52,7 @@ __all__ = [
     # metadata
     "annotate_bulk_rna",
     "annotate_cell_lines",
+    "annotate_drug_perturbations",
     "annotate_drug_response",
     "annotate_drugs",
     "annotate_gene_perturbations",
@@ -141,6 +142,7 @@ from .genomics.snp_utils import (
 from .metadata import (
     annotate_bulk_rna,
     annotate_cell_lines,
+    annotate_drug_perturbations,
     annotate_drug_response,
     annotate_drugs,
     annotate_gene_perturbations,
