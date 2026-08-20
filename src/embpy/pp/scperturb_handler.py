@@ -60,7 +60,7 @@ class ScPerturbDatasetCard:
 _SCPERTURB_REGISTRY: dict[str, ScPerturbDatasetCard] = {
     "AdamsonWeissman2016": ScPerturbDatasetCard(
         name="AdamsonWeissman2016",
-        filename="AdamsonWeissman2016_GSM2396858_rna.h5ad",
+        filename="AdamsonWeissman2016_GSM2406675_10X001.h5ad",
         description=(
             "CRISPRi Perturb-seq targeting UPR and erythroid "
             "differentiation genes in K562 cells (Adamson et al., 2016)."
@@ -71,7 +71,7 @@ _SCPERTURB_REGISTRY: dict[str, ScPerturbDatasetCard] = {
     ),
     "DatlingerBock2017": ScPerturbDatasetCard(
         name="DatlingerBock2017",
-        filename="DatlingerBock2017_GSE92872_rna.h5ad",
+        filename="DatlingerBock2017.h5ad",
         description=(
             "CROP-seq targeting immune signalling regulators "
             "in Jurkat T cells (Datlinger et al., 2017)."
@@ -82,7 +82,7 @@ _SCPERTURB_REGISTRY: dict[str, ScPerturbDatasetCard] = {
     ),
     "DixitRegev2016": ScPerturbDatasetCard(
         name="DixitRegev2016",
-        filename="DixitRegev2016_GSE90063_rna.h5ad",
+        filename="DixitRegev2016.h5ad",
         description=(
             "Perturb-seq targeting transcription factors in K562 and "
             "bone marrow dendritic cells (Dixit et al., 2016)."
@@ -93,7 +93,7 @@ _SCPERTURB_REGISTRY: dict[str, ScPerturbDatasetCard] = {
     ),
     "FrangiehIzar2021": ScPerturbDatasetCard(
         name="FrangiehIzar2021",
-        filename="FrangiehIzar2021_GSE168620_rna.h5ad",
+        filename="FrangiehIzar2021_RNA.h5ad",
         description=(
             "Perturb-CITE-seq of melanoma and T-cell co-cultures "
             "with CRISPR perturbations (Frangieh et al., 2021)."
@@ -104,7 +104,7 @@ _SCPERTURB_REGISTRY: dict[str, ScPerturbDatasetCard] = {
     ),
     "GasperiniShendure2019": ScPerturbDatasetCard(
         name="GasperiniShendure2019",
-        filename="GasperiniShendure2019_at_scale_rna.h5ad",
+        filename="GasperiniShendure2019_atscale.h5ad",
         description=(
             "CRISPRi at scale targeting enhancers in K562 cells "
             "(Gasperini et al., 2019)."
@@ -115,7 +115,7 @@ _SCPERTURB_REGISTRY: dict[str, ScPerturbDatasetCard] = {
     ),
     "GehringPachter2019": ScPerturbDatasetCard(
         name="GehringPachter2019",
-        filename="GehringPachter2019_GSE135497_rna.h5ad",
+        filename="GehringPachter2019.h5ad",
         description=(
             "Highly multiplexed single-cell RNA-seq with drug "
             "perturbations (Gehring et al., 2019)."
@@ -126,7 +126,7 @@ _SCPERTURB_REGISTRY: dict[str, ScPerturbDatasetCard] = {
     ),
     "NormanWeissman2019": ScPerturbDatasetCard(
         name="NormanWeissman2019",
-        filename="NormanWeissman2019_filtered_rna.h5ad",
+        filename="NormanWeissman2019_filtered.h5ad",
         description=(
             "CRISPRa combinatorial Perturb-seq in K562 cells, "
             "exploring gene combinations (Norman et al., 2019)."
@@ -135,20 +135,9 @@ _SCPERTURB_REGISTRY: dict[str, ScPerturbDatasetCard] = {
         cell_line="K562",
         reference="https://doi.org/10.1126/science.aax4438",
     ),
-    "PapaleandrouSchraivogel2019": ScPerturbDatasetCard(
-        name="PapaleandrouSchraivogel2019",
-        filename="PapaleandrouSchraivogel2019_GSE135497_rna.h5ad",
-        description=(
-            "TAP-seq for targeted Perturb-seq with increased sensitivity "
-            "(Schraivogel et al., 2020)."
-        ),
-        perturbation_type="genetic",
-        cell_line="K562",
-        reference="https://doi.org/10.1038/s41592-020-0837-5",
-    ),
     "ReplogleWeissman2022_K562": ScPerturbDatasetCard(
         name="ReplogleWeissman2022_K562",
-        filename="ReplogleWeissman2022_K562_gwps_rna.h5ad",
+        filename="ReplogleWeissman2022_K562_gwps.h5ad",
         description=(
             "Genome-scale CRISPRi Perturb-seq in K562 cells "
             "(Replogle et al., 2022)."
@@ -159,7 +148,7 @@ _SCPERTURB_REGISTRY: dict[str, ScPerturbDatasetCard] = {
     ),
     "ReplogleWeissman2022_RPE1": ScPerturbDatasetCard(
         name="ReplogleWeissman2022_RPE1",
-        filename="ReplogleWeissman2022_RPE1_rna.h5ad",
+        filename="ReplogleWeissman2022_rpe1.h5ad",
         description=(
             "Genome-scale CRISPRi Perturb-seq in RPE1 cells "
             "(Replogle et al., 2022)."
@@ -170,7 +159,7 @@ _SCPERTURB_REGISTRY: dict[str, ScPerturbDatasetCard] = {
     ),
     "SchraivogelSteinmetz2020": ScPerturbDatasetCard(
         name="SchraivogelSteinmetz2020",
-        filename="SchraivogelSteinmetz2020_GSE168620_rna.h5ad",
+        filename="SchraivogelSteinmetz2020_TAP_SCREEN__chromosome_8_screen.h5ad",
         description=(
             "TAP-seq for targeted single-cell perturbation screens "
             "(Schraivogel et al., 2020)."
@@ -179,27 +168,52 @@ _SCPERTURB_REGISTRY: dict[str, ScPerturbDatasetCard] = {
         cell_line="K562/iPSC",
         reference="https://doi.org/10.1038/s41592-020-0837-5",
     ),
-    "TianLuo2019": ScPerturbDatasetCard(
-        name="TianLuo2019",
-        filename="TianLuo2019_GSE133344_rna.h5ad",
+    "TianKampmann2019": ScPerturbDatasetCard(
+        name="TianKampmann2019",
+        filename="TianKampmann2019_iPSC.h5ad",
         description=(
-            "Large-scale CRISPRi screen in K562 cells targeting "
-            "essential gene regulatory circuits (Tian et al., 2019)."
+            "CRISPRi screen in iPSC-derived neurons targeting genes "
+            "essential for neuronal survival (Tian et al., 2019)."
+        ),
+        perturbation_type="genetic",
+        cell_line="iPSC-neuron",
+        reference="https://doi.org/10.1016/j.neuron.2019.07.014",
+    ),
+    "ReplogleWeissman2022_K562_essential": ScPerturbDatasetCard(
+        name="ReplogleWeissman2022_K562_essential",
+        filename="ReplogleWeissman2022_K562_essential.h5ad",
+        description=(
+            "CRISPRi Perturb-seq over essential genes in K562 cells "
+            "(Replogle et al., 2022). Much smaller than the genome-wide "
+            "screen, so the better default of the two."
         ),
         perturbation_type="genetic",
         cell_line="K562",
-        reference="https://doi.org/10.1016/j.neuron.2019.07.014",
+        reference="https://doi.org/10.1016/j.cell.2022.05.013",
     ),
-    "UrsuHein2022": ScPerturbDatasetCard(
-        name="UrsuHein2022",
-        filename="UrsuHein2022_GSE196584_rna.h5ad",
+    "ShifrutMarson2018": ScPerturbDatasetCard(
+        name="ShifrutMarson2018",
+        filename="ShifrutMarson2018.h5ad",
         description=(
-            "Massively parallel phenotyping of coding variants via "
-            "Perturb-seq (Ursu et al., 2022)."
+            "SLICE CRISPR screen in primary human T cells identifying "
+            "regulators of proliferation (Shifrut et al., 2018)."
         ),
         perturbation_type="genetic",
-        cell_line="HEK293T",
-        reference="https://doi.org/10.1038/s41587-022-01563-y",
+        cell_line="primary T cell",
+        reference="https://doi.org/10.1016/j.cell.2018.10.024",
+    ),
+    "SrivatsanTrapnell2020_sciplex3": ScPerturbDatasetCard(
+        name="SrivatsanTrapnell2020_sciplex3",
+        filename="SrivatsanTrapnell2020_sciplex3.h5ad",
+        description=(
+            "sci-Plex nuclear-hashing screen of 188 compounds across three "
+            "cancer cell lines (Srivatsan et al., 2020). Chemical rather "
+            "than genetic, so it is the natural partner for the ChEMBL "
+            "annotation layer."
+        ),
+        perturbation_type="chemical",
+        cell_line="A549/K562/MCF7",
+        reference="https://doi.org/10.1126/science.aax6234",
     ),
 }
 
@@ -292,7 +306,7 @@ def load_scperturb(
         logger.info(
             "Downloading scPerturb dataset '%s' from Zenodo ...", card.name,
         )
-        _download_file(url, local_path)
+        _download_file(url, local_path, record_id=record)
 
     adata = ad.read_h5ad(local_path)
     adata.uns["scperturb_card"] = {
@@ -308,8 +322,26 @@ def load_scperturb(
     return adata
 
 
-def _download_file(url: str, dest: Path) -> None:
+def _record_filenames(record_id: str) -> list[str]:
+    """List the files a Zenodo record actually holds.
+
+    Only used to turn a 404 into something actionable, so any failure here is
+    swallowed -- a diagnostic that itself raises is worse than the bare 404.
+    """
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{_ZENODO_API}/{record_id}", timeout=30) as resp:
+            payload = json.load(resp)
+        return sorted(f["key"] for f in payload.get("files", []))
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _download_file(url: str, dest: Path, record_id: str | None = None) -> None:
     """Stream-download a file with a progress indicator."""
+    import urllib.error
     import urllib.request
 
     logger.info("Downloading %s -> %s", url, dest)
@@ -317,6 +349,30 @@ def _download_file(url: str, dest: Path) -> None:
     try:
         urllib.request.urlretrieve(url, str(tmp))
         tmp.rename(dest)
+    except urllib.error.HTTPError as exc:
+        if tmp.exists():
+            tmp.unlink()
+        if exc.code == 404 and record_id:
+            # Every filename in this registry was once wrong, and the only
+            # symptom was `HTTPError: 404` naming a URL -- which looks like
+            # Zenodo being down rather than embpy asking for a file that has
+            # never existed. Name the near-misses so the difference is
+            # obvious.
+            available = _record_filenames(record_id)
+            wanted = dest.name
+            stem = wanted.split("_")[0].split(".")[0].lower()
+            close = [f for f in available if f.lower().startswith(stem[:8])]
+            raise FileNotFoundError(
+                f"Zenodo record {record_id} has no file named {wanted!r}. "
+                + (
+                    f"Closest matches: {close}. "
+                    if close
+                    else f"The record holds {len(available)} files. "
+                )
+                + "This is a stale entry in embpy's scPerturb registry, not a "
+                "network problem -- please report it."
+            ) from exc
+        raise
     except Exception:
         if tmp.exists():
             tmp.unlink()
