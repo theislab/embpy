@@ -162,18 +162,28 @@ class DrugResolver:
         if not self._rdkit_available:
             logging.warning("RDKit not available; returning SMILES unchanged.")
             return smiles
-        from rdkit import Chem
+        from rdkit import Chem, rdBase
         from rdkit.Chem.MolStandardize import rdMolStandardize
 
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return None
 
-        rdMolStandardize.IsotopeParentInPlace(mol)  # removes isotope labels
-        rdMolStandardize.CleanupInPlace(mol)  # normalize, sanitize, remove explicit Hs
-        rdMolStandardize.RemoveFragmentsInPlace(mol)  # strip known solvents/salts
-        rdMolStandardize.FragmentParentInPlace(mol, skipStandardize=True)  # keep largest remaining fragment
-        rdMolStandardize.Uncharger().unchargeInPlace(mol)  # neutralize charges
+        # Each standardiser step announces itself to RDKit's log ("Initializing
+        # MetalDisconnector", "Running Normalizer", ...), so canonicalising n
+        # molecules emits ~11n lines. Whether those surface depends on ambient
+        # RDKit log routing, which differs between a plain interpreter and a
+        # Jupyter kernel -- in a notebook they bury the cell's actual output.
+        # None of it is actionable: an unparseable SMILES was already caught
+        # above, and these calls report progress rather than problems. BlockLogs
+        # is scoped and restores the previous state on exit, so it does not
+        # stomp on a caller who deliberately enabled RDKit logging.
+        with rdBase.BlockLogs():
+            rdMolStandardize.IsotopeParentInPlace(mol)  # removes isotope labels
+            rdMolStandardize.CleanupInPlace(mol)  # normalize, sanitize, remove explicit Hs
+            rdMolStandardize.RemoveFragmentsInPlace(mol)  # strip known solvents/salts
+            rdMolStandardize.FragmentParentInPlace(mol, skipStandardize=True)  # keep largest remaining fragment
+            rdMolStandardize.Uncharger().unchargeInPlace(mol)  # neutralize charges
         return Chem.MolToSmiles(mol)
 
     # Backward-compatible private alias (internal callers predate the
