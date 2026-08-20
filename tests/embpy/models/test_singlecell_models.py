@@ -1381,3 +1381,104 @@ class TestBioEmbedderDecode:
         fake_wrapper.generate_cells.assert_called_once()
         kwargs = fake_wrapper.generate_cells.call_args.kwargs
         assert kwargs["split_column"] == "donor"
+
+
+# =====================================================================
+# Checkpoint-only models: constructor kwargs have to reach the wrapper
+# =====================================================================
+
+
+class TestSingleCellModelKwargs:
+    """`state` and `stack` are unreachable without constructor kwargs.
+
+    Both wrappers take `checkpoint` on `__init__` and raise from `load()`
+    without it, and `get_singlecell_wrapper` has always forwarded `**kwargs`
+    to the constructor -- but the two layers above it passed nothing, so
+    neither model could be driven through `embed_cells` on any platform.
+
+    The wrapper backends (`arc-state`, `arc-stack`) are linux-64 only, so
+    these tests exercise the plumbing rather than a real forward pass.
+    """
+
+    def test_kwargs_reach_the_wrapper_constructor(self):
+        from unittest.mock import patch
+
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        with patch(
+            "embpy.models.singlecell_models.get_singlecell_wrapper"
+        ) as factory:
+            embedder._get_or_load_singlecell_wrapper(
+                "state", 32, "cpu", {"checkpoint": "/tmp/se600m.ckpt"},
+            )
+        assert factory.call_args.kwargs["checkpoint"] == "/tmp/se600m.ckpt"
+        assert factory.call_args.kwargs["batch_size"] == 32
+
+    def test_no_kwargs_is_unchanged(self):
+        from unittest.mock import patch
+
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        with patch(
+            "embpy.models.singlecell_models.get_singlecell_wrapper"
+        ) as factory:
+            embedder._get_or_load_singlecell_wrapper("scgpt", 16, "cpu")
+        assert factory.call_args.kwargs == {"batch_size": 16}
+
+    def test_two_checkpoints_do_not_share_a_cache_entry(self):
+        """The bug this guards: returning checkpoint A when B was asked for."""
+        from unittest.mock import patch
+
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        with patch(
+            "embpy.models.singlecell_models.get_singlecell_wrapper"
+        ) as factory:
+            embedder._get_or_load_singlecell_wrapper(
+                "state", 32, "cpu", {"checkpoint": "/tmp/a.ckpt"},
+            )
+            embedder._get_or_load_singlecell_wrapper(
+                "state", 32, "cpu", {"checkpoint": "/tmp/b.ckpt"},
+            )
+        assert factory.call_count == 2
+        assert [c.kwargs["checkpoint"] for c in factory.call_args_list] == [
+            "/tmp/a.ckpt", "/tmp/b.ckpt",
+        ]
+
+    def test_same_checkpoint_is_cached(self):
+        from unittest.mock import patch
+
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        with patch(
+            "embpy.models.singlecell_models.get_singlecell_wrapper"
+        ) as factory:
+            for _ in range(3):
+                embedder._get_or_load_singlecell_wrapper(
+                    "state", 32, "cpu", {"checkpoint": "/tmp/a.ckpt"},
+                )
+        assert factory.call_count == 1
+
+    def test_embed_cells_accepts_model_kwargs(self):
+        import inspect
+
+        from embpy.embedder import BioEmbedder
+
+        params = inspect.signature(BioEmbedder.embed_cells).parameters
+        assert "model_kwargs" in params
+        assert params["model_kwargs"].default is None
+
+    def test_checkpoint_only_wrappers_take_it_on_init(self):
+        import inspect
+
+        from embpy.models.singlecell_models import (
+            StackWrapper,
+            StateEmbeddingWrapper,
+        )
+
+        for cls in (StateEmbeddingWrapper, StackWrapper):
+            assert "checkpoint" in inspect.signature(cls.__init__).parameters

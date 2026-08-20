@@ -731,20 +731,32 @@ class BioEmbedder:
         model_key: str,
         batch_size: int,
         device_str: str,
+        wrapper_kwargs: dict[str, Any] | None = None,
     ):
         """Return a cached single-cell foundation-model wrapper.
 
-        The cache is keyed by ``(model_key, device_str)`` only;
-        ``batch_size`` is applied on every call so it can change between
-        chunks without forcing a reload.
+        The cache is keyed by ``(model_key, device_str)`` plus any
+        constructor kwargs; ``batch_size`` is applied on every call so it
+        can change between chunks without forcing a reload.
 
         This is what makes chunked inference over large datasets cheap:
         a caller looping ``for chunk in chunks: embedder.embed_cells(chunk)``
         pays the model-instantiation cost once, not per chunk.
+
+        ``wrapper_kwargs`` reaches the wrapper constructor, which is how
+        checkpoint-only models are usable at all: ``StateEmbeddingWrapper``
+        and ``StackWrapper`` take ``checkpoint`` there and raise from
+        ``load()`` without it. The kwargs are part of the cache key, so
+        asking for two different checkpoints of the same model does not
+        silently return the first one.
         """
         from .models.singlecell_models import get_singlecell_wrapper
 
-        cache_key = (model_key, device_str)
+        wrapper_kwargs = wrapper_kwargs or {}
+        kwargs_key = tuple(sorted((k, str(v)) for k, v in wrapper_kwargs.items()))
+        cache_key = (model_key, device_str, kwargs_key) if kwargs_key else (
+            model_key, device_str,
+        )
         cached = self._singlecell_cache.get(cache_key)
         if cached is not None:
             # Cheap attribute update -- do not re-run `.load()`.
@@ -756,7 +768,9 @@ class BioEmbedder:
             return cached
 
         logging.info("Loading single-cell wrapper for '%s' on %s ...", model_key, device_str)
-        wrapper = get_singlecell_wrapper(model_key, batch_size=batch_size)
+        wrapper = get_singlecell_wrapper(
+            model_key, batch_size=batch_size, **wrapper_kwargs
+        )
         wrapper.load(device_str)
         self._singlecell_cache[cache_key] = wrapper
         return wrapper
@@ -3159,6 +3173,7 @@ class BioEmbedder:
         copy: bool = True,
         backend: Literal["cpu", "gpu"] = "cpu",
         vocab_conversion: Literal["auto", "off"] = "auto",
+        model_kwargs: dict[str, dict[str, Any]] | None = None,
     ):
         """Embed single cells from an AnnData object.
 
@@ -3230,6 +3245,15 @@ class BioEmbedder:
             Prefix for ``.obsm`` keys (default ``"X_"``).
         copy
             If ``True``, operate on a copy of adata.
+        model_kwargs
+            Per-model constructor arguments, keyed by model key, e.g.
+            ``{"state": {"checkpoint": "/path/to/se600m.ckpt"}}``. Needed by
+            models whose weights are not fetched for you: ``state`` and
+            ``stack`` take a ``checkpoint`` (``state`` also accepts
+            ``model_folder``), and raise from ``load()`` without one, so
+            before this existed they could not be reached through this
+            method at all. The kwargs are part of the wrapper cache key,
+            so two checkpoints of one model do not collide.
 
         Returns
         -------
@@ -3378,7 +3402,10 @@ class BioEmbedder:
                     # to embed_cells -- e.g. chunked inference over a large
                     # AnnData -- reuse the already-loaded torch model
                     # instead of re-instantiating it on every call.
-                    wrapper = self._get_or_load_singlecell_wrapper(model_key, batch_size, device_str)
+                    wrapper = self._get_or_load_singlecell_wrapper(
+                        model_key, batch_size, device_str,
+                        (model_kwargs or {}).get(model_key),
+                    )
                     # Auto-adapt var_names to the model's vocabulary.
                     # This is the difference between a silent zero-match
                     # failure (e.g. passing Ensembl IDs to scGPT) and a
