@@ -1027,6 +1027,24 @@ class StateEmbeddingWrapper(SingleCellWrapper):
             if os.path.exists(pe_path):
                 protein_embeds = torch.load(pe_path, weights_only=False, map_location="cpu")
 
+        # No weights named anywhere: fetch the published SE-600M release rather
+        # than refusing to run. Every other single-cell wrapper downloads its
+        # weights on first use, and STATE's are public, so demanding a local
+        # path made it the one model in the registry that could be listed and
+        # never run. Cached by huggingface_hub, so this is a one-time cost.
+        if self._checkpoint is None and self._model_folder is None:
+            self._model_folder = self._download_default_weights()
+            if protein_embeds is None:
+                pe_path = os.path.join(self._model_folder, "protein_embeddings.pt")
+                if os.path.exists(pe_path):
+                    protein_embeds = torch.load(
+                        pe_path, weights_only=False, map_location="cpu"
+                    )
+            if self._config_path is None:
+                cfg_path = os.path.join(self._model_folder, "config.yaml")
+                if os.path.exists(cfg_path):
+                    self._config_path = cfg_path
+
         cfg = OmegaConf.load(self._config_path) if self._config_path else None
         self._inferer = Inference(cfg=cfg, protein_embeds=protein_embeds)
 
@@ -1042,6 +1060,40 @@ class StateEmbeddingWrapper(SingleCellWrapper):
         self._inferer.load_model(checkpoint)
         self._model = self._inferer.model
         logger.info("Loaded STATE embedding model from %s on %s", checkpoint, device)
+
+    #: Published SE-600M release, and the three files needed to run it. The
+    #: repo also ships an ``epoch4`` checkpoint and safetensors variants; only
+    #: these are fetched, because pulling the whole repo would cost ~29 GB
+    #: instead of ~12.
+    DEFAULT_HF_REPO = "arcinstitute/SE-600M"
+    DEFAULT_HF_FILES = ("config.yaml", "protein_embeddings.pt", "se600m_epoch16.ckpt")
+
+    @classmethod
+    def _download_default_weights(cls) -> str:
+        """Fetch SE-600M into the huggingface cache and return its folder.
+
+        Already-present files are not re-downloaded -- ``hf_hub_download``
+        returns the cached path -- so this is a no-op after the first call.
+        The checkpoint alone is ~11.5 GB, which is worth saying out loud
+        before a user waits on it without knowing why.
+        """
+        import os
+
+        from huggingface_hub import hf_hub_download
+
+        logger.info(
+            "No STATE checkpoint given; fetching %s (~12 GB on first use, "
+            "cached afterwards). Pass checkpoint=/path or model_folder=/path "
+            "to use a local copy instead.",
+            cls.DEFAULT_HF_REPO,
+        )
+        paths = [
+            hf_hub_download(repo_id=cls.DEFAULT_HF_REPO, filename=name)
+            for name in cls.DEFAULT_HF_FILES
+        ]
+        folder = os.path.dirname(paths[0])
+        logger.info("STATE weights ready in %s", folder)
+        return folder
 
     def embed_cells(self, adata: Any) -> np.ndarray:  # noqa: D102
         if self._inferer is None:
