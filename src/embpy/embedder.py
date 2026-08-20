@@ -1652,9 +1652,15 @@ class BioEmbedder:
             "duplicate_canonical_ids_dropped": duplicate_canonical,
             "n_dropped_or_unresolved_entities": unresolved + lookup_misses + duplicate_canonical,
         }
+        # A static table is a precomputed lookup: no forward pass, no tokens,
+        # so nothing was pooled. Recording the caller's `pooling_strategy`
+        # here -- which defaults to "mean" whether or not they asked for it --
+        # stamped a pooling that never happened, and `_default_key` then put it
+        # in the key, so `genept` produced `X_emb__gene__genept__pool_mean`.
+        # `None` is the same convention the cell path already uses.
         prov = EmbeddingProvenance.create(
             model=model,
-            pooling=pooling_strategy,
+            pooling=None,
             extra=extra,
         )
         return EmbeddingResult(

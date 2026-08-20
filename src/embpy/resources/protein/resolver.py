@@ -28,10 +28,58 @@ from typing import Literal
 
 import requests
 
+from embpy.retry import retry_with_backoff
+
 logger = logging.getLogger(__name__)
 
 UNIPROT_REST = "https://rest.uniprot.org"
 MYGENE_REST = "https://mygene.info/v3"
+
+
+class _PermanentHTTPError(Exception):
+    """A 4xx response that must NOT be retried.
+
+    Mirrors ``_Permanent4xxError`` in
+    :mod:`embpy.resources.gene.resolver`: retrying a 404 for an accession
+    that genuinely does not exist just burns wallclock, while a 5xx, a
+    timeout or a connection reset is worth another attempt.
+    """
+
+
+@retry_with_backoff(
+    max_attempts=3,
+    base_delay=1.0,
+    max_delay=10.0,
+    retryable=(requests.RequestException,),
+    non_retryable=(_PermanentHTTPError,),
+)
+def _http_get(
+    url: str, *, params: dict | None = None, timeout: int = 30
+) -> requests.Response:
+    """GET with retries on transient failures.
+
+    UniProt resets connections part-way through a burst of per-accession
+    requests -- ask for sixteen FASTAs back to back and a handful come back
+    as ``ConnectionResetError`` or ``ConnectTimeout`` while the rest
+    succeed. Every caller in this module turns a failed fetch into ``None``,
+    and ``None`` is read downstream as *this protein does not exist*, so
+    without a retry a throttled request is indistinguishable from an absent
+    entry. The gene resolver has retried MyGene and Ensembl since it was
+    written; this brings the protein side to parity.
+
+    Raises
+    ------
+    _PermanentHTTPError
+        4xx response -- not retried. Callers treat it as "not found".
+    requests.RequestException
+        A transient failure that survived every attempt.
+    """
+    resp = requests.get(url, params=params, timeout=timeout)
+    if 400 <= resp.status_code < 500:
+        raise _PermanentHTTPError(f"HTTP {resp.status_code} for {url}")
+    resp.raise_for_status()
+    return resp
+
 
 ORGANISM_TAXON = {
     "human": 9606,
@@ -96,6 +144,9 @@ class ProteinResolver:
         self.timeout = request_timeout
         self.rate_limit_delay = rate_limit_delay
         self._uniprot_cache: dict[str, str | None] = {}
+        # Keyed by accession rather than by input identifier, so a symbol and
+        # the accession it resolves to share one entry.
+        self._sequence_cache: dict[str, str] = {}
         self._local_proteome: dict[str, str] | None = None
         self._local_gene_to_acc: dict[str, str] | None = None
 
@@ -271,7 +322,7 @@ class ProteinResolver:
         # ORGANISM_TAXON already knows.
         species = ORGANISM_TAXON.get(organism.lower(), organism)
         try:
-            resp = requests.get(
+            resp = _http_get(
                 f"{MYGENE_REST}/query",
                 params={
                     "q": identifier,
@@ -282,7 +333,6 @@ class ProteinResolver:
                 },
                 timeout=self.timeout,
             )
-            resp.raise_for_status()
             hits = resp.json().get("hits", [])
             if not hits:
                 return None
@@ -327,7 +377,7 @@ class ProteinResolver:
             if reviewed_only:
                 query += " AND reviewed:true"
             try:
-                resp = requests.get(
+                resp = _http_get(
                     f"{UNIPROT_REST}/uniprotkb/search",
                     params={
                         "query": query,
@@ -337,7 +387,6 @@ class ProteinResolver:
                     },
                     timeout=self.timeout,
                 )
-                resp.raise_for_status()
                 results = resp.json().get("results", [])
             except Exception as e:  # noqa: BLE001
                 logger.debug("UniProt search failed for %s: %s", identifier, e)
@@ -387,16 +436,27 @@ class ProteinResolver:
         if accession is None:
             logger.warning("Could not resolve UniProt ID for %s '%s'", id_type, identifier)
             return None
-        return self._fetch_fasta_sequence(accession)
+
+        # Accessions were already cached; sequences were not, so anything that
+        # asks for the same protein twice paid for it twice. A layer sweep is
+        # the worst case: embedding one panel across seven layers re-fetched
+        # every FASTA seven times, which is both slow and the surest way to get
+        # throttled by UniProt part-way through.
+        cached = self._sequence_cache.get(accession)
+        if cached is not None:
+            return cached
+        seq = self._fetch_fasta_sequence(accession)
+        if seq:
+            self._sequence_cache[accession] = seq
+        return seq
 
     def _fetch_fasta_sequence(self, accession: str) -> str | None:
         """Fetch the FASTA sequence for a UniProt accession."""
         try:
-            resp = requests.get(
+            resp = _http_get(
                 f"{UNIPROT_REST}/uniprotkb/{accession}.fasta",
                 timeout=self.timeout,
             )
-            resp.raise_for_status()
             lines = resp.text.strip().split("\n")
             return "".join(lines[1:])
         except Exception as e:  # noqa: BLE001
@@ -454,7 +514,7 @@ class ProteinResolver:
             # make isoform="all" a no-op. Verified against P04637 (TP53):
             # retrieval returns 1 entry, search returns 9, and 9 is what
             # ProteinAnnotator's ALTERNATIVE PRODUCTS count reports.
-            resp = requests.get(
+            resp = _http_get(
                 f"{UNIPROT_REST}/uniprotkb/search",
                 params={
                     "query": f"accession:{accession}",
@@ -463,7 +523,6 @@ class ProteinResolver:
                 },
                 timeout=self.timeout,
             )
-            resp.raise_for_status()
             return self._parse_multi_fasta(resp.text, include_canonical)
         except Exception as e:  # noqa: BLE001
             logger.warning("Failed to fetch isoforms for %s: %s", accession, e)
@@ -536,7 +595,24 @@ class ProteinResolver:
             if (i + 1) % 100 == 0:
                 logger.info("Fetched canonical protein %d/%d ...", i + 1, total)
             time.sleep(self.rate_limit_delay)
-        logger.info("Fetched %d/%d canonical protein sequences.", len(results), total)
+
+        # A short dict is the only signal a caller gets, and callers iterate
+        # what came back rather than what they asked for -- so an identifier
+        # that failed to fetch simply vanishes, and the gap surfaces much later
+        # as a re-index error from the io layer, pointing at the exporter rather
+        # than at the network. Name the missing ids here, where the cause is
+        # still visible. Same counted-drop contract as
+        # :func:`embpy.io._canon.canonicalize`.
+        missing = [ident for ident in identifiers if ident not in results]
+        if missing:
+            logger.warning(
+                "Resolved %d/%d canonical protein sequences; %d unresolved: %s",
+                len(results), total, len(missing), missing[:10],
+            )
+        else:
+            logger.info(
+                "Fetched %d/%d canonical protein sequences.", len(results), total
+            )
         return results
 
     def get_isoforms_batch(
