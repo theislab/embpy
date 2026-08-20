@@ -6,7 +6,7 @@ PY="${PY:-.pixi/envs/default/bin/python}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 PARTS=()
-for n in 1 2 3 4 5 6; do
+for n in 1 2 3 4 5 6 7; do
   f="scripts/notebook_generators/small_molecules_part${n}.py"
   [ -f "$f" ] || { echo "missing $f" >&2; exit 1; }
   "$PY" "$f" "$TMP/part${n}.json"
