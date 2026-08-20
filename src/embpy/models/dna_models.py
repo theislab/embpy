@@ -353,6 +353,11 @@ class EnformerWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
+    # Enformer is not a HuggingFace model and exposes no `.blocks`/`.layers`
+    # ModuleList, so neither extraction path applies: `extract_attention` raises
+    # "Cannot auto-detect layer modules for Enformer". Verified against
+    # EleutherAI/enformer-official-rough.
+    has_attention = False
     available_pooling_strategies = ["mean", "max", "median", "none"]
 
     SEQUENCE_LENGTH = 196_608
@@ -679,6 +684,12 @@ class BorzoiWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
+    # Borzoi computes its attention eagerly (`attn = logits.softmax(-1)` in
+    # borzoi_pytorch/pytorch_borzoi_transformer.py) but never *returns* it -- the
+    # module yields only the attended output -- and the flash path skips the
+    # tensor entirely. A forward hook can only see what a module returns, so the
+    # weights are unreachable either way.
+    has_attention = False
     available_pooling_strategies = ["mean", "max", "median", "none"]
 
     SEQUENCE_LENGTH = 524_288
@@ -1216,6 +1227,10 @@ class EvoWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
+    # Evo's StripedHyena blocks use FlashAttention, which computes the softmax
+    # inside the kernel and returns only the output, so there is no attention
+    # tensor for a hook to observe. See docs/attention_extraction.md.
+    has_attention = False
     available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     AVAILABLE_MODELS: list[str] = [
@@ -1545,6 +1560,10 @@ class Evo2Wrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
+    # Evo2's StripedHyena 2 blocks call FlashAttention unconditionally, so the
+    # attention matrix is never materialised as a tensor and no hook can recover
+    # it. See docs/attention_extraction.md ("fused by construction").
+    has_attention = False
     available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     LAYER_DEFAULTS: dict[str, str] = {

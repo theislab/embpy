@@ -1101,15 +1101,26 @@ class GeneResolver:
                         gene_strand,
                         organism=organism,
                     )
-                    if seq:
-                        regions.append({
-                            "id": ex.get("id", f"exon_{i + 1}"),
-                            "seq_region_name": chrom,
-                            "start": ex["start"],
-                            "end": ex["end"],
-                            "strand": gene_strand,
-                            "sequence": seq,
-                        })
+                    # A failed fetch must not silently shorten the gene. Skipping
+                    # the exon here used to return a *truncated transcript* with no
+                    # error -- a transient Ensembl timeout produced a plausible but
+                    # wrong sequence, and the resulting embedding looked normal.
+                    if not seq:
+                        logging.error(
+                            f"Incomplete exon set for '{identifier}': failed to fetch "
+                            f"exon {i + 1}/{len(exons_sorted)} "
+                            f"({chrom}:{ex['start']}-{ex['end']}). Returning None rather "
+                            "than a truncated sequence; retry when Ensembl is reachable."
+                        )
+                        return None
+                    regions.append({
+                        "id": ex.get("id", f"exon_{i + 1}"),
+                        "seq_region_name": chrom,
+                        "start": ex["start"],
+                        "end": ex["end"],
+                        "strand": gene_strand,
+                        "sequence": seq,
+                    })
             elif region == "introns":
                 for i in range(len(exons_sorted) - 1):
                     intron_start = exons_sorted[i]["end"] + 1
@@ -1123,15 +1134,21 @@ class GeneResolver:
                         gene_strand,
                         organism=organism,
                     )
-                    if seq:
-                        regions.append({
-                            "id": f"intron_{i + 1}",
-                            "seq_region_name": chrom,
-                            "start": intron_start,
-                            "end": intron_end,
-                            "strand": gene_strand,
-                            "sequence": seq,
-                        })
+                    if not seq:
+                        logging.error(
+                            f"Incomplete intron set for '{identifier}': failed to fetch "
+                            f"intron {i + 1} ({chrom}:{intron_start}-{intron_end}). "
+                            "Returning None rather than a truncated sequence."
+                        )
+                        return None
+                    regions.append({
+                        "id": f"intron_{i + 1}",
+                        "seq_region_name": chrom,
+                        "start": intron_start,
+                        "end": intron_end,
+                        "strand": gene_strand,
+                        "sequence": seq,
+                    })
 
             logging.info(
                 f"Fetched {len(regions)} {region} for '{identifier}' "
@@ -1199,7 +1216,7 @@ class GeneResolver:
                 f"https://rest.ensembl.org/sequence/region/{species}/"
                 f"{seq_region_name}:{start}..{end}:{strand}"
             )
-            resp = _ensembl_get(url, headers={"Content-Type": "text/plain"}, timeout=15)
+            resp = _ensembl_get(url, headers={"Content-Type": "text/plain"}, timeout=30)
             resp.raise_for_status()
             return resp.text.strip()
         except requests.RequestException as e:

@@ -54,6 +54,13 @@ Two cases look identical at the call site but are not:
 `has_attention` is a class attribute, so it is answerable without downloading
 weights: `embedder.get_model(key, load=False).has_attention`.
 
+It defaults to `True` on `BaseModelWrapper`, so a wrapper that neither is a
+HuggingFace model nor overrides `_get_layer_modules()` would inherit a promise it
+cannot keep. `EnformerWrapper`, `BorzoiWrapper`, `EvoWrapper` and `Evo2Wrapper`
+did exactly that until the flag was corrected; when adding a wrapper for a non-HF
+architecture, set `has_attention = False` explicitly unless extraction has been
+demonstrated.
+
 ## Per-model findings
 
 Verified by reading the installed packages (`arc-gpu` and `helical-gpu` environments).
@@ -69,6 +76,10 @@ Verified by reading the installed packages (`arc-gpu` and `helical-gpu` environm
 | **Tahoe** | `attn_impl="torch"` + `needs_weights` | ✅ **yes, verified on cluster** | 12 eager `GroupedQueryAttention`; captured `(4, 8, 1606, 1606)` from a real `embed_cells` run |
 | **scGPT** | `FlashMHA`, unconditionally | ❌ no | `scgpt/model_dir/model.py:625` constructs `FlashMHA` with no torch fallback |
 | **STATE** | `F.scaled_dot_product_attention` | ❌ no | `state/emb/nn/flash_transformer.py:67` |
+| **Nucleotide Transformer, GENA-LM** | HuggingFace `EsmModel` / BERT | ✅ yes, via eager switch | verified: 16 and 12 heads returned on a real locus |
+| **Enformer** | not HuggingFace; no `blocks`/`layers` ModuleList | ❌ no | verified: `extract_attention` raises *"Cannot auto-detect layer modules for Enformer"* |
+| **Borzoi / Flashzoi** | eager softmax that is never returned, or FlashAttention | ❌ no | `borzoi_pytorch/pytorch_borzoi_transformer.py:127` computes `attn` but the module returns only the attended output |
+| **Evo, Evo2** | StripedHyena / StripedHyena 2 + FlashAttention | ❌ no | fused by construction, same category as ESM-C |
 | HyenaDNA, Caduceus | attention-free (long convolution / SSM) | ❌ n/a | `has_attention = False` |
 | MiniMol, MHG-GNN | message-passing GNNs | ❌ n/a | `has_attention = False` |
 

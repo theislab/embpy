@@ -46,6 +46,7 @@ else:
     # real import can wait for the first tensor operation. See ``embpy._lazy``.
     torch = lazy_module("torch")
 
+from .pp.static_embeddings import static_embedding_keys
 from .resources.gene_resolver import GeneResolver
 from .resources.protein_resolver import ProteinResolver
 from .resources.text_resolver import TextResolver
@@ -100,21 +101,16 @@ def __getattr__(name: str) -> Any:
 
 
 DEFAULT_STATIC_EMBEDDING_REPO = "theislab/Embpy_Data"
-DEFAULT_STATIC_EMBEDDING_MODELS = frozenset(
-    {
-        "genept",
-        "genept_scaled",
-        "gene2vec",
-        "wikicrow",
-        "ccle",
-        "ccle_ensembl",
-        "crispr_gene_effect",
-        "crispr_gene_effect_1178",
-        "crispr_gene_effect_205",
-        "omics",
-        "pops",
-    }
-)
+
+# Derived from the download specification rather than written out by hand. The
+# two lists had drifted: "ccle" and "ccle_ensembl" were advertised here with no
+# spec behind them, so `model_catalog("static")` offered keys that `embed` could
+# only answer with FileNotFoundError.
+#
+# This is the *gene* roster specifically. The STRING tables in the spec file are
+# keyed by STRING protein ids and declare entity_type="protein"; they are not
+# gene lookups and must not be routed as such.
+DEFAULT_STATIC_EMBEDDING_MODELS = static_embedding_keys("gene")
 
 
 # Helper function (can be moved to utils later)
@@ -5385,7 +5381,10 @@ def _resolve_gene_jump_fallback(
     try:
         from .resources.gene_resolver import GeneResolver
 
-        resolver = GeneResolver(organism="human")
+        # species=, not organism= -- passing organism= raised a TypeError that the
+        # broad `except Exception` below swallowed, silently disabling both this
+        # canonicalisation and the mygene alias fallback after it.
+        resolver = GeneResolver(species="human")
         ensembl_id = resolver.symbol_to_ensembl(gene_symbol)
         if ensembl_id:
             canonical = resolver.ensembl_to_symbol(ensembl_id)
