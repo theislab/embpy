@@ -95,11 +95,27 @@ class TestExtrasTable:
 
 
 def _all_wrapper_names_in_source() -> set[str]:
-    """Wrapper class names referenced by the registry modules, import-independent."""
+    """Wrapper class names referenced by the registry modules, import-independent.
+
+    Matches any ``*Wrapper`` token rather than only ``(FooWrapper`` -- registry
+    entries are written both inline and across several lines::
+
+        "caduceus_ph_131k": (
+            CaduceusWrapper,
+            "kuleshov-group/caduceus-ph_seqlen-131k_d_model-256_n_layer-16",
+        ),
+
+    The old paren-anchored pattern silently missed every multi-line entry, so a
+    correct ``WRAPPER_EXTRAS`` key could be reported as naming an unknown wrapper.
+    Import lines are matched too, which is harmless: a typo'd key still appears
+    nowhere in the directory, so this remains an effective typo check.
+    """
     registry_dir = Path(__file__).resolve().parents[2] / "src" / "embpy" / "embedder_registry"
     names: set[str] = set()
     for path in registry_dir.glob("*.py"):
-        names.update(re.findall(r"\(([A-Za-z0-9_]+Wrapper)\b", path.read_text()))
+        if path.name == "extras.py":
+            continue          # the table under test -- scanning it would be circular
+        names.update(re.findall(r"\b([A-Za-z0-9_]+Wrapper)\b", path.read_text()))
     return names
 
 

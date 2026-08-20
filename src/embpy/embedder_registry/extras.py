@@ -25,6 +25,10 @@ WRAPPER_EXTRAS: dict[str, str] = {
     "AlphaGenomeWrapper": "alphagenome",
     "Boltz2Wrapper": "boltz",
     "BorzoiWrapper": "seqmodels",
+    # CaduceusWrapper was missing, so a machine without mamba-ssm got a bare
+    # ModelLoadError with no install advice -- the failure that made the gene
+    # notebook look as though Caduceus were simply unavailable.
+    "CaduceusWrapper": "caduceus",
     "ESM3Wrapper": "esm3",
     "ESMCWrapper": "esm3",
     "EnformerWrapper": "seqmodels",

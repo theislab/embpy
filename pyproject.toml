@@ -202,11 +202,34 @@ optional-dependencies.genome = [
 optional-dependencies.esm3 = [
   "esm>=3.2.0",
 ]
-# DNA/RNA sequence model wrappers. borzoi-pytorch hard-pins
-# `transformers<4.51.0`, so it cannot coexist with helical (needs >=4.53).
+# DNA/RNA sequence model wrappers.
+#
+# borzoi-pytorch's transformers requirement FLIPPED DIRECTION between minor
+# releases, so the two are silently co-determined:
+#   0.4.4  requires transformers>=4.34.1,<4.51.0
+#   0.5.1  requires transformers>=4.57.6,<5.0.0
+# Those ranges do not overlap. Because this extra pins only `>=0.4.3`, the
+# resolver picks whichever pair fits the rest of the environment -- install
+# `[esm3]` (which caps transformers at 4.48.1) and you silently get borzoi 0.4.x;
+# leave it out and you get 0.5.x on transformers 4.57. Both work, but they are
+# not the same model code, so pin borzoi-pytorch explicitly if you need
+# reproducibility. 0.4.x additionally cannot coexist with helical (needs >=4.53).
 # Kept optional so users without DNA sequence use-cases aren't forced onto an
 # older transformers. The other DNA wrappers (Evo, Caduceus) are in their own
 # extras and don't need this.
+# Flashzoi -- the four `flashzoi_*` keys are Borzoi checkpoints whose config sets
+# `flashed = true`, so borzoi-pytorch instantiates its FlashAttention path and
+# imports `flash_attn` inside `FlashAttention.__init__`. There is no eager
+# fallback: the plain `borzoi_*` checkpoints omit `flashed` and never touch it,
+# which is why 8 of the 12 Borzoi keys work under [cpu] and these 4 do not.
+#
+# flash-attn is NVIDIA-only, ships no wheels, and builds against an already
+# installed torch, so it cannot go in [cpu]/[gpu]. Install torch first, then:
+#   uv pip install "embpy[gpu]"
+#   uv pip install "embpy[flashzoi]" --no-build-isolation
+optional-dependencies.flashzoi = [
+  "borzoi-pytorch[flash]>=0.4.3",
+]
 optional-dependencies.seqmodels = [
   "borzoi-pytorch>=0.4.3",
   "enformer-pytorch>=0.8.10",
@@ -248,8 +271,17 @@ optional-dependencies.evo2 = [
 optional-dependencies.caduceus = [
   "mamba-ssm>=2.0",
 ]
+# Nucleotide Transformer v3 -- needs no package beyond the standard model stack:
+# NucleotideTransformerV3Wrapper loads through stock `AutoModelForMaskedLM` with
+# `trust_remote_code=True`. This extra previously pinned `transformers>=5.0.0`,
+# which contradicts the `<5.0.0` cap in the base requirements and made
+# `embpy[ntv3]` *unsatisfiable* -- `uv pip install "embpy[ntv3]"` failed outright,
+# with or without [cpu]/[gpu], so none of the five ntv3_* keys was installable.
+# The real barrier is access, not packaging: the InstaDeepAI/NTv3_* repositories
+# are gated, so loading one also needs an accepted licence and an authenticated
+# `huggingface-cli login`. See the model table in README.md.
 optional-dependencies.ntv3 = [
-  "transformers>=5.0.0",
+  "transformers>=4.45.0,<5.0.0",
 ]
 optional-dependencies.boltz = [
   "boltz>=2.0",

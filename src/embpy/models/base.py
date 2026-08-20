@@ -20,6 +20,43 @@ else:
     torch = lazy_module("torch")
 
 
+def raise_for_gated_repo(exc: BaseException, model_name: str) -> None:
+    """Turn a Hugging Face access failure into advice instead of "could not load".
+
+    A gated repository answers with 401/403 and a message about accepting the
+    licence and authenticating. Wrappers catch broadly and re-raise a generic
+    ``RuntimeError("Could not load X")``, which discards the one part the user can
+    act on -- ``InstaDeepAI/NTv3_8M_pre`` fails this way, and the surfaced error
+    says nothing about needing an account.
+
+    Call this first inside the ``except`` block. It raises ``PermissionError``
+    with the fix when the chain looks like an access problem, and returns quietly
+    otherwise so the caller keeps its own handling.
+    """
+    text = ""
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text += f"\n{current}"
+        current = current.__cause__ or current.__context__
+
+    low = text.lower()
+    if not any(
+        marker in low
+        for marker in ("gated repo", "is restricted", "401 client error", "403 client error")
+    ):
+        return
+
+    raise PermissionError(
+        f"'{model_name}' is a gated Hugging Face repository, so the weights cannot be "
+        "downloaded anonymously. Accept the licence at "
+        f"https://huggingface.co/{model_name} and authenticate with "
+        "`huggingface-cli login` (or set HF_TOKEN), then retry. This is an access "
+        "problem, not a missing package -- no extra will fix it."
+    ) from exc
+
+
 class BaseModelWrapper(ABC):
     """
     Abstract base class for all model wrappers.

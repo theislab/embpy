@@ -39,11 +39,11 @@ There are **two supported installs**. Both work with `pip` and `uv` — these ar
 standard extras, not tool-specific.
 
 ```bash
-pip install "embpy[cpu]"
+uv pip install "embpy[cpu]"
 ```
 
 ```bash
-pip install "embpy[gpu]"
+uv pip install "embpy[gpu]"
 ```
 
 `[cpu]` pulls CPU-only PyTorch plus every backend that runs on CPU — enough for all
@@ -58,18 +58,72 @@ exists so the docs build and CI stay fast; for real use, pick `[cpu]` or `[gpu]`
 <summary>Backends that must be installed separately</summary>
 
 A few backends cannot be installed by pip on an arbitrary machine, so they are in
-neither extra. embpy degrades gracefully without them and the warning it logs names
-the command to run:
+neither extra. embpy degrades gracefully without them, and asking for one of their
+models raises a typed `DependencyError` naming the command to run.
 
-| Backend | Install | Why it is separate |
+Every line below was checked by resolving it with `uv pip compile`; the "Status"
+column says what actually happens today rather than what is intended.
+
+| Backend | Install | Status / why it is separate |
 | --- | --- | --- |
-| Caduceus | `pip install "embpy[caduceus]"` | `mamba-ssm` needs a CUDA toolchain at build time |
-| Scooby | `pip install "embpy[scooby]"` | installs from a git URL |
-| Evo / Evo2 | `pip install "embpy[evo]"` | CUDA toolchain |
-| Boltz-2 | `pip install "embpy[boltz]"` | heavy structure stack |
-| MiniMol | `pip install "embpy[minimol]"` | pinned graphium stack |
-| AlphaGenome | `pip install "embpy[alphagenome]"` | API client, needs a key |
-| single-cell FMs | `pip install "embpy[helical]"` | pins torch/transformers |
+| Caduceus | `uv pip install "embpy[caduceus]"` | resolves cleanly (`mamba-ssm`), but the wheel builds against your installed torch — install the matching torch first. Needs a CUDA toolchain if no wheel matches. |
+| Scooby | `uv pip install "embpy[scooby]"` | installs from a git URL, so it is not PyPI-only |
+| Evo (v1/v1.5) | `uv pip install "embpy[evo]"` | **Linux only.** Depends on `triton`, which publishes no macOS wheels, so this is unsatisfiable on macOS. |
+| Evo 2 | `uv pip install "embpy[evo2]"` | **needs Python 3.11 or 3.12** — `evo2` declares `requires-python >=3.11,<3.13`, so it cannot install into a 3.13 environment at all. Needs its own venv (below). |
+| Flashzoi | `uv pip install "embpy[flashzoi]" --no-build-isolation` | the four `flashzoi_*` keys set `flashed=true` and need `flash_attn`, which is NVIDIA-only and builds against your installed torch. The eight plain `borzoi_*` keys need none of it. |
+| Boltz-2 | `uv pip install "embpy[boltz]"` | **downgrades numpy to 1.26** (boltz pins `numpy<2`). Everything compiled against numpy 2 in the same environment is at risk — prefer a dedicated environment. |
+| MiniMol | `uv pip install "embpy[minimol]"` | needs `--no-build-isolation`: `torch-sparse`/`torch-scatter` build against an already-installed torch. Install torch first, then this extra with that flag. |
+| ESM-C / ESM3 | `uv pip install "embpy[cpu]"` then `uv pip install esm --no-deps` | installing the extra normally **caps transformers at 4.48.1** (the `esm` SDK pins `<4.48.2`), which also silently moves borzoi-pytorch onto a 0.4.x release. `--no-deps` avoids both — `esm` works with newer transformers. ESM3 weights are additionally licence-gated. |
+| NT v3 | `uv pip install "embpy[ntv3]"` | needs no extra package; the barrier is **access**. The `InstaDeepAI/NTv3_*` repositories are gated, so accept the licence on the model page and `huggingface-cli login` (or set `HF_TOKEN`). |
+| AlphaGenome | `uv pip install "embpy[alphagenome]"` | API client, needs a key — no local weights |
+| single-cell FMs | `uv pip install "embpy[helical]"` | pins torch/transformers; needs the igraph C library |
+
+**Gated weights are not a packaging problem.** NT v3 and ESM3 install fine and then
+fail at download with a 401 until you have accepted the licence and authenticated.
+embpy reports this as an access error naming the model page, not as a missing
+package, so the two cases are distinguishable.
+
+**Some extras move shared pins.** `[esm3]` and `[boltz]` change `transformers` and
+`numpy` for the whole environment. uv will not warn you: both are *legal*
+resolutions rather than conflicts, so the downgrade is silent even if the extras
+are declared as conflicting. The remedies are per-case, below.
+
+#### Backends that want their own environment
+
+Three cases cannot share an environment with the standard install. Give each its
+own venv — embpy is identical in all of them, only the affected models differ.
+
+**Evo 2 — forced by the interpreter.** `evo2` requires Python `>=3.11,<3.13`, so
+no flag makes it install into a 3.13 environment:
+
+```bash
+uv venv --python 3.12 .venv-evo2
+uv pip install --python .venv-evo2/bin/python "embpy[evo2]"
+```
+
+**Flashzoi — forced by the build.** `flash-attn` ships no wheels and compiles
+against an already-installed torch, so it is two steps and NVIDIA-only:
+
+```bash
+uv venv --python 3.12 .venv-flashzoi
+uv pip install --python .venv-flashzoi/bin/python "embpy[gpu]"
+uv pip install --python .venv-flashzoi/bin/python "embpy[flashzoi]" --no-build-isolation
+```
+
+**Boltz-2 — forced by numpy.** `boltz` pins `numpy<2`, putting every package
+compiled against numpy 2 in the same environment at risk:
+
+```bash
+uv venv --python 3.12 .venv-boltz
+uv pip install --python .venv-boltz/bin/python "embpy[boltz]"
+```
+
+**ESM-C / ESM3 does *not* need its own environment.** Install `[cpu]` or `[gpu]`
+normally and add `esm` with `--no-deps`, as in the table above.
+
+Asking for a model whose backend is absent raises a typed `DependencyError` naming
+the install line, so a missing backend stays distinguishable from a broken
+checkpoint or a gated repository.
 
 </details>
 

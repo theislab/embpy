@@ -535,7 +535,13 @@ class BioEmbedder:
                     _missing_package_from_exception(e) or "unknown"
                 )
                 logging.error(f"Failed to load model '{model_name}': missing dependency '{pkg}'.")
-                raise DependencyError(package=pkg, feature=f"model '{model_name}'") from e
+                # Keep whatever the wrapper said. It frequently knows a constraint the
+                # extra name cannot express -- Evo is unresolvable on macOS, evo2 needs
+                # Python < 3.13 -- and dropping it sent users to an install line that
+                # could not work on their machine.
+                raise DependencyError(
+                    package=pkg, feature=f"model '{model_name}'", detail=str(e) or None
+                ) from e
             except Exception as e:
                 logging.error(
                     f"Failed to load model '{model_name}' using wrapper {WrapperClass.__name__} and path '{model_path_or_name}': {e}"

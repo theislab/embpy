@@ -2,6 +2,7 @@
 # pyright: reportUnknownMemberType=false
 # pyright: reportMissingImports=false
 # pyright: reportOptionalMemberAccess=false
+import importlib.util
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -64,7 +65,7 @@ except ImportError:
     AutoModelForMaskedLM = None
 
 
-from .base import BaseModelWrapper
+from .base import BaseModelWrapper, raise_for_gated_repo
 
 
 def _safe_model_forward(model: Any, **kwargs: Any) -> Any:
@@ -741,6 +742,27 @@ class BorzoiWrapper(BaseModelWrapper):
         if Borzoi is None:
             raise ImportError("borzoi_pytorch not installed; cannot load BorzoiWrapper.")
 
+        # The flashzoi checkpoints set `flashed = true` in their config, so
+        # borzoi-pytorch builds its FlashAttention path and imports `flash_attn`
+        # inside `FlashAttention.__init__`. There is no eager fallback -- the plain
+        # borzoi checkpoints omit `flashed` and never reach that code -- so without
+        # the backend the load dies with a ModuleNotFoundError that the generic
+        # handler below flattens into "Could not load Borzoi", never naming
+        # flash_attn. Checking here fails fast, before the checkpoint download, and
+        # says what to install. Keyed on the checkpoint rather than the wrapper
+        # class because 8 of the 12 Borzoi keys do not need this at all, which is a
+        # distinction WRAPPER_EXTRAS (wrapper class -> extra) cannot express.
+        if "flashzoi" in self.model_name.lower() and importlib.util.find_spec("flash_attn") is None:
+            raise ImportError(
+                f"'{self.model_name}' is a Flashzoi checkpoint, which runs "
+                "borzoi-pytorch's FlashAttention path and needs the 'flash_attn' "
+                "package: No module named 'flash_attn'. flash-attn is NVIDIA-only "
+                "and builds against your installed torch, so install torch first, "
+                'then: uv pip install "embpy[flashzoi]" --no-build-isolation. '
+                "On CPU-only machines use the plain borzoi_* keys instead -- they "
+                "are the same architecture without the fused kernel."
+            )
+
         logging.info(f"Loading Borzoi '{self.model_name}' …")
         try:
             borzoi_model: Any = Borzoi.from_pretrained(self.model_name)
@@ -1286,12 +1308,22 @@ class EvoWrapper(BaseModelWrapper):
             If the ``evo-model`` package is not installed.
         RuntimeError
             If the model fails to load.
+        ValueError
+            If ``embedding_layer`` is outside the model's block range. Raised after
+            the load block, so a bad argument is reported as a bad argument rather
+            than being rewritten as a load failure.
         """
         if self._evo_model is not None:
             logging.warning(f"Evo '{self.model_name}' already loaded.")
             return
         if not _HAVE_EVO or EvoModel is None:
-            raise ImportError("evo-model package is not installed. Install with: pip install evo-model")
+            raise ImportError(
+                "evo-model package is not installed: No module named 'evo'. Evo is "
+                "Linux/NVIDIA only -- it pulls `triton`, which publishes no macOS "
+                'wheels, so `uv pip install "embpy[evo]"` cannot resolve on macOS at '
+                "all. On Linux with CUDA:\n"
+                '  uv pip install "embpy[evo]" --no-build-isolation'
+            )
 
         self.device = device
         logging.info(f"Loading Evo model '{self.model_name}'...")
@@ -1307,10 +1339,10 @@ class EvoWrapper(BaseModelWrapper):
             num_blocks = len(sh_model.blocks)
             if self.embedding_layer is None:
                 self.embedding_layer = num_blocks // 2
-            elif self.embedding_layer < 0 or self.embedding_layer >= num_blocks:
-                raise ValueError(
-                    f"embedding_layer={self.embedding_layer} is out of range "
-                    f"for a model with {num_blocks} blocks (valid: 0–{num_blocks - 1})."
+                out_of_range = False
+            else:
+                out_of_range = (
+                    self.embedding_layer < 0 or self.embedding_layer >= num_blocks
                 )
 
             logging.info(
@@ -1323,6 +1355,21 @@ class EvoWrapper(BaseModelWrapper):
             self._tokenizer = None
             self.model = None
             raise RuntimeError(f"Could not load Evo '{self.model_name}'.") from e
+
+        # Raised *after* the try, deliberately. A bad embedding_layer is a caller
+        # error, not a load failure; raising it inside the block let the handler
+        # above rewrite it as "Could not load Evo", sending the reader after a
+        # broken checkpoint instead of a wrong layer index.
+        if out_of_range:
+            requested, blocks = self.embedding_layer, num_blocks
+            self._evo_model = None
+            self._tokenizer = None
+            self.model = None
+            raise ValueError(
+                f"embedding_layer={requested} is out of range for "
+                f"'{self.model_name}', which has {blocks} blocks "
+                f"(valid: 0-{blocks - 1})."
+            )
 
     def _extract_hidden_state(self, input_ids: torch.Tensor) -> torch.Tensor:
         """
@@ -1628,7 +1675,11 @@ class Evo2Wrapper(BaseModelWrapper):
             return
         if not _HAVE_EVO2 or Evo2 is None:
             raise ImportError(
-                "evo2 package is not installed. Install it with: pip install embpy[evo2] or pip install evo2"
+                "evo2 package is not installed: No module named 'evo2'. evo2 requires "
+                "Python >=3.11,<3.13, so on a newer interpreter no extra can install it "
+                "-- it needs a dedicated environment:\n"
+                "  uv venv --python 3.12 .venv-evo2\n"
+                '  uv pip install --python .venv-evo2/bin/python "embpy[evo2]"' 
             )
 
         self.device = device
@@ -2115,6 +2166,8 @@ class NucleotideTransformerV3Wrapper(BaseModelWrapper):
             logging.info(f"NTv3 '{self.model_name}' loaded on {device}.")
         except Exception as e:
             self.model = None
+            # A 401 on a gated repo is actionable; "Could not load NTv3" is not.
+            raise_for_gated_repo(e, self.model_name)
             raise RuntimeError(f"Could not load NTv3 '{self.model_name}'.") from e
 
     def embed(
@@ -2363,6 +2416,23 @@ class CaduceusWrapper(BaseModelWrapper):
             return
         if not _HAVE_TRANSFORMERS:
             raise ImportError("transformers package required: pip install transformers")
+
+        # Check the backend before touching the network. Caduceus is a Mamba/SSM
+        # model whose remote code imports `mamba_ssm`; when that is absent,
+        # transformers only *logs* "Encountered exception while importing
+        # mamba_ssm" and then fails for an unrelated-looking reason, so the module
+        # name never reaches the exception chain and
+        # `_missing_package_from_exception` cannot recover it. Raising ImportError
+        # here is what lets `BioEmbedder.get_model` turn this into a typed
+        # DependencyError naming `embpy[caduceus]` instead of a bare
+        # "Could not load Caduceus".
+        if importlib.util.find_spec("mamba_ssm") is None:
+            raise ImportError(
+                "Caduceus needs the Mamba backend, which is not installed: "
+                "No module named 'mamba_ssm'. Install it with "
+                '`uv pip install "embpy[caduceus]"` (mamba-ssm builds against your '
+                "installed torch, so install the matching torch first)."
+            )
 
         logging.info(f"Loading Caduceus '{self.model_name}' …")
         try:

@@ -682,6 +682,13 @@ class TestEvoWrapper:
         w.load(torch.device("cpu"))  # Should not raise
 
     def test_load_invalid_embedding_layer_raises(self):
+        """An out-of-range layer is a caller error, so ValueError -- not RuntimeError.
+
+        This test previously asserted ``RuntimeError``, which pinned a masking bug:
+        the check ran *inside* ``load``'s ``try``, so the generic handler rewrote a
+        precise "embedding_layer=999 is out of range" into "Could not load Evo",
+        sending the reader after a broken checkpoint instead of a wrong argument.
+        """
         w = EvoWrapper(embedding_layer=999)
         mock_model = self._make_mock_sh_model(num_blocks=32)
         mock_evo_cls = MagicMock()
@@ -691,10 +698,13 @@ class TestEvoWrapper:
         mock_evo_cls.return_value = mock_evo_instance
 
         with patch("embpy.models.dna_models._HAVE_EVO", True), patch("embpy.models.dna_models.EvoModel", mock_evo_cls):
-            with pytest.raises(RuntimeError):
+            with pytest.raises(ValueError) as excinfo:
                 w.load(torch.device("cpu"))
+            assert "out of range" in str(excinfo.value)
+            assert "32 blocks" in str(excinfo.value)
 
     def test_load_negative_embedding_layer_raises(self):
+        """Same contract for a negative index -- see the note above."""
         w = EvoWrapper(embedding_layer=-1)
         mock_model = self._make_mock_sh_model(num_blocks=32)
         mock_evo_cls = MagicMock()
@@ -704,8 +714,10 @@ class TestEvoWrapper:
         mock_evo_cls.return_value = mock_evo_instance
 
         with patch("embpy.models.dna_models._HAVE_EVO", True), patch("embpy.models.dna_models.EvoModel", mock_evo_cls):
-            with pytest.raises(RuntimeError):
+            with pytest.raises(ValueError) as excinfo:
                 w.load(torch.device("cpu"))
+            assert "out of range" in str(excinfo.value)
+            assert "32 blocks" in str(excinfo.value)
 
     # --- Embedding (mocked) ---
 
