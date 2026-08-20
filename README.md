@@ -288,7 +288,12 @@ pl.plot_embedding_space(
    for asking whether two models encode the same structure, and which to use when.
 4. [Which model captures *my* biology?](docs/notebooks/04_benchmark_models.ipynb) —
    rank models on your own labelled task.
-5. [Reading a model's attention](docs/notebooks/06_attention_weights.ipynb) —
+5. [What else does embpy know about your entities?](docs/notebooks/05_annotate_entities.ipynb) —
+   the annotation layer: physicochemical properties, the ChEMBL clinical record
+   (phase, indications, safety, ATC, mechanism, targets), gene pathways and
+   protein function. Network-bound, no weights, and the source of labels your
+   analysis did not choose.
+6. [Reading a model's attention](docs/notebooks/06_attention_weights.ipynb) —
    extract per-layer attention and reduce it to AnnData-ready summaries.
 
 **By modality** — deeper, domain-specific workflows:

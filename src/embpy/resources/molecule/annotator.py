@@ -154,8 +154,14 @@ class MoleculeAnnotator:
         """
         s = identifier.strip()
         try:
-            from rdkit import Chem
-            mol = Chem.MolFromSmiles(s)
+            from rdkit import Chem, rdBase
+            # Speculative: the identifier may be a SMILES or may be a name, and
+            # the only way to tell is to try. A name failing to parse is the
+            # expected path, not an error, so do not let RDKit log it -- without
+            # this, annotating a panel by name prints five lines of
+            # "SMILES Parse Error" per compound over the caller's output.
+            with rdBase.BlockLogs():
+                mol = Chem.MolFromSmiles(s)
             if mol is not None:
                 return Chem.MolToSmiles(mol)
         except ImportError:
@@ -173,8 +179,11 @@ class MoleculeAnnotator:
         """Resolve identifier to PubChem CID."""
         s = identifier.strip()
         try:
-            from rdkit import Chem
-            mol = Chem.MolFromSmiles(s)
+            from rdkit import Chem, rdBase
+            # Same speculative parse as _resolve_to_smiles; same reason to keep
+            # its expected failure out of the caller's output.
+            with rdBase.BlockLogs():
+                mol = Chem.MolFromSmiles(s)
             if mol is not None:
                 canon = Chem.MolToSmiles(mol)
                 data = _get_json(

@@ -281,10 +281,15 @@ class ChEMBLAnnotator:
         if _CHEMBL_ID_RE.match(s):
             return "chembl_id"
         try:
-            from rdkit import Chem, RDLogger
+            from rdkit import Chem, rdBase
 
-            RDLogger.DisableLog("rdApp.*")
-            return "smiles" if Chem.MolFromSmiles(s) is not None else "name"
+            # Speculative parse: a compound *name* failing here is the expected
+            # path. BlockLogs rather than RDLogger.DisableLog because the latter
+            # is global and permanent -- it silenced RDKit for the rest of the
+            # caller's session as a side effect of one identifier lookup.
+            with rdBase.BlockLogs():
+                parsed = Chem.MolFromSmiles(s)
+            return "smiles" if parsed is not None else "name"
         except ImportError:
             pass
         # Without RDKit a token like "CCO" is ambiguous -- it is both a valid
