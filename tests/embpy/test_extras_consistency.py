@@ -187,6 +187,10 @@ class TestFlashzoiIsGatedAtRuntime:
     def test_missing_flash_attn_names_the_package_and_the_fix(self) -> None:
         """Without the gate this raised a generic 'Could not load Borzoi'."""
         pytest.importorskip("torch")
+        # The flash_attn gate lives *after* the borzoi_pytorch check, so without
+        # borzoi installed load() fails earlier with "borzoi_pytorch not installed"
+        # and this gate is never reached (the `full` CI env has neither package).
+        pytest.importorskip("borzoi_pytorch")
         import importlib.util
 
         if importlib.util.find_spec("flash_attn") is not None:
