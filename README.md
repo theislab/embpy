@@ -76,7 +76,7 @@ column says what actually happens today rather than what is intended.
 | ESM-C / ESM3 | `uv pip install "embpy[cpu]"` then `uv pip install esm --no-deps` | installing the extra normally **caps transformers at 4.48.1** (the `esm` SDK pins `<4.48.2`), which also silently moves borzoi-pytorch onto a 0.4.x release. `--no-deps` avoids both — `esm` works with newer transformers. ESM3 weights are additionally licence-gated. |
 | NT v3 | `uv pip install "embpy[ntv3]"` | needs no extra package; the barrier is **access**. The `InstaDeepAI/NTv3_*` repositories are gated, so accept the licence on the model page and `huggingface-cli login` (or set `HF_TOKEN`). |
 | AlphaGenome | `uv pip install "embpy[alphagenome]"` | API client, needs a key — no local weights |
-| single-cell FMs | `uv pip install "embpy[helical]"` | pins torch/transformers; needs the igraph C library |
+| single-cell FMs | `uv pip install "embpy[helical]"` | pins torch/transformers and needs the igraph C library. Cannot coexist with `arc-state` or `cell-eval` through a resolver — see the single-cell recipe below. |
 
 **Gated weights are not a packaging problem.** NT v3 and ESM3 install fine and then
 fail at download with a 401 until you have accepted the licence and authenticated.
@@ -90,7 +90,7 @@ are declared as conflicting. The remedies are per-case, below.
 
 #### Backends that want their own environment
 
-Three cases cannot share an environment with the standard install. Give each its
+Four cases cannot share an environment with the standard install. Give each its
 own venv — embpy is identical in all of them, only the affected models differ.
 
 **Evo 2 — forced by the interpreter.** `evo2` requires Python `>=3.11,<3.13`, so
@@ -117,6 +117,42 @@ compiled against numpy 2 in the same environment at risk:
 uv venv --python 3.12 .venv-boltz
 uv pip install --python .venv-boltz/bin/python "embpy[boltz]"
 ```
+
+**Single-cell foundation models — forced by three mutually exclusive pins.**
+`helical` (scGPT, Geneformer, UCE) declares `numpy>=2.1.3,<2.3` and
+`transformers<=4.51.3`; `arc-state` (STATE) needs `transformers>=4.52.3`; and
+`cell-eval` pulls `pdex`, which needs `numpy>=2.4.2`. No Python version
+satisfies all three, so a resolver rejects the combination outright rather than
+picking badly. The helical ceilings turn out to be stale, though, so
+`--no-deps` plus its real runtime dependencies gets one environment with all of
+them (verified on linux-64: scGPT, Geneformer, scVI, STATE and PCA all embed):
+
+```bash
+uv venv --python 3.13 .venv-sc
+uv pip install --python .venv-sc/bin/python \
+    arc-state arc-stack scvi-tools scib scib-metrics "cell-eval>=0.7.2" scanpy
+uv pip install --python .venv-sc/bin/python -e .        # embpy *with* its deps
+uv pip install --python .venv-sc/bin/python --no-deps helical
+uv pip install --python .venv-sc/bin/python \
+    "datasets==3.6.0" einops sentencepiece biopython catalogue \
+    pybiomart requests-cache
+uv pip install --python .venv-sc/bin/python "transformers==4.57.6"
+```
+
+Five details are load-bearing, each of which fails in its own way:
+
+| Detail | What breaks without it |
+| --- | --- |
+| `--no-deps helical` | resolution fails, or numpy is dragged below 2.3 |
+| `datasets==3.6.0` exactly | Geneformer: `'Column' object has no attribute 'device'` |
+| `transformers==4.57.6`, not 5.x | embpy pins `huggingface-hub<1.0.0`, which lacks the `is_offline_mode` transformers 5 imports |
+| `-e .` *without* `--no-deps` | embpy's own light core (rdkit, sklearn) is missing, and the import errors look like model problems |
+| `scib` *and* `scib-metrics` | different packages; `tl.compute_scib_metrics` imports the first, so only installing the second raises `DependencyError` |
+
+`stack` installs and loads but then fails inside arc-stack's own h5ad reader
+(`Could not find gene names in the file`) even when `gene_name_col` is
+supplied — upstream, not embpy. `state` fetches ~12 GB of weights on first use
+unless you pass `model_kwargs={"state": {"checkpoint": ...}}`.
 
 **ESM-C / ESM3 does *not* need its own environment.** Install `[cpu]` or `[gpu]`
 normally and add `esm` with `--no-deps`, as in the table above.
