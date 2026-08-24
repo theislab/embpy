@@ -106,6 +106,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scanpy as sc
+from scipy import sparse
 from IPython.display import display
 
 import embpy
@@ -167,30 +168,35 @@ LABEL_KEY = "cell_type"      # ground-truth biology; scIB bio-conservation
 BATCH_KEY = "batch"          # TECHNICAL covariate; scIB batch-correction
 COUNTS_LAYER = "counts"      # raw integer counts, kept across preprocessing
 
-N_CELLS = 1500               # subsample size, to keep a run to minutes
+N_CELLS = 3000               # subsample target, to keep a run to minutes
 SEED = 0
 MIN_CELLS_PER_LABEL = 4      # below this, per-label statistics are meaningless
+MIN_PER_LABEL = 60           # floor per label, so rare types survive sampling
 
-# The atlas slot. A dataset qualifies if it has cell-type labels, a technical
-# batch covariate that is not nested inside those labels, raw integer counts,
-# and unique gene symbols. Candidates that satisfy it:
-#   scvi.data.heart_cell_atlas_subsampled()  -- donors as batch, cell_type labels
-#   the scIB pancreas benchmark              -- 4 technologies, the canonical one
-#   any published atlas with a donor / lab / technology column
-ATLAS_PATH = DATA_DIR / "atlas.h5ad"
+# The atlas: the scIB human pancreas benchmark (Luecken et al. 2022). 16,382
+# cells over 19,093 genes, 14 islet cell types, and nine batches spanning six
+# protocols -- four inDrop runs plus CEL-Seq, CEL-Seq2, Fluidigm C1, SMARTer and
+# Smart-seq2. It is the canonical integration benchmark because the technical
+# axis is genuinely large: median library size runs from ~5,000 UMIs in the
+# droplet runs to ~1.3 million reads in Fluidigm C1.
+#
+# To swap in your own atlas, repoint ATLAS_PATH and check it against the
+# assertions in the next cell. Anything with cell-type labels, a technical
+# covariate that is not nested inside them, counts, and unique symbols works.
+ATLAS_URL = "https://ndownloader.figshare.com/files/46763269"
+ATLAS_PATH = DATA_DIR / "scIBPancreas.h5ad"
 
 
 def load_atlas():
     # Staging is the intended path: it keeps this kernel free of dataset
-    # dependencies and makes the choice of atlas explicit rather than a
-    # silent default buried in a helper.
-    if ATLAS_PATH.exists():
-        return sc.read_h5ad(ATLAS_PATH)
-    import scvi  # noqa: PLC0415 - fallback only, for whoever stages the file
+    # dependencies and makes the choice of atlas explicit rather than a silent
+    # default buried in a helper.
+    if not ATLAS_PATH.exists():
+        import urllib.request  # noqa: PLC0415 - one-off fetch, for whoever stages it
 
-    fetched = scvi.data.heart_cell_atlas_subsampled()
-    fetched.write_h5ad(ATLAS_PATH)
-    return fetched
+        print(f"fetching the atlas to {ATLAS_PATH} (316 MB, once) ...")
+        urllib.request.urlretrieve(ATLAS_URL, ATLAS_PATH)
+    return sc.read_h5ad(ATLAS_PATH)
 
 
 adata = load_atlas()
@@ -230,19 +236,73 @@ for canonical, candidates in COLUMN_ALIASES.items():
     adata.obs[canonical] = adata.obs[found]
     print(f"mapped {canonical!r} <- {found!r}")
 
-sc.pp.subsample(adata, n_obs=min(N_CELLS, adata.n_obs), random_state=SEED)
+# Subsample *within* label, with a floor. A flat random sample of 1,500 from
+# 16,382 cells leaves schwann and t_cell with one cell each -- and the rare,
+# batch-restricted labels are precisely what isolated_label_asw exists to
+# score, so deleting them would remove the metric's subject matter.
+rng = np.random.default_rng(SEED)
+labels = adata.obs[LABEL_KEY].astype(str)
+quota = max(MIN_PER_LABEL, N_CELLS // labels.nunique())
+
+keep = []
+for level in labels.unique():
+    idx = np.flatnonzero((labels == level).to_numpy())
+    if len(idx) > quota:
+        idx = rng.choice(idx, quota, replace=False)
+    keep.append(idx)
+adata = adata[np.sort(np.concatenate(keep))].copy()
+
 for key in (LABEL_KEY, BATCH_KEY):
     adata.obs[key] = adata.obs[key].astype(str).astype("category")
 
-# Prefer an explicit counts layer over .X: published atlases frequently ship
-# normalised values in .X and keep the counts beside them.
+# Prefer an explicit counts layer over .X. Published atlases frequently ship
+# normalised values in .X and keep the counts beside them, and this one does:
+# .X here is log-normalised (max ~13), while .layers["counts"] holds the counts.
 if COUNTS_LAYER in adata.layers:
     adata.X = adata.layers[COUNTS_LAYER].copy()
 else:
     adata.layers[COUNTS_LAYER] = adata.X.copy()
 
+
+def nonzero_values(matrix):
+    # A matrix here may be sparse or dense depending on how the atlas was
+    # written, and `.data` means different things for each -- on a dense array
+    # it is the raw memory buffer, not the values, so reading it silently
+    # produces nonsense rather than an error.
+    if sparse.issparse(matrix):
+        return matrix.data
+    flat = np.asarray(matrix).ravel()
+    return flat[flat != 0]
+
+
+def round_matrix(matrix):
+    if sparse.issparse(matrix):
+        out = matrix.copy()
+        out.data = np.round(out.data)
+        return out
+    return np.round(np.asarray(matrix))
+
+
 X = adata.layers[COUNTS_LAYER]
-integral = float(np.abs(X.data - np.round(X.data)).max()) == 0.0
+
+# Not every value in this atlas's count layer is an integer, and the reason is
+# bookkeeping rather than corruption: the droplet runs contribute integer UMIs,
+# while the plate-based studies (Smart-seq2, SMARTer, Fluidigm C1) contribute
+# *estimated* counts from transcript quantification, which are fractional by
+# construction -- they sit at 1.002, 2.008, 4.032. scvi-tools requires integers
+# and refuses the fractional ones, so round. That moves those values by well
+# under a percent.
+vals = nonzero_values(X)
+frac_integral = float(np.mean(np.abs(vals - np.round(vals)) < 1e-6))
+if frac_integral < 1.0:
+    print(f"{1 - frac_integral:.1%} of nonzero count values are fractional "
+          f"(estimated counts from the plate-based protocols); rounding")
+    adata.layers[COUNTS_LAYER] = round_matrix(X)
+    adata.X = round_matrix(X)
+    X = adata.layers[COUNTS_LAYER]
+
+vals = nonzero_values(X)
+integral = float(np.abs(vals - np.round(vals)).max()) == 0.0
 
 assert integral, (
     "X must hold raw integer counts. scvi/scanvi declare input_layer='counts' "
@@ -256,8 +316,9 @@ assert adata.n_vars >= 2000, (
     "need thousands before their embeddings mean anything"
 )
 
-print(f"counts integral, {1 - X.nnz / (X.shape[0] * X.shape[1]):.1%} zeros, "
-      f"X.max() = {X.max():.0f}")
+n_nonzero = X.nnz if sparse.issparse(X) else int(np.count_nonzero(X))
+print(f"counts integral, {1 - n_nonzero / (X.shape[0] * X.shape[1]):.1%} zeros, "
+      f"X.max() = {float(X.max()):.0f}")
 print(f"{LABEL_KEY}: {adata.obs[LABEL_KEY].nunique()} levels | "
       f"{BATCH_KEY}: {adata.obs[BATCH_KEY].nunique()} levels")
 print(f"var_names: {list(adata.var_names[:4])}")
@@ -333,11 +394,26 @@ Section 1 scores every embedding on how well it removes `BATCH_KEY`. That score
 is only interesting if there is a batch effect to remove, so measure it here,
 before any model runs, and let the measurement set expectations.
 
-A covariate that separates cells *globally* but not *within a cell type* is
-confounded with biology rather than technical, and removing it would mean
-merging cell types. So measure both, and treat a near-zero batch silhouette as
-what it is: a weak benchmark, on which every model will score well and the
-column will rank nothing.
+Measure it two ways, because the two answer different questions and only one of
+them is the right basis for a verdict.
+
+**Globally**, a batch is almost never a coherent cluster: cells group by cell
+type first, so the global batch silhouette sits near zero *however strong the
+batch effect is*. Judging a dataset on that number would call a badly batched
+atlas clean.
+
+**Within a cell type** is the question that matters -- holding biology fixed, can
+you still tell the protocols apart? If yes, there is a technical axis for
+integration to remove. If no, the covariate is either absent or so entangled
+with biology that removing it would mean merging cell types.
+
+So the verdict below uses the median within-label figure, and reports the global
+one beside it precisely so the gap between them is visible.
+
+For this atlas the technical axis is not subtle. Median library size runs from
+about 5,000 UMIs in the droplet runs to 1.3 million reads in Fluidigm C1 -- a
+250-fold spread that has nothing to do with pancreatic biology, and everything
+to do with which protocol ran.
 """)
 
 code(r"""
@@ -378,17 +454,32 @@ rows.append(batch_row)
 COVARIATE_STRENGTH = pd.DataFrame(rows).set_index("covariate")
 display(COVARIATE_STRENGTH.round(3))
 
-# State the prediction now. Section 1 scores it rather than assuming it.
+# The verdict keys off the WITHIN-LABEL numbers, not the global one, and the
+# reason is not a detail. Globally, cells group by cell type -- biology
+# dominates -- so a batch is never a coherent global cluster and its silhouette
+# sits near zero however strong the batch effect is. Judging the dataset on the
+# global figure would call a strongly batched atlas "clean". The within-label
+# figure asks the question that matters: holding cell type fixed, can you still
+# tell the protocols apart?
+within_cols = [c for c in COVARIATE_STRENGTH.columns if c.startswith("within ")]
+within = COVARIATE_STRENGTH.loc[f"{BATCH_KEY} (the axis to remove)", within_cols]
+batch_within = float(np.nanmedian(within.astype(float).values))
 batch_global = float(batch_row["global"])
-WEAK_BATCH = batch_global < 0.05
+
+WEAK_BATCH = batch_within < 0.05
+print(f"\nbatch silhouette: global {batch_global:+.3f}, "
+      f"median within-label {batch_within:+.3f}")
 print(
-    f"batch silhouette {batch_global:+.3f} -> "
-    + ("WEAK integration benchmark: expect batch_correction high and near-tied "
-       "for every model, ranking nothing."
-       if WEAK_BATCH else
-       "a real batch effect exists: expect batch_correction to separate the "
-       "models.")
+    "WEAK integration benchmark: expect batch_correction high and near-tied "
+    "for every model, ranking nothing."
+    if WEAK_BATCH else
+    "STRONG integration benchmark: a real technical axis survives inside every "
+    "cell type, so expect batch_correction to separate the models."
 )
+if batch_global < 0.05 <= batch_within:
+    print("Note the disagreement: the global figure is near zero because cell "
+          "type dominates the global geometry, not because the batch effect is "
+          "small. This is why the verdict uses the within-label median.")
 del probe, E
 """)
 

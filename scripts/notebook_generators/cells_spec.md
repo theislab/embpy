@@ -70,7 +70,7 @@ to avoid:
 | used by | the sweep, `## 1` scIB, attention, decode | `## 2` cell-eval only |
 | needs | cell-type labels + a **technical** covariate | many perturbation levels + a control |
 | covariate is | donor, lab, technology, 10x chemistry | -- |
-| source | **pending -- the user will name it** | pertpy |
+| source | scIB pancreas benchmark, figshare 46763269 | pertpy |
 | verified shape | -- | 111,255 cells x 19,018 genes |
 
 **scIB is an atlas-integration benchmark, not an embedding-quality score.**
@@ -86,11 +86,61 @@ discrimination metrics degenerate. `04_benchmark_models.ipynb` is the worked
 example: with 7 well-separated stand-in perturbations, every discrimination
 score came back exactly 1.000 for all five models, ranking nothing.
 
+### The atlas, as measured
+
+**scIB human pancreas** (Luecken et al. 2022), figshare file 46763269
+(`scIBPancreas.h5ad`, 316 MB). Downloaded and inspected; these are observed.
+
+`16,382 cells x 19,093 genes`. `LABEL_KEY = "celltype"` (14 islet types),
+`BATCH_KEY = "tech"` (9 batches over 6 protocols: `inDrop1-4`, `celseq`,
+`celseq2`, `fluidigmc1`, `smarter`, `smartseq2`).
+
+**It is a strong integration benchmark, and the first candidate measured that
+is.** Silhouette on PCA(30):
+
+| Covariate | Global | within alpha | within beta | within acinar | within ductal |
+| --- | --- | --- | --- | --- | --- |
+| `celltype` (biology) | **+0.114** | -- | -- | -- | -- |
+| `tech` (batch) | **+0.074** | +0.235 | +0.187 | +0.117 | +0.097 |
+
+The batch effect is *larger within a cell type than globally*. Inside one islet
+population you can still tell which protocol produced each cell, which is the
+signature of a real technical nuisance rather than a covariate confounded with
+biology. Contrast the alternatives measured earlier: Kang donors at **-0.042**
+(and -0.065 to -0.180 within label), an injected batch at **+0.034**, a
+library-depth proxy at **-0.067**.
+
+The cause is visible in the library sizes -- median row sums by protocol run from
+~4,600 UMIs (`inDrop3`) to ~1,274,900 reads (`fluidigmc1`), a 250-fold spread
+with nothing to do with pancreatic biology. Say this in the notebook; it is the
+clearest available illustration of what "technical covariate" means.
+
+**Consequently the prediction `## 1` scores is the opposite of Kang's.** With a
+batch silhouette of +0.074 the batch-correction block should *separate* the
+models rather than saturating. Part 1 computes `WEAK_BATCH` from the measurement
+and part 3 scores whichever prediction follows, so neither outcome is hardcoded.
+
+**Nestedness 0.712** of a possible 1.78. `t_cell` (9 cells) appears only in the
+inDrop runs and `smarter` contributes only four of the fourteen types, so some
+labels are genuinely batch-restricted -- which is exactly what
+`isolated_label_asw` measures, and the metric that no scIB table in this repo
+has yet been able to compute.
+
+**The counts, which needed checking rather than trusting.** `.X` is
+log-normalised (max 13.0, non-integral). `.layers["counts"]` holds counts, but
+only **57.2% of its values are integral** -- the droplet runs contribute integer
+UMIs while the plate-based studies contribute *estimated* counts from transcript
+quantification, which are fractional by construction (values sit at 1.002,
+2.008, 4.032). scvi-tools requires integers, so the loader rounds and prints
+that it did. Rounding shifts those values by under a percent. The figshare
+description calls this the "full raw dataset", which is true of its provenance
+and not of its dtype -- so the assertion in part 1 is what establishes it, not
+the filename.
+
 ### What the atlas slot requires
 
-The atlas dataset is **not chosen yet**. Write every section against the
-contract, not against a particular file, so naming it later is a one-cell edit.
-What `## 1` needs from it:
+Every section is still written against the contract rather than this file, so
+swapping it is a one-cell edit. What `## 1` needs:
 
 | Requirement | Why | Checked in part 1 |
 | --- | --- | --- |
@@ -122,8 +172,8 @@ it rather than after.
 
 | Contract name | Atlas | Norman | Consumed by |
 | --- | --- | --- | --- |
-| `LABEL_KEY` | cell-type column | -- | scIB bio-conservation, purity, colouring |
-| `BATCH_KEY` | technical covariate | -- | scIB batch-correction |
+| `LABEL_KEY` | `"celltype"` (14 levels) | -- | scIB bio-conservation, colouring |
+| `BATCH_KEY` | `"tech"` (9 levels, 6 protocols) | -- | scIB batch-correction |
 | `PERT_KEY` | -- | `"perturbation_name"` | cell-eval |
 | `CONTROL_VALUE` | -- | `"control"` | cell-eval baseline |
 | `COUNTS_LAYER` | `"counts"` | `"counts"` | `scvi`/`scanvi`/`totalvi` |

@@ -370,22 +370,22 @@ MODEL_KWARGS.pop("state", None)
 """)
 
 md(r"""
-### The two scvi-tools variants that exist to keep section 2 honest
+### The two scvi-tools variants that exist to keep section 1 honest
 
 `scvi` has already run above, told nothing about the data beyond the counts.
 Its wrapper also accepts `batch_key`, which it forwards into
-`setup_anndata` -- so it can be *told* the very covariate section 2 will score
+`setup_anndata` -- so it can be *told* the very covariate section 1 will score
 it on removing.
 
 Running it both ways gives the notebook its one controlled experiment: two
 embeddings from the same wrapper, the same architecture and the same data,
-differing in exactly one thing. Whatever gap appears between them in section 2
+differing in exactly one thing. Whatever gap appears between them in section 1
 is the value of being told, and nothing else.
 
 `scanvi` goes further and has no choice about it: it **raises** without
 `labels_key`, so it necessarily sees the cell-type labels that
 bio-conservation is scored against. That does not make it a bad model, it makes
-its scores incomparable to the unsupervised ones, and section 2 marks the row
+its scores incomparable to the unsupervised ones, and section 1 marks the row
 rather than averaging it in.
 """)
 
