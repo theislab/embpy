@@ -103,7 +103,11 @@ def compute_scib_metrics(
     batch_key
         Optional column in ``adata.obs`` with a batch covariate. When given, the
         batch-correction metrics (ASW-batch, graph connectivity, iLISI, kBET)
-        and the aggregate *total* score are added.
+        are added and ``total`` becomes the scIB 0.6/0.4 weighting of the two
+        blocks. ``isolated_label_asw`` also requires it -- scIB defines an
+        isolated label by the number of batches it appears in -- so without a
+        batch covariate that column is omitted and ``bio_conservation`` is the
+        mean of the remaining four bio metrics.
     cluster_resolution_range
         ``(start, stop, step)`` passed to scIB's optimal-resolution search used
         for NMI/ARI clustering.
@@ -207,11 +211,18 @@ def _score_one_embedding(
     out["nmi"] = _safe_metric("nmi", embed_key, lambda: scib.metrics.nmi(ad, "scib_cluster", label_key))
     out["ari"] = _safe_metric("ari", embed_key, lambda: scib.metrics.ari(ad, "scib_cluster", label_key))
     out["asw_label"] = _safe_metric("asw_label", embed_key, lambda: scib.metrics.silhouette(ad, label_key, embed_key))
-    out["isolated_label_asw"] = _safe_metric(
-        "isolated_label_asw",
-        embed_key,
-        lambda: scib.metrics.isolated_labels(ad, label_key, batch_key, embed_key, cluster=False, verbose=verbose),
-    )
+    # scIB counts isolated-label ASW as a bio-conservation metric, but it
+    # *identifies* the isolated labels by how few batches they appear in, so it
+    # needs the batch covariate. Called with batch_key=None, scib indexes
+    # ``obs[[label_key, None]]`` and raises "[nan] not in index" -- which
+    # _safe_metric would turn into a NaN column plus one warning per embedding.
+    # Skip it instead: an absent column is honest, a NaN column looks broken.
+    if batch_key is not None:
+        out["isolated_label_asw"] = _safe_metric(
+            "isolated_label_asw",
+            embed_key,
+            lambda: scib.metrics.isolated_labels(ad, label_key, batch_key, embed_key, cluster=False, verbose=verbose),
+        )
     out["clisi"] = _safe_metric(
         "clisi", embed_key, lambda: scib.metrics.clisi_graph(ad, label_key, type_="embed", use_rep=embed_key)
     )
