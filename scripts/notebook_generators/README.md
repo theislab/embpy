@@ -6,8 +6,8 @@ the part files and rebuild:
 ```bash
 cd /Users/grpinto/Documents/embpy
 SP=scripts/notebook_generators
-for n in 1 2 3 4 5; do python3 $SP/proteins_part$n.py $SP/cells_part$n.json; done
-python3 $SP/assemble.py $SP/cells_part{1,2,3,4,5}.json docs/notebooks/proteins.ipynb
+for n in 1 2 3 4 5; do python3 $SP/proteins_part$n.py $SP/proteins_part$n.json; done
+python3 $SP/assemble.py $SP/proteins_part{1,2,3,4,5}.json docs/notebooks/proteins.ipynb
 ```
 
 Then execute it end to end before committing (cluster, ~25 min):
