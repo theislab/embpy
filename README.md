@@ -338,7 +338,6 @@ pl.plot_embedding_space(
 - [Proteins](docs/notebooks/proteins.ipynb)
 - [Small molecules](docs/notebooks/small_molecules.ipynb)
 - [Cells](docs/notebooks/cells.ipynb)
-- [Validating single-cell embeddings with scIB](docs/notebooks/scib_validation.ipynb)
 - [Variant effects](docs/notebooks/variant_effects.ipynb)
 
 Each notebook uses real `BioEmbedder.embed(...)` calls, real annotation APIs,

@@ -434,9 +434,9 @@ probe against a column of noise produces a leaderboard that ranks nothing.
   agreement ceiling, not prediction accuracy.
 
 **Next:** [What else embpy knows about your entities](05_annotate_entities.ipynb)
-for the annotation layer, or
-[Validating single-cell embeddings with scIB](scib_validation.ipynb) for the
-scIB half at full dataset size.
+for the annotation layer, or [Cells](cells.ipynb) for the long version of this
+notebook -- every cell model in the registry, and scIB run with a batch
+covariate, which is the half this notebook cannot reach.
 """)
 
 out = Path(sys.argv[1] if len(sys.argv) > 1 else "04_benchmark_models.ipynb")
