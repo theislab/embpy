@@ -20,22 +20,29 @@ md(r"""
 handful of entities. This notebook is the single-cell *deep dive*: every cell
 model embpy can reach, run on the same cells, then scored three different ways.
 
-The three scoring sections answer three different questions, and the difference
+The two scoring sections answer two different questions, and the difference
 matters more than any individual number. There is no single "which model is
 best" ranking, and a notebook that produced one would be lying to you.
 
 | Section | Question | What it needs from the data |
 | --- | --- | --- |
-| [1. Do the models agree?](#1-do-the-models-agree) | do two models encode the same information? | two or more embeddings |
-| [2. scIB](#2-scib-does-integration-preserve-the-biology) | does integration remove the batch and keep the biology? | cell-type labels plus a batch covariate |
-| [3. cell-eval](#3-cell-eval-is-the-perturbation-preserved) | does the embedding preserve a perturbation effect? | many perturbation levels |
+| [1. scIB](#1-scib-does-integration-preserve-the-biology) | does integration remove the batch and keep the biology? | cell-type labels plus a technical covariate |
+| [2. cell-eval](#2-cell-eval-is-the-perturbation-preserved) | does the embedding preserve a perturbation effect? | many perturbation levels |
 
-Because those three needs conflict, this notebook uses **two** datasets, both
-from `pertpy`. Section 3 runs on a different object than sections 1 and 2, and
+Because those two needs conflict, this notebook uses **two** datasets, both from
+`pertpy`. Section 2 runs on a different object than section 1, and
 [the dataset section](#the-datasets-and-the-contract-you-can-swap) says why.
 
+**Evaluation here is scIB and cell-eval, and nothing else.** embpy ships its own
+comparison metrics too, and this notebook deliberately does not use them. For
+cells there are community-standard answers to both questions, and putting a
+parallel bespoke suite beside them invites averaging numbers that are not on the
+same scale. Those tools earn their place in [genes](genes.ipynb),
+[proteins](proteins.ipynb) and [small molecules](small_molecules.ipynb), where no
+standard exists.
+
 **Prerequisites.** [04_benchmark_models](04_benchmark_models.ipynb) is the short
-version of sections 2 and 3 -- five models, one dataset, no batch covariate.
+version of both sections -- five models, one dataset, no batch covariate.
 This notebook is the long version, and the difference is not length: nb04 had no
 batch variable at all, so it could not ask the integration question, and it used
 cell type as a stand-in perturbation, which made every discrimination score come
@@ -94,6 +101,7 @@ from pathlib import Path
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+import anndata as ad
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -128,18 +136,18 @@ experiments and no single dataset provides all of it:
 
 | | `adata` -- an **atlas** | `pert_adata` -- `norman_2019` |
 | --- | --- | --- |
-| used by | the sweep, section 1, section 2, attention, decode | section 3 only |
+| used by | the sweep, section 1, attention, decode | section 2 only |
 | needs | cell-type labels plus a **technical** covariate | many perturbation levels plus a control |
 | the covariate is | donor, lab, sequencing technology, 10x chemistry | -- |
 
-**Section 2 needs an atlas, not a perturbation experiment.** scIB asks whether
+**Section 1 needs an atlas, not a perturbation experiment.** scIB asks whether
 merging batches removes a *technical* axis while preserving the *biological*
 one. Point it at a treatment experiment and a model scores well for making
 stimulated cells look like control cells -- which is not integration, it is
-deleting the result. So the atlas is what sections 1, 2 and 6 run on, and
-section 3 deliberately uses a different object.
+deleting the result. So the atlas is what section 1 runs on, and section 2
+deliberately uses a different object.
 
-The mirror of that rule applies to section 3. cell-eval scores agreement *per
+The mirror of that rule applies to section 2. cell-eval scores agreement *per
 perturbation*, so an atlas gives it nothing to work with, and a dataset with a
 single treatment arm gives it almost nothing.
 [04_benchmark_models](04_benchmark_models.ipynb) is the worked failure: with 7
@@ -180,9 +188,9 @@ def load_atlas():
         return sc.read_h5ad(ATLAS_PATH)
     import scvi  # noqa: PLC0415 - fallback only, for whoever stages the file
 
-    ad = scvi.data.heart_cell_atlas_subsampled()
-    ad.write_h5ad(ATLAS_PATH)
-    return ad
+    fetched = scvi.data.heart_cell_atlas_subsampled()
+    fetched.write_h5ad(ATLAS_PATH)
+    return fetched
 
 
 adata = load_atlas()
@@ -256,7 +264,7 @@ print(f"var_names: {list(adata.var_names[:4])}")
 """)
 
 md(r"""
-The label-by-batch cross-tabulation decides whether section 2 can mean anything,
+The label-by-batch cross-tabulation decides whether section 1 can mean anything,
 so read it rather than skipping it. If every cell type appears in every batch,
 then "mix the batches" and "keep the cell types apart" are separable requests.
 If a cell type lives in only one batch they are in direct conflict, no model can
@@ -321,7 +329,7 @@ Two reasons those failed, both of which generalise past this notebook:
 md(r"""
 ### Is this atlas a real integration benchmark?
 
-Section 2 scores every embedding on how well it removes `BATCH_KEY`. That score
+Section 1 scores every embedding on how well it removes `BATCH_KEY`. That score
 is only interesting if there is a batch effect to remove, so measure it here,
 before any model runs, and let the measurement set expectations.
 
@@ -370,7 +378,7 @@ rows.append(batch_row)
 COVARIATE_STRENGTH = pd.DataFrame(rows).set_index("covariate")
 display(COVARIATE_STRENGTH.round(3))
 
-# State the prediction now. Section 2 scores it rather than assuming it.
+# State the prediction now. Section 1 scores it rather than assuming it.
 batch_global = float(batch_row["global"])
 WEAK_BATCH = batch_global < 0.05
 print(

@@ -11,10 +11,13 @@ PY="${PY:-uv run --no-project python}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 PARTS=()
-for n in 1 2 3 4 5 6; do
+for n in 1 2 3 4 5; do
   f="scripts/notebook_generators/cells_part${n}.py"
   [ -f "$f" ] || { echo "missing $f" >&2; exit 1; }
   $PY "$f" "$TMP/part${n}.json"
   PARTS+=("$TMP/part${n}.json")
 done
+# A name bound inside a function body is not available to a later cell. That
+# class of bug assembles fine and NameErrors on the cluster, so check it here.
+$PY scripts/notebook_generators/check_contract.py "${PARTS[@]}"
 $PY scripts/notebook_generators/assemble.py "${PARTS[@]}" docs/notebooks/cells.ipynb
