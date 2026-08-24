@@ -168,10 +168,15 @@ LABEL_KEY = "cell_type"      # ground-truth biology; scIB bio-conservation
 BATCH_KEY = "batch"          # TECHNICAL covariate; scIB batch-correction
 COUNTS_LAYER = "counts"      # raw integer counts, kept across preprocessing
 
-N_CELLS = 3000               # subsample target, to keep a run to minutes
+# scIB's silhouette and LISI metrics are quadratic in cell count, and the
+# roster is ten embeddings wide, so this number sets the runtime more than
+# anything else in the notebook. 1,400 cells keeps a GPU run to about an hour.
+# The metrics are noisier at this size -- read the spreads, not the third
+# decimal place.
+N_CELLS = 1400               # subsample target
 SEED = 0
 MIN_CELLS_PER_LABEL = 4      # below this, per-label statistics are meaningless
-MIN_PER_LABEL = 60           # floor per label, so rare types survive sampling
+MIN_PER_LABEL = 40           # floor per label, so rare types survive sampling
 
 # The atlas: the scIB human pancreas benchmark (Luecken et al. 2022). 16,382
 # cells over 19,093 genes, 14 islet cell types, and nine batches spanning six

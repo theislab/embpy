@@ -40,6 +40,11 @@ SCIB = tl.compute_scib_metrics(
     embedding_keys=EMBEDDINGS,
     label_key=LABEL_KEY,
     batch_key=BATCH_KEY,
+    # NMI and ARI need a Leiden clustering optimised against the label, and the
+    # default sweeps 20 resolutions per embedding. At ten embeddings that is 200
+    # clusterings, which dominates the runtime. Ten resolutions finds
+    # essentially the same optimum for a fraction of the cost.
+    cluster_resolution_range=(0.2, 2.0, 0.2),
 )
 print(f"scored {len(EMBEDDINGS)} embeddings in {time.perf_counter() - t0:.0f}s")
 display(SCIB.round(3))
@@ -109,7 +114,8 @@ code(r"""
 # The same embeddings, the same labels, no batch covariate. One call, purely to
 # diff the column sets against the run above.
 SCIB_NO_BATCH = tl.compute_scib_metrics(
-    prepared, embedding_keys=EMBEDDINGS[:2], label_key=LABEL_KEY, batch_key=None
+    prepared, embedding_keys=EMBEDDINGS[:2], label_key=LABEL_KEY, batch_key=None,
+    cluster_resolution_range=(0.2, 2.0, 0.2),
 )
 with_batch = set(SCIB.columns)
 without = set(SCIB_NO_BATCH.columns)
