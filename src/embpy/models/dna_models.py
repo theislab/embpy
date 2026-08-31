@@ -974,6 +974,75 @@ class BorzoiWrapper(BaseModelWrapper):
             raise ImportError("borzoi_pytorch not installed; cannot load track metadata.")
         return _BORZOI_TRACKS_DF.copy()
 
+    @staticmethod
+    def get_track_categories(track_metadata: Any = None) -> Any:
+        """Assign each Borzoi track to one of six coarse assay categories.
+
+        Derives ATAC / DNASE / CAGE / CHIP / RNA from the leading token of
+        each track's ``description`` column (e.g. ``"RNA:liver"`` ->
+        ``"RNA"``, split on the first ``":"``), then splits RNA further
+        into ``RNA_GTEx`` vs ``RNA_ENCODE`` using the ``file`` column's
+        source path: ``/human/rna/recount3/`` -> ``RNA_GTEx`` (recount3 is
+        GTEx-derived), ``/human/rna/encode/`` -> ``RNA_ENCODE``. This split
+        was verified to be exhaustive and unambiguous across every RNA
+        track in the bundled ``targets.txt`` table (no track's ``file``
+        path matches neither pattern, and none matches both).
+
+        Parameters
+        ----------
+        track_metadata : pandas.DataFrame, optional
+            Track metadata as returned by :meth:`get_track_metadata`
+            (or a subset/copy of it), with at least ``description`` and
+            ``file`` columns. If None (default), calls
+            :meth:`get_track_metadata` to load the bundled table.
+
+        Returns
+        -------
+        pandas.Series
+            One category label per row of ``track_metadata``, aligned to
+            its index. Values are one of ``"ATAC"``, ``"DNASE"``,
+            ``"CAGE"``, ``"CHIP"``, ``"RNA_GTEx"``, ``"RNA_ENCODE"`` (or
+            whatever other leading ``description`` token appears for a
+            non-RNA track not among the five known assays).
+
+        Raises
+        ------
+        ValueError
+            If any row whose ``description`` starts with ``"RNA"`` has a
+            ``file`` path that matches neither the recount3 nor the encode
+            source convention -- the split is expected to be exhaustive;
+            this signals the bundled track metadata changed in a way that
+            needs re-checking.
+
+        Examples
+        --------
+        >>> import pandas as pd
+        >>> from embpy.models.dna_models import BorzoiWrapper
+        >>> tm = pd.DataFrame({
+        ...     "description": ["ATAC:pbmc", "RNA:liver", "RNA:blood"],
+        ...     "file": ["x.bw", "/human/rna/recount3/y.bw", "/human/rna/encode/z.bw"],
+        ... })
+        >>> list(BorzoiWrapper.get_track_categories(tm))
+        ['ATAC', 'RNA_GTEx', 'RNA_ENCODE']
+        """
+        if track_metadata is None:
+            track_metadata = BorzoiWrapper.get_track_metadata()
+
+        assay = track_metadata["description"].str.split(":", n=1).str[0]
+        category = assay.copy()
+        is_rna = assay.eq("RNA")
+        rna_src = track_metadata["file"].str.extract(r"/human/rna/([^/]+)/")[0]
+        n_unmapped_rna = int(is_rna.sum() - rna_src[is_rna].notna().sum())
+        if n_unmapped_rna:
+            raise ValueError(
+                f"{n_unmapped_rna} RNA track(s) have a `file` path matching neither the "
+                "recount3 nor encode source convention (/human/rna/recount3/ or /human/rna/encode/) -- "
+                "the GTEx/ENCODE RNA split is supposed to be exhaustive; investigate before proceeding."
+            )
+        category[is_rna & rna_src.eq("recount3")] = "RNA_GTEx"
+        category[is_rna & rna_src.eq("encode")] = "RNA_ENCODE"
+        return category
+
     # Conservative default chosen for a 80 GB H100 / A100.
     # Borzoi's first conv expands a (B, 4, 524288) input into roughly
     # (B, 512, 524288) fp32, which is ~1 GiB per sample even before the
