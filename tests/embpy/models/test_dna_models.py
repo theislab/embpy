@@ -280,6 +280,36 @@ class TestBorzoiWrapper:
         assert "identifier" in df.columns
         assert len(df) > 0
 
+    def test_get_track_categories_splits_rna_by_source_path(self):
+        import pandas as pd
+
+        tm = pd.DataFrame({
+            "description": ["ATAC:pbmc", "DNASE:liver", "CAGE:blood", "CHIP:h3k4me3", "RNA:liver", "RNA:blood"],
+            "file": [
+                "atac.bw", "dnase.bw", "cage.bw", "chip.bw",
+                "/human/rna/recount3/liver.bw", "/human/rna/encode/blood.bw",
+            ],
+        })
+        cats = BorzoiWrapper.get_track_categories(tm)
+        assert list(cats) == ["ATAC", "DNASE", "CAGE", "CHIP", "RNA_GTEx", "RNA_ENCODE"]
+        assert list(cats.index) == list(tm.index)
+
+    def test_get_track_categories_raises_on_unmatched_rna_file_path(self):
+        import pandas as pd
+
+        tm = pd.DataFrame({
+            "description": ["RNA:liver"],
+            "file": ["some/path/with/no/human_rna_prefix/liver.bw"],
+        })
+        with pytest.raises(ValueError, match="RNA track"):
+            BorzoiWrapper.get_track_categories(tm)
+
+    def test_get_track_categories_defaults_to_bundled_metadata(self):
+        cats = BorzoiWrapper.get_track_categories()
+        tm = BorzoiWrapper.get_track_metadata()
+        assert len(cats) == len(tm)
+        assert set(cats.unique()) >= {"ATAC", "DNASE", "CAGE", "CHIP", "RNA_GTEx", "RNA_ENCODE"}
+
 
 class TestEvo2Wrapper:
     """Tests for the Evo2Wrapper (mocked, since evo2 may not be installed)."""
