@@ -721,10 +721,42 @@ class BorzoiWrapper(BaseModelWrapper):
         logging.info(f"Loading Borzoi '{self.model_name}' …")
         try:
             borzoi_model: Any = Borzoi.from_pretrained(self.model_name)
-            try:
-                self.model = borzoi_model.to(device).eval()
-            except NotImplementedError:
-                self.model = borzoi_model.to_empty(device=device).eval()
+
+            n_meta = 0
+            for mod in borzoi_model.modules():
+                pos = getattr(mod, "positions", None)
+                if isinstance(pos, torch.Tensor) and pos.is_meta:
+                    n_rel = getattr(mod, "num_rel_pos_features", None)
+                    if n_rel is None:
+                        raise RuntimeError(
+                            "Borzoi attention module has a meta 'positions' buffer but no "
+                            "num_rel_pos_features to rebuild it from."
+                        )
+                    from borzoi_pytorch.pytorch_borzoi_transformer import (
+                        get_positional_embed,
+                    )
+                    mod.positions = get_positional_embed(4096, n_rel, torch.device("cpu"))
+                    n_meta += 1
+            if n_meta:
+                logging.info(
+                    "Rematerialised %d meta positional-encoding buffer(s) before moving "
+                    "Borzoi to %s.", n_meta, device
+                )
+
+            still_meta = [
+                n for n, t in
+                list(borzoi_model.named_parameters()) + list(borzoi_model.named_buffers())
+                if t.is_meta
+            ]
+            if still_meta:
+                # Fail loudly. to_empty() would "work" here and return a model of
+                # uninitialised weights that predicts NaN for everything.
+                raise RuntimeError(
+                    f"Borzoi still has {len(still_meta)} meta tensor(s) after "
+                    f"rematerialisation ({still_meta[:5]}); refusing to continue, since "
+                    "to_empty() would discard the pretrained weights silently."
+                )
+            self.model = borzoi_model.to(device).eval()
             self.device = device
             hidden_dim = getattr(borzoi_model.config, "dim", None)
             if hidden_dim is None:
@@ -920,7 +952,6 @@ class BorzoiWrapper(BaseModelWrapper):
             power-transformed) scale during training; set True to invert
             that transform and recover approximate linear-scale coverage,
             which is required before summing bins for variant-effect scoring.
-
         Returns
         -------
         np.ndarray

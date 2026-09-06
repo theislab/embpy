@@ -1,3 +1,17 @@
+from .region_utils import (
+    BORZOI_ISM_SHUFFLE_PRESETS,
+    SCOOBY_MOTIF_DELETION_DEFAULTS,
+    MotifHit,
+    RegionContext,
+    RegionEffectResult,
+    RegionEmbedder,
+    apply_haplotype,
+    dinucleotide_shuffle,
+    perturb_interval,
+    region_effect_table,
+    scan_motifs_fimo,
+    uniform_random_sequence,
+)
 from .snp_utils import (
     SNPContext,
     SNPEmbedder,
@@ -9,9 +23,11 @@ from .snp_utils import (
     embed_vcf,
     genomic_to_bin_indices,
     profile_variant_effect_score,
+    profile_variant_effect_score_l2,
 )
 
 __all__ = [
+    # single-nucleotide variant effects
     "SNPContext",
     "SNPEmbedder",
     "SNPEmbeddingResult",
@@ -22,4 +38,18 @@ __all__ = [
     "embed_vcf",
     "genomic_to_bin_indices",
     "profile_variant_effect_score",
+    "profile_variant_effect_score_l2",
+    # region / motif / haplotype effects
+    "RegionContext",
+    "RegionEffectResult",
+    "RegionEmbedder",
+    "MotifHit",
+    "dinucleotide_shuffle",
+    "uniform_random_sequence",
+    "perturb_interval",
+    "apply_haplotype",
+    "scan_motifs_fimo",
+    "region_effect_table",
+    "BORZOI_ISM_SHUFFLE_PRESETS",
+    "SCOOBY_MOTIF_DELETION_DEFAULTS",
 ]

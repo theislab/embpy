@@ -65,7 +65,7 @@ from .singlecell_models import (
 
 # AlphaGenome is optional (requires: pip install alphagenome)
 try:
-    from .alphagenome_models import AlphaGenomeWrapper
+    from .alphagenome_models import AlphaGenomeRegionAdapter, AlphaGenomeWrapper
 except ImportError:
     AlphaGenomeWrapper = None  # type: ignore
 
