@@ -2,6 +2,7 @@
 # pyright: reportUnknownMemberType=false
 # pyright: reportMissingImports=false
 # pyright: reportOptionalMemberAccess=false
+import importlib.util
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -44,7 +45,10 @@ except ImportError:
 try:
     from enformer_pytorch import from_pretrained, seq_indices_to_one_hot
 except ImportError:
-    logging.warning("enformer-pytorch not found. EnformerWrapper will not be functional.")
+    logging.warning(
+        "enformer-pytorch not found, so EnformerWrapper is unavailable. It ships in an "
+        'optional extra to keep the base install light: pip install "embpy[seqmodels]"'
+    )
     from_pretrained = None  # type: ignore
     seq_indices_to_one_hot = None  # type: ignore
 
@@ -61,7 +65,7 @@ except ImportError:
     AutoModelForMaskedLM = None
 
 
-from .base import BaseModelWrapper
+from .base import BaseModelWrapper, raise_for_gated_repo
 
 
 def _safe_model_forward(model: Any, **kwargs: Any) -> Any:
@@ -350,6 +354,11 @@ class EnformerWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
+    # Enformer is not a HuggingFace model and exposes no `.blocks`/`.layers`
+    # ModuleList, so neither extraction path applies: `extract_attention` raises
+    # "Cannot auto-detect layer modules for Enformer". Verified against
+    # EleutherAI/enformer-official-rough.
+    has_attention = False
     available_pooling_strategies = ["mean", "max", "median", "none"]
 
     SEQUENCE_LENGTH = 196_608
@@ -637,7 +646,10 @@ try:
     from borzoi_pytorch.pytorch_borzoi_model import TRACKS_DF as _BORZOI_TRACKS_DF
     from borzoi_pytorch.pytorch_borzoi_utils import undo_squashed_scale as _undo_squashed_scale
 except ImportError:
-    logging.warning("borzoi_pytorch not installed; BorzoiWrapper will be nonfunctional.")
+    logging.warning(
+        "borzoi_pytorch not installed, so BorzoiWrapper is unavailable. It ships in an "
+        'optional extra to keep the base install light: pip install "embpy[seqmodels]"'
+    )
     Borzoi = None  # type: ignore
     _BORZOI_TRACKS_DF = None  # type: ignore
     _undo_squashed_scale = None  # type: ignore
@@ -660,7 +672,12 @@ class BorzoiWrapper(BaseModelWrapper):
     NUM_CHANNELS : int
         Number of one-hot channels (4 for A/C/G/T).
     ALPHABET_MAP : dict[str, int]
-        Mapping from nucleotide characters to indices (A=0, C=1, G=2, T=3). Others default to 0.
+        Mapping from nucleotide characters to indices (A=0, C=1, G=2, T=3).
+    UNKNOWN_INDEX : int
+        Sentinel index for ``N`` and any other non-ACGT character. One-hot
+        encoding uses ``NUM_CHANNELS + 1`` classes and then drops this channel,
+        so an ambiguous base becomes an all-zero column -- the same encoding the
+        padding path produces, and Baskerville's default for ``N``.
     model_type : Literal["dna"]
         Indicates that this wrapper expects DNA sequence inputs.
     available_pooling_strategies : list[str]
@@ -668,11 +685,18 @@ class BorzoiWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
+    # Borzoi computes its attention eagerly (`attn = logits.softmax(-1)` in
+    # borzoi_pytorch/pytorch_borzoi_transformer.py) but never *returns* it -- the
+    # module yields only the attended output -- and the flash path skips the
+    # tensor entirely. A forward hook can only see what a module returns, so the
+    # weights are unreachable either way.
+    has_attention = False
     available_pooling_strategies = ["mean", "max", "median", "none"]
 
     SEQUENCE_LENGTH = 524_288
     NUM_CHANNELS = 4
     ALPHABET_MAP = {"A": 0, "C": 1, "G": 2, "T": 3}
+    UNKNOWN_INDEX = 4
     # Borzoi predicts coverage tracks at 32 bp resolution (see borzoi_pytorch's
     # `Borzoi.crop`, which crops the trunk to `target_length` bins before the
     # final head convs).
@@ -717,6 +741,27 @@ class BorzoiWrapper(BaseModelWrapper):
             return
         if Borzoi is None:
             raise ImportError("borzoi_pytorch not installed; cannot load BorzoiWrapper.")
+
+        # The flashzoi checkpoints set `flashed = true` in their config, so
+        # borzoi-pytorch builds its FlashAttention path and imports `flash_attn`
+        # inside `FlashAttention.__init__`. There is no eager fallback -- the plain
+        # borzoi checkpoints omit `flashed` and never reach that code -- so without
+        # the backend the load dies with a ModuleNotFoundError that the generic
+        # handler below flattens into "Could not load Borzoi", never naming
+        # flash_attn. Checking here fails fast, before the checkpoint download, and
+        # says what to install. Keyed on the checkpoint rather than the wrapper
+        # class because 8 of the 12 Borzoi keys do not need this at all, which is a
+        # distinction WRAPPER_EXTRAS (wrapper class -> extra) cannot express.
+        if "flashzoi" in self.model_name.lower() and importlib.util.find_spec("flash_attn") is None:
+            raise ImportError(
+                f"'{self.model_name}' is a Flashzoi checkpoint, which runs "
+                "borzoi-pytorch's FlashAttention path and needs the 'flash_attn' "
+                "package: No module named 'flash_attn'. flash-attn is NVIDIA-only "
+                "and builds against your installed torch, so install torch first, "
+                'then: uv pip install "embpy[flashzoi]" --no-build-isolation. '
+                "On CPU-only machines use the plain borzoi_* keys instead -- they "
+                "are the same architecture without the fused kernel."
+            )
 
         logging.info(f"Loading Borzoi '{self.model_name}' …")
         try:
@@ -778,9 +823,14 @@ class BorzoiWrapper(BaseModelWrapper):
         (1, NUM_CHANNELS, SEQUENCE_LENGTH), padding with zero-vectors if necessary.
 
         Steps:
-        1. Uppercase the input string and map characters A/C/G/T → 0/1/2/3; others → 0.
+        1. Uppercase the input string and map characters A/C/G/T → 0/1/2/3;
+           every other character (``N``, IUPAC ambiguity codes, soft-masked
+           bases) → ``UNKNOWN_INDEX``.
         2. Build an index tensor of shape (1, L_in).
-        3. One-hot encode → (1, L_in, NUM_CHANNELS), then permute → (1, NUM_CHANNELS, L_in).
+        3. One-hot encode over ``NUM_CHANNELS + 1`` classes and drop the sentinel
+           channel → (1, L_in, NUM_CHANNELS), then permute → (1, NUM_CHANNELS, L_in).
+           Ambiguous bases therefore become all-zero columns, identical to the
+           padding representation, rather than being read as adenine.
         4. If L_in < SEQUENCE_LENGTH, pad on the last axis with [0,0,0,0] columns.
             If L_in > SEQUENCE_LENGTH, center-crop the last axis to exactly SEQUENCE_LENGTH.
         5. Return the resulting float tensor of shape (1, NUM_CHANNELS, SEQUENCE_LENGTH).
@@ -801,11 +851,36 @@ class BorzoiWrapper(BaseModelWrapper):
             If after padding/cropping the final length is not exactly SEQUENCE_LENGTH.
         """
         seq = sequence.upper()
-        # 1) Map to integer indices
-        idx = torch.tensor([self.ALPHABET_MAP.get(b, 0) for b in seq], dtype=torch.long).unsqueeze(0)  # (1, L_in)
+        # 1) Map to integer indices. Anything that is not A/C/G/T -- N, IUPAC
+        # ambiguity codes, soft-masked residues -- maps to UNKNOWN_INDEX so it
+        # becomes an all-zero column below. Defaulting these to 0 would silently
+        # read them as adenine, which fabricates sequence content the caller
+        # never supplied.
+        idx = torch.tensor(
+            [self.ALPHABET_MAP.get(b, self.UNKNOWN_INDEX) for b in seq],
+            dtype=torch.long,
+        ).unsqueeze(0)  # (1, L_in)
 
-        # 2) One-hot → (1, L_in, 4) then permute → (1, 4, L_in)
-        oh = F.one_hot(idx, num_classes=self.NUM_CHANNELS).permute(0, 2, 1).float()  # (1, 4, L_in)
+        n_unknown = int((idx == self.UNKNOWN_INDEX).sum())
+        if n_unknown:
+            logging.warning(
+                "Borzoi input contains %d non-ACGT character(s) (%.2f%% of %d); "
+                "encoding them as all-zero columns.",
+                n_unknown,
+                100.0 * n_unknown / idx.shape[1],
+                idx.shape[1],
+            )
+
+        # 2) One-hot over NUM_CHANNELS + 1 classes, then drop the sentinel
+        #    channel so UNKNOWN_INDEX yields [0, 0, 0, 0]. This mirrors
+        #    enformer-pytorch's seq_indices_to_one_hot and matches the zero
+        #    columns used for padding below.
+        #    → (1, L_in, 4) then permute → (1, 4, L_in)
+        oh = (
+            F.one_hot(idx, num_classes=self.NUM_CHANNELS + 1)[..., : self.NUM_CHANNELS]
+            .permute(0, 2, 1)
+            .float()
+        )  # (1, 4, L_in)
 
         L_in = oh.shape[2]
         L_tar = self.SEQUENCE_LENGTH
@@ -1274,6 +1349,10 @@ class EvoWrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
+    # Evo's StripedHyena blocks use FlashAttention, which computes the softmax
+    # inside the kernel and returns only the output, so there is no attention
+    # tensor for a hook to observe. See docs/attention_extraction.md.
+    has_attention = False
     available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     AVAILABLE_MODELS: list[str] = [
@@ -1329,12 +1408,22 @@ class EvoWrapper(BaseModelWrapper):
             If the ``evo-model`` package is not installed.
         RuntimeError
             If the model fails to load.
+        ValueError
+            If ``embedding_layer`` is outside the model's block range. Raised after
+            the load block, so a bad argument is reported as a bad argument rather
+            than being rewritten as a load failure.
         """
         if self._evo_model is not None:
             logging.warning(f"Evo '{self.model_name}' already loaded.")
             return
         if not _HAVE_EVO or EvoModel is None:
-            raise ImportError("evo-model package is not installed. Install with: pip install evo-model")
+            raise ImportError(
+                "evo-model package is not installed: No module named 'evo'. Evo is "
+                "Linux/NVIDIA only -- it pulls `triton`, which publishes no macOS "
+                'wheels, so `uv pip install "embpy[evo]"` cannot resolve on macOS at '
+                "all. On Linux with CUDA:\n"
+                '  uv pip install "embpy[evo]" --no-build-isolation'
+            )
 
         self.device = device
         logging.info(f"Loading Evo model '{self.model_name}'...")
@@ -1350,10 +1439,10 @@ class EvoWrapper(BaseModelWrapper):
             num_blocks = len(sh_model.blocks)
             if self.embedding_layer is None:
                 self.embedding_layer = num_blocks // 2
-            elif self.embedding_layer < 0 or self.embedding_layer >= num_blocks:
-                raise ValueError(
-                    f"embedding_layer={self.embedding_layer} is out of range "
-                    f"for a model with {num_blocks} blocks (valid: 0–{num_blocks - 1})."
+                out_of_range = False
+            else:
+                out_of_range = (
+                    self.embedding_layer < 0 or self.embedding_layer >= num_blocks
                 )
 
             logging.info(
@@ -1366,6 +1455,21 @@ class EvoWrapper(BaseModelWrapper):
             self._tokenizer = None
             self.model = None
             raise RuntimeError(f"Could not load Evo '{self.model_name}'.") from e
+
+        # Raised *after* the try, deliberately. A bad embedding_layer is a caller
+        # error, not a load failure; raising it inside the block let the handler
+        # above rewrite it as "Could not load Evo", sending the reader after a
+        # broken checkpoint instead of a wrong layer index.
+        if out_of_range:
+            requested, blocks = self.embedding_layer, num_blocks
+            self._evo_model = None
+            self._tokenizer = None
+            self.model = None
+            raise ValueError(
+                f"embedding_layer={requested} is out of range for "
+                f"'{self.model_name}', which has {blocks} blocks "
+                f"(valid: 0-{blocks - 1})."
+            )
 
     def _extract_hidden_state(self, input_ids: torch.Tensor) -> torch.Tensor:
         """
@@ -1603,6 +1707,10 @@ class Evo2Wrapper(BaseModelWrapper):
     """
 
     model_type = "dna"
+    # Evo2's StripedHyena 2 blocks call FlashAttention unconditionally, so the
+    # attention matrix is never materialised as a tensor and no hook can recover
+    # it. See docs/attention_extraction.md ("fused by construction").
+    has_attention = False
     available_pooling_strategies = ["mean", "max", "cls", "none"]
 
     LAYER_DEFAULTS: dict[str, str] = {
@@ -1667,7 +1775,11 @@ class Evo2Wrapper(BaseModelWrapper):
             return
         if not _HAVE_EVO2 or Evo2 is None:
             raise ImportError(
-                "evo2 package is not installed. Install it with: pip install embpy[evo2] or pip install evo2"
+                "evo2 package is not installed: No module named 'evo2'. evo2 requires "
+                "Python >=3.11,<3.13, so on a newer interpreter no extra can install it "
+                "-- it needs a dedicated environment:\n"
+                "  uv venv --python 3.12 .venv-evo2\n"
+                '  uv pip install --python .venv-evo2/bin/python "embpy[evo2]"' 
             )
 
         self.device = device
@@ -2154,6 +2266,8 @@ class NucleotideTransformerV3Wrapper(BaseModelWrapper):
             logging.info(f"NTv3 '{self.model_name}' loaded on {device}.")
         except Exception as e:
             self.model = None
+            # A 401 on a gated repo is actionable; "Could not load NTv3" is not.
+            raise_for_gated_repo(e, self.model_name)
             raise RuntimeError(f"Could not load NTv3 '{self.model_name}'.") from e
 
     def embed(
@@ -2255,6 +2369,9 @@ class HyenaDNAWrapper(BaseModelWrapper):
 
     model_type = "dna"
     available_pooling_strategies = ["mean", "max", "cls", "last", "none"]
+    # HyenaDNA replaces attention with an implicit long convolution (the Hyena
+    # operator), so there are no attention weights to extract.
+    has_attention = False
 
     _CHAR_TO_ID: dict[str, int] = {
         "A": 7,
@@ -2381,6 +2498,9 @@ class CaduceusWrapper(BaseModelWrapper):
 
     model_type = "dna"
     available_pooling_strategies = ["mean", "max", "cls", "none"]
+    # Caduceus is built on the Mamba/SSM architecture (bi-directional, RC-equivariant)
+    # and has no attention mechanism, so there are no attention weights to extract.
+    has_attention = False
 
     def __init__(
         self,
@@ -2396,6 +2516,23 @@ class CaduceusWrapper(BaseModelWrapper):
             return
         if not _HAVE_TRANSFORMERS:
             raise ImportError("transformers package required: pip install transformers")
+
+        # Check the backend before touching the network. Caduceus is a Mamba/SSM
+        # model whose remote code imports `mamba_ssm`; when that is absent,
+        # transformers only *logs* "Encountered exception while importing
+        # mamba_ssm" and then fails for an unrelated-looking reason, so the module
+        # name never reaches the exception chain and
+        # `_missing_package_from_exception` cannot recover it. Raising ImportError
+        # here is what lets `BioEmbedder.get_model` turn this into a typed
+        # DependencyError naming `embpy[caduceus]` instead of a bare
+        # "Could not load Caduceus".
+        if importlib.util.find_spec("mamba_ssm") is None:
+            raise ImportError(
+                "Caduceus needs the Mamba backend, which is not installed: "
+                "No module named 'mamba_ssm'. Install it with "
+                '`uv pip install "embpy[caduceus]"` (mamba-ssm builds against your '
+                "installed torch, so install the matching torch first)."
+            )
 
         logging.info(f"Loading Caduceus '{self.model_name}' …")
         try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import tempfile
 from unittest.mock import MagicMock, patch
@@ -11,6 +12,8 @@ import pandas as pd
 import pytest
 
 from embpy.resources.gene_resolver import GeneResolver, _looks_like_smiles, detect_identifier_type
+
+_HAS_BIOPYTHON = importlib.util.find_spec("Bio") is not None
 
 
 @pytest.fixture
@@ -22,6 +25,9 @@ def resolver():
     r.chrom_folder = None
     r.release_version = 109
     r.species = "human"
+    # Match GeneResolver.__init__: lazy local-genome handles default to None.
+    r._genome_fasta = None
+    r._genome_dir = None
     return r
 
 
@@ -37,7 +43,14 @@ class TestGetDnaSequence:
         seq_mock.raise_for_status = MagicMock()
         seq_mock.text = "ACGTACGTACGT"
 
-        with patch("embpy.resources.gene_resolver.requests.get", side_effect=[lookup_mock, seq_mock]):
+        # The "symbol" path first runs the alias chain (resolve_symbol) to
+        # canonicalise names like KARS -> KARS1; that makes its own network
+        # calls and would consume the two mocked responses below (-> StopIteration).
+        # Stub it so this test covers only the Ensembl lookup + sequence fetch.
+        with (
+            patch.object(resolver, "resolve_symbol", return_value="TP53"),
+            patch("embpy.resources.gene.resolver.requests.get", side_effect=[lookup_mock, seq_mock]),
+        ):
             result = resolver.get_dna_sequence("TP53", "symbol")
             assert result == "ACGTACGTACGT"
 
@@ -52,7 +65,7 @@ class TestGetDnaSequence:
         seq_mock.raise_for_status = MagicMock()
         seq_mock.text = "ACGTACGTACGT"
 
-        with patch("embpy.resources.gene_resolver.requests.get", side_effect=[lookup_mock, seq_mock]):
+        with patch("embpy.resources.gene.resolver.requests.get", side_effect=[lookup_mock, seq_mock]):
             result = resolver.get_dna_sequence("ENSG00000141510", "ensembl_id")
             assert result == "ACGTACGTACGT"
 
@@ -66,7 +79,7 @@ class TestGetDnaSequence:
         mock = MagicMock()
         mock.raise_for_status.side_effect = requests.RequestException("API down")
 
-        with patch("embpy.resources.gene_resolver.requests.get", return_value=mock):
+        with patch("embpy.resources.gene.resolver.requests.get", return_value=mock):
             result = resolver.get_dna_sequence("TP53", "symbol")
             assert result is None
 
@@ -76,7 +89,7 @@ class TestGetDnaSequence:
         mock.raise_for_status = MagicMock()
         mock.json.return_value = {}
 
-        with patch("embpy.resources.gene_resolver.requests.get", return_value=mock):
+        with patch("embpy.resources.gene.resolver.requests.get", return_value=mock):
             result = resolver.get_dna_sequence("TP53", "symbol")
             assert result is None
 
@@ -88,7 +101,7 @@ class TestGetProteinSequence:
         fasta_mock.raise_for_status = MagicMock()
         fasta_mock.text = ">sp|P04637|P53_HUMAN\nMEEPQSDPSVEPPLSQ\nETFSDLWKLLPENNVL"
 
-        with patch("embpy.resources.gene_resolver.requests.get", return_value=fasta_mock):
+        with patch("embpy.resources.gene.resolver.requests.get", return_value=fasta_mock):
             result = resolver.get_protein_sequence("P04637", "uniprot_id")
             assert result is not None
             assert result.startswith("MEEPQ")
@@ -106,7 +119,7 @@ class TestGetProteinSequence:
         fasta_mock.text = ">sp|P04637\nMTEYKLVVVGAGGVGKS"
 
         with patch(
-            "embpy.resources.gene_resolver.requests.get",
+            "embpy.resources.gene.resolver.requests.get",
             side_effect=[query_mock, fasta_mock],
         ):
             result = resolver.get_protein_sequence("TP53", "symbol")
@@ -119,7 +132,7 @@ class TestGetProteinSequence:
         mock.raise_for_status = MagicMock()
         mock.json.return_value = {"hits": [{"uniprot": {}}]}
 
-        with patch("embpy.resources.gene_resolver.requests.get", return_value=mock):
+        with patch("embpy.resources.gene.resolver.requests.get", return_value=mock):
             result = resolver.get_protein_sequence("FAKE", "symbol")
             assert result is None
 
@@ -139,7 +152,7 @@ class TestGetGeneDescription:
             ]
         }
 
-        with patch("embpy.resources.gene_resolver.requests.get", return_value=mock):
+        with patch("embpy.resources.gene.resolver.requests.get", return_value=mock):
             result = resolver.get_gene_description("TP53", "symbol")
             assert result is not None
             assert "TP53" in result
@@ -151,7 +164,7 @@ class TestGetGeneDescription:
         mock.raise_for_status = MagicMock()
         mock.json.return_value = {"hits": []}
 
-        with patch("embpy.resources.gene_resolver.requests.get", return_value=mock):
+        with patch("embpy.resources.gene.resolver.requests.get", return_value=mock):
             result = resolver.get_gene_description("FAKEGENE", "symbol")
             assert result is None
 
@@ -168,7 +181,7 @@ class TestSymbolToEnsembl:
         mock.raise_for_status = MagicMock()
         mock.json.return_value = {"hits": [{"ensembl": {"gene": "ENSG00000141510"}}]}
 
-        with patch("embpy.resources.gene_resolver.requests.get", return_value=mock):
+        with patch("embpy.resources.gene.resolver.requests.get", return_value=mock):
             result = resolver.symbol_to_ensembl("TP53")
             assert result == "ENSG00000141510"
 
@@ -179,7 +192,7 @@ class TestSymbolToEnsembl:
         mock.raise_for_status = MagicMock()
         mock.json.return_value = {"hits": []}
 
-        with patch("embpy.resources.gene_resolver.requests.get", return_value=mock):
+        with patch("embpy.resources.gene.resolver.requests.get", return_value=mock):
             result = resolver.symbol_to_ensembl("FAKEGENE")
             assert result is None
 
@@ -192,7 +205,7 @@ class TestEnsemblToSymbol:
         mock.raise_for_status = MagicMock()
         mock.json.return_value = {"hits": [{"symbol": "TP53"}]}
 
-        with patch("embpy.resources.gene_resolver.requests.get", return_value=mock):
+        with patch("embpy.resources.gene.resolver.requests.get", return_value=mock):
             result = resolver.ensembl_to_symbol("ENSG00000141510")
             assert result == "TP53"
 
@@ -203,7 +216,7 @@ class TestEnsemblToSymbol:
         mock.raise_for_status = MagicMock()
         mock.json.return_value = {"hits": [{"symbol": "TP53"}]}
 
-        with patch("embpy.resources.gene_resolver.requests.get", return_value=mock):
+        with patch("embpy.resources.gene.resolver.requests.get", return_value=mock):
             result = resolver.ensembl_to_symbol("ENSG00000141510.12")
             assert result == "TP53"
 
@@ -297,6 +310,7 @@ class TestDetectIdentifierType:
 # =====================================================================
 # load_sequences_from_biomart
 # =====================================================================
+@pytest.mark.skipif(not _HAS_BIOPYTHON, reason="biopython not installed (pip install embpy[bio])")
 class TestLoadSequencesFromBiomart:
     def _make_mart_csv(self, tmpdir):
         df = pd.DataFrame(

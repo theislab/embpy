@@ -10,6 +10,11 @@ from urllib.parse import quote as _url_quote
 
 import requests
 
+try:
+    import cirpy  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover - cirpy is an optional fallback
+    cirpy = None  # type: ignore[assignment]
+
 MoleculeSource = Literal[
     "pubchem_name", "pubchem_cid", "cactus", "cirpy", "none"
 ]
@@ -123,12 +128,8 @@ class DrugResolver:
             self._rdkit_available = False
             logging.info("RDKit not available; proceeding without SMILES canonicalization.")
 
-        try:
-            import cirpy  # noqa: F401  # type: ignore[import-not-found]
-
-            self._cirpy_available = True
-        except ImportError:
-            self._cirpy_available = False
+        self._cirpy_available = cirpy is not None
+        if not self._cirpy_available:
             logging.info("CIRpy not available; CIR fallback disabled.")
 
     # ---------- Helpers ----------
@@ -161,18 +162,28 @@ class DrugResolver:
         if not self._rdkit_available:
             logging.warning("RDKit not available; returning SMILES unchanged.")
             return smiles
-        from rdkit import Chem
+        from rdkit import Chem, rdBase
         from rdkit.Chem.MolStandardize import rdMolStandardize
 
         mol = Chem.MolFromSmiles(smiles)
         if mol is None:
             return None
 
-        rdMolStandardize.IsotopeParentInPlace(mol)  # removes isotope labels
-        rdMolStandardize.CleanupInPlace(mol)  # normalize, sanitize, remove explicit Hs
-        rdMolStandardize.RemoveFragmentsInPlace(mol)  # strip known solvents/salts
-        rdMolStandardize.FragmentParentInPlace(mol, skipStandardize=True)  # keep largest remaining fragment
-        rdMolStandardize.Uncharger().unchargeInPlace(mol)  # neutralize charges
+        # Each standardiser step announces itself to RDKit's log ("Initializing
+        # MetalDisconnector", "Running Normalizer", ...), so canonicalising n
+        # molecules emits ~11n lines. Whether those surface depends on ambient
+        # RDKit log routing, which differs between a plain interpreter and a
+        # Jupyter kernel -- in a notebook they bury the cell's actual output.
+        # None of it is actionable: an unparseable SMILES was already caught
+        # above, and these calls report progress rather than problems. BlockLogs
+        # is scoped and restores the previous state on exit, so it does not
+        # stomp on a caller who deliberately enabled RDKit logging.
+        with rdBase.BlockLogs():
+            rdMolStandardize.IsotopeParentInPlace(mol)  # removes isotope labels
+            rdMolStandardize.CleanupInPlace(mol)  # normalize, sanitize, remove explicit Hs
+            rdMolStandardize.RemoveFragmentsInPlace(mol)  # strip known solvents/salts
+            rdMolStandardize.FragmentParentInPlace(mol, skipStandardize=True)  # keep largest remaining fragment
+            rdMolStandardize.Uncharger().unchargeInPlace(mol)  # neutralize charges
         return Chem.MolToSmiles(mol)
 
     # Backward-compatible private alias (internal callers predate the
@@ -284,12 +295,24 @@ class DrugResolver:
     def _extract_smiles(props: list[dict]) -> str | None:
         """Extract a SMILES string from a PubChem Properties response.
 
-        Prefers ``IsomericSMILES`` (preserves stereochemistry) over
-        ``CanonicalSMILES`` / ``ConnectivitySMILES`` (which drop it).
+        Prefers stereochemistry-preserving keys (``IsomericSMILES``, and its
+        current name ``SMILES``) over the flat ones (``CanonicalSMILES``,
+        ``ConnectivitySMILES``).
+
+        PubChem renamed these properties without changing the request
+        vocabulary: asking for ``IsomericSMILES`` now yields a key named
+        ``SMILES``, and asking for ``CanonicalSMILES`` yields
+        ``ConnectivitySMILES``. Both old and new names are accepted here
+        because the response key no longer matches what was requested.
         """
         if not props:
             return None
-        for key in ("IsomericSMILES", "CanonicalSMILES", "ConnectivitySMILES"):
+        for key in (
+            "IsomericSMILES",
+            "SMILES",
+            "CanonicalSMILES",
+            "ConnectivitySMILES",
+        ):
             if key in props[0]:
                 return props[0][key]
         return None
@@ -352,11 +375,9 @@ class DrugResolver:
             pass
 
         # 4) CIRpy — tries multiple CIR resolvers (name_by_opsin, etc.)
-        if self._cirpy_available:
+        if self._cirpy_available and cirpy is not None:
             self._sleep()
             try:
-                import cirpy  # type: ignore[import-not-found]
-
                 smi = cirpy.resolve(name, "smiles")
                 if smi:
                     return DrugResolution(self.canonicalize_smiles(smi) or smi, "cirpy")

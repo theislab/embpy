@@ -1,7 +1,7 @@
 """Small-molecule annotation from multiple public databases.
 
 Aggregates metadata for a molecule (given as SMILES, name, or InChI)
-from six categories of data sources:
+from these categories of data sources:
 
 1. **Structural / physicochemical** -- RDKit (local)
 2. **Bioactivities & targets** -- ChEMBL REST API
@@ -9,6 +9,15 @@ from six categories of data sources:
 4. **Pathway annotations** -- KEGG REST API
 5. **Cross-database IDs** -- PubChem + UniChem REST APIs
 6. **Disease associations** -- PubChem REST API
+7. **Drug & clinical record** -- ChEMBL, via
+   :class:`~embpy.resources.molecule.chembl.ChEMBLAnnotator`: development
+   phase, indications, safety warnings, ATC class, synonyms, metabolism,
+   and per-target potency profiles.
+
+Category 7 is delegated to :mod:`embpy.resources.molecule.chembl`, which
+covers considerably more of ChEMBL than the ``molecule``/``activity``/
+``mechanism`` endpoints used here and correctly keys drug-level queries on
+the parent molecule -- see that module's docstring for why that matters.
 
 Does **not** reimplement pertpy functionality (drug-target gene
 annotation, MoA lookup tables, cell-line metadata).
@@ -21,6 +30,16 @@ import time
 from typing import Any, Literal
 
 import requests
+
+from .chembl import (
+    DEFAULT_ACTIVITIES,
+    DEFAULT_INDICATIONS,
+    DEFAULT_METABOLITES,
+    DEFAULT_TARGETS,
+    ChEMBLAnnotator,
+    chembl_summary_columns,
+)
+from .resolver import DrugResolver
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +74,41 @@ def _get_text(url: str, timeout: int = 30) -> str | None:
         return None
 
 
+#: :class:`MoleculeAnnotator` source groups served by
+#: :class:`~embpy.resources.molecule.chembl.ChEMBLAnnotator`, and the
+#: ChEMBLAnnotator sources each pulls in.
+#:
+#: ChEMBLAnnotator's ``identity`` is always returned, and its ``xrefs`` are
+#: left out because :meth:`MoleculeAnnotator.get_cross_references` already
+#: covers cross-database IDs from PubChem and UniChem. ``activities`` rides
+#: along with ``target_profile`` because the profile is derived from the same
+#: fetch, so asking for one and getting both costs nothing extra.
+_CHEMBL_SOURCE_GROUPS: dict[str, tuple[str, ...]] = {
+    "drug": (
+        "development",
+        "indications",
+        "safety",
+        "atc",
+        "synonyms",
+        "mechanisms",
+        "forms",
+    ),
+    "target_profile": ("targets", "activities"),
+    "metabolism": ("metabolism",),
+    "analogs": ("analogs",),
+}
+
+
+def _chembl_sources_for(sources_list: list[str]) -> list[str]:
+    """Translate ``MoleculeAnnotator`` source names into ChEMBL ones."""
+    selected: list[str] = []
+    for group in sources_list:
+        for source in _CHEMBL_SOURCE_GROUPS.get(group, ()):
+            if source not in selected:
+                selected.append(source)
+    return selected
+
+
 class MoleculeAnnotator:
     """Aggregate annotations for small molecules from public databases.
 
@@ -66,41 +120,70 @@ class MoleculeAnnotator:
 
     def __init__(self, rate_limit_delay: float = 0.2) -> None:
         self.delay = rate_limit_delay
+        self._chembl: ChEMBLAnnotator | None = None
 
     def _sleep(self) -> None:
         if self.delay > 0:
             time.sleep(self.delay)
+
+    @property
+    def chembl(self) -> ChEMBLAnnotator:
+        """Deep ChEMBL annotator, sharing this instance's rate limit.
+
+        Held as a single instance so its identifier, molecule-record and
+        protein-class caches are reused across every call made through
+        this annotator.
+        """
+        if self._chembl is None:
+            self._chembl = ChEMBLAnnotator(rate_limit_delay=self.delay)
+        return self._chembl
 
     # ==================================================================
     # Identifier resolution
     # ==================================================================
 
     def _resolve_to_smiles(self, identifier: str) -> str | None:
-        """Best-effort resolution of any identifier to canonical SMILES."""
+        """Best-effort resolution of any identifier to canonical SMILES.
+
+        The PubChem leg asks for ``IsomericSMILES`` and reads the answer
+        through :meth:`DrugResolver._extract_smiles`, because PubChem
+        renamed these properties: a request for ``CanonicalSMILES`` now
+        comes back under the key ``ConnectivitySMILES``, and one for
+        ``IsomericSMILES`` under ``SMILES``. Reading the requested name
+        straight back out yields ``None`` for every compound.
+        """
         s = identifier.strip()
         try:
-            from rdkit import Chem
-            mol = Chem.MolFromSmiles(s)
+            from rdkit import Chem, rdBase
+            # Speculative: the identifier may be a SMILES or may be a name, and
+            # the only way to tell is to try. A name failing to parse is the
+            # expected path, not an error, so do not let RDKit log it -- without
+            # this, annotating a panel by name prints five lines of
+            # "SMILES Parse Error" per compound over the caller's output.
+            with rdBase.BlockLogs():
+                mol = Chem.MolFromSmiles(s)
             if mol is not None:
                 return Chem.MolToSmiles(mol)
         except ImportError:
             pass
 
         data = _get_json(
-            f"{PUBCHEM}/compound/name/{requests.utils.quote(s)}/property/CanonicalSMILES/JSON",
+            f"{PUBCHEM}/compound/name/{requests.utils.quote(s)}/property/IsomericSMILES/JSON",
         )
         if data:
             props = data.get("PropertyTable", {}).get("Properties", [])
-            if props:
-                return props[0].get("CanonicalSMILES")
+            return DrugResolver._extract_smiles(props)
         return None
 
     def _resolve_pubchem_cid(self, identifier: str) -> int | None:
         """Resolve identifier to PubChem CID."""
         s = identifier.strip()
         try:
-            from rdkit import Chem
-            mol = Chem.MolFromSmiles(s)
+            from rdkit import Chem, rdBase
+            # Same speculative parse as _resolve_to_smiles; same reason to keep
+            # its expected failure out of the caller's output.
+            with rdBase.BlockLogs():
+                mol = Chem.MolFromSmiles(s)
             if mol is not None:
                 canon = Chem.MolToSmiles(mol)
                 data = _get_json(
@@ -148,7 +231,7 @@ class MoleculeAnnotator:
         """
         try:
             from rdkit import Chem
-            from rdkit.Chem import Descriptors, QED, rdMolDescriptors
+            from rdkit.Chem import QED, Descriptors, rdMolDescriptors
         except ImportError:
             logger.warning("RDKit not available; skipping physicochemical properties")
             return {}
@@ -191,8 +274,10 @@ class MoleculeAnnotator:
 
         # Synthetic accessibility
         try:
+            import os
+            import sys
+
             from rdkit.Chem import RDConfig
-            import os, sys
             sa_path = os.path.join(RDConfig.RDContribDir, "SA_Score")
             if sa_path not in sys.path:
                 sys.path.insert(0, sa_path)
@@ -283,30 +368,46 @@ class MoleculeAnnotator:
         return targets
 
     def get_mechanism_of_action(self, smiles: str) -> list[dict[str, str]]:
-        """Get mechanism of action annotations from ChEMBL."""
-        chembl_id = self._resolve_chembl_id(smiles)
-        if not chembl_id:
+        """Get mechanism of action annotations from ChEMBL.
+
+        Delegates to :class:`~embpy.resources.molecule.chembl.ChEMBLAnnotator`,
+        which keys the query on the parent molecule. Filtering ``mechanism``
+        on ``molecule_chembl_id`` -- as this method used to -- returns nothing
+        for any drug whose mechanism ChEMBL registered against a salt form,
+        imatinib included.
+
+        ``target_name`` is resolved through the ``target`` endpoint: the
+        ``mechanism`` payload carries only ``target_chembl_id``, so reading a
+        ``target_name`` straight off it always yielded an empty string.
+
+        Returns
+        -------
+        list of dict
+            Keys ``mechanism``, ``action_type``, ``target_name`` and
+            ``target_chembl_id``. See
+            :meth:`ChEMBLAnnotator.get_mechanisms` for the full record,
+            including references and the direct-interaction and
+            disease-efficacy flags.
+        """
+        mechanisms = self.chembl.get_mechanisms(smiles)
+        if not mechanisms:
             return []
 
-        self._sleep()
-        data = _get_json(
-            f"{CHEMBL}/mechanism.json",
-            params={
-                "molecule_chembl_id": chembl_id,
-                "format": "json",
-            },
+        target_ids = [m["target_chembl_id"] for m in mechanisms if m.get("target_chembl_id")]
+        details = self.chembl.get_target_details(
+            target_ids, include_protein_classes=False,
         )
-        if not data:
-            return []
-
         return [
             {
-                "mechanism": m.get("mechanism_of_action", ""),
-                "action_type": m.get("action_type", ""),
-                "target_name": m.get("target_name", ""),
-                "target_chembl_id": m.get("target_chembl_id", ""),
+                "mechanism": m.get("mechanism") or "",
+                "action_type": m.get("action_type") or "",
+                "target_name": (
+                    details.get(m.get("target_chembl_id") or "", {}).get("target_name")
+                    or ""
+                ),
+                "target_chembl_id": m.get("target_chembl_id") or "",
             }
-            for m in data.get("mechanisms", [])
+            for m in mechanisms
         ]
 
     # ==================================================================
@@ -344,7 +445,7 @@ class MoleculeAnnotator:
             self._sleep()
             chebi_num = chebi_id.replace("CHEBI:", "")
             result = _get_json(
-                f"https://www.ebi.ac.uk/ols4/api/ontologies/chebi/terms",
+                "https://www.ebi.ac.uk/ols4/api/ontologies/chebi/terms",
                 params={"short_form": f"CHEBI_{chebi_num}"},
             )
             if result and result.get("_embedded", {}).get("terms"):
@@ -487,28 +588,58 @@ class MoleculeAnnotator:
         self,
         identifier: str,
         sources: Literal["all", "structural", "bioactivity", "ontology",
-                         "pathways", "xrefs", "diseases"] | list[str] = "all",
+                         "pathways", "xrefs", "diseases", "drug",
+                         "target_profile", "metabolism",
+                         "analogs"] | list[str] = "all",
     ) -> dict[str, Any]:
         """Aggregate all annotations for a molecule in one call.
 
         Parameters
         ----------
         identifier
-            SMILES, compound name, InChI, or PubChem CID.
+            SMILES, compound name, InChI, PubChem CID, or ChEMBL ID.
         sources
             Which annotation sources to query. ``"all"`` queries
-            everything. Pass a list to select specific ones:
-            ``["structural", "bioactivity", "ontology", "pathways",
-            "xrefs", "diseases"]``.
+            everything except ``"analogs"``. Pass a list to select
+            specific ones:
+
+            ``"structural"``
+                RDKit physicochemical properties.
+            ``"bioactivity"``
+                ChEMBL activities, unique targets, mechanism of action.
+            ``"ontology"``
+                ChEBI roles.
+            ``"pathways"``
+                KEGG pathways.
+            ``"xrefs"``
+                PubChem and UniChem cross-database IDs.
+            ``"diseases"``
+                PubChem disease associations.
+            ``"drug"``
+                ChEMBL clinical record: development phase, indications,
+                safety warnings, ATC class, synonyms, mechanisms, forms.
+            ``"target_profile"``
+                Per-target potency summary with gene symbols and protein
+                families, plus a selectivity summary.
+            ``"metabolism"``
+                ChEMBL metabolite and enzyme records.
+            ``"analogs"``
+                Structurally similar ChEMBL compounds. Excluded from
+                ``"all"`` because a similarity search scans the whole
+                database and costs far more than a keyed lookup.
 
         Returns
         -------
-        Nested dict with keys per annotation category.
+        dict
+            Nested, with one key per annotation category. The four
+            ChEMBL groups above land together under ``result["drug"]``
+            -- see :meth:`ChEMBLAnnotator.annotate` for its shape.
         """
         if sources == "all":
             sources_list = [
                 "structural", "bioactivity", "ontology",
                 "pathways", "xrefs", "diseases",
+                "drug", "target_profile", "metabolism",
             ]
         elif isinstance(sources, str):
             sources_list = [sources]
@@ -520,6 +651,16 @@ class MoleculeAnnotator:
             "identifier": identifier,
             "canonical_smiles": smiles,
         }
+
+        # ChEMBL resolves names, ChEMBL IDs and structures on its own, so the
+        # drug record is worth fetching even for a compound RDKit and PubChem
+        # could not turn into a SMILES -- which is the common case for
+        # biologics and for screen labels that are trade names.
+        chembl_sources = _chembl_sources_for(sources_list)
+        if chembl_sources:
+            result["drug"] = self.chembl.annotate(
+                identifier, sources=chembl_sources,
+            )
 
         if smiles is None:
             logger.warning("Could not resolve '%s' to SMILES", identifier)
@@ -599,8 +740,6 @@ class MoleculeAnnotator:
         -------
         AnnData with molecule annotations added.
         """
-        import numpy as np
-
         if copy:
             adata = adata.copy()
 
@@ -646,6 +785,30 @@ class MoleculeAnnotator:
             ann = annotations.get(ident, {})
             smiles_col.append(ann.get("canonical_smiles", ""))
         adata.obs["mol_canonical_smiles"] = smiles_col
+
+        # ChEMBL drug columns, present only when a ChEMBL source group was
+        # requested. Kept under the `drug_` prefix so the clinical record
+        # stays distinguishable from the `mol_` structural properties.
+        drug_rows = [
+            annotations.get(ident, {}).get("drug") or {} for ident in identifiers
+        ]
+        if any(drug_rows):
+            for name, values in chembl_summary_columns(drug_rows).items():
+                adata.obs[name] = values
+            adata.obs["drug_n_indications_at_limit"] = [
+                n >= DEFAULT_INDICATIONS for n in adata.obs["drug_n_indications"]
+            ]
+            adata.uns["chembl_annotation_limits"] = {
+                "drug_n_indications": DEFAULT_INDICATIONS,
+                "drug_n_activities": DEFAULT_ACTIVITIES,
+                "drug_n_targets": DEFAULT_TARGETS,
+                "drug_n_metabolites": DEFAULT_METABOLITES,
+            }
+            logger.info(
+                "ChEMBL drug annotations stored in adata.obs (drug_*); "
+                "%d/%d observations matched a ChEMBL compound",
+                sum(1 for r in drug_rows if r.get("found")), len(drug_rows),
+            )
 
         logger.info("Molecule annotations stored in adata.obs (mol_*) and adata.uns")
         return adata

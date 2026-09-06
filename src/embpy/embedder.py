@@ -11,9 +11,9 @@ from hashlib import sha1
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
-import torch
 from rdkit import Chem
 
+from ._lazy import lazy_module
 from .errors import (
     ConfigError,
     ContextOverflowError,
@@ -24,13 +24,33 @@ from .errors import (
     ModelNotFoundError,
     ModelOOMError,
 )
-from .models.base import BaseModelWrapper
 from .observability import log_event, time_block
 from .reporting import ResolutionReport
 from .retry import embed_batch_with_oom_recovery
 
 if TYPE_CHECKING:
-    pass
+    import torch
+
+    # Declared for type checkers / IDE intellisense only. At runtime these four
+    # are served by the PEP 562 `__getattr__` below, which ruff cannot see --
+    # hence the noqa.
+    from .embedder_registry.flat import (
+        HUMAN_ONLY_MODELS,  # noqa: F401
+        MODEL_REGISTRY,  # noqa: F401
+        MOUSE_ONLY_MODELS,  # noqa: F401
+        MULTI_SPECIES_DNA,  # noqa: F401
+    )
+    from .models.base import BaseModelWrapper
+else:
+    # Every ``torch.`` reference in this module is inside a method body, so the
+    # real import can wait for the first tensor operation. See ``embpy._lazy``.
+    torch = lazy_module("torch")
+
+from .pp.static_embeddings import static_embedding_keys
+from .resources.gene_resolver import GeneResolver
+from .resources.protein_resolver import ProteinResolver
+from .resources.text_resolver import TextResolver
+
 # MODEL_REGISTRY + the three DNA species sets live in
 # `embpy.embedder_registry` (audit steps 2 + 3). The DNA / Protein /
 # Molecule / Text / Morphology / Single-cell / API entries are split
@@ -43,34 +63,54 @@ if TYPE_CHECKING:
 # (dna.py / protein.py) because they are an implementation detail of
 # the registry; no consumer outside embpy.embedder_registry references
 # them.
-from .embedder_registry.flat import (
-    HUMAN_ONLY_MODELS,
-    MODEL_REGISTRY,
-    MOUSE_ONLY_MODELS,
-)
-from .models.api_models import APIEmbeddingWrapper
-from .models.morphology_models import SubCellWrapper
-from .models.text_models import TextLLMWrapper
-from .resources.gene_resolver import GeneResolver
-from .resources.protein_resolver import ProteinResolver
-from .resources.text_resolver import TextResolver
+#
+# The re-export is now deferred rather than eager. `flat` maps model keys to
+# wrapper *classes*, so importing it pulls torch and transformers -- which made
+# `import embpy.embedder` (and therefore every resolver / IO / analysis module
+# that reaches BioEmbedder) fail outright on the lightweight core install,
+# where those are not present. The four symbols resolve through the PEP 562
+# `__getattr__` below; `WRAPPER_EXTRAS`, `APIEmbeddingWrapper` and
+# `TextLLMWrapper`, each referenced at exactly one call site in `_get_model`,
+# are imported there instead.
+_LAZY_REGISTRY: dict[str, str] = {
+    "MODEL_REGISTRY": "MODEL_REGISTRY",
+    "HUMAN_ONLY_MODELS": "HUMAN_ONLY_MODELS",
+    "MOUSE_ONLY_MODELS": "MOUSE_ONLY_MODELS",
+    "MULTI_SPECIES_DNA": "MULTI_SPECIES_DNA",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """PEP 562 re-export of the registry symbols from ``embedder_registry.flat``.
+
+    Importing ``flat`` builds ``MODEL_REGISTRY``, whose values are the wrapper
+    classes themselves -- so it pulls torch. Deferring it to attribute access
+    keeps ``import embpy.embedder`` torch-free while leaving
+    ``embpy.embedder.MODEL_REGISTRY`` (and the ``from embpy.embedder import
+    MODEL_REGISTRY`` form) returning the very same dict object as before, which
+    ``tests/embpy/test_registry_split.py`` asserts by identity.
+    """
+    attr = _LAZY_REGISTRY.get(name)
+    if attr is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from .embedder_registry import flat
+
+    value = getattr(flat, attr)
+    globals()[name] = value
+    return value
+
 
 DEFAULT_STATIC_EMBEDDING_REPO = "theislab/Embpy_Data"
-DEFAULT_STATIC_EMBEDDING_MODELS = frozenset(
-    {
-        "genept",
-        "genept_scaled",
-        "gene2vec",
-        "wikicrow",
-        "ccle",
-        "ccle_ensembl",
-        "crispr_gene_effect",
-        "crispr_gene_effect_1178",
-        "crispr_gene_effect_205",
-        "omics",
-        "pops",
-    }
-)
+
+# Derived from the download specification rather than written out by hand. The
+# two lists had drifted: "ccle" and "ccle_ensembl" were advertised here with no
+# spec behind them, so `model_catalog("static")` offered keys that `embed` could
+# only answer with FileNotFoundError.
+#
+# This is the *gene* roster specifically. The STRING tables in the spec file are
+# keyed by STRING protein ids and declare entity_type="protein"; they are not
+# gene lookups and must not be routed as such.
+DEFAULT_STATIC_EMBEDDING_MODELS = static_embedding_keys("gene")
 
 
 # Helper function (can be moved to utils later)
@@ -136,6 +176,27 @@ def _guess_missing_package(msg: str) -> str | None:
     m = re.search(r"from ['\"]([^'\"]+)['\"]", msg)
     if m:
         return m.group(1).split(".")[0]
+    return None
+
+
+def _missing_package_from_exception(exc: BaseException) -> str | None:
+    """Extract a missing module name from an exception *or any of its causes*.
+
+    Wrappers routinely catch a bare ``ModuleNotFoundError`` and re-raise a
+    friendlier ``ImportError`` that names no importable module -- Boltz-2 raises
+    ``"Boltz-2 is not installed. Install with: pip install boltz[cuda]"``. Every
+    pattern in :func:`_guess_missing_package` misses that text, but the chained
+    cause still carries ``"No module named 'boltz'"``, so walk the chain before
+    giving up. Returns ``None`` only when no link names a module.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        found = _guess_missing_package(str(current))
+        if found:
+            return found
+        current = current.__cause__ or current.__context__
     return None
 
 
@@ -211,7 +272,7 @@ def _classify_embedder_exception(
     #    deferred import inside the forward pass).
     if isinstance(exc, ImportError):
         return DependencyError(
-            package=_guess_missing_package(msg) or "unknown",
+            package=_missing_package_from_exception(exc) or "unknown",
             feature=f"model '{model_name}'",
         )
 
@@ -324,6 +385,12 @@ class BioEmbedder:
 
     def _discover_models(self) -> dict[str, tuple[type[BaseModelWrapper], str]]:
         """Filters the MODEL_REGISTRY based on available wrapper classes."""
+        # Deferred (see the import note at the top of this module): building
+        # the registry imports every wrapper module, so it happens here -- at
+        # BioEmbedder construction -- rather than at `import embpy.embedder`.
+        from .embedder_registry.flat import MODEL_REGISTRY
+        from .models.base import BaseModelWrapper
+
         available = {}
         for name, (wrapper_class, model_path) in MODEL_REGISTRY.items():
             if wrapper_class is None:
@@ -347,10 +414,65 @@ class BioEmbedder:
 
         return available
 
-    def _get_model(self, model_name: str) -> BaseModelWrapper:
-        """Loads a model or retrieves it from the cache using the registry or direct HF loading for text models."""
+    @staticmethod
+    def _wrapper_supports_layer_selection(wrapper: Any) -> bool:
+        """Whether ``wrapper`` (class or instance) can embed from a chosen layer.
+
+        The wrapper must declare ``target_layer`` explicitly on ``embed`` or
+        ``embed_batch``. A bare ``**kwargs`` does not count: it swallows the
+        argument and returns default-layer vectors, which is exactly the silent
+        wrong answer this check exists to prevent.
+        """
+        import inspect
+
+        for method_name in ("embed_batch", "embed"):
+            method = getattr(wrapper, method_name, None)
+            if method is None:
+                continue
+            try:
+                params = inspect.signature(method).parameters
+            except (TypeError, ValueError):  # pragma: no cover - builtins/C funcs
+                continue
+            if "target_layer" in params:
+                return True
+        return False
+
+    def _assert_layer_selection_supported(self, model: str, layer: int) -> None:
+        """Fail loudly when a layer was requested but the model cannot honour it."""
+        entry = self._available_models.get(model)
+        wrapper: Any = entry[0] if entry else self.model_cache.get(model)
+
+        if wrapper is not None and self._wrapper_supports_layer_selection(wrapper):
+            return
+
+        if entry is None and model not in self.model_cache:
+            hint = (
+                f"'{model}' resolves to a static lookup table or a non-wrapper "
+                "embedding source, which has no layers to choose from."
+            )
+        else:
+            name = wrapper.__name__ if isinstance(wrapper, type) else type(wrapper).__name__
+            hint = f"{name} does not implement layer selection (no 'target_layer' argument)."
+
+        raise ValueError(
+            f"layer={layer} was requested but model '{model}' cannot provide it. {hint} "
+            "Re-run without 'layer' to use the model's default output, or pick a model "
+            "that supports it (protein, DNA and text transformer wrappers do)."
+        )
+
+    def _get_model(self, model_name: str, *, load: bool = True) -> BaseModelWrapper:
+        """Loads a model or retrieves it from the cache using the registry or direct HF loading for text models.
+
+        With ``load=False`` the wrapper is constructed but its weights are not
+        fetched, so class-level attributes (``has_attention``, ``model_type``)
+        can be read without paying for a download. Such an instance is NOT
+        cached: callers that later want a working model must go through the
+        normal path and get one that is actually loaded.
+        """
         if model_name in self.model_cache:
             return self.model_cache[model_name]
+
+        from .embedder_registry.flat import HUMAN_ONLY_MODELS, MOUSE_ONLY_MODELS
 
         is_human = self.organism.lower() in ("human", "homo_sapiens")
         is_mouse = self.organism.lower() in ("mouse", "mus_musculus")
@@ -376,8 +498,8 @@ class BioEmbedder:
                     extra_kwargs["output_type"] = "pairwise"
                 elif model_name == "boltz2_both":
                     extra_kwargs["output_type"] = "both"
-                if WrapperClass is SubCellWrapper:
-                    pass
+                from .models.api_models import APIEmbeddingWrapper
+
                 if WrapperClass is APIEmbeddingWrapper:
                     provider_map = {
                         "openai_small": "openai",
@@ -390,6 +512,8 @@ class BioEmbedder:
                     }
                     extra_kwargs["provider"] = provider_map.get(model_name, "openai")
                 model_instance = WrapperClass(model_path_or_name=model_path_or_name, **extra_kwargs)
+                if not load:
+                    return model_instance
                 model_instance.load(self.device)
                 self.model_cache[model_name] = model_instance
                 logging.info(f"Model '{model_name}' loaded successfully.")
@@ -399,9 +523,25 @@ class BioEmbedder:
                 # so the operator (and SLURM exit code) can distinguish
                 # "needs `pixi install` of a different env" from "the model
                 # is genuinely broken on HF".
-                pkg = _guess_missing_package(str(e)) or "unknown"
+                #
+                # Prefer the embpy extra: it is the install line that actually
+                # works (`boltz` alone is not enough for Boltz-2, which needs
+                # `boltz[cuda]`). Fall back to the module named anywhere in the
+                # exception chain, and only then to a placeholder.
+                from .embedder_registry.extras import WRAPPER_EXTRAS
+
+                extra = WRAPPER_EXTRAS.get(getattr(WrapperClass, "__name__", ""))
+                pkg = f"embpy[{extra}]" if extra else (
+                    _missing_package_from_exception(e) or "unknown"
+                )
                 logging.error(f"Failed to load model '{model_name}': missing dependency '{pkg}'.")
-                raise DependencyError(package=pkg, feature=f"model '{model_name}'") from e
+                # Keep whatever the wrapper said. It frequently knows a constraint the
+                # extra name cannot express -- Evo is unresolvable on macOS, evo2 needs
+                # Python < 3.13 -- and dropping it sent users to an install line that
+                # could not work on their machine.
+                raise DependencyError(
+                    package=pkg, feature=f"model '{model_name}'", detail=str(e) or None
+                ) from e
             except Exception as e:
                 logging.error(
                     f"Failed to load model '{model_name}' using wrapper {WrapperClass.__name__} and path '{model_path_or_name}': {e}"
@@ -415,7 +555,11 @@ class BioEmbedder:
         else:
             logging.info(f"Model '{model_name}' not in registry. Attempting to load as text model from Hugging Face...")
             try:
+                from .models.text_models import TextLLMWrapper
+
                 model_instance = TextLLMWrapper(model_path_or_name=model_name)
+                if not load:
+                    return model_instance
                 model_instance.load(self.device)
                 self.model_cache[model_name] = model_instance
                 logging.info(f"Successfully loaded text model '{model_name}' from Hugging Face.")
@@ -587,20 +731,32 @@ class BioEmbedder:
         model_key: str,
         batch_size: int,
         device_str: str,
+        wrapper_kwargs: dict[str, Any] | None = None,
     ):
         """Return a cached single-cell foundation-model wrapper.
 
-        The cache is keyed by ``(model_key, device_str)`` only;
-        ``batch_size`` is applied on every call so it can change between
-        chunks without forcing a reload.
+        The cache is keyed by ``(model_key, device_str)`` plus any
+        constructor kwargs; ``batch_size`` is applied on every call so it
+        can change between chunks without forcing a reload.
 
         This is what makes chunked inference over large datasets cheap:
         a caller looping ``for chunk in chunks: embedder.embed_cells(chunk)``
         pays the model-instantiation cost once, not per chunk.
+
+        ``wrapper_kwargs`` reaches the wrapper constructor, which is how
+        checkpoint-only models are usable at all: ``StateEmbeddingWrapper``
+        and ``StackWrapper`` take ``checkpoint`` there and raise from
+        ``load()`` without it. The kwargs are part of the cache key, so
+        asking for two different checkpoints of the same model does not
+        silently return the first one.
         """
         from .models.singlecell_models import get_singlecell_wrapper
 
-        cache_key = (model_key, device_str)
+        wrapper_kwargs = wrapper_kwargs or {}
+        kwargs_key = tuple(sorted((k, str(v)) for k, v in wrapper_kwargs.items()))
+        cache_key = (model_key, device_str, kwargs_key) if kwargs_key else (
+            model_key, device_str,
+        )
         cached = self._singlecell_cache.get(cache_key)
         if cached is not None:
             # Cheap attribute update -- do not re-run `.load()`.
@@ -612,10 +768,53 @@ class BioEmbedder:
             return cached
 
         logging.info("Loading single-cell wrapper for '%s' on %s ...", model_key, device_str)
-        wrapper = get_singlecell_wrapper(model_key, batch_size=batch_size)
+        wrapper = get_singlecell_wrapper(
+            model_key, batch_size=batch_size, **wrapper_kwargs
+        )
         wrapper.load(device_str)
         self._singlecell_cache[cache_key] = wrapper
         return wrapper
+
+    def get_model(self, model: str, *, load: bool = True) -> Any:
+        """Return the model wrapper behind a model key, for direct introspection.
+
+        ``embed()`` covers the common path, but the wrappers expose more than a
+        pooled vector -- per-layer hidden states, per-layer attention, and pooled
+        embeddings for every layer at once. Reaching those used to require the
+        private ``_get_model``; this is the supported way.
+
+        Parameters
+        ----------
+        model
+            A key from :meth:`list_available_models`.
+        load
+            Load the weights onto this embedder's device if they are not loaded
+            yet. Pass ``False`` to inspect class-level attributes (such as
+            ``has_attention``) without paying for a download.
+
+        Returns
+        -------
+        BaseModelWrapper
+            The wrapper, loaded unless ``load=False``. Wrappers are cached, so
+            repeated calls return the same instance.
+
+        Examples
+        --------
+        >>> embedder = BioEmbedder(device="cpu")               # doctest: +SKIP
+        >>> wrapper = embedder.get_model("esm2_8M")            # doctest: +SKIP
+        >>> ids = wrapper.tokenizer("MTEYKLVVVG", return_tensors="pt")["input_ids"]
+        >>> attn = wrapper.extract_attention(ids, layers=[-1])  # doctest: +SKIP
+
+        See Also
+        --------
+        embpy.models.base.BaseModelWrapper.extract_attention
+        embpy.models.base.BaseModelWrapper.extract_hidden_states
+        embpy.models.base.BaseModelWrapper.embed_all_layers
+        """
+        inst = self._get_model(model, load=load)
+        if load and getattr(inst, "model", None) is None:
+            inst.load(self.device)
+        return inst
 
     def clear_model_cache(self, *, which: Literal["all", "singlecell", "other"] = "all") -> None:
         """Drop cached model wrappers and free associated GPU memory.
@@ -668,6 +867,7 @@ class BioEmbedder:
         id_type: str | Mapping[str, str] | None = None,
         organism: str | None = None,
         pooling_strategy: str = "mean",
+        layer: int | None = None,
         output: Literal["anndata", "table", "payload"] | None = None,
         target: Any = None,
         input_path: str | os.PathLike[str] | None = None,
@@ -731,9 +931,45 @@ class BioEmbedder:
         returned. Multiple models or multiple entity types return the
         same output family with deterministic keys that include entity
         type and model name.
+
+        ``layer`` selects which transformer layer the embedding is pooled
+        from, instead of the default final layer. Intermediate layers often
+        transfer better to downstream tasks than the last one, which is
+        specialised for the pretraining objective. Negative values count
+        from the end, so ``layer=-1`` reproduces the default and ``layer=-4``
+        takes the fourth-from-last::
+
+            embedder.embed(adata, entity_type="protein", model="esm2_650M", layer=-4)
+
+        Not every architecture supports this. Models that cannot select a
+        layer (fingerprints, static lookup tables, and wrappers that have not
+        implemented it) raise a :class:`ValueError` rather than silently
+        returning default-layer embeddings. Use
+        :meth:`~embpy.models.base.BaseModelWrapper.extract_hidden_states` for
+        finer-grained access to every layer at once.
         """
         from .io.exporters import route_output
         from .io.normalize import normalize_embedding_input
+
+        # ``layer`` is the documented, discoverable spelling; ``target_layer``
+        # is what the wrappers accept. Normalise here so both work and the
+        # downstream support check sees a single canonical key.
+        if layer is not None:
+            embed_kwargs.setdefault("target_layer", layer)
+
+        # Validate here, at the single public entry point, so static lookup
+        # tables and other sources that bypass _embed_to_result are covered too.
+        requested_layer = next(
+            (
+                embed_kwargs[k]
+                for k in ("target_layer", "layer", "embedding_layer", "layer_name")
+                if embed_kwargs.get(k) is not None
+            ),
+            None,
+        )
+        if requested_layer is not None:
+            for _m in [model] if isinstance(model, str) else list(model):
+                self._assert_layer_selection_supported(str(_m), requested_layer)
 
         org = organism or self.organism
         out_path = output_path if output_path is not None else path
@@ -1041,12 +1277,19 @@ class BioEmbedder:
             "is_perturbation": bool(is_perturbation),
             "n_requested_inputs": requested_n,
         }
-        layer = (
-            embed_kwargs.get("target_layer")
-            or embed_kwargs.get("layer")
-            or embed_kwargs.get("embedding_layer")
-            or embed_kwargs.get("layer_name")
+        # First key that is actually present -- not ``or``-chained, because
+        # layer 0 is a legitimate (and falsy) selection that must not be
+        # mistaken for "no layer requested".
+        layer = next(
+            (
+                embed_kwargs[k]
+                for k in ("target_layer", "layer", "embedding_layer", "layer_name")
+                if embed_kwargs.get(k) is not None
+            ),
+            None,
         )
+        if layer is not None:
+            self._assert_layer_selection_supported(model, layer)
         if "region" in embed_kwargs:
             extra["region"] = embed_kwargs["region"]
         if "isoform" in embed_kwargs:
@@ -1423,9 +1666,15 @@ class BioEmbedder:
             "duplicate_canonical_ids_dropped": duplicate_canonical,
             "n_dropped_or_unresolved_entities": unresolved + lookup_misses + duplicate_canonical,
         }
+        # A static table is a precomputed lookup: no forward pass, no tokens,
+        # so nothing was pooled. Recording the caller's `pooling_strategy`
+        # here -- which defaults to "mean" whether or not they asked for it --
+        # stamped a pooling that never happened, and `_default_key` then put it
+        # in the key, so `genept` produced `X_emb__gene__genept__pool_mean`.
+        # `None` is the same convention the cell path already uses.
         prov = EmbeddingProvenance.create(
             model=model,
-            pooling=pooling_strategy,
+            pooling=None,
             extra=extra,
         )
         return EmbeddingResult(
@@ -2552,7 +2801,15 @@ class BioEmbedder:
 
         logging.info(f"Embedding {len(valid_inputs)} valid SMILES with model '{model}'")
         try:
-            batch_embs = inst.embed_batch(input=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
+            # Wrappers disagree on the batch parameter name: most declare
+            # ``inputs`` (base.py), while ChemBERTa declares ``input``. Try the
+            # common spelling first and fall back, mirroring the generic embed
+            # path -- otherwise every molecule model except ChemBERTa raises a
+            # TypeError that is silently swallowed as "all inputs failed".
+            try:
+                batch_embs = inst.embed_batch(inputs=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
+            except TypeError:
+                batch_embs = inst.embed_batch(input=valid_inputs, pooling_strategy=pooling_strategy, **kwargs)
             for out_idx, emb in zip(valid_indices, batch_embs, strict=False):
                 results[out_idx] = emb
         except Exception as e:  # noqa: BLE001
@@ -2916,6 +3173,7 @@ class BioEmbedder:
         copy: bool = True,
         backend: Literal["cpu", "gpu"] = "cpu",
         vocab_conversion: Literal["auto", "off"] = "auto",
+        model_kwargs: dict[str, dict[str, Any]] | None = None,
     ):
         """Embed single cells from an AnnData object.
 
@@ -2987,6 +3245,15 @@ class BioEmbedder:
             Prefix for ``.obsm`` keys (default ``"X_"``).
         copy
             If ``True``, operate on a copy of adata.
+        model_kwargs
+            Per-model constructor arguments, keyed by model key, e.g.
+            ``{"state": {"checkpoint": "/path/to/se600m.ckpt"}}``. Needed by
+            models whose weights are not fetched for you: ``state`` and
+            ``stack`` take a ``checkpoint`` (``state`` also accepts
+            ``model_folder``), and raise from ``load()`` without one, so
+            before this existed they could not be reached through this
+            method at all. The kwargs are part of the wrapper cache key,
+            so two checkpoints of one model do not collide.
 
         Returns
         -------
@@ -3135,7 +3402,10 @@ class BioEmbedder:
                     # to embed_cells -- e.g. chunked inference over a large
                     # AnnData -- reuse the already-loaded torch model
                     # instead of re-instantiating it on every call.
-                    wrapper = self._get_or_load_singlecell_wrapper(model_key, batch_size, device_str)
+                    wrapper = self._get_or_load_singlecell_wrapper(
+                        model_key, batch_size, device_str,
+                        (model_kwargs or {}).get(model_key),
+                    )
                     # Auto-adapt var_names to the model's vocabulary.
                     # This is the difference between a silent zero-match
                     # failure (e.g. passing Ensembl IDs to scGPT) and a
@@ -3728,6 +3998,67 @@ class BioEmbedder:
             if hasattr(wrapper_cls, "model_type") and wrapper_cls.model_type == category:
                 result.append(name)
         return sorted(result)
+
+    def model_catalog(
+        self,
+        category: str = "all",
+        *,
+        summary: bool = False,
+    ) -> Any:
+        """Return the available models as a table.
+
+        The tabular counterpart to :meth:`list_available_models`, which returns bare
+        strings. In a notebook this renders as a proper table rather than printed
+        text, and being a DataFrame it can be filtered, sorted and exported.
+
+        Parameters
+        ----------
+        category
+            Restrict to one family (``"dna"``, ``"protein"``, ``"molecule"``,
+            ``"text"``, ``"morphology"``, ``"single_cell"``, ``"static"``), or
+            ``"all"`` for everything.
+        summary
+            ``False`` (default) gives one row per model with its family. ``True``
+            gives one row per family with a count and a few example keys -- the
+            quick "what can this package do?" view.
+
+        Returns
+        -------
+        pandas.DataFrame
+            With ``summary=False``: columns ``model``, ``family``.
+            With ``summary=True``: columns ``family``, ``n_models``, ``examples``.
+
+        Examples
+        --------
+        >>> embedder.model_catalog(summary=True)          # doctest: +SKIP
+        >>> embedder.model_catalog("protein").head()      # doctest: +SKIP
+        """
+        import pandas as pd
+
+        families = ["static", "dna", "protein", "molecule", "text", "single_cell", "morphology"]
+        wanted = families if category == "all" else [category]
+
+        rows: list[dict[str, Any]] = []
+        for fam in wanted:
+            for name in self.list_available_models(fam):  # type: ignore[arg-type]
+                rows.append({"model": name, "family": fam})
+
+        frame = pd.DataFrame(rows, columns=["model", "family"])
+        # A model can appear under more than one family (e.g. a text encoder used
+        # for genes); keep the first family so counts stay interpretable.
+        frame = frame.drop_duplicates(subset="model", keep="first").reset_index(drop=True)
+
+        if not summary:
+            return frame.sort_values(["family", "model"]).reset_index(drop=True)
+
+        grouped = (
+            frame.groupby("family")["model"]
+            .agg(n_models="size", examples=lambda s: ", ".join(sorted(s)[:4]))
+            .reset_index()
+            .sort_values("n_models", ascending=False)
+            .reset_index(drop=True)
+        )
+        return grouped
 
     # ------------------------------------------------------------------
     # Morphological embedding API
@@ -5089,7 +5420,10 @@ def _resolve_gene_jump_fallback(
     try:
         from .resources.gene_resolver import GeneResolver
 
-        resolver = GeneResolver(organism="human")
+        # species=, not organism= -- passing organism= raised a TypeError that the
+        # broad `except Exception` below swallowed, silently disabling both this
+        # canonicalisation and the mygene alias fallback after it.
+        resolver = GeneResolver(species="human")
         ensembl_id = resolver.symbol_to_ensembl(gene_symbol)
         if ensembl_id:
             canonical = resolver.ensembl_to_symbol(ensembl_id)

@@ -554,6 +554,81 @@ def annotate_molecules(
     )
 
 
+def annotate_drug_perturbations(
+    adata: AnnData,
+    column: str,
+    sources: str | list[str] = "all",
+    copy: bool = True,
+) -> AnnData:
+    """Annotate drug perturbations with the ChEMBL clinical record.
+
+    Reads compound identifiers -- ChEMBL IDs, SMILES, generic names, trade
+    names or research codes -- from ``adata.obs[column]`` and fetches, from
+    ChEMBL:
+
+    - **Development status** -- clinical phase, first approval, routes of
+      administration, prescription vs over the counter
+    - **Indications** -- MeSH and EFO terms, each with the phase reached for
+      that indication
+    - **Safety** -- black box warnings and withdrawals, with toxicity class,
+      country and year
+    - **ATC classification** -- the WHO therapeutic hierarchy
+    - **Synonyms** -- INN, USAN, trade names, research codes
+    - **Mechanism of action** -- action type, direct interaction and
+      disease-efficacy flags, references
+    - **Target profile** -- per-target potency with gene symbols, UniProt
+      accessions and protein families, plus a selectivity summary
+    - **Metabolism** -- metabolites and the enzymes responsible
+    - **Molecular forms** -- parent compound and its salts
+
+    Results are stored in ``adata.obs`` (summary columns as ``drug_*``) and
+    ``adata.uns["chembl_annotations"]`` (full dicts). Counts taken from a
+    capped fetch carry an ``*_at_limit`` companion column, and the caps
+    themselves are recorded in ``adata.uns["chembl_annotation_limits"]``.
+
+    .. note::
+       This is the compound-centric counterpart to :func:`annotate_drugs`,
+       which instead flags genes in ``adata.var`` that are known drug
+       targets. Use :func:`annotate_molecules` for structural and
+       physicochemical properties.
+
+    Parameters
+    ----------
+    adata
+        AnnData with compound identifiers in ``.obs[column]``.
+    column
+        Column in ``adata.obs`` holding the identifiers.
+    sources
+        Which ChEMBL sources to query. ``"all"`` queries everything except
+        ``"analogs"``, which is a structure search over the whole database
+        and so is opt-in. Pass a list to select from ``["development",
+        "indications", "safety", "atc", "synonyms", "mechanisms",
+        "activities", "targets", "metabolism", "forms", "analogs",
+        "xrefs"]``.
+    copy
+        If ``True``, return a modified copy.
+
+    Returns
+    -------
+    AnnData with ChEMBL annotations in ``adata.obs`` and ``adata.uns``.
+
+    Examples
+    --------
+    >>> adata = annotate_drug_perturbations(adata, column="compound")
+    >>> adata.obs["drug_development_phase"]     # approved / phase 2 / ...
+    >>> adata.obs["drug_moa"]                   # mechanism of action
+    >>> adata.obs["drug_primary_target_gene"]   # e.g. ABL1
+    >>> adata.obs["drug_is_withdrawn"]
+    >>> adata.uns["chembl_annotations"]["imatinib"]["indications"]
+    """
+    from embpy.resources.molecule.chembl import ChEMBLAnnotator
+
+    annotator = ChEMBLAnnotator()
+    return annotator.annotate_adata(
+        adata, column=column, sources=sources, copy=copy,
+    )
+
+
 def annotate_gene_perturbations(
     adata: AnnData,
     column: str,

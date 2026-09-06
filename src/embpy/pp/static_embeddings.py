@@ -242,6 +242,35 @@ _STRING_SOURCE_TEMPLATES: dict[str, dict[str, Any]] = {
 }
 
 
+def static_embedding_keys(entity_type: str = "gene") -> frozenset[str]:
+    """Static-embedding keys for one entity type, derived from the specs.
+
+    Taken from :data:`_DEFAULT_SOURCE_SPECS` so the advertised roster and the
+    download specification cannot drift apart. ``embpy.embedder`` uses this to
+    build ``DEFAULT_STATIC_EMBEDDING_MODELS``, which previously listed ``ccle``
+    and ``ccle_ensembl`` -- keys with no specification behind them, so ``embed``
+    raised ``FileNotFoundError`` for anything the catalogue happily advertised.
+
+    A spec with no ``entity_type`` is a gene table; the two STRING tables declare
+    ``entity_type="protein"`` and are keyed by STRING protein ids, so they must
+    *not* be offered as gene lookups. There is currently no protein-side static
+    routing, which is why asking for them at all is still a dead end -- but a dead
+    end is better than silently resolving 19,000 ``9606.ENSP...`` ids into gene
+    symbols one HTTP call at a time.
+
+    A key being listed here means embpy knows which file to ask for, not that the
+    configured repository serves it: ``crispr_gene_effect`` needs the raw DepMap
+    matrix, which the public ``theislab/Embpy_Data`` repository does not ship.
+    Missing files surface as a ``FileNotFoundError`` naming what *is* available.
+    """
+    return frozenset(
+        spec["key"]
+        for spec in _DEFAULT_SOURCE_SPECS.values()
+        if spec.get("entity_type", "gene") == entity_type
+    )
+
+
+
 def discover_static_embedding_sources(
     input_dir: str | Path,
     *,

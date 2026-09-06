@@ -30,12 +30,6 @@ from .static_embeddings import (
     validate_static_embedding_package,
     write_static_embedding_dataset_card,
 )
-from .scperturb_handler import (
-    ScPerturbDatasetCard,
-    list_scperturb_datasets,
-    load_scperturb,
-    scperturb_info,
-)
 from .morphology.preprocessing import (
     CELL_PAINTING_CHANNELS,
     CELL_PAINTING_COLORS,
@@ -64,7 +58,6 @@ __all__ = [
     "HFHandler",
     "LaminDatasetCard",
     "PerturbationProcessor",
-    "ScPerturbDatasetCard",
     "StaticEmbeddingSource",
     "StaticEmbeddingStore",
     "depmap_info",
@@ -73,16 +66,13 @@ __all__ = [
     "lamin_info",
     "list_depmap_datasets",
     "list_lamin_datasets",
-    "list_scperturb_datasets",
     "load_depmap",
     "load_lamin",
-    "load_scperturb",
     "load_static_embedding_package",
     "prepare_static_embedding_package",
     "preprocess_counts",
     "reduce_embeddings",
     "render_static_embedding_dataset_card",
-    "scperturb_info",
     "validate_static_embedding_package",
     "write_static_embedding_dataset_card",
     # morphology preprocessing

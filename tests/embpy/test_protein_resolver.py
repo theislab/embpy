@@ -121,6 +121,109 @@ class TestResolveUniprotId:
 
 
 # =====================================================================
+# TestNonHumanResolution
+#
+# Cross-species work resolves lowercase, non-mammalian symbols through
+# Ensembl-style organism names ("danio_rerio"), and both of those used to
+# break resolution in ways that were silent.
+# =====================================================================
+
+
+def _empty_mygene_response():
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = {"hits": []}
+    return resp
+
+
+def _empty_search_response():
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.raise_for_status = MagicMock()
+    resp.json.return_value = {"results": []}
+    return resp
+
+
+class TestNonHumanResolution:
+    @patch("embpy.resources.protein_resolver.requests.get")
+    def test_lowercase_zebrafish_symbol_without_a_reviewed_entry(self, mock_get):
+        """Regression: zebrafish `cdk1` has no Swiss-Prot entry.
+
+        The reviewed-only query returned nothing and the ortholog was dropped,
+        which cost the cross-species notebook six of eight zebrafish proteins.
+        Verified against UniProt: cdk1, mapk1, jun and casp3 are TrEMBL-only in
+        taxon 7955, while gapdh, src, tp53 and ldha are reviewed -- which is why
+        the failure looked random rather than systematic.
+        """
+        resolver = ProteinResolver(organism="danio_rerio", request_timeout=5)
+        mock_get.side_effect = [
+            _empty_mygene_response(),                    # MyGene has no Swiss-Prot
+            _empty_search_response(),                    # reviewed:true -> nothing
+            _mock_uniprot_search_response("Q7T3L7"),     # unreviewed -> TrEMBL hit
+        ]
+        assert resolver.resolve_uniprot_id("cdk1", id_type="symbol") == "Q7T3L7"
+
+    @patch("embpy.resources.protein_resolver.requests.get")
+    def test_reviewed_is_tried_first_and_short_circuits(self, mock_get):
+        """A reviewed entry must win, and must not cost a second request.
+
+        Dropping `reviewed:true` altogether would also have fixed zebrafish, at
+        the cost of silently degrading the common case: an unreviewed search for
+        human TP53 returns the fragment K7PPA8 rather than canonical P04637.
+        """
+        resolver = ProteinResolver(organism="human", request_timeout=5)
+        mock_get.side_effect = [
+            _empty_mygene_response(),
+            _mock_uniprot_search_response("P04637"),
+        ]
+        assert resolver.resolve_uniprot_id("TP53", id_type="symbol") == "P04637"
+        assert mock_get.call_count == 2, "a reviewed hit must not trigger the fallback"
+
+        first_query = mock_get.call_args_list[1][1]["params"]["query"]
+        assert "reviewed:true" in first_query
+        assert "organism_id:9606" in first_query
+
+    @patch("embpy.resources.protein_resolver.requests.get")
+    def test_fallback_query_drops_only_the_reviewed_filter(self, mock_get):
+        resolver = ProteinResolver(organism="danio_rerio", request_timeout=5)
+        mock_get.side_effect = [
+            _empty_mygene_response(),
+            _empty_search_response(),
+            _mock_uniprot_search_response("Q7T3L7"),
+        ]
+        resolver.resolve_uniprot_id("cdk1", id_type="symbol")
+
+        fallback_query = mock_get.call_args_list[2][1]["params"]["query"]
+        assert "reviewed:true" not in fallback_query
+        assert "organism_id:7955" in fallback_query
+        assert "gene_exact:cdk1" in fallback_query
+
+    @patch("embpy.resources.protein_resolver.requests.get")
+    def test_mygene_receives_a_taxid_not_an_ensembl_name(self, mock_get):
+        """MyGene 400s on "danio_rerio", and the error was swallowed at debug.
+
+        That silently disabled the MyGene leg for every cross-species lookup,
+        so everything fell through to the UniProt search without any sign.
+        """
+        resolver = ProteinResolver(organism="danio_rerio", request_timeout=5)
+        mock_get.side_effect = [
+            _empty_mygene_response(),
+            _mock_uniprot_search_response("Q7T3L7"),
+        ]
+        resolver.resolve_uniprot_id("cdk1", id_type="symbol")
+
+        species = mock_get.call_args_list[0][1]["params"]["species"]
+        assert species == 7955, f"MyGene needs a taxid or common name, got {species!r}"
+
+    @patch("embpy.resources.protein_resolver.requests.get")
+    def test_unknown_organism_still_gives_up_cleanly(self, mock_get):
+        resolver = ProteinResolver(organism="tyrannosaurus_rex", request_timeout=5)
+        mock_get.side_effect = [_empty_mygene_response()]
+        assert resolver.resolve_uniprot_id("trex1", id_type="symbol") is None
+
+
+# =====================================================================
 # TestGetCanonicalSequence
 # =====================================================================
 
@@ -182,6 +285,34 @@ class TestGetIsoforms:
         mock_get.return_value = fail
         result = resolver.get_isoforms("FAKEGENE", id_type="symbol")
         assert result == {}
+
+    @patch("embpy.resources.protein_resolver.requests.get")
+    def test_queries_the_search_endpoint_not_single_entry_retrieval(
+        self, mock_get, resolver,
+    ):
+        """Regression: `includeIsoform` is a search-only parameter.
+
+        On the single-entry route (``/uniprotkb/{accession}.fasta``) UniProt
+        ignores it and returns the canonical sequence alone, which silently
+        reduced ``isoform="all"`` to one vector. Verified live against P04637:
+        retrieval yields 1 record, search yields 9. The other tests here mock
+        ``requests.get`` wholesale and so pass on either URL -- this one pins
+        the request itself.
+        """
+        mock_get.side_effect = [
+            _mock_mygene_response(),
+            _mock_fasta_response(FAKE_ISOFORM_FASTA),
+        ]
+        resolver.get_isoforms("TP53", id_type="symbol")
+
+        url, kwargs = mock_get.call_args_list[-1][0][0], mock_get.call_args_list[-1][1]
+        params = kwargs["params"]
+        assert url.endswith("/uniprotkb/search"), (
+            f"isoforms must come from the search endpoint, got {url!r}"
+        )
+        assert params["includeIsoform"] == "true"
+        assert params["format"] == "fasta"
+        assert FAKE_ACCESSION in params["query"]
 
 
 # =====================================================================

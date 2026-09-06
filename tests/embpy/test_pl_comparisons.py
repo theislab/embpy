@@ -9,7 +9,10 @@ import pytest
 from anndata import AnnData
 from matplotlib.figure import Figure
 
-sc = pytest.importorskip("scanpy")
+# embpy's dimred layer needs scanpy, so skip the module without it.
+pytest.importorskip("scanpy")
+
+from embpy import tl  # noqa: E402  (must follow the importorskip guard)
 
 
 @pytest.fixture
@@ -181,9 +184,13 @@ class TestTsneFeaturePanel:
     def test_returns_figure(self, tiny_adata):
         from embpy.pl.comparisons import tsne_feature_panel
 
-        sc.pp.neighbors(tiny_adata, use_rep="X_model_a_pca", n_neighbors=5)
-        sc.tl.tsne(tiny_adata, use_rep="X_model_a_pca")
-        tiny_adata.obsm["X_tsne_X_model_a_pca"] = tiny_adata.obsm["X_tsne"].copy()
+        # Build the layout through embpy rather than calling scanpy directly.
+        # `sc.tl.tsne` defaults to perplexity=30, and current scikit-learn
+        # requires perplexity < n_samples -- with a 30-observation fixture that
+        # is an error. `tl.compute_tsne` clamps to `min(perplexity, n_obs - 1)`,
+        # so going through it both fixes the failure and exercises the code
+        # path embpy actually ships. It writes X_tsne_{obsm_key} itself.
+        tl.compute_tsne(tiny_adata, obsm_key="X_model_a_pca")
 
         fig = tsne_feature_panel(
             tiny_adata, obsm_key="X_model_a_pca",

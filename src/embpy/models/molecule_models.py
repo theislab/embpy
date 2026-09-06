@@ -1,4 +1,6 @@
 # Placeholder for small molecule models (e.g., ChemBERTa, MolFormer)
+from __future__ import annotations
+
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -435,6 +437,9 @@ class RDKitWrapper(BaseModelWrapper):
 
     model_type = "molecule"
     available_pooling_strategies = ["flat"]
+    # Structural fingerprints (Morgan, MACCS, atom-pair) are hand-computed bit
+    # vectors, not neural networks, so there is nothing to attend with.
+    has_attention = False
 
     _VALID_FP_TYPES = (
         "morgan",
@@ -643,6 +648,9 @@ class MiniMolWrapper(BaseModelWrapper):
     model_type: str = "molecule"  # type: ignore[assignment]
     available_pooling_strategies: list[str] = ["flat"]
     EMBEDDING_DIM: int = 512
+    # MiniMol is a message-passing GNN (GIN with edge features), not a transformer,
+    # so it has no attention weights to extract.
+    has_attention = False
 
     def __init__(
         self,
@@ -747,6 +755,9 @@ class MHGGNNWrapper(BaseModelWrapper):
 
     model_type: str = "molecule"  # type: ignore[assignment]
     available_pooling_strategies: list[str] = ["flat"]
+    # MHG-GNN is a GIN-based graph autoencoder over molecular hypergraphs, not a
+    # transformer, so it has no attention weights to extract.
+    has_attention = False
 
     def __init__(
         self,

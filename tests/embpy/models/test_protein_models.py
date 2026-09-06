@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -9,6 +10,86 @@ import pytest
 import torch
 
 from embpy.models.protein_models import ESM2Wrapper
+
+
+def _tok(seq_len: int = 12, has_mask: bool = True) -> MagicMock:
+    """Mock tokenizer that honours ``return_tensors`` and its batch size.
+
+    The protein wrappers use two different tokenizer contracts:
+
+    * ESM2's ``embed_batch`` chunks long sequences itself, so it tokenizes one
+      string at a time with ``return_tensors=None`` and expects ``list[int]``
+      back -- it then adds special tokens and pads by hand. Handing it a tensor
+      makes the ``if ids and ...`` coercion guard raise "Boolean value of Tensor
+      with more than one value is ambiguous", which no real tokenizer does.
+    * ProtT5's ``embed_batch`` tokenizes the whole batch in one call with
+      ``padding="longest", return_tensors="pt"`` and then iterates the batch
+      dimension of the model output. A mock returning a fixed ``(1, seq_len)``
+      tensor silently yields ONE embedding for N inputs.
+
+    So the mock has to vary both container type and batch size with its input,
+    exactly as a real tokenizer does.
+    """
+
+    def _encode(text: Any = None, *args: Any, **kwargs: Any) -> dict:
+        n = len(text) if isinstance(text, list | tuple) else 1
+        if kwargs.get("return_tensors") == "pt":
+            enc: dict = {"input_ids": torch.zeros(n, seq_len, dtype=torch.long)}
+            if has_mask:
+                enc["attention_mask"] = torch.ones(n, seq_len, dtype=torch.long)
+            return enc
+        ids = [1] * seq_len
+        enc = {"input_ids": ids if n == 1 else [ids] * n}
+        if has_mask:
+            mask = [1] * seq_len
+            enc["attention_mask"] = mask if n == 1 else [mask] * n
+        return enc
+
+    mock = MagicMock(side_effect=_encode)
+    mock.cls_token_id = 2
+    mock.sep_token_id = 3
+    mock.bos_token_id = None
+    mock.eos_token_id = None
+    mock.pad_token_id = 0
+    mock.model_max_length = 512
+    return mock
+
+
+def _dyn_model(
+    hidden_dim: int,
+    *,
+    last_hidden: bool = True,
+    layers: int = 2,
+    layer_fills: tuple[float, ...] | None = None,
+) -> MagicMock:
+    """Model mock whose output is shaped from the ``input_ids`` it receives.
+
+    A static ``return_value`` cannot track the batch size or the token count
+    after special tokens are added, which shows up either as a tensor-size
+    mismatch during masked pooling or as a silently short result list.
+    """
+
+    def _forward(*args: Any, **kwargs: Any) -> MagicMock:
+        ids = kwargs.get("input_ids")
+        if ids is None and args:
+            ids = args[0]
+        n_batch, n_tok = (int(ids.shape[0]), int(ids.shape[1])) if ids is not None else (1, seq_default)
+        if layer_fills is not None:
+            stack = tuple(
+                torch.full((n_batch, n_tok, hidden_dim), float(v)) for v in layer_fills
+            )
+        else:
+            stack = tuple(torch.randn(n_batch, n_tok, hidden_dim) for _ in range(layers))
+        out = MagicMock()
+        out.hidden_states = stack
+        out.last_hidden_state = stack[-1] if last_hidden else None
+        return out
+
+    seq_default = 12
+    model = MagicMock(side_effect=_forward)
+    model.config = MagicMock()
+    model.config.num_hidden_layers = layers
+    return model
 
 
 class TestESM2Wrapper:
@@ -37,6 +118,7 @@ class TestESM2Wrapper:
     def test_embed_batch_empty_returns_empty(self):
         w = ESM2Wrapper()
         w.model = MagicMock()
+        w.tokenizer = _tok()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
@@ -149,20 +231,8 @@ class TestESM2Wrapper:
         hidden_dim = 320
         seq_len = 12
 
-        mock_output = MagicMock()
-        mock_output.last_hidden_state = torch.randn(1, seq_len, hidden_dim)
-        mock_output.hidden_states = None
-
-        mock_model = MagicMock()
-        mock_model.return_value = mock_output
-        w.model = mock_model
-
-        mock_tokenizer = MagicMock()
-        mock_tokenizer.return_value = {
-            "input_ids": torch.zeros(1, seq_len, dtype=torch.long),
-            "attention_mask": torch.ones(1, seq_len, dtype=torch.long),
-        }
-        w.tokenizer = mock_tokenizer
+        w.model = _dyn_model(hidden_dim)
+        w.tokenizer = _tok(seq_len)
 
         results = w.embed_batch(["MTEYKLVVVG", "ACDEFGHIKL"])
         assert len(results) == 2
@@ -209,6 +279,7 @@ class TestProtT5Wrapper:
 
         w = ProtT5Wrapper()
         w.model = MagicMock()
+        w.tokenizer = _tok()
         w.device = torch.device("cpu")
         assert w.embed_batch([]) == []
 
@@ -250,22 +321,11 @@ class TestProtT5Wrapper:
         w = ProtT5Wrapper()
         w.device = torch.device("cpu")
 
-        mock_output = MagicMock()
-        mock_output.last_hidden_state = torch.randn(1, seq_len, hidden_dim)
-        mock_output.hidden_states = None
-
-        mock_model = MagicMock()
-        mock_model.return_value = mock_output
+        mock_model = _dyn_model(hidden_dim)
         w.model = mock_model
+        w.tokenizer = _tok(seq_len)
 
-        mock_tokenizer = MagicMock()
-        mock_tokenizer.return_value = {
-            "input_ids": torch.zeros(1, seq_len, dtype=torch.long),
-            "attention_mask": torch.ones(1, seq_len, dtype=torch.long),
-        }
-        w.tokenizer = mock_tokenizer
-
-        return w, mock_output
+        return w, mock_model
 
     def test_embed_mean_pooling(self):
         w, _ = self._make_loaded_wrapper()
@@ -425,6 +485,7 @@ class TestESM3Wrapper:
             w.embed("MTEYKLVVVG")
 
     def test_embed_with_mock(self):
+        pytest.importorskip("esm.sdk.api")  # ESM3Wrapper.embed builds an ESMProtein
         from embpy.models.protein_models import ESM3Wrapper
 
         w = ESM3Wrapper()
@@ -444,6 +505,7 @@ class TestESM3Wrapper:
         assert emb.ndim == 1
 
     def test_embed_batch(self):
+        pytest.importorskip("esm.sdk.api")  # ESM3Wrapper.embed builds an ESMProtein
         from embpy.models.protein_models import ESM3Wrapper
 
         w = ESM3Wrapper()

@@ -123,14 +123,29 @@ def compute_umap(
     """
     out = output_key or f"X_umap_{obsm_key}"
 
+    # UMAP's default spectral initialisation solves for n_components + 1
+    # eigenvectors of the neighbour graph, which needs strictly more
+    # observations than that. Below the threshold scipy raises "Cannot use
+    # scipy.linalg.eigh for sparse A with k >= N" from deep inside the solver.
+    # A random init is the standard fallback and is what UMAP itself suggests
+    # for tiny inputs; the layout is less stable, which is inherent at this size.
+    init_pos = "spectral" if adata.n_obs > n_components + 1 else "random"
+    if init_pos == "random":
+        logging.warning(
+            "Only %d observations for a %d-D UMAP; using a random initialisation "
+            "instead of spectral, and the layout should be read as indicative.",
+            adata.n_obs, n_components,
+        )
+    n_neighbors = max(2, min(n_neighbors, adata.n_obs - 1))
+
     if backend == "gpu":
         rsc = _require_rapids()
         rsc.pp.neighbors(adata, use_rep=obsm_key, n_neighbors=n_neighbors)
-        rsc.tl.umap(adata, n_components=n_components)
+        rsc.tl.umap(adata, n_components=n_components, init_pos=init_pos)
     else:
         sc = _require_scanpy()
         sc.pp.neighbors(adata, use_rep=obsm_key, n_neighbors=n_neighbors)
-        sc.tl.umap(adata, n_components=n_components)
+        sc.tl.umap(adata, n_components=n_components, init_pos=init_pos)
 
     adata.obsm[out] = adata.obsm["X_umap"].copy()
     logging.info(

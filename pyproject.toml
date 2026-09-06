@@ -27,9 +27,19 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
 ]
+# ---------------------------------------------------------------------------
+# Core (default) dependencies. Intentionally LIGHTWEIGHT: everything here
+# ships reliable, pre-built wheels on all platforms, so `pip install embpy`
+# always succeeds and the core test suite runs without a compiler or GPU.
+#
+# Heavy / build-fragile dependencies (torch, transformers, torch-geometric,
+# biopython, pysam, pyensembl, sentencepiece) live in the optional extras
+# below and are imported lazily by the code that needs them. A bare
+# `pip install embpy` gives you the resolvers, IO, annotation, plotting and
+# analysis layers; `pip install embpy[models]` adds the embedding backends.
+# ---------------------------------------------------------------------------
 dependencies = [
   "anndata",
-  "biopython",
   "broad-babel>=0.1",
   "cirpy",
   "huggingface-hub>=0.35,<1.0.0",
@@ -38,20 +48,16 @@ dependencies = [
   # Intentionally permissive: scipy 1.13 (needed by helical) pre-dates numpy 2,
   # while modern torch / transformers work fine with numpy 2. Both are ok.
   "numpy>=1.26,<3",
-  "pysam>=0.22",
   "pandas>=2.2",
   "pyarrow>=14.0.2",
-  "pyensembl>=2.3.13",
+  # rdkit + scikit-learn ship reliable wheels and are used broadly (molecule
+  # fingerprints, classical PCA baselines), so they stay in core.
   "rdkit",
   "requests",
   "scikit-learn>=1.3",
   "scipy>=1.11",
   "seaborn",
-  "sentencepiece>=0.1.99",
-  "protobuf>=3.20",
   "session-info",
-  "torch-geometric>=2.5",
-  "transformers>=4.45.0,<5.0.0",
 ]
 
 scripts.embpy-static-embeddings = "embpy.scripts.package_static_embeddings:main"
@@ -77,18 +83,153 @@ optional-dependencies.torch-cu128 = [
 optional-dependencies.torch-cu130 = [
   "torch>=2.5.1",
 ]
+# ---------------------------------------------------------------------------
+# Core feature extras. These pull the heavy/build-fragile deps that used to
+# live in [project.dependencies]. They are imported lazily by the code that
+# needs them, so a bare `pip install embpy` stays lightweight.
+# ---------------------------------------------------------------------------
+# Embedding backends: the deep-learning stack behind BioEmbedder and the
+# HuggingFace / PyG model wrappers. `pip install embpy[models]` is the usual
+# "I actually want to compute embeddings" install.
+# ---------------------------------------------------------------------------
+# The two supported installs. Everything below them is fine-grained plumbing that
+# these two compose; users should only ever need `cpu` or `gpu`.
+#
+#   pip install "embpy[cpu]"   -> CPU-only torch + every backend that runs on CPU
+#   pip install "embpy[gpu]"   -> CUDA torch + the same backends, GPU-accelerated
+#
+# A few backends are deliberately NOT in either, because pip cannot install them
+# on an arbitrary machine: scooby (git URL), caduceus/mamba-ssm and evo2 (need a
+# CUDA toolchain at build time), boltz, minimol, helical, arc-state, arc-stack and
+# alphagenome (heavy or pinned stacks). pysam/pyensembl ARE included -- they ship
+# wheels on Linux and macOS, so no compiler is needed. Install those individually when needed --
+# see the README.
+#
+# `esm` (ESM-C / ESM3) is excluded from BOTH for a different reason: it is easy to
+# install but declares `transformers<4.48.2`, so putting it in a bundle silently
+# downgrades transformers for every other HuggingFace backend in the same
+# environment. It used to be in [gpu] and not [cpu], which made the two bundles
+# disagree about which models exist. See the `esm3` extra for the install recipe
+# that keeps both.
+optional-dependencies.cpu = [
+  "pysam>=0.22; platform_system != 'Windows'",
+  "pyensembl>=2.3.13; platform_system != 'Windows'",
+  "embpy[torch-cpu]",
+  "transformers>=4.45.0,<5.0.0",
+  "sentencepiece>=0.1.99",
+  "protobuf>=3.20",
+  "torch-geometric>=2.5",
+  "borzoi-pytorch>=0.4.3",
+  "enformer-pytorch>=0.8.10",
+  "biopython",
+  "scanpy>=1.10",
+  "h5py",
+  "pillow>=10",
+  "xgboost>=2.0",
+  # Annotation and metrics layers, not just embedding backends: pertpy powers
+  # tl.annotate_cell_lines / annotate_drugs / lookup_*, and scib powers
+  # tl.compute_scib_metrics. Without them those functions raise DependencyError
+  # on an otherwise complete install.
+  "pertpy",
+  "scib>=1.1.5",
+  # tl.leiden / tl.cluster_embeddings(method="leiden") are public API, and
+  # scanpy's leiden backend needs these two at runtime. Without them the
+  # functions raise ModuleNotFoundError on an otherwise complete install.
+  "leidenalg>=0.10",
+  "igraph>=0.11",
+]
+optional-dependencies.gpu = [
+  "pysam>=0.22; platform_system != 'Windows'",
+  "pyensembl>=2.3.13; platform_system != 'Windows'",
+  "embpy[torch]",
+  "transformers>=4.45.0,<5.0.0",
+  "sentencepiece>=0.1.99",
+  "protobuf>=3.20",
+  "torch-geometric>=2.5",
+  "borzoi-pytorch>=0.4.3",
+  "enformer-pytorch>=0.8.10",
+  "biopython",
+  "scanpy>=1.10",
+  "h5py",
+  "pillow>=10",
+  "xgboost>=2.0",
+  # Annotation and metrics layers, not just embedding backends: pertpy powers
+  # tl.annotate_cell_lines / annotate_drugs / lookup_*, and scib powers
+  # tl.compute_scib_metrics. Without them those functions raise DependencyError
+  # on an otherwise complete install.
+  "pertpy",
+  "scib>=1.1.5",
+  # tl.leiden / tl.cluster_embeddings(method="leiden") are public API, and
+  # scanpy's leiden backend needs these two at runtime. Without them the
+  # functions raise ModuleNotFoundError on an otherwise complete install.
+  "leidenalg>=0.10",
+  "igraph>=0.11",
+]
+optional-dependencies.models = [
+  "embpy[torch]",
+  "transformers>=4.45.0,<5.0.0",
+  "sentencepiece>=0.1.99",
+  "protobuf>=3.20",
+  "torch-geometric>=2.5",
+]
+# Sequence / FASTA parsing (biopython). Needed by the gene and protein
+# resolvers when reading transcript / protein FASTA records.
+optional-dependencies.bio = [
+  "biopython",
+]
+# Local genome access: pull transcript sequences straight from indexed FASTA
+# (pysam) and Ensembl annotations (pyensembl). Optional because pysam needs a
+# C toolchain on some platforms.
+optional-dependencies.genome = [
+  "pysam>=0.22",
+  "pyensembl>=2.3.13",
+]
 # ESM-3 / ESM-C wrappers. Kept separate because `esm>=3.2.0` hard-pins
 # `transformers<4.48.2`, which conflicts with helical (needs >=4.49.0) and a
 # few other packages. ESM-2 / ProtT5 do NOT need this extra -- they go through
 # HuggingFace `transformers` directly.
+#
+# That pin is conservative rather than real. Verified 2026-08-18: esm 3.2.3 and
+# transformers 4.57.6 coexist fine -- `esmc_300m` embedded a 64-residue sequence
+# to a 960-dim vector, and esm2/prot_t5 kept working alongside it. So to get
+# ESM-C without dragging transformers back two years:
+#
+#   pip install "embpy[cpu]"      # or [gpu]
+#   pip install esm --no-deps     # skips the over-tight transformers pin
+#
+# `--no-deps` is safe here because every other esm runtime dep is already in the
+# bundle. Plain `pip install embpy[esm3]` still works, it just pins transformers.
 optional-dependencies.esm3 = [
   "esm>=3.2.0",
 ]
-# DNA/RNA sequence model wrappers. borzoi-pytorch hard-pins
-# `transformers<4.51.0`, so it cannot coexist with helical (needs >=4.53).
+# DNA/RNA sequence model wrappers.
+#
+# borzoi-pytorch's transformers requirement FLIPPED DIRECTION between minor
+# releases, so the two are silently co-determined:
+#   0.4.4  requires transformers>=4.34.1,<4.51.0
+#   0.5.1  requires transformers>=4.57.6,<5.0.0
+# Those ranges do not overlap. Because this extra pins only `>=0.4.3`, the
+# resolver picks whichever pair fits the rest of the environment -- install
+# `[esm3]` (which caps transformers at 4.48.1) and you silently get borzoi 0.4.x;
+# leave it out and you get 0.5.x on transformers 4.57. Both work, but they are
+# not the same model code, so pin borzoi-pytorch explicitly if you need
+# reproducibility. 0.4.x additionally cannot coexist with helical (needs >=4.53).
 # Kept optional so users without DNA sequence use-cases aren't forced onto an
 # older transformers. The other DNA wrappers (Evo, Caduceus) are in their own
 # extras and don't need this.
+# Flashzoi -- the four `flashzoi_*` keys are Borzoi checkpoints whose config sets
+# `flashed = true`, so borzoi-pytorch instantiates its FlashAttention path and
+# imports `flash_attn` inside `FlashAttention.__init__`. There is no eager
+# fallback: the plain `borzoi_*` checkpoints omit `flashed` and never touch it,
+# which is why 8 of the 12 Borzoi keys work under [cpu] and these 4 do not.
+#
+# flash-attn is NVIDIA-only, ships no wheels, and builds against an already
+# installed torch, so it cannot go in [cpu]/[gpu]. Install torch first, then:
+#   uv pip install "embpy[gpu]"
+#   uv pip install "embpy[flashzoi]" --no-build-isolation
+optional-dependencies.flashzoi = [
+  "borzoi-pytorch[flash]>=0.4.3",
+]
 optional-dependencies.seqmodels = [
   "borzoi-pytorch>=0.4.3",
   "enformer-pytorch>=0.8.10",
@@ -130,8 +271,17 @@ optional-dependencies.evo2 = [
 optional-dependencies.caduceus = [
   "mamba-ssm>=2.0",
 ]
+# Nucleotide Transformer v3 -- needs no package beyond the standard model stack:
+# NucleotideTransformerV3Wrapper loads through stock `AutoModelForMaskedLM` with
+# `trust_remote_code=True`. This extra previously pinned `transformers>=5.0.0`,
+# which contradicts the `<5.0.0` cap in the base requirements and made
+# `embpy[ntv3]` *unsatisfiable* -- `uv pip install "embpy[ntv3]"` failed outright,
+# with or without [cpu]/[gpu], so none of the five ntv3_* keys was installable.
+# The real barrier is access, not packaging: the InstaDeepAI/NTv3_* repositories
+# are gated, so loading one also needs an accepted licence and an authenticated
+# `huggingface-cli login`. See the model table in README.md.
 optional-dependencies.ntv3 = [
-  "transformers>=5.0.0",
+  "transformers>=4.45.0,<5.0.0",
 ]
 optional-dependencies.boltz = [
   "boltz>=2.0",
@@ -161,6 +311,16 @@ optional-dependencies.pertpy = [
 optional-dependencies.scanpy = [
   "scanpy>=1.10",
 ]
+# scIB metrics for validating single-cell foundation-model embeddings
+# (embpy.tl.compute_scib_metrics). Pulls scanpy + the scib metric suite.
+optional-dependencies.scib = [
+  "scib>=1.1.5",
+  "scanpy>=1.10",
+]
+# Optional regressor backend for tl.benchmark_embeddings(models=[..., "xgboost"]).
+optional-dependencies.benchmark = [
+  "xgboost>=2.0",
+]
 optional-dependencies.eval = [
   "cell-eval>=0.7.2",
 ]
@@ -183,7 +343,7 @@ optional-dependencies.morphology = [
 #     kept opt-in so "all" doesn't imply an external API account
 # Install those explicitly in a separate env if you need them.
 optional-dependencies.all = [
-  "embpy[torch,ppi,lamindb,pertpy,scanpy,morphology,seqmodels]",
+  "embpy[models,bio,genome,ppi,lamindb,pertpy,scanpy,scib,benchmark,morphology,seqmodels]",
 ]
 # Convenience bundles that combine "all" with a specific torch build. These
 # intentionally omit caduceus/evo2 so a plain `pip install embpy[all-cu124]`
@@ -377,6 +537,12 @@ testpaths = [ "tests" ]
 xfail_strict = true
 addopts = [
   "--import-mode=importlib",
+]
+# Markers for tests that need heavy optional dependencies. The root conftest
+# auto-skips whole files (via collect_ignore_glob) when the dep is absent, so
+# the core suite runs on a lightweight `pip install embpy[test]` install.
+markers = [
+  "requires_torch: test needs the optional 'torch' dependency (pip install embpy[models])",
 ]
 
 [tool.coverage.run]

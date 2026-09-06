@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 744" role="img" aria-label="embpy architecture: BioEmbedder.embed routes any biological entity through resolve and preprocess to one of ~150 models across seven modality families, writing embeddings into typed AnnData slots, with annotation feeding in and tl/pl analysis reading out." style="max-width:100%;height:auto">
+<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#475569"/></marker></defs>
+<rect x="0" y="0" width="1320" height="744" rx="0" ry="0" fill="#fbfcfd" stroke="#fbfcfd" stroke-width="0" opacity="1.0"/>
+<text x="40" y="50" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="30" fill="#1e293b" text-anchor="start" font-weight="700">embpy</text>
+<text x="148" y="50" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="16" fill="#475569" text-anchor="start" font-weight="400">one embedding API across every biological modality</text>
+<text x="40" y="74" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.5" fill="#64748b" text-anchor="start" font-weight="400">BioEmbedder.embed(entity)  →  resolve  →  model  →  typed AnnData</text>
+<rect x="30" y="232" width="218" height="300" rx="10" ry="10" fill="#f1f5f7" stroke="#cbd5e1" stroke-width="1.6" opacity="1.0"/>
+<rect x="30" y="232" width="218" height="34" rx="10" ry="10" fill="#5a6b78" stroke="#5a6b78" stroke-width="0" opacity="1.0"/>
+<rect x="30" y="254" width="218" height="12" rx="0" ry="0" fill="#f1f5f7" stroke="#f1f5f7" stroke-width="0" opacity="1.0"/>
+<text x="44" y="254" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14" fill="#ffffff" text-anchor="start" font-weight="650">Biological entities</text>
+<rect x="42" y="275" width="194" height="24" rx="10" ry="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" opacity="1.0"/>
+<text x="52" y="291" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#475569" text-anchor="start" font-weight="400">genes</text>
+<rect x="42" y="306" width="194" height="24" rx="10" ry="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" opacity="1.0"/>
+<text x="52" y="322" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#475569" text-anchor="start" font-weight="400">proteins</text>
+<rect x="42" y="337" width="194" height="24" rx="10" ry="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" opacity="1.0"/>
+<text x="52" y="353" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#475569" text-anchor="start" font-weight="400">molecules</text>
+<rect x="42" y="368" width="194" height="24" rx="10" ry="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" opacity="1.0"/>
+<text x="52" y="384" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#475569" text-anchor="start" font-weight="400">DNA</text>
+<rect x="42" y="399" width="194" height="24" rx="10" ry="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" opacity="1.0"/>
+<text x="52" y="415" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#475569" text-anchor="start" font-weight="400">single cells</text>
+<rect x="42" y="430" width="194" height="24" rx="10" ry="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" opacity="1.0"/>
+<text x="52" y="446" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#475569" text-anchor="start" font-weight="400">morphology</text>
+<rect x="42" y="461" width="194" height="24" rx="10" ry="10" fill="#ffffff" stroke="#cbd5e1" stroke-width="1" opacity="1.0"/>
+<text x="52" y="477" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">text · perturbations</text>
+<text x="139.0" y="520" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#64748b" text-anchor="middle" font-weight="400">passed as AnnData or lists</text>
+<rect x="288" y="232" width="210" height="300" rx="10" ry="10" fill="#ecfeff" stroke="#a5d8e6" stroke-width="1.6" opacity="1.0"/>
+<rect x="288" y="232" width="210" height="34" rx="10" ry="10" fill="#0e7490" stroke="#0e7490" stroke-width="0" opacity="1.0"/>
+<rect x="288" y="254" width="210" height="12" rx="0" ry="0" fill="#ecfeff" stroke="#ecfeff" stroke-width="0" opacity="1.0"/>
+<text x="302" y="254" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14" fill="#ffffff" text-anchor="start" font-weight="650">Resolve + preprocess</text>
+<rect x="300" y="275" width="186" height="24" rx="10" ry="10" fill="#ffffff" stroke="#a5d8e6" stroke-width="1" opacity="1.0"/>
+<text x="310" y="291" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">symbol → sequence</text>
+<rect x="300" y="306" width="186" height="24" rx="10" ry="10" fill="#ffffff" stroke="#a5d8e6" stroke-width="1" opacity="1.0"/>
+<text x="310" y="322" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">name → SMILES</text>
+<rect x="300" y="337" width="186" height="24" rx="10" ry="10" fill="#ffffff" stroke="#a5d8e6" stroke-width="1" opacity="1.0"/>
+<text x="310" y="353" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">counts · log-norm · HVG</text>
+<rect x="300" y="368" width="186" height="24" rx="10" ry="10" fill="#ffffff" stroke="#a5d8e6" stroke-width="1" opacity="1.0"/>
+<text x="310" y="384" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#475569" text-anchor="start" font-weight="400">rank / bin tokenize</text>
+<rect x="300" y="399" width="186" height="24" rx="10" ry="10" fill="#ffffff" stroke="#a5d8e6" stroke-width="1" opacity="1.0"/>
+<text x="310" y="415" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#475569" text-anchor="start" font-weight="400">morphology canvas</text>
+<text x="393.0" y="520" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#64748b" text-anchor="middle" font-weight="400">9 resolvers · embpy.pp</text>
+<rect x="522" y="294.0" width="210" height="176" rx="10" ry="10" fill="#0f7d8c" stroke="#0b5c68" stroke-width="2" opacity="1.0"/>
+<text x="627.0" y="334.0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="18" fill="#ffffff" text-anchor="middle" font-weight="700">BioEmbedder</text>
+<text x="627.0" y="356.0" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12.5" fill="#d7f0f3" text-anchor="middle" font-weight="400">.embed(entity, model=…)</text>
+<text x="627.0" y="386.0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#eafafb" text-anchor="middle" font-weight="400">one entry point</text>
+<text x="627.0" y="408.0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#eafafb" text-anchor="middle" font-weight="400">device auto · batching</text>
+<text x="627.0" y="430.0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#eafafb" text-anchor="middle" font-weight="400">caching · provenance</text>
+<rect x="780" y="232" width="258" height="300" rx="10" ry="10" fill="#f5f3ff" stroke="#c4b5fd" stroke-width="1.6" opacity="1.0"/>
+<rect x="780" y="232" width="258" height="34" rx="10" ry="10" fill="#6d28d9" stroke="#6d28d9" stroke-width="0" opacity="1.0"/>
+<rect x="780" y="254" width="258" height="12" rx="0" ry="0" fill="#f5f3ff" stroke="#f5f3ff" stroke-width="0" opacity="1.0"/>
+<text x="794" y="254" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14" fill="#ffffff" text-anchor="start" font-weight="650">Model registry · ~150</text>
+<rect x="792" y="275" width="234" height="24" rx="10" ry="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1" opacity="1.0"/>
+<text x="802" y="291" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">Protein — ESM2 · ESMC · ProtT5</text>
+<rect x="792" y="306" width="234" height="24" rx="10" ry="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1" opacity="1.0"/>
+<text x="802" y="322" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">DNA — Enformer · Borzoi · NT · Evo</text>
+<rect x="792" y="337" width="234" height="24" rx="10" ry="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1" opacity="1.0"/>
+<text x="802" y="353" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">Molecule — ChemBERTa · RDKit</text>
+<rect x="792" y="368" width="234" height="24" rx="10" ry="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1" opacity="1.0"/>
+<text x="802" y="384" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">Single-cell — scGPT · Geneformer · scVI</text>
+<rect x="792" y="399" width="234" height="24" rx="10" ry="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1" opacity="1.0"/>
+<text x="802" y="415" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">Morphology — SubCell · Structure</text>
+<text x="909.0" y="520" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#64748b" text-anchor="middle" font-weight="400">one key selects the backend</text>
+<rect x="1058" y="232" width="232" height="300" rx="10" ry="10" fill="#fffbeb" stroke="#fcd34d" stroke-width="1.6" opacity="1.0"/>
+<rect x="1058" y="232" width="232" height="34" rx="10" ry="10" fill="#b45309" stroke="#b45309" stroke-width="0" opacity="1.0"/>
+<rect x="1058" y="254" width="232" height="12" rx="0" ry="0" fill="#fffbeb" stroke="#fffbeb" stroke-width="0" opacity="1.0"/>
+<text x="1072" y="254" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14" fill="#ffffff" text-anchor="start" font-weight="650">AnnData output contract</text>
+<rect x="1070" y="275" width="208" height="24" rx="10" ry="10" fill="#ffffff" stroke="#fcd34d" stroke-width="1" opacity="1.0"/>
+<text x="1080" y="291" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">.obsm — row-aligned</text>
+<rect x="1070" y="306" width="208" height="24" rx="10" ry="10" fill="#ffffff" stroke="#fcd34d" stroke-width="1" opacity="1.0"/>
+<text x="1080" y="322" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">.varm — feature-aligned</text>
+<rect x="1070" y="337" width="208" height="24" rx="10" ry="10" fill="#ffffff" stroke="#fcd34d" stroke-width="1" opacity="1.0"/>
+<text x="1080" y="353" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">.uns — payload + provenance</text>
+<text x="1174.0" y="520" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#64748b" text-anchor="middle" font-weight="400">.X stays raw counts</text>
+<line x1="248" y1="382.0" x2="288" y2="382.0" stroke="#475569" stroke-width="2" marker-end="url(#ah)"/>
+<text x="268.0" y="374.0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#475569" text-anchor="middle" font-weight="600">resolve</text>
+<line x1="498" y1="382.0" x2="522" y2="382.0" stroke="#475569" stroke-width="2" marker-end="url(#ah)"/>
+<text x="510.0" y="374.0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#475569" text-anchor="middle" font-weight="600">dispatch</text>
+<line x1="732" y1="382.0" x2="780" y2="382.0" stroke="#475569" stroke-width="2" marker-end="url(#ah)"/>
+<text x="756.0" y="374.0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#475569" text-anchor="middle" font-weight="600">select</text>
+<line x1="1038" y1="382.0" x2="1058" y2="382.0" stroke="#475569" stroke-width="2" marker-end="url(#ah)"/>
+<text x="1048.0" y="374.0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#475569" text-anchor="middle" font-weight="600">write</text>
+<rect x="1058" y="78" width="232" height="128" rx="10" ry="10" fill="#ecfdf5" stroke="#6ee7b7" stroke-width="1.6" opacity="1.0"/>
+<rect x="1058" y="78" width="232" height="34" rx="10" ry="10" fill="#047857" stroke="#047857" stroke-width="0" opacity="1.0"/>
+<rect x="1058" y="100" width="232" height="12" rx="0" ry="0" fill="#ecfdf5" stroke="#ecfdf5" stroke-width="0" opacity="1.0"/>
+<text x="1072" y="100" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14" fill="#ffffff" text-anchor="start" font-weight="650">Annotate</text>
+<rect x="1070" y="121" width="208" height="24" rx="10" ry="10" fill="#ffffff" stroke="#6ee7b7" stroke-width="1" opacity="1.0"/>
+<text x="1080" y="137" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">pathways · GO · domains</text>
+<rect x="1070" y="152" width="208" height="24" rx="10" ry="10" fill="#ffffff" stroke="#6ee7b7" stroke-width="1" opacity="1.0"/>
+<text x="1080" y="168" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">diseases · interactions</text>
+<rect x="1070" y="183" width="208" height="24" rx="10" ry="10" fill="#ffffff" stroke="#6ee7b7" stroke-width="1" opacity="1.0"/>
+<text x="1080" y="199" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#475569" text-anchor="start" font-weight="400">cell-line metadata</text>
+<line x1="1174.0" y1="206" x2="1174.0" y2="232" stroke="#475569" stroke-width="2" marker-end="url(#ah)"/>
+<text x="1174.0" y="213.0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#475569" text-anchor="middle" font-weight="600">enrich → .obs/.uns</text>
+<rect x="1058" y="572" width="232" height="128" rx="10" ry="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.6" opacity="1.0"/>
+<rect x="1058" y="572" width="232" height="34" rx="10" ry="10" fill="#b91c1c" stroke="#b91c1c" stroke-width="0" opacity="1.0"/>
+<rect x="1058" y="594" width="232" height="12" rx="0" ry="0" fill="#fef2f2" stroke="#fef2f2" stroke-width="0" opacity="1.0"/>
+<text x="1072" y="594" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="14" fill="#ffffff" text-anchor="start" font-weight="650">Analyze — tl · pl</text>
+<rect x="1070" y="615" width="208" height="24" rx="10" ry="10" fill="#ffffff" stroke="#fca5a5" stroke-width="1" opacity="1.0"/>
+<text x="1080" y="631" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">metrics · similarity · scIB</text>
+<rect x="1070" y="646" width="208" height="24" rx="10" ry="10" fill="#ffffff" stroke="#fca5a5" stroke-width="1" opacity="1.0"/>
+<text x="1080" y="662" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">benchmark · clustering</text>
+<rect x="1070" y="677" width="208" height="24" rx="10" ry="10" fill="#ffffff" stroke="#fca5a5" stroke-width="1" opacity="1.0"/>
+<text x="1080" y="693" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#475569" text-anchor="start" font-weight="400">embedding-space · KNN plots</text>
+<line x1="1174.0" y1="532" x2="1174.0" y2="572" stroke="#475569" stroke-width="2" marker-end="url(#ah)"/>
+<text x="1174.0" y="544.0" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="11" fill="#475569" text-anchor="middle" font-weight="600">analyze</text>
+<text x="40" y="722" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif" font-size="12" fill="#64748b" text-anchor="start" font-weight="400">A single call resolves an identifier, routes it to the right model among seven families, and writes embeddings into the correct AnnData slot with provenance.</text>
+</svg>

@@ -22,8 +22,12 @@ except ImportError:
 
 
 PROTEIN_MODELS: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
-    # ESM-1b (Meta AI, 650M params, HuggingFace)
-    "esm1b": (ESM2Wrapper, "facebook/esm-1b"),
+    # ESM-1b (Meta AI, 650M params, HuggingFace). The short "facebook/esm-1b"
+    # repo declares tokenizer_class "ESMTokenizer", a name transformers dropped
+    # when it renamed the class to EsmTokenizer, so AutoTokenizer raises
+    # "Tokenizer class ESMTokenizer does not exist". The versioned repo carries
+    # the current name and loads.
+    "esm1b": (ESM2Wrapper, "facebook/esm1b_t33_650M_UR50S"),
     # ESM-1v (Meta AI, 650M params, 5 random seeds, HuggingFace)
     "esm1v_1": (ESM2Wrapper, "facebook/esm1v_t33_650M_UR90S_1"),
     "esm1v_2": (ESM2Wrapper, "facebook/esm1v_t33_650M_UR90S_2"),

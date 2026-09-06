@@ -1,4 +1,6 @@
 # embpy/models/protein_models.py
+from __future__ import annotations
+
 import logging
 import re
 from collections.abc import Sequence
@@ -416,6 +418,12 @@ class ESMCWrapper(BaseModelWrapper):
 
     model_type = "protein"
     available_pooling_strategies = ["mean", "max", "cls", "none"]
+    # The ESM SDK computes attention with F.scaled_dot_product_attention
+    # unconditionally (esm/layers/attention.py:70,76 -- both the masked and
+    # unmasked branch), so the per-head matrix never exists as a tensor and no
+    # hook can recover it. Declared False so extract_attention fails fast with an
+    # explanation instead of running a forward pass that cannot produce weights.
+    has_attention = False
 
     def __init__(self, model_path_or_name: str = "esmc_300m", **kwargs: Any):
         """
@@ -896,6 +904,10 @@ class ESM3Wrapper(BaseModelWrapper):
 
     model_type = "protein"
     available_pooling_strategies = ["mean", "max", "cls", "none"]
+    # Same fused-kernel limit as ESM-C: the shared esm SDK attention layer calls
+    # F.scaled_dot_product_attention (esm/layers/attention.py:70,76). The Forge
+    # API checkpoints are remote in any case, so no local tensor exists to hook.
+    has_attention = False
 
     def __init__(
         self,

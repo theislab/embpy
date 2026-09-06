@@ -611,6 +611,8 @@ def cell_eval(
     pert_col: str = "perturbation",
     profile: Literal["full", "vcc", "minimal", "de", "anndata"] = "full",
     num_threads: int = 1,
+    metric_configs: dict[str, dict[str, Any]] | None = None,
+    skip_metrics: list[str] | None = None,
     **kwargs: Any,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run the ArcInstitute *cell-eval* evaluation suite.
@@ -636,8 +638,23 @@ def cell_eval(
         ``"minimal"``, ``"de"``, ``"anndata"``.
     num_threads
         Number of threads for parallel differential expression.
+    metric_configs
+        Per-metric keyword arguments, passed to
+        :meth:`cell_eval.MetricsEvaluator.compute` rather than to the
+        constructor. This is the only route to ``embed_key``, which is what
+        makes the ten ``ANNDATA_PAIR`` metrics score an ``.obsm`` embedding
+        instead of ``.X``::
+
+            metric_configs={"discrimination_score_cosine": {"embed_key": "X_pca"}}
+
+        Note that ``discrimination_score_l1`` ignores ``embed_key`` upstream,
+        so a profile including it mixes expression-space and embedding-space
+        numbers.
+    skip_metrics
+        Metric names to leave out, also forwarded to ``compute``.
     **kwargs
-        Forwarded to :class:`cell_eval.MetricsEvaluator`.
+        Forwarded to :class:`cell_eval.MetricsEvaluator` -- the constructor,
+        not ``compute``. ``skip_de=True`` belongs here.
 
     Returns
     -------
@@ -658,7 +675,17 @@ def cell_eval(
         num_threads=num_threads,
         **kwargs,
     )
-    results_pl, agg_pl = evaluator.compute(profile=profile, write_csv=False)
+    # metric_configs and skip_metrics are `compute` arguments, not constructor
+    # ones. Folding them into **kwargs raised
+    # `MetricsEvaluator.__init__() got an unexpected keyword argument
+    # 'metric_configs'`, which left `embed_key` -- and therefore the whole
+    # embedding-scoring path -- unreachable through this wrapper.
+    results_pl, agg_pl = evaluator.compute(
+        profile=profile,
+        metric_configs=metric_configs,
+        skip_metrics=skip_metrics,
+        write_csv=False,
+    )
 
     results = results_pl.to_pandas()
     agg_results = agg_pl.to_pandas()

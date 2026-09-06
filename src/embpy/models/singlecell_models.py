@@ -452,6 +452,14 @@ class SingleCellWrapper(ABC):
     supports_decode: bool = False
     supports_generation: bool = False
 
+    #: Scale of the matrix returned by :meth:`decode_cells`. Decoders disagree --
+    #: STATE returns log-probabilities, the scVI family returns NB/ZINB rates, PCA
+    #: returns a linear inverse transform -- so a caller combining decoded matrices
+    #: across wrappers needs to know which it holds. ``None`` means the wrapper does
+    #: not decode. Machine-readable counterpart to the warning on
+    #: :meth:`decode_cells`.
+    decode_scale: Literal["log_prob", "rate", "linear"] | None = None
+
     def __init__(
         self,
         model_name: str | None = None,
@@ -484,6 +492,113 @@ class SingleCellWrapper(ABC):
         np.ndarray of shape ``(n_cells, embedding_dim)``
         """
 
+    # =================================================================
+    # Model introspection (layers / attention)
+    # =================================================================
+
+    #: Whether the wrapped architecture exposes attention weights. ``False`` for
+    #: models whose attention runs in a fused kernel (scGPT builds FlashMHA
+    #: unconditionally; STATE uses F.scaled_dot_product_attention), where the
+    #: matrix is never materialised and no hook can observe it. See
+    #: ``docs/attention_extraction.md`` for the per-model evidence.
+    has_attention: bool = True
+
+    def torch_module(self) -> Any:
+        """Return the underlying :class:`torch.nn.Module`, or ``None``.
+
+        Single-cell wrappers hold heterogeneous objects in ``self._model``: helical
+        wrappers keep the network one level down (``._model.model``), while STATE
+        stores the module directly. This resolves the common shapes so introspection
+        does not need to know which backend it is looking at. Override when a wrapper
+        nests it somewhere else.
+        """
+        import torch
+
+        candidate = getattr(self, "_model", None)
+        if candidate is None:
+            return None
+        if isinstance(candidate, torch.nn.Module):
+            return candidate
+        for attr in ("model", "module", "net", "encoder"):
+            inner = getattr(candidate, attr, None)
+            if isinstance(inner, torch.nn.Module):
+                return inner
+        return None
+
+    def _introspection_wrapper(self) -> Any:
+        """Adapt this wrapper so ``BaseModelWrapper``'s extractors can drive it.
+
+        The two hierarchies are disjoint -- ``SingleCellWrapper`` does not inherit
+        ``BaseModelWrapper`` -- so rather than duplicating the extraction logic, the
+        resolved module is handed to a thin adapter that already implements it.
+        """
+        import torch
+
+        from .base import BaseModelWrapper
+
+        module = self.torch_module()
+        if module is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not expose a torch module for "
+                "introspection (torch_module() returned None). The backend may not be "
+                "loaded yet -- call load() first -- or it may not be a PyTorch model."
+            )
+
+        class _Adapter(BaseModelWrapper):
+            has_attention = type(self).has_attention
+
+            def load(self, device: Any) -> None:  # pragma: no cover - already loaded
+                return None
+
+            def embed(self, input: Any, pooling_strategy: str = "mean", **kwargs: Any) -> Any:
+                raise NotImplementedError("Adapter is for introspection only.")
+
+            def embed_batch(self, inputs: Any, pooling_strategy: str = "mean", **kwargs: Any) -> Any:
+                raise NotImplementedError("Adapter is for introspection only.")
+
+        adapter = _Adapter(getattr(self, "_model_name", None))
+        adapter.model = module
+        dev = getattr(self, "device", "cpu")
+        adapter.device = torch.device(dev) if isinstance(dev, str) else dev
+        return adapter
+
+    def extract_attention(
+        self,
+        input_ids: Any,
+        attention_mask: Any = None,
+        layers: list[int] | None = None,
+    ) -> dict[int, Any]:
+        """Extract per-layer attention weights, where the architecture allows it.
+
+        Mirrors :meth:`embpy.models.base.BaseModelWrapper.extract_attention`: returns
+        ``{layer_index: (batch, heads, seq, seq)}`` with one entry per transformer
+        block. Reduce the result with :mod:`embpy.tl.attention` to get something that
+        fits the 2-D output contract.
+
+        Raises
+        ------
+        NotImplementedError
+            If the architecture is attention-free or fuses attention into a kernel
+            (scGPT, STATE), or if no torch module could be resolved.
+        """
+        return self._introspection_wrapper().extract_attention(input_ids, attention_mask=attention_mask, layers=layers)
+
+    def extract_hidden_states(
+        self,
+        input_ids: Any,
+        attention_mask: Any = None,
+        layers: list[int] | None = None,
+    ) -> dict[int, Any]:
+        """Extract per-layer hidden states.
+
+        Mirrors :meth:`embpy.models.base.BaseModelWrapper.extract_hidden_states`. Note
+        the index convention differs from :meth:`extract_attention`: index 0 is the
+        embedding layer and index ``b+1`` is transformer block ``b``.
+        """
+        return self._introspection_wrapper().extract_hidden_states(
+            input_ids, attention_mask=attention_mask, layers=layers
+        )
+
     def decode_cells(
         self,
         latent: np.ndarray,
@@ -498,6 +613,26 @@ class SingleCellWrapper(ABC):
         (PCA, scVI family, STATE). For foundation encoders without a
         reusable decoder head (scGPT, Geneformer, UCE, ...), calling
         this raises :class:`NotImplementedError`.
+
+        .. warning::
+
+           **The output scale differs by wrapper, and the values are not
+           comparable across them.** Check :attr:`decode_scale` before combining,
+           averaging or plotting decoded matrices from different models:
+
+           ===================== ==================== =============================
+           Wrapper               ``decode_scale``     Returned values
+           ===================== ==================== =============================
+           STATE                 ``"log_prob"``       per-gene log-probabilities
+           scVI family           ``"rate"``           NB/ZINB mean ``px_rate``
+                                                      (``library_size * px_scale``)
+           PCA                   ``"linear"``         inverse-transformed HVG matrix
+           ===================== ==================== =============================
+
+           Averaging a STATE decode with an scVI decode mixes log-probabilities
+           with expression rates and is meaningless. Convert deliberately --
+           e.g. ``np.exp`` on a ``"log_prob"`` matrix -- rather than assuming a
+           shared scale.
 
         Parameters
         ----------
@@ -583,6 +718,10 @@ class ScGPTWrapper(SingleCellWrapper):
         wrapper.load("cuda")
         embs = wrapper.embed_cells(adata)  # (n_cells, 512)
     """
+
+    #: scGPT builds FlashMHA unconditionally (helical scgpt model.py:625), so
+    #: the attention matrix is never materialised and no hook can observe it.
+    has_attention: bool = False
 
     def load(self, device: str = "cpu") -> None:  # noqa: D102
         _require_helical()
@@ -836,7 +975,13 @@ class StateEmbeddingWrapper(SingleCellWrapper):
         logprobs = wrapper.decode_cells(z, gene_names=adata.var_names)
     """
 
+    #: STATE uses F.scaled_dot_product_attention (state/emb/nn/flash_transformer.py:67),
+    #: a fused kernel that never materialises the attention matrix.
+    has_attention: bool = False
+
     supports_decode: bool = True
+    #: STATE's decoder emits per-gene log-probabilities.
+    decode_scale: Literal["log_prob", "rate", "linear"] | None = "log_prob"
 
     def __init__(
         self,
@@ -882,6 +1027,24 @@ class StateEmbeddingWrapper(SingleCellWrapper):
             if os.path.exists(pe_path):
                 protein_embeds = torch.load(pe_path, weights_only=False, map_location="cpu")
 
+        # No weights named anywhere: fetch the published SE-600M release rather
+        # than refusing to run. Every other single-cell wrapper downloads its
+        # weights on first use, and STATE's are public, so demanding a local
+        # path made it the one model in the registry that could be listed and
+        # never run. Cached by huggingface_hub, so this is a one-time cost.
+        if self._checkpoint is None and self._model_folder is None:
+            self._model_folder = self._download_default_weights()
+            if protein_embeds is None:
+                pe_path = os.path.join(self._model_folder, "protein_embeddings.pt")
+                if os.path.exists(pe_path):
+                    protein_embeds = torch.load(
+                        pe_path, weights_only=False, map_location="cpu"
+                    )
+            if self._config_path is None:
+                cfg_path = os.path.join(self._model_folder, "config.yaml")
+                if os.path.exists(cfg_path):
+                    self._config_path = cfg_path
+
         cfg = OmegaConf.load(self._config_path) if self._config_path else None
         self._inferer = Inference(cfg=cfg, protein_embeds=protein_embeds)
 
@@ -897,6 +1060,40 @@ class StateEmbeddingWrapper(SingleCellWrapper):
         self._inferer.load_model(checkpoint)
         self._model = self._inferer.model
         logger.info("Loaded STATE embedding model from %s on %s", checkpoint, device)
+
+    #: Published SE-600M release, and the three files needed to run it. The
+    #: repo also ships an ``epoch4`` checkpoint and safetensors variants; only
+    #: these are fetched, because pulling the whole repo would cost ~29 GB
+    #: instead of ~12.
+    DEFAULT_HF_REPO = "arcinstitute/SE-600M"
+    DEFAULT_HF_FILES = ("config.yaml", "protein_embeddings.pt", "se600m_epoch16.ckpt")
+
+    @classmethod
+    def _download_default_weights(cls) -> str:
+        """Fetch SE-600M into the huggingface cache and return its folder.
+
+        Already-present files are not re-downloaded -- ``hf_hub_download``
+        returns the cached path -- so this is a no-op after the first call.
+        The checkpoint alone is ~11.5 GB, which is worth saying out loud
+        before a user waits on it without knowing why.
+        """
+        import os
+
+        from huggingface_hub import hf_hub_download
+
+        logger.info(
+            "No STATE checkpoint given; fetching %s (~12 GB on first use, "
+            "cached afterwards). Pass checkpoint=/path or model_folder=/path "
+            "to use a local copy instead.",
+            cls.DEFAULT_HF_REPO,
+        )
+        paths = [
+            hf_hub_download(repo_id=cls.DEFAULT_HF_REPO, filename=name)
+            for name in cls.DEFAULT_HF_FILES
+        ]
+        folder = os.path.dirname(paths[0])
+        logger.info("STATE weights ready in %s", folder)
+        return folder
 
     def embed_cells(self, adata: Any) -> np.ndarray:  # noqa: D102
         if self._inferer is None:
@@ -1344,6 +1541,8 @@ class PCAEmbedding(SingleCellWrapper):
     """
 
     supports_decode: bool = True
+    #: PCA inverse-transforms back to the (scaled) HVG matrix.
+    decode_scale: Literal["log_prob", "rate", "linear"] | None = "linear"
 
     def __init__(
         self,
@@ -1528,6 +1727,8 @@ class ScVIToolsWrapper(SingleCellWrapper):
     """
 
     supports_decode: bool = True
+    #: scvi-tools returns the NB/ZINB mean px_rate.
+    decode_scale: Literal["log_prob", "rate", "linear"] | None = "rate"
 
     def __init__(
         self,

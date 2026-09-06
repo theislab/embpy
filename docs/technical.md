@@ -117,32 +117,62 @@ Users can still override the important knobs:
 
 ## Environments and Installation
 
-Pixi is the recommended development path:
+### pip / uv extras
+
+`pip install embpy` installs a **lightweight core** that always builds without a
+compiler or GPU: numpy, pandas, anndata, scikit-learn, rdkit, matplotlib and the
+lightweight identifier-resolution libraries. The heavy / build-fragile
+dependencies are split into optional extras and imported lazily, so you only
+install what a given workflow needs:
+
+| Extra | Adds | For |
+| --- | --- | --- |
+| `models` | torch, transformers, torch-geometric, sentencepiece | Computing embeddings via `BioEmbedder` and the model wrappers |
+| `bio` | biopython | FASTA/sequence parsing in the gene/protein resolvers |
+| `genome` | pysam, pyensembl | Local indexed-genome access |
+| `scanpy` | scanpy | Single-cell preprocessing |
+| `scib` | scib, scanpy | scIB metrics for single-cell embeddings (`tl.compute_scib_metrics`) |
+| `benchmark` | xgboost | The optional xgboost regressor in `tl.benchmark_embeddings` |
+| `seqmodels`, `esm3`, `ppi`, `morphology`, ... | see `pyproject.toml` | Specific model families |
+| `all` | every pip-installable extra above | Full CPU feature set |
 
 ```bash
-pixi install -e default
-pixi run -e default verify
+pip install embpy                  # lightweight core
+pip install "embpy[models]"        # + embedding backends
+pip install "embpy[models,scib]"   # + backends + scIB metrics
 ```
 
-Common environments:
+Each extra resolves independently; nothing forces a heavy dependency on a user
+who does not need it.
+
+### Pixi environments
+
+Each pixi environment is self-contained and installed independently — you do
+**not** need every environment to solve in order to use one:
 
 ```bash
 pixi install -e default      # CPU/dev
+pixi run -e default verify
 pixi install -e mps          # Apple Silicon/PyTorch MPS
 pixi install -e gpu          # Linux CUDA GPU
+pixi install -e helical-gpu  # single-cell foundation models (scGPT, Geneformer, ...)
 pixi install -e boltz        # Boltz-specific examples
 pixi install -e alphagenome  # AlphaGenome cloud API client (opt-in)
 pixi install -e scooby       # Scooby single-cell DNA model (opt-in, git install)
 ```
 
-Pip users can start with:
+Pixi keeps a single lockfile for the whole workspace, so regenerating it solves
+every environment. When an unrelated environment (for example a CUDA-only one)
+cannot solve on your machine, or you simply want to skip the re-solve, install
+the one you want directly from the committed lock:
 
 ```bash
-pip install embpy
+pixi install -e default --frozen
 ```
 
-Optional model families may require extra dependencies. Large GPU models should
-be installed in an environment with compatible PyTorch/CUDA wheels.
+The CPU environments (`default`, `dev`, `docs`) share one solve group and are
+kept independent from the GPU/CUDA-only ones, so a failure in a GPU environment
+never blocks a CPU install.
 
 Pip extras for individual model families (see `pyproject.toml` for the full,
 up-to-date list and per-extra caveats):

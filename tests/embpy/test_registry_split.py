@@ -136,7 +136,10 @@ EXPECTED_ENTRIES: list[tuple[str, str, str]] = [
     ("scooby_neurips", "ScoobyWrapper", "johahi/neurips-scooby"),
     ("scooby_epicardioids", "ScoobyWrapper", "lauradmartens/epicardioids-scooby"),
     # --- Protein ---
-    ("esm1b", "ESM2Wrapper", "facebook/esm-1b"),
+    # Deliberately diverges from the fde522f snapshot: "facebook/esm-1b" cannot
+    # load on any current transformers (its tokenizer_class is the long-removed
+    # "ESMTokenizer"), so the path was corrected to the versioned repo.
+    ("esm1b", "ESM2Wrapper", "facebook/esm1b_t33_650M_UR50S"),
     ("esm1v_1", "ESM2Wrapper", "facebook/esm1v_t33_650M_UR90S_1"),
     ("esm1v_2", "ESM2Wrapper", "facebook/esm1v_t33_650M_UR90S_2"),
     ("esm1v_3", "ESM2Wrapper", "facebook/esm1v_t33_650M_UR90S_3"),
@@ -303,6 +306,7 @@ def test_species_sets_owned_by_dna(live_registry):
     assert live_registry.MULTI_SPECIES_DNA is dna.MULTI_SPECIES_DNA
 
 
+@pytest.mark.requires_torch
 def test_embedder_re_export_is_same_object(live_registry):
     """`from embpy.embedder import MODEL_REGISTRY` returns the same dict.
 
