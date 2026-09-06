@@ -29,5 +29,20 @@
                 "hidden": true,
             },
         },
+        {
+            "name": "embpy",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "python": "/lustre/groups/ml01/workspace/lucas.arnoldt/embpy2/bin/python",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "justMyCode": false,
+            "env": {
+                "PYDEVD_USE_FRAME_EVAL": "NO"
+            },
+            "args": [
+            ]
+        },
     ],
 }
