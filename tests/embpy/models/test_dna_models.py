@@ -422,6 +422,11 @@ class TestBorzoiWrapper:
             BorzoiWrapper.get_track_categories(tm)
 
     def test_get_track_categories_defaults_to_bundled_metadata(self):
+        # The no-arg path falls back to get_track_metadata(), and `targets.txt`
+        # ships with borzoi_pytorch rather than with embpy -- so this needs the
+        # same guard as test_get_track_metadata_returns_dataframe. The sibling
+        # tests that pass a DataFrame in stay backend-free.
+        pytest.importorskip("borzoi_pytorch")
         cats = BorzoiWrapper.get_track_categories()
         tm = BorzoiWrapper.get_track_metadata()
         assert len(cats) == len(tm)
