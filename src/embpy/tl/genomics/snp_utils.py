@@ -21,6 +21,8 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 
 # UCSC hg38 -- per-chromosome FASTAs (chromFa.tar.gz, ~938 MB compressed)
 _UCSC_CHROMFA_URL = "https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.chromFa.tar.gz"
@@ -204,6 +206,9 @@ class SNPContext:
     Attributes
     ----------
     position : int
+        Coordinate convention: **1-BASED** (VCF/pgen). String offsets elsewhere in this
+        module are 0-based; see :func:`_extract_context`.
+
         1-based position of the variant on the chromosome (or within the
         provided sequence if ``chromosome_sequence`` is supplied directly).
     ref_allele : str
@@ -379,9 +384,19 @@ def _apply_snp(sequence: str, offset: int, ref: str, alt: str) -> str:
     """
     ref_in_seq = sequence[offset : offset + len(ref)].upper()
     if ref_in_seq != ref.upper():
+        neighbours = {
+            "offset-1": sequence[offset - 1: offset - 1 + len(ref)].upper() if offset else "",
+            "offset+1": sequence[offset + 1: offset + 1 + len(ref)].upper(),
+        }
+        hint = ""
+        for label, base in neighbours.items():
+            if base == ref.upper():
+                hint = (f" The expected base IS found at {label}, so this is an off-by-one: "
+                        f"SNPContext.position is 1-BASED, string offsets are 0-BASED.")
+                break
         raise ValueError(
             f"Reference mismatch at offset {offset}: "
-            f"expected '{ref.upper()}', found '{ref_in_seq}'."
+            f"expected '{ref.upper()}', found '{ref_in_seq}'.{hint}"
         )
     return sequence[:offset] + alt + sequence[offset + len(ref) :]
 
@@ -897,6 +912,14 @@ class SNPEmbedder:
 
         ref_ctx, alt_ctxs, _ = self._build_sequences(snp, chromosome_sequence)
 
+        if getattr(snp, "strand", "+") == "-":
+            logger.warning(
+                "snp.strand='-': scoring in forward orientation. Reverse-complementing would "
+                "change the score of the same locus (the model is not reverse-complement "
+                "invariant, and bin_indices are forward-oriented)."
+            )
+            ref_ctx = _reverse_complement(ref_ctx)
+            alt_ctxs = [_reverse_complement(a) for a in alt_ctxs]
         ref_profile = np.asarray(self.wrapper.predict_profile(ref_ctx, **kwargs))
         alt_profiles = [np.asarray(self.wrapper.predict_profile(a, **kwargs)) for a in alt_ctxs]
 
@@ -1165,7 +1188,11 @@ class SequenceProvider:
         chrom
             Chromosome name (``"17"`` or ``"chr17"`` both work).
         start, end
-            1-based inclusive coordinates (same as Ensembl REST convention).
+            Coordinate convention: **1-BASED INCLUSIVE** (Ensembl REST). Note that
+        :attr:`RegionContext.window_start` is 0-based, so callers bridging the two must
+        add 1 -- :meth:`RegionEmbedder._fetch_window` does this and asserts the result.
+
+        1-based inclusive coordinates (same as Ensembl REST convention).
 
         Returns
         -------

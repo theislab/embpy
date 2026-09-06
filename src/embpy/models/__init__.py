@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 # imports are NOT executed at runtime; `__getattr__` below is the real load
 # path.
 if TYPE_CHECKING:
-    from .alphagenome_models import AlphaGenomeWrapper
+    from .alphagenome_models import AlphaGenomeRegionAdapter, AlphaGenomeWrapper
     from .dna_models import (
         BorzoiWrapper,
         CaduceusWrapper,
@@ -89,6 +89,7 @@ _LAZY: dict[str, str] = {
     "HyenaDNAWrapper": "dna_models:HyenaDNAWrapper",
     "NucleotideTransformerWrapper": "dna_models:NucleotideTransformerWrapper",
     "NucleotideTransformerV3Wrapper": "dna_models:NucleotideTransformerV3Wrapper",
+    "AlphaGenomeRegionAdapter": "alphagenome_models:AlphaGenomeRegionAdapter",
     "AlphaGenomeWrapper": "alphagenome_models:AlphaGenomeWrapper",
     "ScoobyWrapper": "scooby_models:ScoobyWrapper",
     # --- Protein ---
@@ -145,6 +146,7 @@ _OPTIONAL: frozenset[str] = frozenset(
         # requires: pip install h5py
         "PrecomputedPPIWrapper",
         # requires: pip install alphagenome
+        "AlphaGenomeRegionAdapter",
         "AlphaGenomeWrapper",
         # requires: pip install snapatac2-scooby && pip install git+https://github.com/gagneurlab/scooby.git
         "ScoobyWrapper",
@@ -248,6 +250,7 @@ __all__ = [
     "get_singlecell_wrapper",
     "list_singlecell_models",
     "singlecell_info",
+    "AlphaGenomeRegionAdapter",
     "AlphaGenomeWrapper",
     "ScoobyWrapper",
 ]

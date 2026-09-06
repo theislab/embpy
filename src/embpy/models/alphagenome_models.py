@@ -194,6 +194,71 @@ class AlphaGenomeWrapper(BaseModelWrapper):
         else:
             return values.max(axis=0)
 
+    def predict_profile(
+        self,
+        input: str,
+        output_types: Sequence[str] = ("DNASE",),
+        ontology_terms: Sequence[str] | None = None,
+    ) -> dict[str, tuple[np.ndarray, list[str]]]:
+        """Predict AlphaGenome's per-position track profiles for a raw DNA sequence.
+
+        The AlphaGenome counterpart of :meth:`BorzoiWrapper.predict_profile`, and the
+        piece that region-level scoring needs: :meth:`embed` can already return an
+        unpooled array via ``pooling_strategy="none"``, but only for a single output
+        type and without track identities, so a caller cannot tell which column is
+        which assay or cell type. Region ablation and element ranking need both.
+
+        Parameters
+        ----------
+        input : str
+            Raw DNA sequence. AlphaGenome accepts 16,384 / 131,072 / 524,288 /
+            1,048,576 bp; the sequence must be exactly one of those lengths.
+        output_types : sequence of str, default ("DNASE",)
+            Names of ``alphagenome.models.dna_output.OutputType`` members, e.g.
+            ``("DNASE", "ATAC", "CHIP_HISTONE", "CAGE", "RNA_SEQ")``. Requesting
+            several in one call costs one API round trip rather than several.
+        ontology_terms : sequence of str, optional
+            Ontology CURIEs restricting the returned tracks, e.g.
+            ``("CL:0000792",)`` for CD4+CD25+ regulatory T cell. ``None`` returns
+            every track for the requested output types, which is a much larger
+            response.
+
+        Returns
+        -------
+        dict
+            ``{output_type_name: (values, track_names)}`` where ``values`` has shape
+            ``(num_positions, num_tracks)`` and ``track_names`` has length
+            ``num_tracks``.
+
+        Raises
+        ------
+        RuntimeError
+            If the client hasn't been initialized (``load()`` not called).
+        """
+        if self.client is None:
+            raise RuntimeError("AlphaGenome client not initialized. Call load() first.")
+
+        requested = [getattr(dna_output.OutputType, ot) for ot in output_types]
+        prediction = self.client.predict_sequence(
+            sequence=input,
+            organism=self._organism_enum(),
+            requested_outputs=requested,
+            ontology_terms=ontology_terms,
+        )
+        out: dict[str, tuple[np.ndarray, list[str]]] = {}
+        for ot in output_types:
+            track_data = getattr(prediction, ot.lower(), None)
+            if track_data is None:
+                continue
+            values = np.asarray(track_data.values, dtype=np.float32)
+            md = getattr(track_data, "metadata", None)
+            if md is not None and hasattr(md, "columns") and "name" in md.columns:
+                names = [str(x) for x in md["name"].tolist()]
+            else:
+                names = [f"{ot}_track{i}" for i in range(values.shape[1])]
+            out[ot] = (values, names)
+        return out
+
     def embed_batch(
         self,
         inputs: Sequence[str],
@@ -332,3 +397,87 @@ class AlphaGenomeWrapper(BaseModelWrapper):
         scores = df["raw_score"].to_numpy(dtype=np.float32)
         track_names = df["track_name"].tolist()
         return scores, track_names
+
+class AlphaGenomeRegionAdapter:
+    """Expose :class:`AlphaGenomeWrapper` through the interface ``RegionEmbedder`` expects.
+
+    ``embpy.tl.genomics.RegionEmbedder`` drives region ablation, haplotype substitution,
+    ISM-shuffle and TF-motif ablation through a Borzoi-shaped contract: a
+    ``predict_profile(sequence) -> (num_tracks, num_bins)`` array, plus ``SEQUENCE_LENGTH``,
+    ``BIN_SIZE`` and ``profile_offset_bp``. AlphaGenome's own ``predict_profile`` returns
+    ``{output_type: (values, track_names)}`` with values shaped ``(positions, tracks)``, so
+    it cannot be passed to ``RegionEmbedder`` directly.
+
+    This adapter fixes one output type (and optionally a set of ontology CURIEs), transposes
+    to the Borzoi orientation, and derives ``BIN_SIZE`` from the returned resolution rather
+    than assuming it. The point is to run the *identical* region-scoring code on both models,
+    so a difference in the result is a difference between the models rather than between two
+    implementations of the same idea.
+
+    Parameters
+    ----------
+    wrapper
+        A loaded :class:`AlphaGenomeWrapper`.
+    output_type
+        One ``dna_output.OutputType`` name, e.g. ``"DNASE"``, ``"ATAC"``, ``"CHIP_HISTONE"``.
+    ontology_terms
+        Ontology CURIEs to restrict the tracks, e.g. ``("CL:0000792",)`` for Treg.
+    sequence_length
+        Must be one of AlphaGenome's supported lengths. 524,288 matches Borzoi exactly,
+        which is what makes an element-level comparison like-for-like.
+
+    Examples
+    --------
+    >>> ag = AlphaGenomeWrapper(); ag.load()
+    >>> adapter = AlphaGenomeRegionAdapter(ag, output_type="DNASE",
+    ...                                    ontology_terms=["CL:0000792"])
+    >>> from embpy.tl.genomics import RegionEmbedder
+    >>> emb = RegionEmbedder(adapter, seed=0)
+    """
+
+    SUPPORTED_LENGTHS = (16_384, 131_072, 524_288, 1_048_576)
+
+    def __init__(
+        self,
+        wrapper: "AlphaGenomeWrapper",
+        output_type: str = "DNASE",
+        ontology_terms: Sequence[str] | None = None,
+        sequence_length: int = 524_288,
+    ) -> None:
+        if sequence_length not in self.SUPPORTED_LENGTHS:
+            raise ValueError(
+                f"AlphaGenome accepts only {self.SUPPORTED_LENGTHS}; got {sequence_length}."
+            )
+        self.wrapper = wrapper
+        self.output_type = output_type
+        self.ontology_terms = list(ontology_terms) if ontology_terms else None
+        self.SEQUENCE_LENGTH = sequence_length
+        self.BIN_SIZE: int | None = None      # derived on the first prediction
+        self.profile_offset_bp = 0            # AlphaGenome returns the whole window uncropped
+        self.track_names: list[str] = []
+
+    def predict_profile(self, sequence: str, **_: Any) -> np.ndarray:
+        """Return ``(num_tracks, num_bins)`` for one sequence, Borzoi's orientation."""
+        out = self.wrapper.predict_profile(
+            sequence, output_types=(self.output_type,), ontology_terms=self.ontology_terms
+        )
+        if self.output_type not in out:
+            raise RuntimeError(
+                f"AlphaGenome returned no {self.output_type} track for this request; "
+                f"got {list(out)}."
+            )
+        values, names = out[self.output_type]
+        self.track_names = names
+        if self.BIN_SIZE is None:
+            n_pos = values.shape[0]
+            if n_pos == 0 or self.SEQUENCE_LENGTH % n_pos:
+                raise RuntimeError(
+                    f"cannot derive a bin size: {self.SEQUENCE_LENGTH} bp returned "
+                    f"{n_pos} positions."
+                )
+            self.BIN_SIZE = self.SEQUENCE_LENGTH // n_pos
+            logging.info(
+                "AlphaGenomeRegionAdapter: %s at %d bp/bin, %d tracks",
+                self.output_type, self.BIN_SIZE, values.shape[1],
+            )
+        return np.asarray(values, dtype=np.float32).T

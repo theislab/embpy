@@ -766,10 +766,42 @@ class BorzoiWrapper(BaseModelWrapper):
         logging.info(f"Loading Borzoi '{self.model_name}' …")
         try:
             borzoi_model: Any = Borzoi.from_pretrained(self.model_name)
-            try:
-                self.model = borzoi_model.to(device).eval()
-            except NotImplementedError:
-                self.model = borzoi_model.to_empty(device=device).eval()
+
+            n_meta = 0
+            for mod in borzoi_model.modules():
+                pos = getattr(mod, "positions", None)
+                if isinstance(pos, torch.Tensor) and pos.is_meta:
+                    n_rel = getattr(mod, "num_rel_pos_features", None)
+                    if n_rel is None:
+                        raise RuntimeError(
+                            "Borzoi attention module has a meta 'positions' buffer but no "
+                            "num_rel_pos_features to rebuild it from."
+                        )
+                    from borzoi_pytorch.pytorch_borzoi_transformer import (
+                        get_positional_embed,
+                    )
+                    mod.positions = get_positional_embed(4096, n_rel, torch.device("cpu"))
+                    n_meta += 1
+            if n_meta:
+                logging.info(
+                    "Rematerialised %d meta positional-encoding buffer(s) before moving "
+                    "Borzoi to %s.", n_meta, device
+                )
+
+            still_meta = [
+                n for n, t in
+                list(borzoi_model.named_parameters()) + list(borzoi_model.named_buffers())
+                if t.is_meta
+            ]
+            if still_meta:
+                # Fail loudly. to_empty() would "work" here and return a model of
+                # uninitialised weights that predicts NaN for everything.
+                raise RuntimeError(
+                    f"Borzoi still has {len(still_meta)} meta tensor(s) after "
+                    f"rematerialisation ({still_meta[:5]}); refusing to continue, since "
+                    "to_empty() would discard the pretrained weights silently."
+                )
+            self.model = borzoi_model.to(device).eval()
             self.device = device
             hidden_dim = getattr(borzoi_model.config, "dim", None)
             if hidden_dim is None:
@@ -995,7 +1027,6 @@ class BorzoiWrapper(BaseModelWrapper):
             power-transformed) scale during training; set True to invert
             that transform and recover approximate linear-scale coverage,
             which is required before summing bins for variant-effect scoring.
-
         Returns
         -------
         np.ndarray
@@ -1048,6 +1079,75 @@ class BorzoiWrapper(BaseModelWrapper):
         if _BORZOI_TRACKS_DF is None:
             raise ImportError("borzoi_pytorch not installed; cannot load track metadata.")
         return _BORZOI_TRACKS_DF.copy()
+
+    @staticmethod
+    def get_track_categories(track_metadata: Any = None) -> Any:
+        """Assign each Borzoi track to one of six coarse assay categories.
+
+        Derives ATAC / DNASE / CAGE / CHIP / RNA from the leading token of
+        each track's ``description`` column (e.g. ``"RNA:liver"`` ->
+        ``"RNA"``, split on the first ``":"``), then splits RNA further
+        into ``RNA_GTEx`` vs ``RNA_ENCODE`` using the ``file`` column's
+        source path: ``/human/rna/recount3/`` -> ``RNA_GTEx`` (recount3 is
+        GTEx-derived), ``/human/rna/encode/`` -> ``RNA_ENCODE``. This split
+        was verified to be exhaustive and unambiguous across every RNA
+        track in the bundled ``targets.txt`` table (no track's ``file``
+        path matches neither pattern, and none matches both).
+
+        Parameters
+        ----------
+        track_metadata : pandas.DataFrame, optional
+            Track metadata as returned by :meth:`get_track_metadata`
+            (or a subset/copy of it), with at least ``description`` and
+            ``file`` columns. If None (default), calls
+            :meth:`get_track_metadata` to load the bundled table.
+
+        Returns
+        -------
+        pandas.Series
+            One category label per row of ``track_metadata``, aligned to
+            its index. Values are one of ``"ATAC"``, ``"DNASE"``,
+            ``"CAGE"``, ``"CHIP"``, ``"RNA_GTEx"``, ``"RNA_ENCODE"`` (or
+            whatever other leading ``description`` token appears for a
+            non-RNA track not among the five known assays).
+
+        Raises
+        ------
+        ValueError
+            If any row whose ``description`` starts with ``"RNA"`` has a
+            ``file`` path that matches neither the recount3 nor the encode
+            source convention -- the split is expected to be exhaustive;
+            this signals the bundled track metadata changed in a way that
+            needs re-checking.
+
+        Examples
+        --------
+        >>> import pandas as pd
+        >>> from embpy.models.dna_models import BorzoiWrapper
+        >>> tm = pd.DataFrame({
+        ...     "description": ["ATAC:pbmc", "RNA:liver", "RNA:blood"],
+        ...     "file": ["x.bw", "/human/rna/recount3/y.bw", "/human/rna/encode/z.bw"],
+        ... })
+        >>> list(BorzoiWrapper.get_track_categories(tm))
+        ['ATAC', 'RNA_GTEx', 'RNA_ENCODE']
+        """
+        if track_metadata is None:
+            track_metadata = BorzoiWrapper.get_track_metadata()
+
+        assay = track_metadata["description"].str.split(":", n=1).str[0]
+        category = assay.copy()
+        is_rna = assay.eq("RNA")
+        rna_src = track_metadata["file"].str.extract(r"/human/rna/([^/]+)/")[0]
+        n_unmapped_rna = int(is_rna.sum() - rna_src[is_rna].notna().sum())
+        if n_unmapped_rna:
+            raise ValueError(
+                f"{n_unmapped_rna} RNA track(s) have a `file` path matching neither the "
+                "recount3 nor encode source convention (/human/rna/recount3/ or /human/rna/encode/) -- "
+                "the GTEx/ENCODE RNA split is supposed to be exhaustive; investigate before proceeding."
+            )
+        category[is_rna & rna_src.eq("recount3")] = "RNA_GTEx"
+        category[is_rna & rna_src.eq("encode")] = "RNA_ENCODE"
+        return category
 
     # Conservative default chosen for a 80 GB H100 / A100.
     # Borzoi's first conv expands a (B, 4, 524288) input into roughly

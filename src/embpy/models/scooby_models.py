@@ -194,6 +194,27 @@ class ScoobyWrapper(BaseModelWrapper):
                 disable_cache=False,
                 use_transform_borzoi_emb=self.use_transform_borzoi_emb,
             )
+
+            n_meta = 0
+            for mod in scooby_model.modules():
+                pos = getattr(mod, "positions", None)
+                if isinstance(pos, torch.Tensor) and pos.is_meta:
+                    n_rel = getattr(mod, "num_rel_pos_features", None)
+                    if n_rel is None:
+                        raise RuntimeError(
+                            "Scooby attention module has a meta 'positions' buffer but no "
+                            "num_rel_pos_features to rebuild it from."
+                        )
+                    from borzoi_pytorch.pytorch_borzoi_transformer import (
+                        get_positional_embed,
+                    )
+                    mod.positions = get_positional_embed(4096, n_rel, torch.device("cpu"))
+                    n_meta += 1
+            if n_meta:
+                logging.info(
+                    "Rematerialised %d meta positional-encoding buffer(s) before moving "
+                    "Scooby to %s.", n_meta, device
+                )
             self.model = scooby_model.to(device).eval()
             self.device = device
             logging.info(
