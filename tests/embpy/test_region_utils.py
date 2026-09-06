@@ -406,7 +406,10 @@ class TestPredictHaplotypeEffect:
     def test_reference_mismatch_raises(self, stub_window):
         emb = RegionEmbedder(StubProfileModel(), seed=0)
         region = RegionContext(chrom="chr1", start=2000, end=2100, context_window=4096, window_start=0)
-        with pytest.raises(ValueError, match="expected reference"):
+        # `predict_haplotype_effect` aggregates mismatches across all variants
+        # and raises the summary message; "expected reference" is what the
+        # per-variant `apply_haplotype` path emits (asserted separately above).
+        with pytest.raises(ValueError, match="do not match the reference base"):
             emb.predict_haplotype_effect(region, stub_window, [(2001, "C", "T")])
 
 
