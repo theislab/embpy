@@ -29,7 +29,9 @@ except ImportError:
     _HAVE_ESM3 = False
     ESM3 = None  # type: ignore
     ESM3InferenceClient = None  # type: ignore
-from transformers import AutoModel, AutoTokenizer, T5EncoderModel, T5Tokenizer
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from transformers import AutoModel, AutoTokenizer, T5EncoderModel, T5Tokenizer
 
 
 class ESM2Wrapper(BaseModelWrapper):
@@ -74,6 +76,7 @@ class ESM2Wrapper(BaseModelWrapper):
 
         logging.info(f"Loading ESM2 model '{self.model_name}'...")
         try:
+            from transformers import AutoTokenizer, AutoModel
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             self.model = AutoModel.from_pretrained(self.model_name)
             self.model.to(device)
@@ -681,6 +684,7 @@ class ProtT5Wrapper(BaseModelWrapper):
 
         logging.info("Loading ProtT5 model '%s' …", self.model_name)
         try:
+            from transformers import T5Tokenizer, T5EncoderModel
             self.tokenizer = T5Tokenizer.from_pretrained(self.model_name, do_lower_case=False)
             # Use T5EncoderModel to avoid decoder overhead
             self.model = T5EncoderModel.from_pretrained(self.model_name)
