@@ -13,10 +13,10 @@ from .region_utils import (
     uniform_random_sequence,
 )
 from .snp_utils import (
+    SequenceProvider,
     SNPContext,
     SNPEmbedder,
     SNPEmbeddingResult,
-    SequenceProvider,
     VariantEffectResult,
     download_hg38_per_chrom,
     download_hg38_single_fasta,

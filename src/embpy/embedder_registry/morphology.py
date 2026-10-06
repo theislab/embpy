@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from ..models.base import BaseModelWrapper
-from ..models.morphology_models import SubCellWrapper
-
+from embpy.models.base import BaseModelWrapper
+from embpy.models.morphology_models import SubCellWrapper
 
 MORPHOLOGY_MODELS: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     # SubCell ViT-MAE models (auto-downloaded from CZI S3)

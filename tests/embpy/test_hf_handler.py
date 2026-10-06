@@ -13,7 +13,6 @@ from anndata import AnnData
 
 from embpy.pp.hf_handler import HFHandler, _read_tabular, _read_to_anndata
 
-
 # =====================================================================
 # Fixtures
 # =====================================================================
@@ -68,7 +67,7 @@ class TestReadToAnndata:
 
     def test_unsupported_extension(self, tmp_dir):
         path = tmp_dir / "data.json"
-        path.write_text("{}")
+        path.write_text("{}", encoding='utf-8')
         with pytest.raises(ValueError, match="Unsupported file extension"):
             _read_to_anndata(path)
 
@@ -90,7 +89,7 @@ class TestReadTabular:
 
     def test_unsupported(self, tmp_dir):
         path = tmp_dir / "t.txt"
-        path.write_text("hello")
+        path.write_text("hello", encoding='utf-8')
         with pytest.raises(ValueError, match="Unsupported tabular extension"):
             _read_tabular(path)
 
@@ -156,14 +155,14 @@ class TestUploadFile:
 class TestUploadDatasets:
     def test_uploads_h5ad(self, handler, tmp_dir):
         f = tmp_dir / "tahoe.h5ad"
-        f.write_text("fake")
+        f.write_text("fake", encoding='utf-8')
         handler.upload_file = MagicMock()
         handler.upload_datasets({"tahoe": str(f)})
         handler.upload_file.assert_called_once_with(f, "raw/tahoe.h5ad")
 
     def test_uploads_csv(self, handler, tmp_dir):
         f = tmp_dir / "lincs.csv"
-        f.write_text("a,b\n1,2")
+        f.write_text("a,b\n1,2", encoding='utf-8')
         handler.upload_file = MagicMock()
         handler.upload_datasets({"lincs": str(f)})
         handler.upload_file.assert_called_once_with(f, "raw/lincs.csv")
@@ -175,7 +174,7 @@ class TestUploadDatasets:
 
     def test_skips_unsupported_format(self, handler, tmp_dir, caplog):
         f = tmp_dir / "data.json"
-        f.write_text("{}")
+        f.write_text("{}", encoding='utf-8')
         handler.upload_file = MagicMock()
         handler.upload_datasets({"bad": str(f)})
         handler.upload_file.assert_not_called()
@@ -202,18 +201,18 @@ class TestUploadMetadata:
     def test_upload_path(self, handler, tmp_dir):
         handler.upload_file = MagicMock()
         f = tmp_dir / "meta.parquet"
-        f.write_text("fake")
+        f.write_text("fake", encoding='utf-8')
         handler.upload_metadata(str(f))
         handler.upload_file.assert_called_once_with(str(f), "metadata/perturbations.parquet")
 
 
 class TestUploadEmbeddings:
     def test_uploads_parquet_and_npy(self, handler, tmp_dir):
-        (tmp_dir / "model_a.parquet").write_text("fake")
+        (tmp_dir / "model_a.parquet").write_text("fake", encoding='utf-8')
         (tmp_dir / "model_b.npy").write_bytes(b"\x00")
-        (tmp_dir / "model_b_index.csv").write_text("id\na\nb")
+        (tmp_dir / "model_b_index.csv").write_text("id\na\nb", encoding='utf-8')
         (tmp_dir / "model_c.zarr").mkdir()
-        (tmp_dir / "ignore.txt").write_text("skip")
+        (tmp_dir / "ignore.txt").write_text("skip", encoding='utf-8')
 
         handler.upload_file = MagicMock()
         handler.upload_folder = MagicMock()

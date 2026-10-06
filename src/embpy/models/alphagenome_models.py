@@ -439,7 +439,7 @@ class AlphaGenomeRegionAdapter:
 
     def __init__(
         self,
-        wrapper: "AlphaGenomeWrapper",
+        wrapper: AlphaGenomeWrapper,
         output_type: str = "DNASE",
         ontology_terms: Sequence[str] | None = None,
         sequence_length: int = 524_288,

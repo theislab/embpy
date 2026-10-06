@@ -115,7 +115,7 @@ def _all_wrapper_names_in_source() -> set[str]:
     for path in registry_dir.glob("*.py"):
         if path.name == "extras.py":
             continue          # the table under test -- scanning it would be circular
-        names.update(re.findall(r"\b([A-Za-z0-9_]+Wrapper)\b", path.read_text()))
+        names.update(re.findall(r"\b([A-Za-z0-9_]+Wrapper)\b", path.read_text(encoding='utf-8')))
     return names
 
 

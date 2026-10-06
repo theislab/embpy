@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import importlib.util
-import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
 
 _HAS_PYSAM = importlib.util.find_spec("pysam") is not None
@@ -42,6 +40,7 @@ class TestGeneResolverLocalIndexedSequence:
     def resolver_with_genome(self, tmp_path):
         """Create a GeneResolver with a tiny mock genome FASTA."""
         import pysam
+
         from embpy.resources.gene_resolver import GeneResolver
 
         fa_path = tmp_path / "test_genome.fa"
@@ -52,7 +51,7 @@ class TestGeneResolverLocalIndexedSequence:
             ">17\n"
             "NNNATCGATCGAAATTTCCCGGGAAATTTCCCGGGNNNN\n"
             "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG\n"
-        )
+        , encoding='utf-8')
         pysam.faidx(str(fa_path))
 
         gr = GeneResolver.__new__(GeneResolver)
@@ -159,7 +158,7 @@ class TestGeneResolverLocalFirstFallback:
             mock_resp.raise_for_status = MagicMock()
             mock_api.return_value = mock_resp
 
-            seq = gr.get_dna_sequence("TP53", id_type="symbol", organism="human")
+            gr.get_dna_sequence("TP53", id_type="symbol", organism="human")
             assert mock_api.called
 
 

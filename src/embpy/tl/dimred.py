@@ -70,7 +70,7 @@ def compute_pca(
     AnnData with PCA coordinates in ``obsm[output_key]`` and the
     variance-ratio array in ``uns[output_key + "_variance_ratio"]``.
     """
-    from .._pca import pca_project
+    from embpy._pca import pca_project
 
     if obsm_key not in adata.obsm:
         raise KeyError(

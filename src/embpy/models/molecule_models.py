@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
 import torch
 from rdkit import Chem, DataStructs
-from rdkit.Chem import AllChem
 from transformers import AutoModel, AutoTokenizer, BatchEncoding
 
 from .base import BaseModelWrapper
@@ -983,7 +983,7 @@ class MolEWrapper(BaseModelWrapper):
             raise RuntimeError("MolE not loaded. Call load() first.")
 
         batch_size: int = kwargs.get("batch_size", 32)  # type: ignore[assignment]
-        num_workers: int = kwargs.get("num_workers", 4)  # type: ignore[assignment]
+        num_workers: int = kwargs.get("num_workers", 0 if sys.platform == "win32" else 4)  # type: ignore[assignment]
 
         embeddings = self._mole_predict.encode(
             smiles=list(inputs),

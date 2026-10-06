@@ -8,7 +8,6 @@ import pytest
 
 from embpy.resources.protein_annotator import ProteinAnnotator
 
-
 MOCK_UNIPROT_ENTRY = {
     "primaryAccession": "P04637",
     "entryType": "UniProtKB reviewed (Swiss-Prot)",

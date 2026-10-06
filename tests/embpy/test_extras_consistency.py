@@ -35,7 +35,7 @@ _GRID = [
 
 
 def _project() -> dict:
-    return tomllib.loads(PYPROJECT.read_text())["project"]
+    return tomllib.loads(PYPROJECT.read_text(encoding='utf-8'))["project"]
 
 
 def _requirements(entries: list[str]) -> dict[str, SpecifierSet]:
@@ -120,7 +120,7 @@ class TestCpuGpuParity:
     def test_cpu_and_gpu_differ_only_in_torch(self) -> None:
         """They are documented as identical bar the torch flavour; keep them so."""
         opt = _project()["optional-dependencies"]
-        strip = lambda items: {  # noqa: E731
+        strip = lambda items: {
             i for i in items if "torch" not in i.lower()
         }
         assert strip(opt["cpu"]) == strip(opt["gpu"])

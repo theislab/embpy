@@ -12,10 +12,9 @@ if TYPE_CHECKING:
     # embpy.models -> dna_models -> torch, which would break the lightweight
     # (torch-free) core install. `from __future__ import annotations` above
     # keeps these annotations lazy, so a TYPE_CHECKING import is sufficient.
-    from ...models.base import BaseModelWrapper
+    from embpy.models.base import BaseModelWrapper
 
 
-import os
 import shutil
 import subprocess
 import urllib.request
@@ -100,7 +99,7 @@ def download_hg38_per_chrom(
     # Check if already complete
     if not force and keep:
         existing = {p.stem for p in output_dir.glob("chr*.fa")}
-        needed = {c for c in keep}
+        needed = set(keep)
         if needed.issubset(existing):
             logging.info(f"All requested chromosomes already present in {output_dir}. Skipping download.")
             return output_dir
@@ -1281,8 +1280,6 @@ class SequenceProvider:
 
     def _from_fasta_file(self, chrom: str) -> str | None:
         """Look up a chromosome record in a multi-record FASTA index."""
-        import os
-
         from Bio import SeqIO
 
         if self._fasta_index is None:
@@ -1311,7 +1308,6 @@ class SequenceProvider:
 
         _, without_prefix = self._normalise_chrom(chrom)
 
-        coord_system = "chromosome"
         if self.genome_build == "GRCh37":
             base = "https://grch37.rest.ensembl.org"
         else:

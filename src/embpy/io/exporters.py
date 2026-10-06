@@ -104,7 +104,7 @@ def _metadata_dict(result: EmbeddingResult, *, key: str | None = None) -> dict:
 def _write_sidecar(path: Path, result: EmbeddingResult, *, key: str | None = None) -> Path:
     meta = _metadata_dict(result, key=key)
     side = _sidecar_path(path)
-    side.write_text(json.dumps(meta, indent=2))
+    side.write_text(json.dumps(meta, indent=2, encoding='utf-8'))
     return side
 
 

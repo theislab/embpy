@@ -330,7 +330,7 @@ class TestLoadSequencesFromBiomart:
         chrom_dir = os.path.join(tmpdir, "genome")
         os.makedirs(chrom_dir, exist_ok=True)
         fasta_path = os.path.join(chrom_dir, "chr1.fa")
-        with open(fasta_path, "w") as f:
+        with open(fasta_path, "w", encoding='utf-8') as f:
             f.write(">chr1\n")
             f.write("A" * 100 + "\n")
         return chrom_dir

@@ -9,11 +9,11 @@ split preserves byte-equivalence. If a future PR creates a dedicated
 
 from __future__ import annotations
 
-from ..models.base import BaseModelWrapper
-from ..models.protein_models import ESM2Wrapper, ESM3Wrapper, ESMCWrapper, ProtT5Wrapper
+from embpy.models.base import BaseModelWrapper
+from embpy.models.protein_models import ESM2Wrapper, ESM3Wrapper, ESMCWrapper, ProtT5Wrapper
 
 try:
-    from ..models.structure_models import Boltz2Wrapper
+    from embpy.models.structure_models import Boltz2Wrapper
 
     _HAVE_BOLTZ = True
 except ImportError:

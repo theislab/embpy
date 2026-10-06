@@ -61,7 +61,7 @@ class TestGeneResolverSpecies:
         gr.species = "mouse"
         gr.ensembl = None
 
-        result = gr._fetch_region_sequence("1", 100, 200, 1)
+        gr._fetch_region_sequence("1", 100, 200, 1)
         call_url = mock_get.call_args[0][0]
         assert "/sequence/region/mouse/" in call_url
 

@@ -5,7 +5,6 @@
 #   pp/singlecell/   -- single-cell RNA-seq preprocessing
 
 from .basic import PerturbationProcessor, reduce_embeddings
-from .singlecell.preprocessing import preprocess_counts
 from .depmap_handler import (
     DepMapDatasetCard,
     depmap_info,
@@ -18,17 +17,6 @@ from .lamin_handler import (
     lamin_info,
     list_lamin_datasets,
     load_lamin,
-)
-from .static_embeddings import (
-    StaticEmbeddingSource,
-    StaticEmbeddingStore,
-    discover_static_embedding_sources,
-    load_static_embedding_source_config,
-    load_static_embedding_package,
-    prepare_static_embedding_package,
-    render_static_embedding_dataset_card,
-    validate_static_embedding_package,
-    write_static_embedding_dataset_card,
 )
 from .morphology.preprocessing import (
     CELL_PAINTING_CHANNELS,
@@ -50,6 +38,18 @@ from .morphology.preprocessing import (
     rescale_to_target_nm_per_pixel,
     resize_to_canvas,
     save_channels_as_pngs,
+)
+from .singlecell.preprocessing import preprocess_counts
+from .static_embeddings import (
+    StaticEmbeddingSource,
+    StaticEmbeddingStore,
+    discover_static_embedding_sources,
+    load_static_embedding_package,
+    load_static_embedding_source_config,
+    prepare_static_embedding_package,
+    render_static_embedding_dataset_card,
+    validate_static_embedding_package,
+    write_static_embedding_dataset_card,
 )
 
 __all__ = [

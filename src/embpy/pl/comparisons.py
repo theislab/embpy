@@ -1,5 +1,6 @@
 """Comparison visualizations: parallel coordinates, radar charts,
-star coordinates, and t-SNE feature panels."""
+star coordinates, and t-SNE feature panels.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +15,6 @@ from anndata import AnnData
 from matplotlib.figure import Figure
 
 from embpy import tl
-
 
 # -----------------------------------------------------------------------
 # Parallel coordinates

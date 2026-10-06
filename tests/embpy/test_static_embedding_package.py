@@ -9,8 +9,8 @@ import pytest
 from embpy.pp.static_embeddings import (
     StaticEmbeddingSource,
     StaticEmbeddingStore,
-    load_static_embedding_source_config,
     load_static_embedding_package,
+    load_static_embedding_source_config,
     prepare_static_embedding_package,
     read_static_embedding_table,
     render_static_embedding_dataset_card,
@@ -121,7 +121,7 @@ def test_read_static_embedding_table_duplicate_policy(tmp_path):
 
 def test_read_static_embedding_table_missing_ids_are_explicit(tmp_path):
     path = tmp_path / "missing.csv"
-    path.write_text("gene_id,0,1\nTP53,1,2\n,3,4\n")
+    path.write_text("gene_id,0,1\nTP53,1,2\n,3,4\n", encoding='utf-8')
     source = StaticEmbeddingSource(key="missing", path=path, id_type="symbol")
 
     with pytest.raises(ValueError, match="missing/blank identifier"):
@@ -281,7 +281,7 @@ def test_prepare_static_embedding_package_from_source_config(tmp_path):
                     }
                 ]
             }
-        )
+        , encoding='utf-8')
     )
 
     sources = load_static_embedding_source_config(config_path)
@@ -324,7 +324,7 @@ def test_source_config_rejects_species_taxonomy_mismatch(tmp_path):
                     }
                 ]
             }
-        )
+        , encoding='utf-8')
     )
 
     with pytest.raises(ValueError, match="species and taxonomy_id"):
@@ -352,7 +352,7 @@ def test_static_embedding_dataset_card_from_manifest(tmp_path):
 
     card_path = write_static_embedding_dataset_card(package_root, repo_id="theislab/Embpy_Data")
     assert card_path == package_root / "README.md"
-    assert "Species keys: `human_9606`" in card_path.read_text()
+    assert "Species keys: `human_9606`" in card_path.read_text(encoding='utf-8')
     with pytest.raises(FileExistsError, match="Dataset card already exists"):
         write_static_embedding_dataset_card(package_root)
 

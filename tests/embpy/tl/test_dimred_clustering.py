@@ -198,7 +198,7 @@ class TestFindNearestNeighbors:
         mock_sc.return_value = sc
 
         adata = _make_adata()
-        result = find_nearest_neighbors(adata, "X_emb", n_neighbors=5, backend="cpu")
+        find_nearest_neighbors(adata, "X_emb", n_neighbors=5, backend="cpu")
         sc.pp.neighbors.assert_called_once()
 
     @patch("embpy.tl.clustering._require_rapids")
@@ -207,7 +207,7 @@ class TestFindNearestNeighbors:
         mock_rsc.return_value = rsc
 
         adata = _make_adata()
-        result = find_nearest_neighbors(adata, "X_emb", backend="gpu")
+        find_nearest_neighbors(adata, "X_emb", backend="gpu")
         rsc.pp.neighbors.assert_called_once()
 
 
@@ -222,7 +222,7 @@ class TestLeiden:
         import pandas as pd
         adata.obs["leiden"] = pd.Categorical(adata.obs["leiden"])
 
-        result = leiden(adata, "X_emb", resolution=1.0, backend="cpu")
+        leiden(adata, "X_emb", resolution=1.0, backend="cpu")
         sc.pp.neighbors.assert_called_once()
         sc.tl.leiden.assert_called_once()
 

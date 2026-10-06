@@ -8,18 +8,14 @@ re-implements from scratch.
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.figure import Figure
 
-from ...pp.morphology_preprocessing import (
-    CELL_PAINTING_COLORS,
-    composite_cell_painting,
-    normalize_channels,
-)
+from embpy.pp.morphology_preprocessing import CELL_PAINTING_COLORS, composite_cell_painting, normalize_channels
 
 
 def _mono_cmap(color: tuple[float, float, float]) -> LinearSegmentedColormap:

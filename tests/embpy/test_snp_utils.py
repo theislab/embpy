@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import io
 import textwrap
 from unittest.mock import MagicMock, patch
 
@@ -9,15 +8,15 @@ import numpy as np
 import pytest
 
 from embpy.tl.snp_utils import (
-    SNPContext,
-    SNPEmbeddingResult,
-    SNPEmbedder,
     SequenceProvider,
+    SNPContext,
+    SNPEmbedder,
+    SNPEmbeddingResult,
     VariantEffectResult,
-    genomic_to_bin_indices,
-    profile_variant_effect_score,
     _apply_snp,
     _extract_context,
+    genomic_to_bin_indices,
+    profile_variant_effect_score,
 )
 
 # SequenceProvider reads local FASTA via ``Bio.SeqIO``; biopython is the
@@ -27,9 +26,9 @@ from embpy.tl.snp_utils import (
 _HAVE_BIO = importlib.util.find_spec("Bio") is not None
 
 
-CHR_SEQ = "ACGT" * 100          
-SNP_POS = 200                   
-REF_BASE = CHR_SEQ[SNP_POS - 1].upper()   
+CHR_SEQ = "ACGT" * 100
+SNP_POS = 200
+REF_BASE = CHR_SEQ[SNP_POS - 1].upper()
 ALT_BASE = "T" if REF_BASE != "T" else "G"
 
 def _make_wrapper(hidden_dim: int = 64, same_each_call: bool = True) -> MagicMock:
@@ -497,7 +496,7 @@ class TestEmbedVCF:
         from embpy.tl.snp_utils import embed_vcf
 
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text(self._vcf_content())
+        vcf_file.write_text(self._vcf_content(), encoding='utf-8')
 
         wrapper = _make_wrapper()
         results = embed_vcf(
@@ -512,7 +511,7 @@ class TestEmbedVCF:
         from embpy.tl.snp_utils import embed_vcf
 
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text(self._vcf_content())
+        vcf_file.write_text(self._vcf_content(), encoding='utf-8')
 
         wrapper = _make_wrapper()
         results = embed_vcf(
@@ -527,7 +526,7 @@ class TestEmbedVCF:
         from embpy.tl.snp_utils import embed_vcf
 
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text(self._vcf_content())
+        vcf_file.write_text(self._vcf_content(), encoding='utf-8')
 
         wrapper = _make_wrapper()
         results = embed_vcf(
@@ -541,10 +540,11 @@ class TestEmbedVCF:
 
     def test_embed_vcf_gz_supported(self, tmp_path):
         import gzip
+
         from embpy.tl.snp_utils import embed_vcf
 
         vcf_gz = tmp_path / "test.vcf.gz"
-        with gzip.open(vcf_gz, "wt") as fh:
+        with gzip.open(vcf_gz, "wt", encoding='utf-8') as fh:
             fh.write(self._vcf_content())
 
         wrapper = _make_wrapper()
@@ -562,7 +562,7 @@ class TestEmbedVCF:
         # Add extra ## comment lines — should all be ignored
         content = "##extra=header\n" * 5 + self._vcf_content()
         vcf_file = tmp_path / "test.vcf"
-        vcf_file.write_text(content)
+        vcf_file.write_text(content, encoding='utf-8')
 
         results = embed_vcf(
             vcf_path=str(vcf_file),
@@ -579,7 +579,7 @@ class TestEmbedVCF:
 class TestSequenceProvider:
 
     def _write_fasta(self, path, chrom_name: str, seq: str) -> None:
-        path.write_text(f">{chrom_name}\n{seq}\n")
+        path.write_text(f">{chrom_name}\n{seq}\n", encoding='utf-8')
 
     def test_get_chromosome_from_fasta_dir(self, tmp_path):
         fa = tmp_path / "chr17.fa"
@@ -653,13 +653,13 @@ class TestSequenceProvider:
 
         provider = SequenceProvider(fasta_dir=str(tmp_path), cache=True)
         seq1 = provider.get_chromosome("chr17")
-        seq2 = provider.get_chromosome("chr17")  
+        seq2 = provider.get_chromosome("chr17")
 
         assert seq1 == seq2
 
     def test_get_chromosome_from_fasta_file(self, tmp_path):
         fa = tmp_path / "genome.fa"
-        fa.write_text(f">chr17\n{CHR_SEQ}\n>chr1\n{'ACGT' * 50}\n")
+        fa.write_text(f">chr17\n{CHR_SEQ}\n>chr1\n{'ACGT' * 50}\n", encoding='utf-8')
 
         provider = SequenceProvider(fasta_file=str(fa))
         seq = provider.get_chromosome("chr17")
@@ -669,7 +669,7 @@ class TestSequenceProvider:
     def test_multiple_chroms_from_single_file(self, tmp_path):
         chr1_seq = "TTTT" * 100
         fa = tmp_path / "genome.fa"
-        fa.write_text(f">chr17\n{CHR_SEQ}\n>chr1\n{chr1_seq}\n")
+        fa.write_text(f">chr17\n{CHR_SEQ}\n>chr1\n{chr1_seq}\n", encoding='utf-8')
 
         provider = SequenceProvider(fasta_file=str(fa))
         assert provider.get_chromosome("chr17").upper() == CHR_SEQ.upper()
