@@ -8,8 +8,10 @@ from typing import Any
 
 import numpy as np
 import torch
-from rdkit import Chem, DataStructs
-from transformers import AutoModel, AutoTokenizer, BatchEncoding
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from rdkit import Chem, DataStructs
+    from transformers import AutoModel, AutoTokenizer, BatchEncoding
 
 from .base import BaseModelWrapper
 
@@ -47,6 +49,7 @@ class ChembertaWrapper(BaseModelWrapper):
         if self.model is not None:
             return
         logging.info(f"Loading ChemBERTa '{self.model_name}'…")
+        from transformers import AutoTokenizer, AutoModel
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         import transformers
         prev_level = transformers.logging.get_verbosity()
@@ -271,6 +274,7 @@ class MolformerWrapper(BaseModelWrapper):
 
         logging.info(f"Loading MolFormer '{self.model_name}' (trust_remote_code)…")
         try:
+            from transformers import AutoTokenizer, AutoModel
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name, trust_remote_code=True, model_max_length=512,
             )
@@ -517,6 +521,7 @@ class RDKitWrapper(BaseModelWrapper):
         if not self._loaded:
             raise RuntimeError("RDKit model not loaded. Call load() first.")
 
+        from rdkit import Chem, DataStructs
         mol = Chem.MolFromSmiles(input)
         if mol is None:
             raise ValueError(f"RDKit failed to parse SMILES: {input}")
