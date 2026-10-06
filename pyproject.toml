@@ -384,6 +384,8 @@ optional-dependencies.test = [
   "pytest-mock",
   "scanpy>=1.10",
   "xgboost",
+  "igraph>=0.11",
+  "leidenalg>=0.10",
 ]
 
 # https://docs.pypi.org/project_metadata/#project-urls

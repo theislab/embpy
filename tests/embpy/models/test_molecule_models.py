@@ -1,6 +1,7 @@
 """Tests for molecule model wrappers (ChemBERTa, MolFormer, RDKit, MiniMol, MHG-GNN, MolE) using mocks."""
 
 from __future__ import annotations
+import sys
 
 from unittest.mock import MagicMock, patch
 
@@ -138,7 +139,7 @@ class TestChembertaWrapper:
         # "Call load() first." guard, and a fixed-size tensor would silently
         # yield one embedding for N inputs.
         def _encode(text=None, *args, **kwargs):
-            n = len(text) if isinstance(text, list | tuple) else 1
+            n = len(text) if isinstance(text, (list, tuple)) else 1
             return {
                 "input_ids": torch.zeros(n, seq_len, dtype=torch.long),
                 "attention_mask": torch.ones(n, seq_len, dtype=torch.long),
@@ -747,7 +748,7 @@ class TestMolEWrapper:
             smiles=["CCO", "CCC", "c1ccccc1"],
             pretrained_model="/path/to/ckpt",
             batch_size=32,
-            num_workers=4,
+            num_workers=0 if sys.platform == 'win32' else 4,
         )
 
     def test_embed_custom_batch_kwargs(self):

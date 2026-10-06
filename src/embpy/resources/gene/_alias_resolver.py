@@ -184,7 +184,7 @@ class AliasCache:
                 "entries": self._data,
             }
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, encoding='utf-8'))
+            tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
             os.replace(tmp, self.path)
 
 

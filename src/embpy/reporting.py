@@ -281,7 +281,7 @@ class ResolutionReport:
         path = Path(str(npz_path) + suffix)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(
-            self.to_dict(include_records=include_records, encoding='utf-8'),
+            self.to_dict(include_records=include_records),
             indent=2, default=str,
         ))
         return path

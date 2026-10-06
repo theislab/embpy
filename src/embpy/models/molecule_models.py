@@ -605,6 +605,7 @@ class RDKitWrapper(BaseModelWrapper):
 
     def _bitvect_to_array(self, fp: Any) -> np.ndarray:
         """Convert an RDKit ``ExplicitBitVect`` to a float32 numpy array."""
+        from rdkit import DataStructs
         arr = np.zeros(self.n_bits, dtype=np.float32)
         DataStructs.ConvertToNumpyArray(fp, arr)
         return arr

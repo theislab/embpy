@@ -898,7 +898,7 @@ def write_static_embedding_dataset_card(
     if card_path.exists() and not overwrite:
         raise FileExistsError(f"Dataset card already exists: {card_path}. Pass overwrite=True to replace it.")
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-    card_path.write_text(render_static_embedding_dataset_card(manifest, repo_id=repo_id, encoding='utf-8'), encoding="utf-8")
+    card_path.write_text(render_static_embedding_dataset_card(manifest, repo_id=repo_id), encoding="utf-8")
     logger.info("Wrote static embedding dataset card: %s", card_path)
     return card_path
 
@@ -2412,7 +2412,7 @@ def _first_duplicate(ids: Sequence[str]) -> str | None:
 
 def _write_json(path: Path, value: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(_json_safe(value, encoding='utf-8'), indent=2, sort_keys=True))
+    path.write_text(json.dumps(_json_safe(value), indent=2, sort_keys=True))
 
 
 def _json_safe(value: object) -> Any:

@@ -11,7 +11,6 @@ from hashlib import sha1
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
-from rdkit import Chem
 
 from ._lazy import lazy_module
 from .errors import (
@@ -4999,7 +4998,7 @@ class BioEmbedder:
         # -- parse sequences --------------------------------------------
         handle = gzip.open(filepath, "rt", encoding='utf-8') if is_gz else open(filepath)
         try:
-            records = list(SeqIO.parse(handle, fmt, encoding='utf-8'))
+            records = list(SeqIO.parse(handle, fmt))
         finally:
             handle.close()
 
