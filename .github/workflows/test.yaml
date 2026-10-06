@@ -71,7 +71,7 @@ jobs:
         run: pip install ${{ matrix.pip-flags }} -e ".[dev,test]"
 
       - name: BioEmbedder smoke test
-        run: python -c "from embpy.embedder import BioEmbedder; emb = BioEmbedder(model='mini_esm', device='auto')"
+        run: python -c "from embpy.embedder import BioEmbedder; emb = BioEmbedder(device='auto')"
 
       - name: Test
         run: coverage run -m pytest -v --color=yes
