@@ -2783,6 +2783,7 @@ class BioEmbedder:
         if inst.model_type != "molecule":
             raise ValueError(f"Model '{model}' is not a molecule embedder.")
 
+        from rdkit import Chem
         valid_inputs: list[str] = []
         valid_indices: list[int] = []
         for idx, smi in enumerate(identifiers):
@@ -4996,7 +4997,7 @@ class BioEmbedder:
             )
 
         # -- parse sequences --------------------------------------------
-        handle = gzip.open(filepath, "rt", encoding='utf-8') if is_gz else open(filepath)
+        handle = gzip.open(filepath, "rt") if is_gz else open(filepath)
         try:
             records = list(SeqIO.parse(handle, fmt))
         finally:

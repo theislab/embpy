@@ -45,7 +45,7 @@ def _write_fasta(
     region_type: str,
 ) -> None:
     """Write extracted regions to a FASTA file."""
-    with open(output_path, "w", encoding='utf-8') as f:
+    with open(output_path, "w") as f:
         for gene, entries in regions.items():
             for entry in entries:
                 header = (

@@ -43,7 +43,7 @@ def test_invalid_path_and_suffix_errors(tmp_path):
         normalize_embedding_input(tmp_path / "missing.csv")
 
     bad = tmp_path / "ids.txt"
-    bad.write_text("TP53\n", encoding='utf-8')
+    bad.write_text("TP53\n")
     with pytest.raises(ValueError, match=r"input loading: unsupported input file suffix"):
         normalize_embedding_input(bad)
 

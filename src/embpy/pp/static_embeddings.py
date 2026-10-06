@@ -898,7 +898,7 @@ def write_static_embedding_dataset_card(
     if card_path.exists() and not overwrite:
         raise FileExistsError(f"Dataset card already exists: {card_path}. Pass overwrite=True to replace it.")
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-    card_path.write_text(render_static_embedding_dataset_card(manifest, repo_id=repo_id), encoding="utf-8")
+    card_path.write_text(render_static_embedding_dataset_card(manifest, repo_id=repo_id))
     logger.info("Wrote static embedding dataset card: %s", card_path)
     return card_path
 

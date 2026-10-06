@@ -1521,7 +1521,7 @@ class TestStateDefaultWeights:
 
         from embpy.models.singlecell_models import StateEmbeddingWrapper
 
-        (tmp_path / "config.yaml").write_text("{}", encoding='utf-8')
+        (tmp_path / "config.yaml").write_text("{}")
         with patch(
             "huggingface_hub.hf_hub_download",
             side_effect=lambda repo_id, filename: str(tmp_path / filename),

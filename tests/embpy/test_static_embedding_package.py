@@ -121,7 +121,7 @@ def test_read_static_embedding_table_duplicate_policy(tmp_path):
 
 def test_read_static_embedding_table_missing_ids_are_explicit(tmp_path):
     path = tmp_path / "missing.csv"
-    path.write_text("gene_id,0,1\nTP53,1,2\n,3,4\n", encoding='utf-8')
+    path.write_text("gene_id,0,1\nTP53,1,2\n,3,4\n")
     source = StaticEmbeddingSource(key="missing", path=path, id_type="symbol")
 
     with pytest.raises(ValueError, match="missing/blank identifier"):
@@ -281,7 +281,7 @@ def test_prepare_static_embedding_package_from_source_config(tmp_path):
                     }
                 ]
             }
-        , encoding='utf-8')
+        )
     )
 
     sources = load_static_embedding_source_config(config_path)
@@ -324,7 +324,7 @@ def test_source_config_rejects_species_taxonomy_mismatch(tmp_path):
                     }
                 ]
             }
-        , encoding='utf-8')
+        )
     )
 
     with pytest.raises(ValueError, match="species and taxonomy_id"):

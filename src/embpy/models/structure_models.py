@@ -164,7 +164,7 @@ class Boltz2Wrapper(BaseModelWrapper):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
             yaml_path = tmpdir / "input.yaml"
-            yaml_path.write_text(yaml_content, encoding='utf-8')
+            yaml_path.write_text(yaml_content)
 
             try:
                 from boltz.data.types import Manifest

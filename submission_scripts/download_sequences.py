@@ -132,7 +132,7 @@ def _prepare_genome(cache_dir: Path, config: dict) -> Path:
     genome_fa = cache_dir / f"{assembly}.dna.primary_assembly.fa"
     fai_path = Path(str(genome_fa) + ".fai")
 
-    with open(lock_path, "w", encoding='utf-8') as lock_fd:
+    with open(lock_path, "w") as lock_fd:
         logger.info("Acquiring genome prep lock (%s)...", lock_path)
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         logger.info("Lock acquired -- preparing genome...")

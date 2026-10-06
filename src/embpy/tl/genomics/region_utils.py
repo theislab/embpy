@@ -978,7 +978,7 @@ def _scan_motifs_fimo_cli(
 
     with tempfile.TemporaryDirectory() as td:
         fa = _Path(td) / "region.fa"
-        fa.write_text(f">{chrom}:{window_start}\n" + sequence + "\n", encoding='utf-8')
+        fa.write_text(f">{chrom}:{window_start}\n" + sequence + "\n")
         cmd = ["fimo", "--text", "--thresh", str(pvalue_threshold),
                "--verbosity", "1", str(meme_file), str(fa)]
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=7200)
