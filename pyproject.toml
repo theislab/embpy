@@ -58,6 +58,8 @@ dependencies = [
   "scipy>=1.11",
   "seaborn",
   "session-info",
+  "torch>=2.5.1",
+  "pysam>=0.22; sys_platform != 'win32'",
 ]
 
 scripts.embpy-static-embeddings = "embpy.scripts.package_static_embeddings:main"
