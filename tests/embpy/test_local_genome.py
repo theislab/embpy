@@ -47,9 +47,9 @@ class TestGeneResolverLocalIndexedSequence:
         fa_path.write_text(
             ">1\n"
             "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG\n"
-            "GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAG\n"
+            "GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTA\n"
             ">17\n"
-            "NNNATCGATCGAAATTTCCCGGGAAATTTCCCGGGNNNN\n"
+            "NNNATCGATCGAAATTTCCCGGGAAATTTCCCGGGNNNNN\n"
             "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG\n"
         )
         pysam.faidx(str(fa_path))

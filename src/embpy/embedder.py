@@ -2731,6 +2731,7 @@ class BioEmbedder:
             raise ValueError(f"Model '{model}' is not a molecule embedder.")
 
         smiles = identifier
+        from rdkit import Chem
         # Validate SMILES
         if Chem.MolFromSmiles(smiles) is None:
             raise ValueError(f"Invalid SMILES string: '{smiles}'")
