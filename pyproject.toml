@@ -58,6 +58,8 @@ dependencies = [
   "scipy>=1.11",
   "seaborn",
   "session-info",
+  "torch>=2.5.1",
+  "pysam>=0.22; sys_platform != 'win32'",
 ]
 
 scripts.embpy-static-embeddings = "embpy.scripts.package_static_embeddings:main"
@@ -112,7 +114,7 @@ optional-dependencies.torch-cu130 = [
 # disagree about which models exist. See the `esm3` extra for the install recipe
 # that keeps both.
 optional-dependencies.cpu = [
-  "pysam>=0.22; platform_system != 'Windows'",
+  "pysam>=0.22; sys_platform != 'win32'",
   "pyensembl>=2.3.13; platform_system != 'Windows'",
   "embpy[torch-cpu]",
   "transformers>=4.45.0,<5.0.0",
@@ -139,7 +141,7 @@ optional-dependencies.cpu = [
   "igraph>=0.11",
 ]
 optional-dependencies.gpu = [
-  "pysam>=0.22; platform_system != 'Windows'",
+  "pysam>=0.22; sys_platform != 'win32'",
   "pyensembl>=2.3.13; platform_system != 'Windows'",
   "embpy[torch]",
   "transformers>=4.45.0,<5.0.0",
@@ -181,7 +183,7 @@ optional-dependencies.bio = [
 # (pysam) and Ensembl annotations (pyensembl). Optional because pysam needs a
 # C toolchain on some platforms.
 optional-dependencies.genome = [
-  "pysam>=0.22",
+  "pysam>=0.22; sys_platform != 'win32'",
   "pyensembl>=2.3.13",
 ]
 # ESM-3 / ESM-C wrappers. Kept separate because `esm>=3.2.0` hard-pins
@@ -382,6 +384,10 @@ optional-dependencies.test = [
   "coverage",
   "pytest",
   "pytest-mock",
+  "scanpy>=1.10",
+  "xgboost",
+  "igraph>=0.11",
+  "leidenalg>=0.10",
 ]
 
 # https://docs.pypi.org/project_metadata/#project-urls
@@ -497,9 +503,7 @@ line-length = 120
 src = [ "src" ]
 extend-include = [ "*.ipynb" ]
 
-format.docstring-code-format = true
-
-lint.select = [
+select = [
   "B",      # flake8-bugbear
   "BLE",    # flake8-blind-except
   "C4",     # flake8-comprehensions
@@ -512,7 +516,7 @@ lint.select = [
   "UP",     # pyupgrade
   "W",      # Warning detected by Pycodestyle
 ]
-lint.ignore = [
+ignore = [
   "B008", # Errors from function calls in argument defaults. These are fine when the result is immutable.
   "D100", # Missing docstring in public module
   "D104", # Missing docstring in public package
@@ -527,10 +531,10 @@ lint.ignore = [
   "E731", # Do not assign a lambda expression, use a def -> lambda expression assignments are convenient
   "E741", # allow I, O, l as variable names -> I is the identity matrix
 ]
-lint.per-file-ignores."*/__init__.py" = [ "F401" ]
-lint.per-file-ignores."docs/*" = [ "I" ]
-lint.per-file-ignores."tests/*" = [ "D" ]
-lint.pydocstyle.convention = "numpy"
+per-file-ignores."*/__init__.py" = [ "F401" ]
+per-file-ignores."docs/*" = [ "I" ]
+per-file-ignores."tests/*" = [ "D" ]
+pydocstyle.convention = "numpy"
 
 [tool.pytest.ini_options]
 testpaths = [ "tests" ]

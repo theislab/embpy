@@ -987,7 +987,7 @@ class BorzoiWrapper(BaseModelWrapper):
 
     @property
     def profile_offset_bp(self) -> int:
-        """bp offset of profile bin 0 relative to the start of the model's input window.
+        """Bp offset of profile bin 0 relative to the start of the model's input window.
 
         Borzoi crops both ends of its receptive field before the prediction
         head, so the first predicted bin does not start at position 0 of the
@@ -1027,6 +1027,7 @@ class BorzoiWrapper(BaseModelWrapper):
             power-transformed) scale during training; set True to invert
             that transform and recover approximate linear-scale coverage,
             which is required before summing bins for variant-effect scoring.
+
         Returns
         -------
         np.ndarray
@@ -1779,7 +1780,7 @@ class Evo2Wrapper(BaseModelWrapper):
                 "Python >=3.11,<3.13, so on a newer interpreter no extra can install it "
                 "-- it needs a dedicated environment:\n"
                 "  uv venv --python 3.12 .venv-evo2\n"
-                '  uv pip install --python .venv-evo2/bin/python "embpy[evo2]"' 
+                '  uv pip install --python .venv-evo2/bin/python "embpy[evo2]"'
             )
 
         self.device = device

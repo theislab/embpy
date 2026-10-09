@@ -283,7 +283,6 @@ def discover_static_embedding_sources(
     names. Additional ``.csv``, ``.tsv``, and ``.parquet`` files are included
     with a path-derived key when ``include_unknown=True``.
     """
-
     root = Path(input_dir)
     if not root.is_dir():
         raise FileNotFoundError(f"Static embedding input directory not found: {root}")
@@ -334,12 +333,11 @@ def load_static_embedding_source_config(
     or one source object. Relative source paths are resolved relative to
     ``input_dir`` when provided, otherwise relative to the config file.
     """
-
     path = Path(config_path)
     if not path.is_file():
         raise FileNotFoundError(f"Static embedding source config not found: {path}")
     try:
-        payload = json.loads(path.read_text())
+        payload = json.loads(path.read_text(encoding='utf-8'))
     except json.JSONDecodeError as exc:
         raise ValueError(f"Source config {path} is not valid JSON: {exc}") from exc
 
@@ -374,7 +372,6 @@ def read_static_embedding_table(
     gene_resolver: Any | None = None,
 ) -> StaticEmbeddingTable:
     """Read and validate one source table as ``float32`` embeddings."""
-
     duplicate_policy = _validate_duplicate_policy(duplicate_policy)
     nan_policy = _validate_nan_policy(nan_policy)
     target_id_type = _validate_target_id_type(target_id_type)
@@ -516,7 +513,6 @@ def prepare_static_embedding_package(
     ``dry_run=True`` performs discovery only and returns the manifest that
     would be written.
     """
-
     target_id_type = _validate_target_id_type(target_id_type)
     unresolved_id_policy = _validate_unresolved_id_policy(unresolved_id_policy)
     input_path = Path(input_dir) if input_dir is not None else None
@@ -625,7 +621,6 @@ def write_static_embedding_package(
     overwrite: bool = False,
 ) -> dict[str, Any]:
     """Write one table into ``package_root/embeddings/<key>/``."""
-
     root = Path(package_root)
     model_dir = root / "embeddings" / table.key
     if model_dir.exists():
@@ -653,14 +648,13 @@ def write_static_embedding_package(
 
 def validate_static_embedding_package(path: str | Path) -> list[StaticEmbeddingValidation]:
     """Validate a package root or one ``embeddings/<key>`` directory."""
-
     root = Path(path)
     if _is_model_dir(root):
         return [validate_static_embedding_dir(root)]
 
     manifest_path = root / "manifest.json"
     if manifest_path.is_file():
-        manifest = json.loads(manifest_path.read_text())
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
         keys = sorted((manifest.get("embeddings") or {}).keys())
     else:
         embeddings_dir = root / "embeddings"
@@ -674,7 +668,6 @@ def validate_static_embedding_package(path: str | Path) -> list[StaticEmbeddingV
 
 def validate_static_embedding_dir(path: str | Path) -> StaticEmbeddingValidation:
     """Validate one ``embeddings/<key>`` package directory."""
-
     store = StaticEmbeddingStore.open(path)
     shape = tuple(int(x) for x in store.matrix_array.shape)
     expected_shape = tuple(int(x) for x in store.metadata.get("shape", []))
@@ -700,9 +693,8 @@ def validate_static_embedding_dir(path: str | Path) -> StaticEmbeddingValidation
     )
 
 
-def load_static_embedding_package(path: str | Path, *, key: str | None = None) -> "StaticEmbeddingStore":
+def load_static_embedding_package(path: str | Path, *, key: str | None = None) -> StaticEmbeddingStore:
     """Open a packaged static embedding for exact identifier lookup."""
-
     root = Path(path)
     if key is not None:
         model_dir = root / "embeddings" / key
@@ -715,7 +707,7 @@ def load_static_embedding_package(path: str | Path, *, key: str | None = None) -
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Expected a model package directory or manifest.json under {root}.")
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     keys = sorted((manifest.get("embeddings") or {}).keys())
     if len(keys) != 1:
         raise ValueError(f"Package {root} contains {len(keys)} embeddings; pass key=... to select one.")
@@ -728,7 +720,6 @@ def render_static_embedding_dataset_card(
     repo_id: str | None = None,
 ) -> str:
     """Render a Hugging Face dataset card from a static embedding manifest."""
-
     repo = repo_id or "your-org/Embpy_Data"
     embeddings = dict(manifest.get("embeddings") or {})
     planned = list(manifest.get("planned_embeddings") or [])
@@ -899,7 +890,6 @@ def write_static_embedding_dataset_card(
     overwrite: bool = False,
 ) -> Path:
     """Write ``README.md`` for a prepared static embedding package."""
-
     root = Path(package_root)
     manifest_path = root / "manifest.json"
     if not manifest_path.is_file():
@@ -907,8 +897,8 @@ def write_static_embedding_dataset_card(
     card_path = root / DATASET_CARD_NAME
     if card_path.exists() and not overwrite:
         raise FileExistsError(f"Dataset card already exists: {card_path}. Pass overwrite=True to replace it.")
-    manifest = json.loads(manifest_path.read_text())
-    card_path.write_text(render_static_embedding_dataset_card(manifest, repo_id=repo_id), encoding="utf-8")
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    card_path.write_text(render_static_embedding_dataset_card(manifest, repo_id=repo_id))
     logger.info("Wrote static embedding dataset card: %s", card_path)
     return card_path
 
@@ -939,7 +929,7 @@ class StaticEmbeddingStore:
         self._matrix_array: Any | None = None
 
     @classmethod
-    def open(cls, path: str | Path) -> "StaticEmbeddingStore":
+    def open(cls, path: str | Path) -> StaticEmbeddingStore:
         model_dir = Path(path)
         metadata_dir = model_dir / METADATA_DIR_NAME
         metadata_path = metadata_dir / "metadata.json"
@@ -957,8 +947,8 @@ class StaticEmbeddingStore:
 
         return cls(
             model_dir,
-            metadata=json.loads(metadata_path.read_text()),
-            uns=json.loads(uns_path.read_text()),
+            metadata=json.loads(metadata_path.read_text(encoding='utf-8')),
+            uns=json.loads(uns_path.read_text(encoding='utf-8')),
             index=pd.read_parquet(index_path),
         )
 
@@ -994,7 +984,7 @@ class StaticEmbeddingStore:
     @property
     def n_dims(self) -> int:
         shape = self.metadata.get("shape")
-        if isinstance(shape, (list, tuple)) and len(shape) == 2:
+        if isinstance(shape, list | tuple) and len(shape) == 2:
             return int(shape[1])
         return int(self.matrix_array.shape[1])
 
@@ -1018,7 +1008,6 @@ class StaticEmbeddingStore:
         id_type: str | None = None,
     ) -> np.ndarray:
         """Return embeddings for row identifiers or preserved aliases."""
-
         wanted, scalar = _normalize_identifier_query(identifiers)
         lookup, lookup_name = self._lookup_for_query_id_type(id_type)
         rows: list[int | None] = [lookup.get(identifier) for identifier in wanted]
@@ -1056,7 +1045,6 @@ class StaticEmbeddingStore:
         as_dataframe: bool = True,
     ) -> pd.DataFrame | np.ndarray:
         """Query identifiers and return a DataFrame by default."""
-
         wanted, scalar = _normalize_identifier_query(identifiers)
         lookup, lookup_name = self._lookup_for_query_id_type(id_type)
         matrix = self.get(wanted, missing=missing, id_type=id_type)
@@ -1077,7 +1065,6 @@ class StaticEmbeddingStore:
 
     def to_hf_dict(self) -> dict[str, Any]:
         """Return the dict shape expected by ``HFHandler.download_embedding``."""
-
         matrix = np.asarray(self.matrix_array[:, :], dtype=np.float32)
         ids = np.asarray(self.entity_ids, dtype=str)
         return {

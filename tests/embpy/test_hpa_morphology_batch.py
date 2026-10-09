@@ -59,7 +59,7 @@ def test_hpa_batch_builds_shared_catalog_once(monkeypatch, tmp_path):
 
     assert len(calls) == 1
     assert set(calls[0]["genes"]) == {"TP53", "MISSING"}
-    assert str(calls[0]["xml_source"]).endswith("morphology_cache/_hpa/proteinatlas.xml.gz")
+    assert str(calls[0]["xml_source"]).replace("\\", "/").endswith("morphology_cache/_hpa/proteinatlas.xml.gz")
     assert str(calls[0]["cache_path"]).endswith(".csv")
     assert labels == ["TP53"]
     assert matrix.shape == (1, 3)

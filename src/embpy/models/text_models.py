@@ -4,7 +4,9 @@ from typing import Any
 
 import numpy as np
 import torch
-from transformers import AutoModel, AutoTokenizer
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from transformers import AutoModel, AutoTokenizer
 
 from .base import BaseModelWrapper
 
@@ -48,6 +50,7 @@ class TextLLMWrapper(BaseModelWrapper):
 
         logging.info(f"Loading text model '{self.model_name}'...")
         try:
+            from transformers import AutoTokenizer, AutoModel
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             self.model = AutoModel.from_pretrained(self.model_name)
             self.model = self.model.to(device)

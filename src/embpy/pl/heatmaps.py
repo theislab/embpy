@@ -227,7 +227,8 @@ def cross_embedding_correlation(
     -------
     The matplotlib ``Figure``.
     """
-    from scipy.stats import pearsonr as _pr, spearmanr as _sr
+    from scipy.stats import pearsonr as _pr
+    from scipy.stats import spearmanr as _sr
 
     sim_a = tl.compute_similarity(adata, obsm_key=obsm_key_a, metric="cosine")
     sim_b = tl.compute_similarity(adata, obsm_key=obsm_key_b, metric="cosine")

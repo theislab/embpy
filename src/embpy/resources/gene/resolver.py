@@ -878,7 +878,7 @@ class GeneResolver:
         See :class:`embpy.resources.gene._alias_resolver.Resolution` for
         the structured result with full per-step chain log.
         """
-        from ._alias_resolver import (  # noqa: PLC0415
+        from ._alias_resolver import (
             AliasCache,
             default_cache_path,
             resolve_symbol_chain,

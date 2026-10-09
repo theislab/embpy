@@ -2,27 +2,21 @@ name: Test
 
 on:
   push:
-    branches: [main]
+    branches: [main, vibe_embpy]
   pull_request:
-    branches: [main]
-  schedule:
-    - cron: "0 5 1,15 * *"
+    branches: [main, vibe_embpy]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Primary gate: the lightweight core install (no torch / transformers / pysam
-  # / biopython / scanpy). The test suite auto-skips the parts that need those
-  # optional dependencies, so this job verifies the core package quickly and
-  # without any heavy / build-fragile wheels.
-  core:
+  test:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        shell: bash -e {0} # -e to fail on error
-
+        shell: bash -e {0}
     strategy:
       fail-fast: false
       matrix:
@@ -33,16 +27,30 @@ jobs:
             python: "3.12"
           - os: ubuntu-latest
             python: "3.13"
+          - os: macos-latest
+            python: "3.11"
+          - os: macos-latest
+            python: "3.12"
+          - os: macos-latest
+            python: "3.13"
+          - os: windows-latest
+            python: "3.11"
+          - os: windows-latest
+            python: "3.12"
+          - os: windows-latest
+            python: "3.13"
           - os: ubuntu-latest
             python: "3.12"
             pip-flags: "--pre"
             name: PRE-RELEASE DEPENDENCIES
 
-    name: core ${{ matrix.name }} Python ${{ matrix.python }}
-
+    name: ${{ matrix.os }} Python ${{ matrix.python }} ${{ matrix.name }}
     env:
       OS: ${{ matrix.os }}
       PYTHON: ${{ matrix.python }}
+      PYTHONUTF8: "1"
+      PYTORCH_ENABLE_MPS_FALLBACK: "1"
+      MPLBACKEND: agg
 
     steps:
       - uses: actions/checkout@v4
@@ -54,50 +62,19 @@ jobs:
           cache-dependency-path: "**/pyproject.toml"
 
       - name: Install build tooling
-        run: python -m pip install --upgrade pip wheel
-      - name: Install embpy (lightweight core + test extras)
-        run: pip install ${{ matrix.pip-flags }} ".[test]"
-      - name: Test
-        env:
-          MPLBACKEND: agg
-          PLATFORM: ${{ matrix.os }}
-          DISPLAY: :42
-        run: |
-          coverage run -m pytest -v --color=yes
-      - name: Report coverage
-        run: |
-          coverage report
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
+        run: python -m pip install --upgrade pip wheel hatch-vcs
+        
+      - name: Pre-install CPU PyTorch
+        run: pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 
-  # Full install: adds the model backends (CPU torch + transformers + PyG) so
-  # the torch-gated tests (model wrappers, BioEmbedder) also run. Heavier, so it
-  # runs on a single Python version.
-  full:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        shell: bash -e {0}
-    name: full Python 3.12
-    steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: "**/pyproject.toml"
-      - name: Install build tooling
-        run: python -m pip install --upgrade pip wheel
-      - name: Install embpy with model backends (CPU torch)
-        run: pip install ".[test,models]" --extra-index-url https://download.pytorch.org/whl/cpu
+      - name: Install embpy
+        run: pip install ${{ matrix.pip-flags }} -e ".[dev,test]"
+
+      - name: BioEmbedder smoke test
+        run: python -c "from embpy.embedder import BioEmbedder; emb = BioEmbedder(device='auto')"
+
       - name: Test
-        env:
-          MPLBACKEND: agg
-          PLATFORM: ubuntu-latest
-          DISPLAY: :42
-        run: |
-          coverage run -m pytest -v --color=yes
+        run: coverage run -m pytest -v --color=yes
+
       - name: Report coverage
-        run: |
-          coverage report
+        run: coverage report

@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Pre-split snapshot (commit fde522f). Order in this list matches the
 # per-modality grouping in the new split (DNA, Protein, Molecule, Text,

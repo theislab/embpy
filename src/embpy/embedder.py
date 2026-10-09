@@ -11,7 +11,6 @@ from hashlib import sha1
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
-from rdkit import Chem
 
 from ._lazy import lazy_module
 from .errors import (
@@ -2732,6 +2731,7 @@ class BioEmbedder:
             raise ValueError(f"Model '{model}' is not a molecule embedder.")
 
         smiles = identifier
+        from rdkit import Chem
         # Validate SMILES
         if Chem.MolFromSmiles(smiles) is None:
             raise ValueError(f"Invalid SMILES string: '{smiles}'")
@@ -2784,6 +2784,7 @@ class BioEmbedder:
         if inst.model_type != "molecule":
             raise ValueError(f"Model '{model}' is not a molecule embedder.")
 
+        from rdkit import Chem
         valid_inputs: list[str] = []
         valid_indices: list[int] = []
         for idx, smi in enumerate(identifiers):

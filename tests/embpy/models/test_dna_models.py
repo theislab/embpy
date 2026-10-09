@@ -11,9 +11,9 @@ import torch
 
 from embpy.models.dna_models import (
     BorzoiWrapper,
+    CaduceusWrapper,
     EnformerWrapper,
     EvoWrapper,
-    CaduceusWrapper,
     GENALMWrapper,
     HyenaDNAWrapper,
     NucleotideTransformerWrapper,

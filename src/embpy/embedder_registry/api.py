@@ -7,9 +7,8 @@ and require credentials via environment variables (see
 
 from __future__ import annotations
 
-from ..models.api_models import APIEmbeddingWrapper
-from ..models.base import BaseModelWrapper
-
+from embpy.models.api_models import APIEmbeddingWrapper
+from embpy.models.base import BaseModelWrapper
 
 API_MODELS: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     "openai_small": (APIEmbeddingWrapper, "text-embedding-3-small"),

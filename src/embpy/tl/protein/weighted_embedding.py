@@ -216,7 +216,6 @@ class WeightedProteinEmbedder:
         if weight_sites is None:
             weight_sites = ["active_sites", "binding_sites", "motifs"]
 
-        from ...models.protein_models import ESM2Wrapper
 
         seq = self.embedder.protein_resolver.get_canonical_sequence(
             gene, id_type=id_type, organism=self.organism,

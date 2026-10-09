@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import io
 import textwrap
 from unittest.mock import MagicMock, patch
 
@@ -9,15 +8,15 @@ import numpy as np
 import pytest
 
 from embpy.tl.snp_utils import (
-    SNPContext,
-    SNPEmbeddingResult,
-    SNPEmbedder,
     SequenceProvider,
+    SNPContext,
+    SNPEmbedder,
+    SNPEmbeddingResult,
     VariantEffectResult,
-    genomic_to_bin_indices,
-    profile_variant_effect_score,
     _apply_snp,
     _extract_context,
+    genomic_to_bin_indices,
+    profile_variant_effect_score,
 )
 
 # SequenceProvider reads local FASTA via ``Bio.SeqIO``; biopython is the
@@ -27,9 +26,9 @@ from embpy.tl.snp_utils import (
 _HAVE_BIO = importlib.util.find_spec("Bio") is not None
 
 
-CHR_SEQ = "ACGT" * 100          
-SNP_POS = 200                   
-REF_BASE = CHR_SEQ[SNP_POS - 1].upper()   
+CHR_SEQ = "ACGT" * 100
+SNP_POS = 200
+REF_BASE = CHR_SEQ[SNP_POS - 1].upper()
 ALT_BASE = "T" if REF_BASE != "T" else "G"
 
 def _make_wrapper(hidden_dim: int = 64, same_each_call: bool = True) -> MagicMock:
@@ -541,6 +540,7 @@ class TestEmbedVCF:
 
     def test_embed_vcf_gz_supported(self, tmp_path):
         import gzip
+
         from embpy.tl.snp_utils import embed_vcf
 
         vcf_gz = tmp_path / "test.vcf.gz"
@@ -653,7 +653,7 @@ class TestSequenceProvider:
 
         provider = SequenceProvider(fasta_dir=str(tmp_path), cache=True)
         seq1 = provider.get_chromosome("chr17")
-        seq2 = provider.get_chromosome("chr17")  
+        seq2 = provider.get_chromosome("chr17")
 
         assert seq1 == seq2
 

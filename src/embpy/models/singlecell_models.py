@@ -32,6 +32,7 @@ then decode back to expression):
 from __future__ import annotations
 
 import logging
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -1388,7 +1389,7 @@ class StackWrapper(SingleCellWrapper):
         mask_rate: float = 1.0,
         num_steps: int | None = 5,
         mode: str = "mdm",
-        num_workers: int = 4,
+        num_workers: int = 0 if sys.platform == "win32" else 4,
         random_seed: int | None = None,
         show_progress: bool = False,
         **kwargs: Any,

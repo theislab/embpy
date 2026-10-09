@@ -42,7 +42,6 @@ def plot_ortholog_similarity(
     title
         Plot title.
     """
-    import matplotlib.pyplot as plt
     import pandas as pd
     import seaborn as sns
     from sklearn.metrics.pairwise import cosine_similarity
