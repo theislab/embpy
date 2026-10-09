@@ -33,26 +33,137 @@ scverse-friendly plotting and analysis utilities.
 
 ## Install
 
-### pip / uv
+> **Requires Python ≥ 3.11.** Check with `python --version` or `python3 --version` before starting.
 
-There are **two supported installs**. Both work with `pip` and `uv` — these are
-standard extras, not tool-specific.
+There are **two main install flavours** — pick one based on your hardware:
+
+| Flavour | When to use |
+| --- | --- |
+| `embpy[cpu]` | No NVIDIA GPU, or just getting started |
+| `embpy[gpu]` | NVIDIA GPU with CUDA available |
+
+A bare `pip install embpy` gives the lightweight core (resolvers, IO, annotation, plotting) but **no embedding backends**. For real use, always pick `[cpu]` or `[gpu]`.
+
+---
+
+### 🐧 Linux / macOS
+
+**Option A — with `pip` (standard):**
+
+```bash
+pip install "embpy[cpu]"       # CPU-only
+pip install "embpy[gpu]"       # GPU (NVIDIA CUDA)
+```
+
+**Option B — with `uv` (faster resolver, recommended):**
 
 ```bash
 uv pip install "embpy[cpu]"
-```
-
-```bash
 uv pip install "embpy[gpu]"
 ```
 
-`[cpu]` pulls CPU-only PyTorch plus every backend that runs on CPU — enough for all
-the tutorials. `[gpu]` pulls CUDA PyTorch and the same backends, GPU-accelerated.
-Pick `[gpu]` on a machine with an NVIDIA card, `[cpu]` otherwise.
+**Quick verification:**
 
-Installing the bare package (`pip install embpy`) gives the lightweight core —
-resolvers, IO, annotation, plotting and analysis — but no embedding backends. It
-exists so the docs build and CI stay fast; for real use, pick `[cpu]` or `[gpu]`.
+```bash
+python -c "import embpy; print(embpy.__version__)"
+```
+
+---
+
+### 🪟 Windows
+
+On Windows, `pip` is tied to a specific Python version. Use `py -3.12` (or whichever Python ≥ 3.11 you have installed) to be explicit:
+
+**Step 1 — Check your Python version:**
+
+```powershell
+py --list          # shows all installed Python versions
+py -3.12 --version # confirm 3.12 is available
+```
+
+**Step 2 — Install embpy:**
+
+```powershell
+# CPU-only (recommended for most Windows users)
+py -3.12 -m pip install "embpy[cpu]"
+
+# GPU (only if you have an NVIDIA GPU with CUDA)
+py -3.12 -m pip install "embpy[gpu]"
+```
+
+**Step 3 — Verify:**
+
+```powershell
+py -3.12 -c "import embpy; print(embpy.__version__)"
+```
+
+> **Note:** `pysam` and `pyensembl` (genome access) are **not available on Windows** — these are Linux/macOS only. All other backends work natively on Windows.
+
+---
+
+### 🧪 Installing from a specific branch (for reviewers / contributors)
+
+If the latest release is not yet on PyPI or you want to test a specific branch:
+
+```bash
+# Core install from a branch
+pip install "embpy @ git+https://github.com/vipreshgupta/embpy.git@vibe_embpy"
+
+# With ML model backends
+pip install "embpy[models] @ git+https://github.com/vipreshgupta/embpy.git@vibe_embpy"
+
+# With test dependencies (for running pytest)
+pip install "embpy[test] @ git+https://github.com/vipreshgupta/embpy.git@vibe_embpy"
+```
+
+On Windows, prefix with `py -3.12 -m`:
+
+```powershell
+py -3.12 -m pip install "embpy[models] @ git+https://github.com/vipreshgupta/embpy.git@vibe_embpy"
+```
+
+---
+
+### 🖥️ On an HPC cluster (Slurm)
+
+Verified on Helmholtz Munich HPC; adjust partition/QoS names for your site.
+
+**1. Grab an interactive CPU node.** The tutorials are small enough for CPU:
+
+```bash
+srun --partition=interactive_cpu_p --qos=interactive_cpu --cpus-per-task=8 --mem=16G --time=04:00:00 --pty bash
+```
+
+If you see `QOSMaxMemoryPerJob`, that is a **policy cap, not a shortage** — ask for less memory, not more. 16G is enough here.
+
+**2. Create and activate an environment:**
+
+```bash
+export UV_LINK_MODE=copy && uv venv .venv --python 3.12 && source .venv/bin/activate
+```
+
+**3. Install:**
+
+```bash
+uv pip install -e ".[cpu]" ipykernel jupyter
+```
+
+**4. Run the notebooks headless:**
+
+```bash
+jupyter nbconvert --to notebook --execute docs/notebooks/01_embed_any_model.ipynb --output /tmp/out.ipynb
+```
+
+**Or run them interactively.** Start a server on the compute node:
+
+```bash
+jupyter lab --no-browser --ip=0.0.0.0 --port=8899 --IdentityProvider.token=embpy
+```
+
+Then point your notebook client at `http://<compute-node>:8899/lab?token=embpy`
+(`hostname` gives the node). Do not background it with `Ctrl+Z` — use `nohup ... &` if you need the prompt back.
+
+---
 
 <details>
 <summary>Backends that must be installed separately</summary>
@@ -162,48 +273,6 @@ the install line, so a missing backend stays distinguishable from a broken
 checkpoint or a gated repository.
 
 </details>
-
-### On an HPC cluster (Slurm)
-
-Verified on Helmholtz Munich HPC; adjust partition/QoS names for your site.
-
-**1. Grab an interactive CPU node.** The tutorials are small enough for CPU:
-
-```bash
-srun --partition=interactive_cpu_p --qos=interactive_cpu --cpus-per-task=8 --mem=16G --time=04:00:00 --pty bash
-```
-
-If you see `QOSMaxMemoryPerJob`, that is a **policy cap, not a shortage** — ask for
-less memory, not more. 16G is enough here.
-
-**2. Create and activate an environment:**
-
-```bash
-export UV_LINK_MODE=copy && uv venv .venv --python 3.12 && source .venv/bin/activate
-```
-
-**3. Install:**
-
-```bash
-uv pip install -e ".[cpu]" ipykernel jupyter
-```
-
-**4. Run the notebooks headless:**
-
-```bash
-jupyter nbconvert --to notebook --execute docs/notebooks/01_embed_any_model.ipynb --output /tmp/out.ipynb
-```
-
-**Or run them interactively.** Start a server on the compute node:
-
-```bash
-jupyter lab --no-browser --ip=0.0.0.0 --port=8899 --IdentityProvider.token=embpy
-```
-
-Then point your notebook client at `http://<compute-node>:8899/lab?token=embpy`
-(`hostname` gives the node). Do not background it with `Ctrl+Z` — that suspends the
-process, which keeps the port open while answering nothing; use `nohup ... &` if you
-need the prompt back.
 
 ## Quick Start
 
