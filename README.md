@@ -44,7 +44,14 @@ There are **two main install flavours** — pick one based on your hardware:
 
 A bare install gives the lightweight core (resolvers, IO, annotation, plotting) but **no embedding backends**. For real use, always pick `[cpu]` or `[gpu]`.
 
-> **GPU Note:** The default `[gpu]` install supports Turing architectures and newer (e.g., T4, A100, H100). For older Volta GPUs (like V100), you will need a custom PyTorch build.
+> **GPU Note (V100/Volta Users):** PyTorch `2.5.1` (the minimum version required for newer models) drops pre-compiled wheel support for older Volta GPUs (`sm_70`) on PyPI. If you run the default `[gpu]` install on a V100, you will get a `no kernel image is available` error. To run `embpy` on a V100, we strongly recommend using an official NVIDIA NGC PyTorch Docker Container (which includes PyTorch compiled with support for all architectures):
+> ```bash
+> # 1. Start the NVIDIA PyTorch container
+> docker run --gpus all -it --rm nvcr.io/nvidia/pytorch:24.02-py3
+> 
+> # 2. Inside the container, install embpy without reinstalling torch
+> pip install "embpy[models] @ git+https://github.com/theislab/embpy.git@vibe_embpy" --no-deps
+> ```
 
 ---
 
