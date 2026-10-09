@@ -59,8 +59,6 @@ dependencies = [
   "scipy>=1.11",
   "seaborn",
   "session-info",
-  "torch>=2.5.1",
-  "pysam>=0.22; sys_platform != 'win32'",
 ]
 
 scripts.embpy-static-embeddings = "embpy.scripts.package_static_embeddings:main"
@@ -117,7 +115,7 @@ optional-dependencies.torch-cu130 = [
 optional-dependencies.cpu = [
   "pysam>=0.22; sys_platform != 'win32'",
   "pyensembl>=2.3.13; platform_system != 'Windows'",
-  "embpy[torch-cpu]",
+  "torch>=2.5.1",
   "transformers>=4.45.0",
   "sentencepiece>=0.1.99",
   "protobuf>=3.20",
@@ -185,7 +183,7 @@ optional-dependencies.bio = [
 # C toolchain on some platforms.
 optional-dependencies.genome = [
   "pysam>=0.22; sys_platform != 'win32'",
-  "pyensembl>=2.3.13",
+  "pyensembl>=2.3.13; platform_system != 'Windows'",
 ]
 # ESM-3 / ESM-C wrappers. Kept separate because `esm>=3.2.0` hard-pins
 # `transformers<4.48.2`, which conflicts with helical (needs >=4.49.0) and a
@@ -382,6 +380,7 @@ optional-dependencies.doc = [
   "sphinxext-opengraph",
 ]
 optional-dependencies.test = [
+  "biopython",
   "coverage",
   "pytest",
   "pytest-mock",
@@ -422,6 +421,8 @@ source = "vcs"
 # are explicitly requested via [tool.uv.sources] -- prevents polluting
 # unrelated packages with the torch index.
 conflicts = [
+  [ { extra = "cpu" }, { extra = "gpu" } ],
+  [ { extra = "cpu" }, { extra = "torch-cu121" }, { extra = "torch-cu124" }, { extra = "torch-cu128" }, { extra = "torch-cu130" } ],
   [
     { extra = "torch-cpu" },
     { extra = "torch-cu121" },
@@ -471,6 +472,7 @@ explicit = true
 
 [tool.uv.sources]
 torch = [
+  { index = "pytorch-cpu", extra = "cpu" },
   { index = "pytorch-cpu", extra = "torch-cpu" },
   { index = "pytorch-cu121", extra = "torch-cu121" },
   { index = "pytorch-cu124", extra = "torch-cu124" },
@@ -504,6 +506,10 @@ line-length = 120
 src = [ "src" ]
 extend-include = [ "*.ipynb" ]
 
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.ruff.lint]
 select = [
   "B",      # flake8-bugbear
   "BLE",    # flake8-blind-except
@@ -532,10 +538,14 @@ ignore = [
   "E731", # Do not assign a lambda expression, use a def -> lambda expression assignments are convenient
   "E741", # allow I, O, l as variable names -> I is the identity matrix
 ]
-per-file-ignores."*/__init__.py" = [ "F401" ]
-per-file-ignores."docs/*" = [ "I" ]
-per-file-ignores."tests/*" = [ "D" ]
-pydocstyle.convention = "numpy"
+
+[tool.ruff.lint.per-file-ignores]
+"*/__init__.py" = [ "F401" ]
+"docs/*" = [ "I" ]
+"tests/*" = [ "D" ]
+
+[tool.ruff.lint.pydocstyle]
+convention = "numpy"
 
 [tool.pytest.ini_options]
 testpaths = [ "tests" ]

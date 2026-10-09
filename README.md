@@ -42,7 +42,9 @@ There are **two main install flavours** — pick one based on your hardware:
 | `embpy[cpu]` | No NVIDIA GPU, or just getting started |
 | `embpy[gpu]` | NVIDIA GPU with CUDA available |
 
-A bare `pip install embpy` gives the lightweight core (resolvers, IO, annotation, plotting) but **no embedding backends**. For real use, always pick `[cpu]` or `[gpu]`.
+A bare install gives the lightweight core (resolvers, IO, annotation, plotting) but **no embedding backends**. For real use, always pick `[cpu]` or `[gpu]`.
+
+> **GPU Note:** The default `[gpu]` install supports Turing architectures and newer (e.g., T4, A100, H100). For older Volta GPUs (like V100), you will need a custom PyTorch build.
 
 ---
 
@@ -51,21 +53,25 @@ A bare `pip install embpy` gives the lightweight core (resolvers, IO, annotation
 **Option A — with `pip` (standard):**
 
 ```bash
-pip install "embpy[cpu]"       # CPU-only
-pip install "embpy[gpu]"       # GPU (NVIDIA CUDA)
+# CPU-only (Note: On Linux pip, you must install torch first to avoid the CUDA bundle)
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install "embpy[cpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+
+# GPU (NVIDIA CUDA)
+pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 ```
 
 **Option B — with `uv` (faster resolver, recommended):**
 
 ```bash
-uv pip install "embpy[cpu]"
-uv pip install "embpy[gpu]"
+uv pip install "embpy[cpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+uv pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 ```
 
 **Quick verification:**
 
 ```bash
-python -c "import embpy; print(embpy.__version__)"
+python -c "import embpy, torch; from embpy import BioEmbedder; print(embpy.__version__, torch.__version__, torch.cuda.is_available())"
 ```
 
 ---
@@ -85,16 +91,16 @@ py -3.12 --version # confirm 3.12 is available
 
 ```powershell
 # CPU-only (recommended for most Windows users)
-py -3.12 -m pip install "embpy[cpu]"
+py -3.12 -m pip install "embpy[cpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 
 # GPU (only if you have an NVIDIA GPU with CUDA)
-py -3.12 -m pip install "embpy[gpu]"
+py -3.12 -m pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 ```
 
 **Step 3 — Verify:**
 
 ```powershell
-py -3.12 -c "import embpy; print(embpy.__version__)"
+py -3.12 -c "import embpy, torch; from embpy import BioEmbedder; print(embpy.__version__, torch.__version__, torch.cuda.is_available())"
 ```
 
 > **Note:** `pysam` and `pyensembl` (genome access) are **not available on Windows** — these are Linux/macOS only. All other backends work natively on Windows.
@@ -113,8 +119,10 @@ upstream repository — no need to clone anything.
 # With ML model backends (recommended)
 pip install "embpy[models] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 
-# With test dependencies + run tests
-pip install "embpy[test] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+# With test dependencies + run tests (requires a clone so the tests folder exists)
+git clone --branch vibe_embpy https://github.com/theislab/embpy.git
+cd embpy
+pip install -e ".[test]"
 python -m pytest tests/ -v
 
 # Core only (no ML backends)
@@ -127,8 +135,10 @@ pip install "embpy @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 # With ML model backends (recommended)
 py -3.12 -m pip install "embpy[models] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 
-# With test dependencies + run tests
-py -3.12 -m pip install "embpy[test] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+# With test dependencies + run tests (requires a clone so the tests folder exists)
+git clone --branch vibe_embpy https://github.com/theislab/embpy.git
+cd embpy
+py -3.12 -m pip install -e ".[test]"
 py -3.12 -m pytest tests/ -v
 
 # Core only (no ML backends)
@@ -139,10 +149,10 @@ py -3.12 -m pip install "embpy @ git+https://github.com/theislab/embpy.git@vibe_
 
 ```bash
 # Linux / macOS
-python -c "import embpy; print(embpy.__version__)"
+python -c "import embpy, torch; print(embpy.__version__, torch.__version__)"
 
 # Windows
-py -3.12 -c "import embpy; print(embpy.__version__)"
+py -3.12 -c "import embpy, torch; print(embpy.__version__, torch.__version__)"
 ```
 
 > Once this branch is merged into `main` and a new version is published to PyPI,

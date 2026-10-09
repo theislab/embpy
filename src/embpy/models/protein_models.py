@@ -75,8 +75,8 @@ class ESM2Wrapper(BaseModelWrapper):
             raise ValueError("model_path_or_name must be provided for ESM2Wrapper.")
 
         logging.info(f"Loading ESM2 model '{self.model_name}'...")
+        from transformers import AutoTokenizer, AutoModel
         try:
-            from transformers import AutoTokenizer, AutoModel
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             self.model = AutoModel.from_pretrained(self.model_name)
             self.model.to(device)
@@ -683,8 +683,8 @@ class ProtT5Wrapper(BaseModelWrapper):
             raise ValueError("model_path_or_name must be provided for ProtT5Wrapper.")
 
         logging.info("Loading ProtT5 model '%s' …", self.model_name)
+        from transformers import T5Tokenizer, T5EncoderModel
         try:
-            from transformers import T5Tokenizer, T5EncoderModel
             self.tokenizer = T5Tokenizer.from_pretrained(self.model_name, do_lower_case=False)
             # Use T5EncoderModel to avoid decoder overhead
             self.model = T5EncoderModel.from_pretrained(self.model_name)

@@ -25,6 +25,7 @@ jobs:
             python: "3.11"
           - os: ubuntu-latest
             python: "3.12"
+            extras: ".[dev,test,models]"
           - os: ubuntu-latest
             python: "3.13"
           - os: macos-latest
@@ -37,6 +38,7 @@ jobs:
             python: "3.11"
           - os: windows-latest
             python: "3.12"
+            pythonutf8: "0"
           - os: windows-latest
             python: "3.13"
           - os: ubuntu-latest
@@ -48,7 +50,7 @@ jobs:
     env:
       OS: ${{ matrix.os }}
       PYTHON: ${{ matrix.python }}
-      PYTHONUTF8: "1"
+      PYTHONUTF8: ${{ matrix.pythonutf8 || '1' }}
       PYTORCH_ENABLE_MPS_FALLBACK: "1"
       MPLBACKEND: agg
 
@@ -68,7 +70,7 @@ jobs:
         run: pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 
       - name: Install embpy
-        run: pip install ${{ matrix.pip-flags }} -e ".[dev,test]"
+        run: pip install ${{ matrix.pip-flags }} -e "${{ matrix.extras || '.[dev,test]' }}"
 
       - name: BioEmbedder smoke test
         run: python -c "from embpy.embedder import BioEmbedder; emb = BioEmbedder(device='auto')"
@@ -78,3 +80,19 @@ jobs:
 
       - name: Report coverage
         run: coverage report
+
+  test-readme-install:
+    name: README Install Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install exactly as README specifies
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install ".[models]"
+      - name: Verify
+        run: python -c "import embpy, torch; from embpy import BioEmbedder; print(embpy.__version__, torch.__version__)"
