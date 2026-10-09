@@ -1,3 +1,4 @@
+
 # ---------------------------------------------------------------------------
 # Root pyproject for the `embpy` package.
 #
@@ -42,7 +43,7 @@ dependencies = [
   "anndata",
   "broad-babel>=0.1",
   "cirpy",
-  "huggingface-hub>=1.0.0,<3.0.0",
+  "huggingface-hub>=0.36",
   "ipywidgets",
   "matplotlib",
   # Intentionally permissive: scipy 1.13 (needed by helical) pre-dates numpy 2,
@@ -117,7 +118,7 @@ optional-dependencies.cpu = [
   "pysam>=0.22; sys_platform != 'win32'",
   "pyensembl>=2.3.13; platform_system != 'Windows'",
   "embpy[torch-cpu]",
-  "transformers>=4.45.0,<5.0.0",
+  "transformers>=4.45.0",
   "sentencepiece>=0.1.99",
   "protobuf>=3.20",
   "torch-geometric>=2.5",
@@ -144,7 +145,7 @@ optional-dependencies.gpu = [
   "pysam>=0.22; sys_platform != 'win32'",
   "pyensembl>=2.3.13; platform_system != 'Windows'",
   "embpy[torch]",
-  "transformers>=4.45.0,<5.0.0",
+  "transformers>=4.45.0",
   "sentencepiece>=0.1.99",
   "protobuf>=3.20",
   "torch-geometric>=2.5",
@@ -169,7 +170,7 @@ optional-dependencies.gpu = [
 ]
 optional-dependencies.models = [
   "embpy[torch]",
-  "transformers>=4.45.0,<5.0.0",
+  "transformers>=4.45.0",
   "sentencepiece>=0.1.99",
   "protobuf>=3.20",
   "torch-geometric>=2.5",
