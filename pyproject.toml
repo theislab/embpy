@@ -42,7 +42,7 @@ dependencies = [
   "anndata",
   "broad-babel>=0.1",
   "cirpy",
-  "huggingface-hub>=0.35,<1.0.0",
+  "huggingface-hub>=1.0.0,<3.0.0",
   "ipywidgets",
   "matplotlib",
   # Intentionally permissive: scipy 1.13 (needed by helical) pre-dates numpy 2,
