@@ -101,26 +101,52 @@ py -3.12 -c "import embpy; print(embpy.__version__)"
 
 ---
 
-### 🧪 Installing from a specific branch (for reviewers / contributors)
+### 🧪 Installing the `vibe_embpy` branch (for reviewers / contributors)
 
-If the latest release is not yet on PyPI or you want to test a specific branch:
+The `vibe_embpy` branch contains the latest cross-platform compatibility fixes
+(Windows support, encoding fixes, FASTA strictness). Install it directly from the
+upstream repository — no need to clone anything.
+
+**🐧 Linux / macOS:**
 
 ```bash
-# Core install from a branch
-pip install "embpy @ git+https://github.com/vipreshgupta/embpy.git@vibe_embpy"
+# With ML model backends (recommended)
+pip install "embpy[models] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 
-# With ML model backends
-pip install "embpy[models] @ git+https://github.com/vipreshgupta/embpy.git@vibe_embpy"
+# With test dependencies + run tests
+pip install "embpy[test] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+python -m pytest tests/ -v
 
-# With test dependencies (for running pytest)
-pip install "embpy[test] @ git+https://github.com/vipreshgupta/embpy.git@vibe_embpy"
+# Core only (no ML backends)
+pip install "embpy @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 ```
 
-On Windows, prefix with `py -3.12 -m`:
+**🪟 Windows:**
 
 ```powershell
-py -3.12 -m pip install "embpy[models] @ git+https://github.com/vipreshgupta/embpy.git@vibe_embpy"
+# With ML model backends (recommended)
+py -3.12 -m pip install "embpy[models] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+
+# With test dependencies + run tests
+py -3.12 -m pip install "embpy[test] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+py -3.12 -m pytest tests/ -v
+
+# Core only (no ML backends)
+py -3.12 -m pip install "embpy @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 ```
+
+**Verify the install:**
+
+```bash
+# Linux / macOS
+python -c "import embpy; print(embpy.__version__)"
+
+# Windows
+py -3.12 -c "import embpy; print(embpy.__version__)"
+```
+
+> Once this branch is merged into `main` and a new version is published to PyPI,
+> the install simplifies to just `pip install "embpy[models]"`.
 
 ---
 
