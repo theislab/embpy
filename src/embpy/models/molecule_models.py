@@ -273,8 +273,8 @@ class MolformerWrapper(BaseModelWrapper):
             return
 
         logging.info(f"Loading MolFormer '{self.model_name}' (trust_remote_code)…")
+        from transformers import AutoTokenizer, AutoModel
         try:
-            from transformers import AutoTokenizer, AutoModel
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name, trust_remote_code=True, model_max_length=512,
             )
