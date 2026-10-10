@@ -707,11 +707,12 @@ def to_anndata(
         _store_uns_embedding(target, result, out_key)
         return target
 
-    if attach_to == "auto":
-        if _is_perturbation_result(result):
-            attach_to = "obs"
-        elif result.entity_type == "gene":
-            attach_to = "var"
+    if attach_to == "auto" and _is_perturbation_result(result):
+        # Perturbation/action labels are observation-aligned regardless of
+        # entity type. Everything else (including genes) is resolved by id
+        # overlap in `_resolve_axis`, which raises on an ambiguous/empty match
+        # rather than silently guessing an axis.
+        attach_to = "obs"
 
     axis = _resolve_axis(result, target, attach_to, min_overlap)
     if axis == "obs":

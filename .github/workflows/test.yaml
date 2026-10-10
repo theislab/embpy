@@ -2,11 +2,10 @@ name: Test
 
 on:
   push:
-    branches: [main]
+    branches: [main, vibe_embpy]
   pull_request:
-    branches: [main]
-  schedule:
-    - cron: "0 5 1,15 * *"
+    branches: [main, vibe_embpy]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -17,26 +16,43 @@ jobs:
     runs-on: ${{ matrix.os }}
     defaults:
       run:
-        shell: bash -e {0} # -e to fail on error
-
+        shell: bash -e {0}
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
-            python: "3.10"
+            python: "3.11"
           - os: ubuntu-latest
             python: "3.12"
+            extras: ".[dev,test,models]"
+          - os: ubuntu-latest
+            python: "3.13"
+          - os: macos-latest
+            python: "3.11"
+          - os: macos-latest
+            python: "3.12"
+          - os: macos-latest
+            python: "3.13"
+          - os: windows-latest
+            python: "3.11"
+          - os: windows-latest
+            python: "3.12"
+            pythonutf8: "0"
+          - os: windows-latest
+            python: "3.13"
           - os: ubuntu-latest
             python: "3.12"
             pip-flags: "--pre"
             name: PRE-RELEASE DEPENDENCIES
 
-    name: ${{ matrix.name }} Python ${{ matrix.python }}
-
+    name: ${{ matrix.os }} Python ${{ matrix.python }} ${{ matrix.name }}
     env:
       OS: ${{ matrix.os }}
       PYTHON: ${{ matrix.python }}
+      PYTHONUTF8: ${{ matrix.pythonutf8 || '1' }}
+      PYTORCH_ENABLE_MPS_FALLBACK: "1"
+      MPLBACKEND: agg
 
     steps:
       - uses: actions/checkout@v4
@@ -47,21 +63,36 @@ jobs:
           cache: "pip"
           cache-dependency-path: "**/pyproject.toml"
 
-      - name: Install test dependencies
-        run: |
-          python -m pip install --upgrade pip wheel
-      - name: Install dependencies
-        run: |
-          pip install ${{ matrix.pip-flags }} ".[dev,test]"
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip wheel hatch-vcs
+        
+      - name: Pre-install CPU PyTorch
+        run: pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Install embpy
+        run: pip install ${{ matrix.pip-flags }} -e "${{ matrix.extras || '.[dev,test]' }}"
+
+      - name: BioEmbedder smoke test
+        run: python -c "from embpy.embedder import BioEmbedder; emb = BioEmbedder(device='auto')"
+
       - name: Test
-        env:
-          MPLBACKEND: agg
-          PLATFORM: ${{ matrix.os }}
-          DISPLAY: :42
-        run: |
-          coverage run -m pytest -v --color=yes
+        run: coverage run -m pytest -v --color=yes
+
       - name: Report coverage
+        run: coverage report
+
+  test-readme-install:
+    name: README Install Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install exactly as README specifies
         run: |
-          coverage report
-      - name: Upload coverage
-        uses: codecov/codecov-action@v3
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install ".[models]"
+      - name: Verify
+        run: python -c "import embpy, torch; from embpy import BioEmbedder; print(embpy.__version__, torch.__version__)"

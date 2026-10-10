@@ -1,13 +1,17 @@
 # Placeholder for small molecule models (e.g., ChemBERTa, MolFormer)
+from __future__ import annotations
+
 import logging
+import sys
 from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
 import torch
-from rdkit import Chem, DataStructs
-from rdkit.Chem import AllChem
-from transformers import AutoModel, AutoTokenizer, BatchEncoding
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from rdkit import Chem, DataStructs
+    from transformers import AutoModel, AutoTokenizer, BatchEncoding
 
 from .base import BaseModelWrapper
 
@@ -45,6 +49,7 @@ class ChembertaWrapper(BaseModelWrapper):
         if self.model is not None:
             return
         logging.info(f"Loading ChemBERTa '{self.model_name}'…")
+        from transformers import AutoTokenizer, AutoModel
         self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         import transformers
         prev_level = transformers.logging.get_verbosity()
@@ -268,6 +273,7 @@ class MolformerWrapper(BaseModelWrapper):
             return
 
         logging.info(f"Loading MolFormer '{self.model_name}' (trust_remote_code)…")
+        from transformers import AutoTokenizer, AutoModel
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.model_name, trust_remote_code=True, model_max_length=512,
@@ -435,6 +441,9 @@ class RDKitWrapper(BaseModelWrapper):
 
     model_type = "molecule"
     available_pooling_strategies = ["flat"]
+    # Structural fingerprints (Morgan, MACCS, atom-pair) are hand-computed bit
+    # vectors, not neural networks, so there is nothing to attend with.
+    has_attention = False
 
     _VALID_FP_TYPES = (
         "morgan",
@@ -512,6 +521,7 @@ class RDKitWrapper(BaseModelWrapper):
         if not self._loaded:
             raise RuntimeError("RDKit model not loaded. Call load() first.")
 
+        from rdkit import Chem, DataStructs
         mol = Chem.MolFromSmiles(input)
         if mol is None:
             raise ValueError(f"RDKit failed to parse SMILES: {input}")
@@ -595,6 +605,7 @@ class RDKitWrapper(BaseModelWrapper):
 
     def _bitvect_to_array(self, fp: Any) -> np.ndarray:
         """Convert an RDKit ``ExplicitBitVect`` to a float32 numpy array."""
+        from rdkit import DataStructs
         arr = np.zeros(self.n_bits, dtype=np.float32)
         DataStructs.ConvertToNumpyArray(fp, arr)
         return arr
@@ -643,6 +654,9 @@ class MiniMolWrapper(BaseModelWrapper):
     model_type: str = "molecule"  # type: ignore[assignment]
     available_pooling_strategies: list[str] = ["flat"]
     EMBEDDING_DIM: int = 512
+    # MiniMol is a message-passing GNN (GIN with edge features), not a transformer,
+    # so it has no attention weights to extract.
+    has_attention = False
 
     def __init__(
         self,
@@ -747,6 +761,9 @@ class MHGGNNWrapper(BaseModelWrapper):
 
     model_type: str = "molecule"  # type: ignore[assignment]
     available_pooling_strategies: list[str] = ["flat"]
+    # MHG-GNN is a GIN-based graph autoencoder over molecular hypergraphs, not a
+    # transformer, so it has no attention weights to extract.
+    has_attention = False
 
     def __init__(
         self,
@@ -972,7 +989,7 @@ class MolEWrapper(BaseModelWrapper):
             raise RuntimeError("MolE not loaded. Call load() first.")
 
         batch_size: int = kwargs.get("batch_size", 32)  # type: ignore[assignment]
-        num_workers: int = kwargs.get("num_workers", 4)  # type: ignore[assignment]
+        num_workers: int = kwargs.get("num_workers", 0 if sys.platform == "win32" else 4)  # type: ignore[assignment]
 
         embeddings = self._mole_predict.encode(
             smiles=list(inputs),

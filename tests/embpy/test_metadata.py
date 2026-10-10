@@ -20,7 +20,7 @@ from anndata import AnnData
 # Load metadata module directly from file (avoids embpy.__init__ imports)
 # ---------------------------------------------------------------------------
 
-_MOD_PATH = Path(__file__).resolve().parent.parent / "src" / "embpy" / "tl" / "metadata.py"
+_MOD_PATH = Path(__file__).resolve().parents[2] / "src" / "embpy" / "tl" / "metadata.py"
 _spec = importlib.util.spec_from_file_location("embpy.tl.metadata", _MOD_PATH)
 assert _spec is not None and _spec.loader is not None
 metadata = importlib.util.module_from_spec(_spec)
@@ -443,3 +443,90 @@ class TestInferPerturbationType:
     def test_gene_ids_uppercase(self):
         series = pd.Series(["ABCB1", "SLC6A3", "CYP2D6", "BRCA1", "PTEN"])
         assert metadata._infer_perturbation_type(series) == "genetic"
+
+
+# =====================================================================
+# cell-eval: metric_configs must reach compute(), not the constructor
+# =====================================================================
+
+
+class TestCellEvalMetricConfigs:
+    """`embed_key` is only reachable through `compute(metric_configs=...)`.
+
+    `MetricsEvaluator.__init__` takes the data and DE options;
+    `MetricsEvaluator.compute` takes `metric_configs` and `skip_metrics`.
+    Folding everything into `**kwargs` sent `metric_configs` to the
+    constructor, which raised
+
+        MetricsEvaluator.__init__() got an unexpected keyword argument
+        'metric_configs'
+
+    and left the ten ANNDATA_PAIR metrics unable to score an `.obsm`
+    embedding at all -- they silently default to `.X`.
+    """
+
+    def _fake_cell_eval(self, monkeypatch):
+        """Stand in for the cell_eval module, recording how it was called."""
+        from unittest.mock import MagicMock
+
+        import embpy.tl.metrics as metrics_mod
+
+        seen: dict = {}
+
+        class _Evaluator:
+            def __init__(self, **init_kwargs):
+                seen["init"] = init_kwargs
+
+            def compute(self, **compute_kwargs):
+                seen["compute"] = compute_kwargs
+                frame = MagicMock()
+                frame.to_pandas.return_value = __import__("pandas").DataFrame(
+                    {"metric": [1.0]}
+                )
+                return frame, frame
+
+        module = MagicMock()
+        module.MetricsEvaluator = _Evaluator
+        monkeypatch.setattr(metrics_mod, "_require_cell_eval", lambda: module)
+        return seen
+
+    def test_metric_configs_go_to_compute(self, monkeypatch):
+        from anndata import AnnData
+
+        from embpy.tl import cell_eval
+
+        seen = self._fake_cell_eval(monkeypatch)
+        configs = {"discrimination_score_cosine": {"embed_key": "X_pca"}}
+        cell_eval(
+            AnnData(), AnnData(), profile="anndata",
+            metric_configs=configs, skip_metrics=["mse"],
+        )
+
+        assert seen["compute"]["metric_configs"] == configs
+        assert seen["compute"]["skip_metrics"] == ["mse"]
+        assert seen["compute"]["profile"] == "anndata"
+        # And must NOT have been handed to the constructor.
+        assert "metric_configs" not in seen["init"]
+        assert "skip_metrics" not in seen["init"]
+
+    def test_constructor_kwargs_still_go_to_the_constructor(self, monkeypatch):
+        from anndata import AnnData
+
+        from embpy.tl import cell_eval
+
+        seen = self._fake_cell_eval(monkeypatch)
+        cell_eval(AnnData(), AnnData(), skip_de=True)
+
+        assert seen["init"]["skip_de"] is True
+        assert "skip_de" not in seen["compute"]
+
+    def test_run_cell_eval_forwards_metric_configs(self, monkeypatch):
+        from anndata import AnnData
+
+        from embpy.tl import run_cell_eval
+
+        seen = self._fake_cell_eval(monkeypatch)
+        configs = {"mae": {"embed_key": "X_scgpt"}}
+        run_cell_eval(AnnData(), AnnData(), metric_configs=configs)
+
+        assert seen["compute"]["metric_configs"] == configs

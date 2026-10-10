@@ -18,8 +18,8 @@ user-facing listing.
 
 from __future__ import annotations
 
-from ..models.base import BaseModelWrapper
-from ..models.dna_models import (
+from embpy.models.base import BaseModelWrapper
+from embpy.models.dna_models import (
     BorzoiWrapper,
     CaduceusWrapper,
     EnformerWrapper,
@@ -30,7 +30,7 @@ from ..models.dna_models import (
 )
 
 try:
-    from ..models.dna_models import EvoWrapper
+    from embpy.models.dna_models import EvoWrapper
 
     _HAVE_EVO = True
 except ImportError:
@@ -38,7 +38,7 @@ except ImportError:
     EvoWrapper = None  # type: ignore
 
 try:
-    from ..models.dna_models import Evo2Wrapper
+    from embpy.models.dna_models import Evo2Wrapper
 
     _HAVE_EVO2 = True
 except ImportError:
@@ -46,7 +46,7 @@ except ImportError:
     Evo2Wrapper = None  # type: ignore
 
 try:
-    from ..models.alphagenome_models import AlphaGenomeWrapper
+    from embpy.models.alphagenome_models import AlphaGenomeWrapper
 
     _HAVE_ALPHAGENOME = True
 except ImportError:
@@ -54,7 +54,7 @@ except ImportError:
     AlphaGenomeWrapper = None  # type: ignore
 
 try:
-    from ..models.scooby_models import ScoobyWrapper
+    from embpy.models.scooby_models import ScoobyWrapper
 
     _HAVE_SCOOBY = True
 except ImportError:

@@ -148,7 +148,7 @@ def main() -> None:
     if args.gene:
         genes = [args.gene]
     elif args.gene_list:
-        genes = Path(args.gene_list).read_text().strip().splitlines()
+        genes = Path(args.gene_list).read_text(encoding='utf-8').strip().splitlines()
         genes = [g.strip() for g in genes if g.strip()]
         logging.info(f"Loaded {len(genes)} genes from {args.gene_list}")
     elif args.adata:

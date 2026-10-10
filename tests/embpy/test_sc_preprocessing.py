@@ -7,6 +7,9 @@ import pytest
 import scipy.sparse as sp
 from anndata import AnnData
 
+# Single-cell preprocessing requires scanpy (optional: pip install embpy[scanpy]).
+pytest.importorskip("scanpy", reason="scanpy not installed (pip install embpy[scanpy])")
+
 # =====================================================================
 # Fixtures
 # =====================================================================

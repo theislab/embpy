@@ -175,6 +175,13 @@ class SubCellWrapper(BaseModelWrapper):
 
         self._model_key = key if key in SUBCELL_MODELS else None
 
+        # When no variant is given, report the one implied by the resolved
+        # checkpoint instead of assuming the default -- otherwise an explicit
+        # ``subcell_vit_*`` key would still describe itself as "contrast".
+        if variant is None:
+            variant = "vit" if key.startswith("subcell_vit") else "contrast"
+        self.variant = variant
+
     def load(self, device: torch.device) -> None:
         """Load the SubCell encoder, downloading weights if needed."""
         if self._encoder is not None:
@@ -265,6 +272,12 @@ class SubCellWrapper(BaseModelWrapper):
     ) -> torch.Tensor:
         """Preprocess an image for SubCell inference.
 
+        The image must already carry exactly as many channels as the loaded
+        checkpoint expects (``self._num_channels``); a mismatch raises rather
+        than being padded or truncated to fit.
+
+        The input is never modified, whatever its dtype.
+
         Returns a tensor of shape (1, C, 448, 448) normalized to [0, 1].
         """
         if isinstance(image, str):
@@ -291,16 +304,41 @@ class SubCellWrapper(BaseModelWrapper):
             raise TypeError(f"Unsupported input type: {type(image)}")
 
         n_ch = tensor.shape[0]
-        if n_ch < self._num_channels:
-            padding = torch.zeros(self._num_channels - n_ch, tensor.shape[1], tensor.shape[2])
-            tensor = torch.cat([tensor, padding], dim=0)
-        elif n_ch > self._num_channels:
-            tensor = tensor[:self._num_channels]
+        if n_ch != self._num_channels:
+            raise ValueError(
+                f"Expected {self._num_channels} channels, got {n_ch}. "
+                "SubCell's channels are semantically fixed, so zero-padding or "
+                "truncating to fit would silently produce a meaningless embedding. "
+                "Pick the checkpoint matching your channel count (see SUBCELL_MODELS)."
+            )
+
+        # The normalization below writes in place, and for float32 input `tensor`
+        # still shares memory with what the caller handed us -- `.float()` is a
+        # no-op at that dtype and `torch.from_numpy` aliases. Copy first so
+        # embedding an image never rewrites the caller's array.
+        tensor = tensor.clone()
 
         for c in range(self._num_channels):
-            cmin, cmax = tensor[c].min(), tensor[c].max()
+            channel = tensor[c]
+            cmin, cmax = channel.min(), channel.max()
             if cmax > cmin:
-                tensor[c] = (tensor[c] - cmin) / (cmax - cmin)
+                tensor[c] = (channel - cmin) / (cmax - cmin)
+            elif torch.isfinite(cmin):
+                # Constant channel (dead detector, saturated field): min-max is
+                # undefined, so zero it instead of passing the raw magnitude
+                # through. Keeps the documented [0, 1] contract and matches
+                # pp.normalize_channels, which is what the PNG canvas path
+                # already hands us for a blank channel.
+                tensor[c] = 0.0
+            else:
+                # Non-finite. Zeroing here would turn an obviously-broken NaN
+                # embedding into a plausible-looking wrong one, so leave it
+                # visible.
+                logger.warning(
+                    "Channel %d contains non-finite values; leaving it unnormalized "
+                    "(the embedding will be NaN). Clean the image before embedding.",
+                    c,
+                )
 
         if tensor.shape[1] != self.image_size or tensor.shape[2] != self.image_size:
             tensor = torch.nn.functional.interpolate(
@@ -325,7 +363,8 @@ class SubCellWrapper(BaseModelWrapper):
             Image path, numpy array, or torch tensor.
         pooling_strategy
             ``"cls"`` (768d), ``"mean"`` (768d),
-            ``"attention_pool"`` (1536d, recommended), or
+            ``"attention_pool"`` (1536d, recommended -- falls back to CLS at
+            768d if no pooler is available), or
             ``"none"`` (num_tokens x 768 -- raw per-patch tokens).
 
         Returns
@@ -352,8 +391,15 @@ class SubCellWrapper(BaseModelWrapper):
             elif pooling_strategy == "mean":
                 emb = hidden[:, 1:, :].mean(dim=1).cpu().numpy().squeeze(0)
             elif pooling_strategy == "attention_pool":
-                pooled, _ = self._pool_model(hidden[:, 1:, :])
-                emb = pooled.cpu().numpy().squeeze(0)
+                if self._pool_model is not None:
+                    pooled, _ = self._pool_model(hidden[:, 1:, :])
+                    emb = pooled.cpu().numpy().squeeze(0)
+                else:
+                    logger.warning(
+                        "No attention pooler available; falling back to CLS "
+                        "(768d, not the usual 1536d)."
+                    )
+                    emb = hidden[:, 0, :].cpu().numpy().squeeze(0)
             else:
                 raise ValueError(f"Unknown pooling '{pooling_strategy}'")
 

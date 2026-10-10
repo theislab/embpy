@@ -252,7 +252,7 @@ class TestPrepareSubcellCanvas:
 
 class TestPngIO:
     def test_roundtrip(self, tmp_path):
-        PIL = pytest.importorskip("PIL")
+        pytest.importorskip("PIL")
         from embpy.pp.morphology_preprocessing import (
             load_channels_from_pngs,
             save_channels_as_pngs,
@@ -304,7 +304,7 @@ class TestCellPaintingColors:
             assert ch in CELL_PAINTING_COLORS
 
     def test_color_values_are_rgb_tuples(self):
-        for ch, rgb in CELL_PAINTING_COLORS.items():
+        for _ch, rgb in CELL_PAINTING_COLORS.items():
             assert len(rgb) == 3
             for c in rgb:
                 assert 0.0 <= c <= 1.0

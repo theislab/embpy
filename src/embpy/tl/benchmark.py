@@ -32,7 +32,11 @@ from embpy.tl.metrics import compute_metrics as _compute_metrics
 if TYPE_CHECKING:
     from sklearn.base import RegressorMixin
 
-_DEFAULT_MODELS = ["linear", "ridge", "knn", "random_forest", "xgboost"]
+# Supported regressors. All rely only on scikit-learn (a core dependency), so
+# the benchmark runs on a lightweight install. (An xgboost backend exists in
+# `_build_model` but is intentionally not in this set -- it needs the optional
+# `xgboost` package, so it is not offered as a default/validated choice.)
+_DEFAULT_MODELS = ["linear", "ridge", "knn", "random_forest"]
 
 logger = logging.getLogger(__name__)
 

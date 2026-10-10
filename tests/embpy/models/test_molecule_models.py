@@ -1,6 +1,7 @@
 """Tests for molecule model wrappers (ChemBERTa, MolFormer, RDKit, MiniMol, MHG-GNN, MolE) using mocks."""
 
 from __future__ import annotations
+import sys
 
 from unittest.mock import MagicMock, patch
 
@@ -129,11 +130,35 @@ class TestChembertaWrapper:
         w.max_len = 512
 
         hidden_dim = 768
-        mock_emb = np.zeros(hidden_dim, dtype=np.float32)
-        w.embed = MagicMock(return_value=mock_emb)
+        seq_len = 8
+
+        # embed_batch no longer delegates to embed(): it tokenizes the whole
+        # batch with return_tensors="pt" and iterates the batch dimension of
+        # the model output. So both mocks have to track the batch size --
+        # stubbing embed() leaves model/tokenizer unset and trips the
+        # "Call load() first." guard, and a fixed-size tensor would silently
+        # yield one embedding for N inputs.
+        def _encode(text=None, *args, **kwargs):
+            n = len(text) if isinstance(text, (list, tuple)) else 1
+            return {
+                "input_ids": torch.zeros(n, seq_len, dtype=torch.long),
+                "attention_mask": torch.ones(n, seq_len, dtype=torch.long),
+            }
+
+        def _forward(*args, **kwargs):
+            ids = kwargs.get("input_ids")
+            out = MagicMock()
+            out.last_hidden_state = torch.randn(
+                int(ids.shape[0]), int(ids.shape[1]), hidden_dim
+            )
+            return out
+
+        w.tokenizer = MagicMock(side_effect=_encode)
+        w.model = MagicMock(side_effect=_forward)
 
         results = w.embed_batch(["CCO", "CCC"])
         assert len(results) == 2
+        assert all(r is not None and r.shape == (hidden_dim,) for r in results)
 
 
 class TestMolformerWrapper:
@@ -723,7 +748,7 @@ class TestMolEWrapper:
             smiles=["CCO", "CCC", "c1ccccc1"],
             pretrained_model="/path/to/ckpt",
             batch_size=32,
-            num_workers=4,
+            num_workers=0 if sys.platform == 'win32' else 4,
         )
 
     def test_embed_custom_batch_kwargs(self):

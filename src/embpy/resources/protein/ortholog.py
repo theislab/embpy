@@ -218,7 +218,7 @@ class OrthologResolver:
         target_species: list[str],
         source_species: str | None = None,
         orthology_type: str = "ortholog_one2one",
-    ) -> "pandas.DataFrame":
+    ) -> pandas.DataFrame:
         """Build a tabular mapping of genes across species.
 
         Returns a DataFrame with columns: source_symbol, plus one column

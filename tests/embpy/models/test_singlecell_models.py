@@ -1381,3 +1381,172 @@ class TestBioEmbedderDecode:
         fake_wrapper.generate_cells.assert_called_once()
         kwargs = fake_wrapper.generate_cells.call_args.kwargs
         assert kwargs["split_column"] == "donor"
+
+
+# =====================================================================
+# Checkpoint-only models: constructor kwargs have to reach the wrapper
+# =====================================================================
+
+
+class TestSingleCellModelKwargs:
+    """`state` and `stack` are unreachable without constructor kwargs.
+
+    Both wrappers take `checkpoint` on `__init__` and raise from `load()`
+    without it, and `get_singlecell_wrapper` has always forwarded `**kwargs`
+    to the constructor -- but the two layers above it passed nothing, so
+    neither model could be driven through `embed_cells` on any platform.
+
+    The wrapper backends (`arc-state`, `arc-stack`) are linux-64 only, so
+    these tests exercise the plumbing rather than a real forward pass.
+    """
+
+    def test_kwargs_reach_the_wrapper_constructor(self):
+        from unittest.mock import patch
+
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        with patch(
+            "embpy.models.singlecell_models.get_singlecell_wrapper"
+        ) as factory:
+            embedder._get_or_load_singlecell_wrapper(
+                "state", 32, "cpu", {"checkpoint": "/tmp/se600m.ckpt"},
+            )
+        assert factory.call_args.kwargs["checkpoint"] == "/tmp/se600m.ckpt"
+        assert factory.call_args.kwargs["batch_size"] == 32
+
+    def test_no_kwargs_is_unchanged(self):
+        from unittest.mock import patch
+
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        with patch(
+            "embpy.models.singlecell_models.get_singlecell_wrapper"
+        ) as factory:
+            embedder._get_or_load_singlecell_wrapper("scgpt", 16, "cpu")
+        assert factory.call_args.kwargs == {"batch_size": 16}
+
+    def test_two_checkpoints_do_not_share_a_cache_entry(self):
+        """The bug this guards: returning checkpoint A when B was asked for."""
+        from unittest.mock import patch
+
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        with patch(
+            "embpy.models.singlecell_models.get_singlecell_wrapper"
+        ) as factory:
+            embedder._get_or_load_singlecell_wrapper(
+                "state", 32, "cpu", {"checkpoint": "/tmp/a.ckpt"},
+            )
+            embedder._get_or_load_singlecell_wrapper(
+                "state", 32, "cpu", {"checkpoint": "/tmp/b.ckpt"},
+            )
+        assert factory.call_count == 2
+        assert [c.kwargs["checkpoint"] for c in factory.call_args_list] == [
+            "/tmp/a.ckpt", "/tmp/b.ckpt",
+        ]
+
+    def test_same_checkpoint_is_cached(self):
+        from unittest.mock import patch
+
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        with patch(
+            "embpy.models.singlecell_models.get_singlecell_wrapper"
+        ) as factory:
+            for _ in range(3):
+                embedder._get_or_load_singlecell_wrapper(
+                    "state", 32, "cpu", {"checkpoint": "/tmp/a.ckpt"},
+                )
+        assert factory.call_count == 1
+
+    def test_embed_cells_accepts_model_kwargs(self):
+        import inspect
+
+        from embpy.embedder import BioEmbedder
+
+        params = inspect.signature(BioEmbedder.embed_cells).parameters
+        assert "model_kwargs" in params
+        assert params["model_kwargs"].default is None
+
+    def test_checkpoint_only_wrappers_take_it_on_init(self):
+        import inspect
+
+        from embpy.models.singlecell_models import (
+            StackWrapper,
+            StateEmbeddingWrapper,
+        )
+
+        for cls in (StateEmbeddingWrapper, StackWrapper):
+            assert "checkpoint" in inspect.signature(cls.__init__).parameters
+
+
+class TestStateDefaultWeights:
+    """STATE fetches its own weights when none are named.
+
+    Before this, `state` was the one registry key that `list_available_models`
+    advertised and `load()` refused to run: it raised "Either checkpoint or
+    model_folder must be provided" while its weights sat public on the Hub.
+    Every other single-cell wrapper downloads on first use.
+
+    The real download is ~12 GB, so these tests check the wiring, not the
+    fetch.
+    """
+
+    def test_declares_the_published_release(self):
+        from embpy.models.singlecell_models import StateEmbeddingWrapper
+
+        assert StateEmbeddingWrapper.DEFAULT_HF_REPO == "arcinstitute/SE-600M"
+        # A checkpoint alone is not enough -- STATE needs the protein
+        # embeddings to embed arbitrary gene panels, and the config to build
+        # the model.
+        assert "se600m_epoch16.ckpt" in StateEmbeddingWrapper.DEFAULT_HF_FILES
+        assert "protein_embeddings.pt" in StateEmbeddingWrapper.DEFAULT_HF_FILES
+        assert "config.yaml" in StateEmbeddingWrapper.DEFAULT_HF_FILES
+
+    def test_fetches_only_what_is_needed(self):
+        """The repo also ships epoch4 and safetensors: ~29 GB if pulled whole."""
+        from embpy.models.singlecell_models import StateEmbeddingWrapper
+
+        assert not any(
+            "epoch4" in f or f.endswith(".safetensors")
+            for f in StateEmbeddingWrapper.DEFAULT_HF_FILES
+        )
+
+    def test_downloader_requests_each_file(self, tmp_path):
+        from unittest.mock import patch
+
+        from embpy.models.singlecell_models import StateEmbeddingWrapper
+
+        (tmp_path / "config.yaml").write_text("{}")
+        with patch(
+            "huggingface_hub.hf_hub_download",
+            side_effect=lambda repo_id, filename: str(tmp_path / filename),
+        ) as dl:
+            folder = StateEmbeddingWrapper._download_default_weights()
+
+        assert folder == str(tmp_path)
+        assert [c.kwargs["filename"] for c in dl.call_args_list] == list(
+            StateEmbeddingWrapper.DEFAULT_HF_FILES
+        )
+
+    def test_an_explicit_path_still_wins(self):
+        """A caller who names a checkpoint must not trigger a 12 GB download."""
+        from unittest.mock import patch
+
+        from embpy.models.singlecell_models import StateEmbeddingWrapper
+
+        wrapper = StateEmbeddingWrapper(checkpoint="/local/se600m.ckpt")
+        with patch.object(
+            StateEmbeddingWrapper, "_download_default_weights"
+        ) as dl:
+            try:
+                wrapper.load("cpu")
+            except Exception:
+                # arc-state is linux-64 only; the point is the download was
+                # never reached, whatever load() does afterwards.
+                pass
+        dl.assert_not_called()

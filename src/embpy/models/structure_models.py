@@ -103,7 +103,8 @@ class Boltz2Wrapper(BaseModelWrapper):
         self._ccd_path = self._cache_dir / "ccd.pkl"
 
         from dataclasses import asdict
-        from boltz.main import Boltz2DiffusionParams, PairformerArgsV2, MSAModuleArgs
+
+        from boltz.main import Boltz2DiffusionParams, MSAModuleArgs, PairformerArgsV2
 
         diffusion_params = Boltz2DiffusionParams()
         pairformer_args = PairformerArgsV2()
@@ -166,8 +167,8 @@ class Boltz2Wrapper(BaseModelWrapper):
             yaml_path.write_text(yaml_content)
 
             try:
-                from boltz.main import process_inputs
                 from boltz.data.types import Manifest
+                from boltz.main import process_inputs
 
                 out_dir = tmpdir / "output"
                 out_dir.mkdir()

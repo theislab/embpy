@@ -3,14 +3,18 @@ from __future__ import annotations
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
-from ...models.base import BaseModelWrapper
+if TYPE_CHECKING:
+    # Only needed for type annotations; importing it at runtime pulls in
+    # embpy.models -> dna_models -> torch, which would break the lightweight
+    # (torch-free) core install. `from __future__ import annotations` above
+    # keeps these annotations lazy, so a TYPE_CHECKING import is sufficient.
+    from embpy.models.base import BaseModelWrapper
 
 
-import os
 import shutil
 import subprocess
 import urllib.request
@@ -95,7 +99,7 @@ def download_hg38_per_chrom(
     # Check if already complete
     if not force and keep:
         existing = {p.stem for p in output_dir.glob("chr*.fa")}
-        needed = {c for c in keep}
+        needed = set(keep)
         if needed.issubset(existing):
             logging.info(f"All requested chromosomes already present in {output_dir}. Skipping download.")
             return output_dir
@@ -255,14 +259,15 @@ class SNPEmbeddingResult:
     alt_embeddings : list[np.ndarray]
         Embeddings of each alternate sequence. Always populated.
     delta_embeddings : list[np.ndarray]
-        ``alt_emb - ref_emb`` for each alternate allele. Opt-in via ``compute_delta=True``.
+        ``alt_emb - ref_emb`` for each alternate allele. Computed by default;
+        pass ``compute_delta=False`` to skip.
     concat_embeddings : list[np.ndarray]
         ``concatenate([ref_emb, alt_emb])`` for each alternate allele --
         handy as a single feature vector for downstream ML. Opt-in via
         ``compute_concat=True``.
     delta_norms : list[float]
         L2 norm of each delta embedding (scalar summary of effect size).
-        Empty when ``compute_delta=False``.
+        Empty only when ``compute_delta=False`` is passed explicitly.
     cosine_similarities : list[float]
         Cosine similarity between reference and each alternate embedding.
     model_name : str
@@ -287,7 +292,7 @@ class SNPEmbeddingResult:
     cosine_similarities: list[float] = field(default_factory=list)
     model_name: str = ""
     pooling_strategy: str = "mean"
-    compute_delta: bool = False
+    compute_delta: bool = True
     compute_concat: bool = False
 
     def __post_init__(self) -> None:
@@ -681,7 +686,7 @@ class SNPEmbedder:
         snp: SNPContext,
         chromosome_sequence: str,
         pooling_strategy: str | None = None,
-        compute_delta: bool = False,
+        compute_delta: bool = True,
         compute_concat: bool = False,
         **kwargs: Any,
     ) -> SNPEmbeddingResult:
@@ -689,8 +694,8 @@ class SNPEmbedder:
 
         By default the result always carries the reference and every
         alternate-allele embedding (``ref_embedding``/``alt_embeddings``).
-        Delta vectors (``alt - ref``) re opt-in via
-        ``compute_delta=True``. Concatenated ``[ref, alt]``
+        Delta vectors (``alt - ref``) are computed by default (pass
+        ``compute_delta=False`` to skip). Concatenated ``[ref, alt]``
         feature vectors are opt-in via ``compute_concat=True``.
 
         Parameters
@@ -1275,8 +1280,6 @@ class SequenceProvider:
 
     def _from_fasta_file(self, chrom: str) -> str | None:
         """Look up a chromosome record in a multi-record FASTA index."""
-        import os
-
         from Bio import SeqIO
 
         if self._fasta_index is None:
@@ -1305,7 +1308,6 @@ class SequenceProvider:
 
         _, without_prefix = self._normalise_chrom(chrom)
 
-        coord_system = "chromosome"
         if self.genome_build == "GRCh37":
             base = "https://grch37.rest.ensembl.org"
         else:

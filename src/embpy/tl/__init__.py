@@ -3,6 +3,22 @@
 #   tl/genomics/  - SNP/variant embedding utilities
 
 __all__ = [
+    # attention summaries (2-D, exporter-compatible)
+    "attention_entropy",
+    "attention_to_gene_set",
+    "head_uniformity",
+    "received_attention",
+    "summarize_attention",
+    # alignment (representation-similarity metrics)
+    "alignment_matrix",
+    "block_to_attention_index",
+    "block_to_hidden_state_index",
+    "linear_cka",
+    "mutual_knn",
+    "qsi",
+    "rank_layers",
+    "sample_size_for",
+    "tsi",
     # clustering
     "cluster_annotation_enrichment",
     "cluster_embeddings",
@@ -31,9 +47,12 @@ __all__ = [
     "basic_tool",
     # benchmark
     "benchmark_embeddings",
+    # scib
+    "compute_scib_metrics",
     # metadata
     "annotate_bulk_rna",
     "annotate_cell_lines",
+    "annotate_drug_perturbations",
     "annotate_drug_response",
     "annotate_drugs",
     "annotate_gene_perturbations",
@@ -84,6 +103,24 @@ __all__ = [
 ]
 
 from .activity import phenotypic_activity
+from .alignment import (
+    alignment_matrix,
+    block_to_attention_index,
+    block_to_hidden_state_index,
+    linear_cka,
+    mutual_knn,
+    qsi,
+    rank_layers,
+    sample_size_for,
+    tsi,
+)
+from .attention import (
+    attention_entropy,
+    attention_to_gene_set,
+    head_uniformity,
+    received_attention,
+    summarize_attention,
+)
 from .basic import basic_tool
 from .benchmark import benchmark_embeddings
 from .clustering import (
@@ -105,6 +142,7 @@ from .genomics.snp_utils import (
 from .metadata import (
     annotate_bulk_rna,
     annotate_cell_lines,
+    annotate_drug_perturbations,
     annotate_drug_response,
     annotate_drugs,
     annotate_gene_perturbations,
@@ -143,6 +181,7 @@ from .protein.cross_species import (
     ortholog_similarity_matrix,
 )
 from .protein.weighted_embedding import WeightedProteinEmbedder
+from .scib_metrics import compute_scib_metrics
 from .similarity import (
     aggregate_embedding_table,
     compare_embedding_matrices,

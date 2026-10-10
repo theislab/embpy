@@ -4,6 +4,22 @@ build:
   os: ubuntu-22.04
   tools:
     python: "3.12"
+  jobs:
+    # Install a real, CPU-only torch before the docs deps. autosummary imports
+    # embpy.embedder, which does an unguarded ``import torch``; a mocked torch
+    # (a non-class Mock) also makes scipy's ``issubclass(x, torch.Tensor)`` raise,
+    # so a real torch is required. The CPU wheel keeps the build small enough for
+    # Read the Docs.
+    #
+    # ``--extra-index-url`` (not a bare ``--index-url``) is deliberate: a plain
+    # ``--index-url`` *replaces* PyPI, so a torch dependency that ships only an
+    # sdist on the PyTorch index can't fetch its build backend (flit_core) and the
+    # install dies with "No matching distribution found for flit_core". Keeping
+    # PyPI available fixes that; torch itself still resolves to the CPU wheel
+    # because pip prefers the ``+cpu`` local-version build over PyPI's base
+    # version, so the (huge) CUDA build is never pulled.
+    pre_install:
+      - pip install "torch>=2.5.1" --extra-index-url https://download.pytorch.org/whl/cpu
 sphinx:
   configuration: docs/conf.py
   fail_on_warning: false

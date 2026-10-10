@@ -155,7 +155,7 @@ def _is_cuda_oom(exc: BaseException) -> bool:
     OOM-shaped subset, to avoid swallowing real bugs.
     """
     try:
-        import torch  # noqa: PLC0415
+        import torch
 
         if isinstance(exc, torch.cuda.OutOfMemoryError):  # type: ignore[attr-defined]
             return True
@@ -177,7 +177,7 @@ def _is_cuda_oom(exc: BaseException) -> bool:
 def _empty_cuda_cache() -> None:
     """Best-effort ``torch.cuda.empty_cache``; silent if torch unavailable."""
     try:
-        import torch  # noqa: PLC0415
+        import torch
 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

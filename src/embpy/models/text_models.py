@@ -4,7 +4,9 @@ from typing import Any
 
 import numpy as np
 import torch
-from transformers import AutoModel, AutoTokenizer
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from transformers import AutoModel, AutoTokenizer
 
 from .base import BaseModelWrapper
 
@@ -47,6 +49,8 @@ class TextLLMWrapper(BaseModelWrapper):
             raise ValueError("model_path_or_name must be set for TextLLMWrapper.")
 
         logging.info(f"Loading text model '{self.model_name}'...")
+        from transformers import AutoTokenizer, AutoModel
+
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             self.model = AutoModel.from_pretrained(self.model_name)
@@ -357,8 +361,9 @@ class LlamaEmbeddingWrapper(TextLLMWrapper):
         import os
 
         logging.info("Loading LLaMA '%s' in bfloat16...", self.model_name)
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
         try:
-            from transformers import AutoModelForCausalLM
 
             token = os.environ.get("HF_TOKEN")
 

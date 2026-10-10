@@ -42,6 +42,13 @@ class EmbpyError(Exception):
     category: str = "embpy"
     exit_code: int = 1
 
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+        # Expose the human-readable message as ``.message`` for callers and
+        # tests that introspect it (all subclasses pass a single formatted
+        # string to ``super().__init__``).
+        self.message = str(args[0]) if args else ""
+
 
 # ── Configuration ───────────────────────────────────────────────────
 
@@ -315,14 +322,22 @@ class DependencyError(EmbpyError):
     category = "dependency"
     exit_code = 12
 
-    def __init__(self, package: str, feature: str | None = None):
+    def __init__(self, package: str, feature: str | None = None, detail: str | None = None):
         self.package = package
         self.feature = feature
+        self.detail = detail
         what = f" for {feature}" if feature else ""
-        super().__init__(
+        message = (
             f"'{package}' is required{what} but not installed. "
             f"Install with: pip install {package}"
         )
+        # A wrapper often knows more than the extra name -- that Evo cannot resolve
+        # on macOS at all, or that evo2 needs an interpreter below 3.13. Without
+        # this the uniform message discarded it and sent the user to an install
+        # line that cannot succeed on their machine.
+        if detail:
+            message = f"{message}\n\n{detail}"
+        super().__init__(message)
 
 
 # ── Data / AnnData ──────────────────────────────────────────────────

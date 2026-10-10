@@ -8,7 +8,6 @@ import pytest
 
 from embpy.resources.protein_annotator import ProteinAnnotator
 
-
 MOCK_UNIPROT_ENTRY = {
     "primaryAccession": "P04637",
     "entryType": "UniProtKB reviewed (Swiss-Prot)",
@@ -165,7 +164,7 @@ class TestIsoformAnnotations:
 
 
 class TestAnnotate:
-    @patch("embpy.resources.protein_annotator._get_json")
+    @patch("embpy.resources.protein.annotator._get_json")
     def test_annotate_all(self, mock_get, annotator):
         mock_get.return_value = MOCK_UNIPROT_ENTRY
         annotator._resolve_uniprot_accession = MagicMock(return_value="P04637")
@@ -177,7 +176,7 @@ class TestAnnotate:
         assert "go_terms" in result
         assert result["metadata"]["reviewed"] is True
 
-    @patch("embpy.resources.protein_annotator._get_json")
+    @patch("embpy.resources.protein.annotator._get_json")
     def test_annotate_subset(self, mock_get, annotator):
         mock_get.return_value = MOCK_UNIPROT_ENTRY
         annotator._resolve_uniprot_accession = MagicMock(return_value="P04637")
@@ -189,7 +188,7 @@ class TestAnnotate:
 
 
 class TestAnnotateAdata:
-    @patch("embpy.resources.protein_annotator._get_json")
+    @patch("embpy.resources.protein.annotator._get_json")
     def test_annotate_adata(self, mock_get, annotator):
         import pandas as pd
         from anndata import AnnData

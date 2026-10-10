@@ -60,7 +60,11 @@ def test_default_patterns_match_known_controls(label: str) -> None:
         "NT5C2",        # real gene starting with NT
         "NT5C3A",       # real gene starting with NT
         "CTRL2",        # real gene literally named CTRL2 in some libraries
-        "CONTROL_GENE_X",  # not in the matched set; only "control" prefix + non-alnum tail matches
+        # NOTE: "CONTROL_GENE_X" was removed here -- it is structurally
+        # identical to "CONTROL_GROUP_1", which `test_default_patterns_match
+        # _known_controls` asserts IS a control. The `^control([-_].*)?$`
+        # rule (case-insensitive by contract) matches both, so the two
+        # expectations were mutually exclusive.
         "TP53",
         "MYC",
         "BRCA1",

@@ -1,4 +1,6 @@
 # embpy/models/protein_models.py
+from __future__ import annotations
+
 import logging
 import re
 from collections.abc import Sequence
@@ -27,7 +29,9 @@ except ImportError:
     _HAVE_ESM3 = False
     ESM3 = None  # type: ignore
     ESM3InferenceClient = None  # type: ignore
-from transformers import AutoModel, AutoTokenizer, T5EncoderModel, T5Tokenizer
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from transformers import AutoModel, AutoTokenizer, T5EncoderModel, T5Tokenizer
 
 
 class ESM2Wrapper(BaseModelWrapper):
@@ -71,6 +75,7 @@ class ESM2Wrapper(BaseModelWrapper):
             raise ValueError("model_path_or_name must be provided for ESM2Wrapper.")
 
         logging.info(f"Loading ESM2 model '{self.model_name}'...")
+        from transformers import AutoTokenizer, AutoModel
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             self.model = AutoModel.from_pretrained(self.model_name)
@@ -416,6 +421,12 @@ class ESMCWrapper(BaseModelWrapper):
 
     model_type = "protein"
     available_pooling_strategies = ["mean", "max", "cls", "none"]
+    # The ESM SDK computes attention with F.scaled_dot_product_attention
+    # unconditionally (esm/layers/attention.py:70,76 -- both the masked and
+    # unmasked branch), so the per-head matrix never exists as a tensor and no
+    # hook can recover it. Declared False so extract_attention fails fast with an
+    # explanation instead of running a forward pass that cannot produce weights.
+    has_attention = False
 
     def __init__(self, model_path_or_name: str = "esmc_300m", **kwargs: Any):
         """
@@ -672,6 +683,7 @@ class ProtT5Wrapper(BaseModelWrapper):
             raise ValueError("model_path_or_name must be provided for ProtT5Wrapper.")
 
         logging.info("Loading ProtT5 model '%s' …", self.model_name)
+        from transformers import T5Tokenizer, T5EncoderModel
         try:
             self.tokenizer = T5Tokenizer.from_pretrained(self.model_name, do_lower_case=False)
             # Use T5EncoderModel to avoid decoder overhead
@@ -896,6 +908,10 @@ class ESM3Wrapper(BaseModelWrapper):
 
     model_type = "protein"
     available_pooling_strategies = ["mean", "max", "cls", "none"]
+    # Same fused-kernel limit as ESM-C: the shared esm SDK attention layer calls
+    # F.scaled_dot_product_attention (esm/layers/attention.py:70,76). The Forge
+    # API checkpoints are remote in any case, so no local tensor exists to hook.
+    has_attention = False
 
     def __init__(
         self,

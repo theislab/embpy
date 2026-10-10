@@ -189,6 +189,17 @@ def build_aliases(
         for cid, r in zip(canon, raw, strict=False):
             if r and r != cid:
                 aliases.setdefault(cid, {})["gene_symbol"] = r
+    elif entity_type == "molecule":
+        # A non-canonical SMILES is a different *string* for the same molecule,
+        # so the form the caller passed has to stay addressable. `to_anndata`
+        # re-indexes a target AnnData by that target's own `.obs_names`, and
+        # without this alias anyone who passed, say, Kekule caffeine gets
+        # "target .obs_names have no embedding" for a molecule that embedded
+        # perfectly well -- the canonical id simply is not the string they
+        # indexed by.
+        for cid, r in zip(canon, raw, strict=False):
+            if r and r != cid:
+                aliases.setdefault(cid, {})["input_smiles"] = r
     elif entity_type in ("sequence", "text"):
         scheme = "original_sequence" if entity_type == "sequence" else "original_text"
         for cid, r in zip(canon, raw, strict=False):
