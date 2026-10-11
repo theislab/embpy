@@ -44,13 +44,14 @@ There are **two main install flavours** — pick one based on your hardware:
 
 A bare install gives the lightweight core (resolvers, IO, annotation, plotting) but **no embedding backends**. For real use, always pick `[cpu]` or `[gpu]`.
 
-> **GPU Note (V100/Volta Users):** PyTorch `2.5.1` (the minimum version required for newer models) drops pre-compiled wheel support for older Volta GPUs (`sm_70`) on PyPI. If you run the default `[gpu]` install on a V100, you will get a `no kernel image is available` error. To run `embpy` on a V100, we strongly recommend using an official NVIDIA NGC PyTorch Docker Container (which includes PyTorch compiled with support for all architectures):
+> **GPU note (V100 / Volta):** the default `[gpu]` install gets PyTorch's CUDA 13 build, which supports GPUs from the Turing generation onwards (`sm_75` and newer, e.g. A100, H100) but not Volta (`sm_70`). On a V100 it reports CUDA as available, then every operation fails with `no kernel image is available`. Install the CUDA 12.6 build instead, which still supports Volta:
 > ```bash
-> # 1. Start the NVIDIA PyTorch container
-> docker run --gpus all -it --rm nvcr.io/nvidia/pytorch:24.02-py3
-> 
-> # 2. Inside the container, install embpy without reinstalling torch
-> pip install "embpy[models] @ git+https://github.com/theislab/embpy.git@vibe_embpy" --no-deps
+> # pip: install that torch first; embpy then keeps it
+> pip install torch --index-url https://download.pytorch.org/whl/cu126
+> pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+>
+> # uv: one line
+> uv pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy" --torch-backend=cu126
 > ```
 
 ---
@@ -169,9 +170,11 @@ py -3.12 -c "import embpy, torch; print(embpy.__version__, torch.__version__)"
 
 ### 🖥️ On an HPC cluster (Slurm)
 
-Verified on Helmholtz Munich HPC; adjust partition/QoS names for your site.
+A cluster node is a Linux machine, so **the Linux / macOS commands above work unchanged**. This section
+only adds what is specific to a shared cluster: where to run them, where the caches go, and which GPUs the
+default build supports. Verified on the Helmholtz Munich HPC; adjust partition/QoS names for your site.
 
-**1. Grab an interactive CPU node.** The tutorials are small enough for CPU:
+**1. Work on a compute node, not the login node.** The tutorials are small enough for CPU:
 
 ```bash
 srun --partition=interactive_cpu_p --qos=interactive_cpu --cpus-per-task=8 --mem=16G --time=04:00:00 --pty bash
@@ -179,32 +182,53 @@ srun --partition=interactive_cpu_p --qos=interactive_cpu --cpus-per-task=8 --mem
 
 If you see `QOSMaxMemoryPerJob`, that is a **policy cap, not a shortage** — ask for less memory, not more. 16G is enough here.
 
-**2. Create and activate an environment:**
+**2. Keep caches out of your home directory.** pip, uv and Hugging Face cache downloads under `~/.cache`,
+and home quotas are usually small: each install leaves 1–3 GB of wheels there, and model weights add more.
+Point the caches at project storage (replace the path):
 
 ```bash
-export UV_LINK_MODE=copy && uv venv .venv --python 3.12 && source .venv/bin/activate
+export PROJECT=/path/to/your/project/space
+export PIP_CACHE_DIR=$PROJECT/.cache/pip UV_CACHE_DIR=$PROJECT/.cache/uv HF_HOME=$PROJECT/.cache/huggingface
+export UV_LINK_MODE=copy   # the uv cache and the environment are often on different filesystems
 ```
 
-**3. Install:**
+**3. Create an environment and install, exactly as on Linux:**
 
 ```bash
-uv pip install -e ".[cpu]" ipykernel jupyter
+uv venv .venv --python 3.12 && source .venv/bin/activate
+uv pip install "embpy[cpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"   # CPU node
+uv pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"   # GPU node
 ```
 
-**4. Run the notebooks headless:**
+The default `[gpu]` build runs on GPUs from the Turing generation onwards (`sm_75` and newer, e.g. A100,
+H100). Older **V100** (Volta) GPUs report CUDA as available, but every operation then fails with
+`no kernel image is available`. On those nodes, ask uv for the CUDA 12.6 build instead:
 
 ```bash
+uv pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy" --torch-backend=cu126
+```
+
+**4. Run the notebooks.** They live in the repository, so clone it first:
+
+```bash
+git clone --branch vibe_embpy https://github.com/theislab/embpy.git && cd embpy
+uv pip install ipykernel jupyter
 jupyter nbconvert --to notebook --execute docs/notebooks/01_embed_any_model.ipynb --output /tmp/out.ipynb
 ```
+
+To work on embpy itself, install the clone instead of the git URL: `uv pip install -e ".[cpu]"`.
 
 **Or run them interactively.** Start a server on the compute node:
 
 ```bash
-jupyter lab --no-browser --ip=0.0.0.0 --port=8899 --IdentityProvider.token=embpy
+jupyter lab --no-browser --ip=0.0.0.0 --port=8899
 ```
 
-Then point your notebook client at `http://<compute-node>:8899/lab?token=embpy`
-(`hostname` gives the node). Do not background it with `Ctrl+Z` — use `nohup ... &` if you need the prompt back.
+Jupyter prints a URL with a random token. Open it as `http://<compute-node>:8899/lab?token=<token>`
+(`hostname` gives the node), through an SSH tunnel from your laptop if the node is not directly reachable:
+`ssh -N -L 8899:<compute-node>:8899 <login-node>`, then use `localhost:8899`. Do not set a fixed token such
+as `embpy`: anyone who can reach the node could then open your session, and with it a shell under your
+account. Do not background the server with `Ctrl+Z` — use `nohup ... &` if you need the prompt back.
 
 ---
 
