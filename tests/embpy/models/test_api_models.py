@@ -232,6 +232,10 @@ class TestLlamaEmbeddingWrapperLoad:
     @pytest.mark.parametrize("device_str", ["cpu", "cuda:0"])
     def test_load_without_device_map_then_moves_to_device(self, device_str):
         """``device_map`` needs ``accelerate`` (in no extra): load plainly and ``.to(device)`` on every device."""
+        # The patch targets below are resolved by importing transformers, which
+        # only the `.[dev,test,models]` matrix entry installs.
+        pytest.importorskip("transformers", reason="transformers not installed (pip install embpy[models])")
+
         from embpy.models.text_models import LlamaEmbeddingWrapper
 
         device = torch.device(device_str)
@@ -352,6 +356,11 @@ class TestLlamaEmbeddingWrapperEmbedBatch:
 @pytest.fixture(scope="module")
 def tiny_llama_dir(tmp_path_factory):
     """A tiny random-weight LlamaForCausalLM + tokenizer (no pad token, like real Llama), built offline."""
+    # Only the `.[dev,test,models]` matrix entry installs transformers; the other
+    # eight get `.[dev,test]`, where building the tiny model is impossible.
+    pytest.importorskip("tokenizers", reason="transformers not installed (pip install embpy[models])")
+    pytest.importorskip("transformers", reason="transformers not installed (pip install embpy[models])")
+
     from tokenizers import Tokenizer, models, pre_tokenizers, trainers
     from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
 

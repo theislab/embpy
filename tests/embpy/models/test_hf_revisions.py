@@ -11,6 +11,13 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+
+# `hf_mocks` patches `from_pretrained` on five transformers Auto classes, so the
+# module cannot even be collected without transformers. Only the
+# `.[dev,test,models]` matrix entry installs it; every other OS/Python entry gets
+# `.[dev,test]`, where importing this file aborted collection for the whole run.
+pytest.importorskip("transformers", reason="transformers not installed (pip install embpy[models])")
+
 import torch
 import transformers
 
