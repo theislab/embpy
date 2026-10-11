@@ -66,6 +66,7 @@ except ImportError:
 
 
 from .base import BaseModelWrapper, raise_for_gated_repo
+from .hf_revisions import resolve_revision
 
 
 def _safe_model_forward(model: Any, **kwargs: Any) -> Any:
@@ -2015,9 +2016,14 @@ class GENALMWrapper(BaseModelWrapper):
             raise ImportError("transformers package required: pip install transformers")
 
         logging.info(f"Loading GENA-LM '{self.model_name}' …")
+        revision = resolve_revision(self.model_name, self.config.get("revision"))
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
-            self.model = AutoModel.from_pretrained(self.model_name, trust_remote_code=True).to(device).eval()
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True, revision=revision)
+            self.model = (
+                AutoModel.from_pretrained(self.model_name, trust_remote_code=True, revision=revision)
+                .to(device)
+                .eval()
+            )
             self.device = device
             logging.info(f"GENA-LM '{self.model_name}' loaded on {device}.")
         except Exception as e:
@@ -2119,17 +2125,19 @@ class NucleotideTransformerWrapper(BaseModelWrapper):
             raise ImportError("transformers package required: pip install transformers")
 
         logging.info(f"Loading Nucleotide Transformer '{self.model_name}' …")
+        revision = resolve_revision(self.model_name, self.config.get("revision"))
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True, revision=revision)
 
             from transformers import AutoConfig, AutoModelForMaskedLM  # type: ignore
 
-            config = AutoConfig.from_pretrained(self.model_name, trust_remote_code=True)
+            config = AutoConfig.from_pretrained(self.model_name, trust_remote_code=True, revision=revision)
             self.model = (
                 AutoModelForMaskedLM.from_pretrained(
                     self.model_name,
                     config=config,
                     trust_remote_code=True,
+                    revision=revision,
                 )
                 .to(device)
                 .eval()
@@ -2258,11 +2266,18 @@ class NucleotideTransformerV3Wrapper(BaseModelWrapper):
             raise ImportError("transformers package required: pip install transformers")
 
         logging.info(f"Loading NTv3 '{self.model_name}' (PyTorch) …")
+        # NTv3 repos are gated and have no pin in REMOTE_CODE_REVISIONS, so this is None unless the caller
+        # passes ``revision=``.
+        revision = resolve_revision(self.model_name, self.config.get("revision"))
         try:
             from transformers import AutoModelForMaskedLM  # type: ignore
 
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
-            self.model = AutoModelForMaskedLM.from_pretrained(self.model_name, trust_remote_code=True).to(device).eval()
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True, revision=revision)
+            self.model = (
+                AutoModelForMaskedLM.from_pretrained(self.model_name, trust_remote_code=True, revision=revision)
+                .to(device)
+                .eval()
+            )
             self.device = device
             logging.info(f"NTv3 '{self.model_name}' loaded on {device}.")
         except Exception as e:
@@ -2404,11 +2419,16 @@ class HyenaDNAWrapper(BaseModelWrapper):
             raise ImportError("transformers package required: pip install transformers")
 
         logging.info(f"Loading HyenaDNA '{self.model_name}' …")
+        revision = resolve_revision(self.model_name, self.config.get("revision"))
         try:
             # HyenaDNA uses character-level tokenisation; the AutoTokenizer from
             # the HF repo handles this via trust_remote_code
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
-            self.model = AutoModelForCausalLM.from_pretrained(self.model_name, trust_remote_code=True).to(device).eval()
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True, revision=revision)
+            self.model = (
+                AutoModelForCausalLM.from_pretrained(self.model_name, trust_remote_code=True, revision=revision)
+                .to(device)
+                .eval()
+            )
             self.device = device
             logging.info(f"HyenaDNA '{self.model_name}' loaded on {device}.")
         except Exception as e:
@@ -2536,13 +2556,14 @@ class CaduceusWrapper(BaseModelWrapper):
             )
 
         logging.info(f"Loading Caduceus '{self.model_name}' …")
+        revision = resolve_revision(self.model_name, self.config.get("revision"))
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True)
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name, trust_remote_code=True, revision=revision)
 
             try:
-                m = AutoModelForMaskedLM.from_pretrained(self.model_name, trust_remote_code=True)
+                m = AutoModelForMaskedLM.from_pretrained(self.model_name, trust_remote_code=True, revision=revision)
             except Exception:
-                m = AutoModel.from_pretrained(self.model_name, trust_remote_code=True)
+                m = AutoModel.from_pretrained(self.model_name, trust_remote_code=True, revision=revision)
             self.model = m.to(device).eval()
             self.device = device
             logging.info(f"Caduceus '{self.model_name}' loaded on {device}.")

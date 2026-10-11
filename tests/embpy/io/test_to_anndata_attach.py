@@ -83,6 +83,39 @@ def test_custom_key():
     assert "X_myemb" in out.obsm
 
 
+def test_obs_column_alignment_never_overwrites_label_column():
+    # The alias scheme shares the label column's name: NaN rows must not clobber the labels.
+    res = EmbeddingResult(
+        matrix=np.array([[1, 2], [3, 4]], dtype=np.float32),
+        entity_ids=("ENSG1", "ENSG2"),
+        entity_type="gene",
+        id_scheme="ensembl_gene_id",
+        provenance=EmbeddingProvenance(model="m"),
+        aliases={"ENSG1": {"gene_symbol": "TP53"}, "ENSG2": {"gene_symbol": "MYC"}},
+    )
+    tgt = _make_target(["cell1", "cell2", "cell3"], ["g1"])
+    tgt.obs["gene_symbol"] = ["MYC", "unknown", "TP53"]
+
+    to_anndata(res, target=tgt, attach_to="obs", obs_column="gene_symbol", missing="nan", key="X_pert_m")
+
+    mat = tgt.obsm["X_pert_m"]
+    np.testing.assert_allclose(mat[[0, 2]], np.array([[3, 4], [1, 2]], dtype=np.float32))
+    assert np.isnan(mat[1]).all()
+    assert list(tgt.obs["gene_symbol"]) == ["MYC", "unknown", "TP53"]
+    assert list(tgt.obs_names) == ["cell1", "cell2", "cell3"]
+
+
+def test_obs_column_absent_from_target_falls_back_to_obs_names(caplog):
+    import logging
+
+    res = _result(["pertA", "pertB"])
+    tgt = _make_target(["pertA", "pertB"], ["g1"])
+    with caplog.at_level(logging.WARNING):
+        out = to_anndata(res, target=tgt, attach_to="obs", obs_column="perturbation")
+    np.testing.assert_allclose(out.obsm["X_emb__gene__m"], res.matrix)
+    assert any("aligning on target.obs_names" in r.message for r in caplog.records)
+
+
 def test_attach_to_uns_stores_entity_aligned_payload():
     res = _result(["ENSG1", "ENSG2"])
     tgt = _make_target(["cell1", "cell2"], ["g1"])

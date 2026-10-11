@@ -56,6 +56,35 @@ def _sequence_response(seq: str):
     return mock
 
 
+def _persistent(script):
+    """``requests.get`` side effect where a failing request keeps failing.
+
+    Ensembl requests are retried, so a timed-out exon is requested again; a
+    real outage fails every attempt. Responses in ``script`` are served in
+    order, except that a URL that raised once raises again on each retry.
+    """
+    queue = list(script)
+    failing: dict[str, BaseException] = {}
+
+    def side_effect(url, *args, **kwargs):
+        if url in failing:
+            raise failing[url]
+        item = queue.pop(0)
+        if isinstance(item, BaseException):
+            failing[url] = item
+            raise item
+        return item
+
+    return side_effect
+
+
+@pytest.fixture(autouse=True)
+def _no_backoff_sleep():
+    """Retries back off with ``time.sleep``; skip the waiting in these tests."""
+    with patch("embpy.retry.time.sleep"):
+        yield
+
+
 @pytest.fixture()
 def resolver():
     return GeneResolver(auto_download=False)
@@ -66,13 +95,13 @@ class TestExonFetchFailure:
     def test_timeout_on_one_exon_returns_none_not_a_short_gene(
         self, mock_get: MagicMock, resolver: GeneResolver
     ) -> None:
-        mock_get.side_effect = [
+        mock_get.side_effect = _persistent([
             _lookup_response(),
             _sequence_response("AAAA"),
             requests.exceptions.ReadTimeout("read timed out"),
             _sequence_response("CCCC"),
             _sequence_response("GGGG"),
-        ]
+        ])
         regions = resolver.get_gene_regions("TUBB", region="exons")
         assert regions is None, (
             "a timed-out exon was dropped and the remaining exons returned as if "
@@ -83,13 +112,13 @@ class TestExonFetchFailure:
     def test_concatenated_sequence_is_none_rather_than_truncated(
         self, mock_get: MagicMock, resolver: GeneResolver
     ) -> None:
-        mock_get.side_effect = [
+        mock_get.side_effect = _persistent([
             _lookup_response(),
             _sequence_response("AAAA"),
             _sequence_response("TTTT"),
             requests.exceptions.ReadTimeout("read timed out"),
             _sequence_response("GGGG"),
-        ]
+        ])
         seq = resolver.get_gene_region_sequence("TUBB", region="exons")
         assert seq is None
         # The specific regression: 8 bp of a 16 bp transcript looked like success.
@@ -116,12 +145,12 @@ class TestExonFetchFailure:
     def test_intron_fetch_failure_also_returns_none(
         self, mock_get: MagicMock, resolver: GeneResolver
     ) -> None:
-        mock_get.side_effect = [
+        mock_get.side_effect = _persistent([
             _lookup_response(),
             _sequence_response("AAAA"),
             requests.exceptions.ReadTimeout("read timed out"),
             _sequence_response("CCCC"),
-        ]
+        ])
         assert resolver.get_gene_regions("TUBB", region="introns") is None
 
     @patch("embpy.resources.gene_resolver.requests.get")
@@ -129,13 +158,13 @@ class TestExonFetchFailure:
         self, mock_get: MagicMock, resolver: GeneResolver, caplog
     ) -> None:
         """A warning nothing reads was the reason this went unnoticed for so long."""
-        mock_get.side_effect = [
+        mock_get.side_effect = _persistent([
             _lookup_response(),
             requests.exceptions.ReadTimeout("read timed out"),
             _sequence_response("TTTT"),
             _sequence_response("CCCC"),
             _sequence_response("GGGG"),
-        ]
+        ])
         with caplog.at_level("ERROR"):
             resolver.get_gene_regions("TUBB", region="exons")
         assert any("Incomplete exon set" in r.message for r in caplog.records)

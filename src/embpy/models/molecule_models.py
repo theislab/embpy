@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from transformers import AutoModel, AutoTokenizer, BatchEncoding
 
 from .base import BaseModelWrapper
+from .hf_revisions import resolve_revision
 
 # TODO: If we use the transformers library we can access to other hidden states, since we are using it here for molecules we can add this option to the package
 
@@ -255,6 +256,8 @@ class MolformerWrapper(BaseModelWrapper):
             Defaults to `"ibm/MoLFormer-XL-both-10pct"`.
         **kwargs
             Additional keyword arguments passed to `BaseModelWrapper`.
+            `revision` overrides the commit pinned in `embpy.models.hf_revisions` (which keeps
+            the repo's `trust_remote_code` files at a version that loads on transformers 4.x).
         """
         super().__init__(model_path_or_name, **kwargs)
         self.tokenizer = None
@@ -274,14 +277,16 @@ class MolformerWrapper(BaseModelWrapper):
 
         logging.info(f"Loading MolFormer '{self.model_name}' (trust_remote_code)…")
         from transformers import AutoTokenizer, AutoModel
+        revision = resolve_revision(self.model_name, self.config.get("revision"))
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name, trust_remote_code=True, model_max_length=512,
+                self.model_name, trust_remote_code=True, revision=revision, model_max_length=512,
             )
             model = AutoModel.from_pretrained(
                 self.model_name,
                 deterministic_eval=True,
                 trust_remote_code=True,
+                revision=revision,
             )
             self.model = model.to(device).eval()  # type: ignore[union-attr]
             self.device = device

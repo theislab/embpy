@@ -914,7 +914,10 @@ class BioEmbedder:
         route to ``.varm`` for AnnData output. Set ``is_perturbation=True``
         when gene identifiers are perturbation/action labels; those
         embeddings route to ``.obsm`` and the flag is recorded in
-        provenance.
+        provenance. When the labels come from ``obs_column`` (or
+        ``var_column``), rows are aligned on that column of the target
+        rather than on its ``obs_names``/``var_names``, so every cell
+        receives the vector of its label.
 
         ``embedding_source="auto"`` routes known static lookup models
         such as ``genept`` and ``gene2vec`` to a Hugging Face dataset
@@ -1086,6 +1089,8 @@ class BioEmbedder:
             metadata_mode=metadata_mode,
             include_matrix=include_matrix,
             random_state=random_state,
+            obs_column=obs_column,
+            var_column=var_column,
         )
 
     def _embed_cells_standardized(

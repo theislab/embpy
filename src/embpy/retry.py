@@ -84,6 +84,13 @@ def retry_with_backoff(
         just before sleeping. Useful for emitting structured-log
         events from Layer 4 without coupling the decorator to it.
 
+    Notes
+    -----
+    If the raised exception has a numeric ``retry_after`` attribute
+    (seconds, e.g. parsed from an HTTP ``Retry-After`` header), the wait
+    before the next attempt is at least that long, even beyond
+    ``max_delay``.
+
     Behaviour
     ---------
     On the *final* failed attempt the exception is re-raised verbatim.
@@ -111,6 +118,9 @@ def retry_with_backoff(
                         # can classify the failure normally.
                         raise
                     sleep_for = min(delay, max_delay)
+                    server_wait = getattr(exc, "retry_after", None)
+                    if server_wait is not None:
+                        sleep_for = max(sleep_for, float(server_wait))
                     if on_retry is not None:
                         try:
                             on_retry(attempt, exc, sleep_for)

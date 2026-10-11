@@ -374,14 +374,13 @@ class LlamaEmbeddingWrapper(TextLLMWrapper):
                 self.tokenizer.pad_token = self.tokenizer.eos_token
                 self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
+            # No ``device_map``: it needs ``accelerate`` (not in any embpy extra).
             self.model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
                 torch_dtype=torch.bfloat16,
-                device_map={"": device} if device.type == "cuda" else None,
                 token=token,
             )
-            if device.type != "cuda":
-                self.model = self.model.to(device)
+            self.model = self.model.to(device)
             self.model.eval()
             self.device = device
 
@@ -418,9 +417,51 @@ class LlamaEmbeddingWrapper(TextLLMWrapper):
                 f"Available: {self.available_pooling_strategies}"
             )
 
+        return self._process_batch_chunk([text], pooling_strategy, target_layer)[0]
+
+    def embed_batch(
+        self,
+        inputs: Sequence[str],
+        pooling_strategy: str = "last_token",
+        target_layer: int | None = None,
+        batch_size: int | None = None,
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        """Compute embeddings for several texts from a LLaMA model.
+
+        Same pooling, ``target_layer`` and ``max_length`` handling as
+        :meth:`embed` (default pooling is ``last_token``). The texts are
+        tokenized together with padding and an attention mask, so padding
+        never contributes to the pooled vector. ``batch_size`` splits
+        ``inputs`` into chunks to bound memory.
+        """
+        return super().embed_batch(
+            inputs,
+            pooling_strategy=pooling_strategy,
+            target_layer=target_layer,
+            batch_size=batch_size,
+            **kwargs,
+        )
+
+    def _process_batch_chunk(
+        self,
+        inputs: Sequence[str],
+        pooling_strategy: str,
+        target_layer: int | None = None,
+        **kwargs: Any,
+    ) -> list[np.ndarray]:
+        """Embed one chunk of texts; shared by :meth:`embed` and :meth:`embed_batch`.
+
+        Decoder-only models expose ``hidden_states`` rather than
+        ``last_hidden_state``, so the layer is always taken from
+        ``hidden_states`` (the last one unless ``target_layer`` is given).
+        """
         tokenized = self.tokenizer(
-            text, return_tensors="pt", truncation=True,
-            padding=True, max_length=self.max_length,
+            list(inputs),
+            return_tensors="pt",
+            truncation=True,
+            padding=True,
+            max_length=self.max_length,
         )
         input_ids = tokenized["input_ids"].to(self.device)
         attention_mask = tokenized["attention_mask"].to(self.device)
@@ -432,27 +473,22 @@ class LlamaEmbeddingWrapper(TextLLMWrapper):
                 output_hidden_states=True,
             )
             if target_layer is not None:
-                hidden = outputs.hidden_states[target_layer]
+                hidden = outputs.hidden_states[target_layer]  # (B, L, D)
             else:
-                hidden = outputs.hidden_states[-1]
-
-        if hidden.dim() == 3 and hidden.shape[0] == 1:
-            hidden = hidden.squeeze(0)
+                hidden = outputs.hidden_states[-1]  # (B, L, D)
 
         if pooling_strategy == "none":
-            pooled = hidden.float().cpu().numpy()
-        elif pooling_strategy == "last_token":
-            h = hidden.unsqueeze(0) if hidden.dim() == 2 else hidden
-            pooled = self._last_token_pool(h, attention_mask).cpu().float().numpy()
-            if pooled.ndim > 1:
-                pooled = pooled.squeeze(0)
-        elif pooling_strategy == "mean":
-            mask = attention_mask.squeeze(0).unsqueeze(-1).float()
-            pooled = (torch.sum(hidden * mask, dim=0) / torch.sum(mask, dim=0)).cpu().float().numpy()
-        elif pooling_strategy == "max":
-            pooled = hidden.max(dim=0).values.cpu().float().numpy()
+            # Drop padding so each result matches what embed() gives for that text alone.
+            pooled = [h[m.bool()].float().cpu().numpy() for h, m in zip(hidden, attention_mask, strict=True)]
         else:
-            pooled = self._apply_pooling(hidden, pooling_strategy)
+            if pooling_strategy == "last_token":
+                batch_pooled = self._last_token_pool(hidden, attention_mask)
+            elif pooling_strategy == "mean":
+                mask = attention_mask.unsqueeze(-1).float()  # (B, L, 1)
+                batch_pooled = torch.sum(hidden * mask, dim=1) / torch.sum(mask, dim=1)
+            else:  # max
+                batch_pooled = hidden.masked_fill(attention_mask.unsqueeze(-1) == 0, float("-inf")).max(dim=1).values
+            pooled = list(batch_pooled.cpu().float().numpy())
 
         del input_ids, attention_mask, hidden, outputs
         if self.device.type == "cuda":

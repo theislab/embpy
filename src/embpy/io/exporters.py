@@ -530,18 +530,47 @@ def _attach_to_standalone_axis(
     _record_embedding_uns(adata, result, key)
 
 
+def _alignment_column(frame: pd.DataFrame, column: str | None, axis: str) -> str | None:
+    """Return ``column`` if ``frame`` has it; otherwise ``None`` (align on the axis names)."""
+    if column is None:
+        return None
+    if column in frame.columns:
+        return column
+    logger.warning(
+        "%s_column=%r is not a column of target.%s; aligning on target.%s_names instead.",
+        axis,
+        column,
+        axis,
+        axis,
+    )
+    return None
+
+
+def _axis_labels(target: AnnData, axis: str, column: str | None) -> list[str]:
+    """Per-row alignment labels: ``target.<axis>[column]`` values, or the axis names."""
+    frame = target.obs if axis == "obs" else target.var
+    values = frame.index if column is None else frame[column]
+    return [str(v) for v in values]
+
+
+def _axis_source(axis: str, column: str | None) -> str:
+    return f"target.{axis}_names" if column is None else f"target.{axis}[{column!r}]"
+
+
 def _resolve_axis(
     result: EmbeddingResult,
     target: AnnData,
     attach_to: Literal["auto", "obs", "var"],
     min_overlap: float,
+    *,
+    obs_column: str | None = None,
+    var_column: str | None = None,
 ) -> Literal["obs", "var"]:
     """Pick obs vs var by id overlap; never guess silently."""
     ids = set(_entity_lookup(result))
-    obs_names = list(target.obs_names)
-    var_names = list(target.var_names)
-    obs_hits = sum(1 for n in obs_names if n in ids)
-    var_hits = sum(1 for n in var_names if n in ids)
+    # Count distinct labels so repeated per-cell labels do not inflate the overlap.
+    obs_hits = sum(1 for n in dict.fromkeys(_axis_labels(target, "obs", obs_column)) if n in ids)
+    var_hits = sum(1 for n in dict.fromkeys(_axis_labels(target, "var", var_column)) if n in ids)
     n = result.n_entities
     obs_frac = obs_hits / n if n else 0.0
     var_frac = var_hits / n if n else 0.0
@@ -561,8 +590,8 @@ def _resolve_axis(
             raise ValueError(
                 "Cannot auto-resolve attach axis for "
                 f"{result.entity_type!r} [{result.id_scheme}]: "
-                f"{obs_hits}/{n} entities match target.obs_names "
-                f"({obs_frac:.0%}), {var_hits}/{n} match target.var_names "
+                f"{obs_hits}/{n} entities match {_axis_source('obs', obs_column)} "
+                f"({obs_frac:.0%}), {var_hits}/{n} match {_axis_source('var', var_column)} "
                 f"({var_frac:.0%}); threshold is {min_overlap:.0%}. "
                 "Pass attach_to='obs'/'var' explicitly, or fix the ids."
             )
@@ -583,22 +612,32 @@ def _reindex_matrix(
     axis_names: list[str],
     missing: Literal["error", "nan"],
     axis: str,
+    column: str | None = None,
 ) -> np.ndarray:
-    """Re-order rows of the matrix to match the target axis order."""
+    """Re-order rows of the matrix to match the target axis order.
+
+    ``axis_names`` holds one label per target row: the axis names, or the
+    values of ``target.<axis>[column]`` when ``column`` is given, in which
+    case repeated labels receive the same embedding row.
+    """
     pos = _entity_lookup(result)
     missing_names = [n for n in axis_names if n not in pos]
+    if column is None:
+        what, fix = f"target .{axis}_names", "ids"
+    else:
+        what, fix = f"target .{axis} rows (labels in .{axis}[{column!r}])", "labels"
     if missing_names and missing == "error":
-        preview = missing_names[:10]
+        preview = list(dict.fromkeys(missing_names))[:10]
         raise ValueError(
-            f"{len(missing_names)} target .{axis}_names have no embedding "
+            f"{len(missing_names)} {what} have no embedding "
             f"(missing='error'). First missing: {preview}. "
-            "Pass missing='nan' to NaN-fill, or fix the ids."
+            f"Pass missing='nan' to NaN-fill, or fix the {fix}."
         )
     if missing_names:
         logger.info(
-            "NaN-filling %d target .%s_names absent from the embedding.",
+            "NaN-filling %d %s absent from the embedding.",
             len(missing_names),
-            axis,
+            what,
         )
     out = np.full((len(axis_names), result.n_dims), np.nan, dtype=np.float32)
     for i, n in enumerate(axis_names):
@@ -625,14 +664,18 @@ def _entity_lookup(result: EmbeddingResult) -> dict[str, int]:
     return pos
 
 
-def _add_alias_columns(frame: pd.DataFrame, result: EmbeddingResult) -> None:
+def _add_alias_columns(frame: pd.DataFrame, result: EmbeddingResult, column: str | None = None) -> None:
+    """Write one alias value per row, looked up by the index or by ``frame[column]``."""
     if not result.aliases:
         return
     lookup = _entity_lookup(result)
+    labels = list(frame.index if column is None else frame[column])
     for scheme in _alias_schemes(result):
+        if scheme == column:
+            continue  # never overwrite the labels the rows were aligned on
         col = scheme
         values = []
-        for label in frame.index:
+        for label in labels:
             row = lookup.get(str(label))
             eid = result.entity_ids[row] if row is not None else str(label)
             values.append((result.aliases.get(str(eid), {}) or {}).get(scheme))
@@ -681,6 +724,8 @@ def to_anndata(
     key: str | None = None,
     missing: Literal["error", "nan"] = "error",
     min_overlap: float = 1.0,
+    obs_column: str | None = None,
+    var_column: str | None = None,
 ) -> AnnData:
     """Export to AnnData -- standalone, or attached to a user's AnnData.
 
@@ -698,6 +743,13 @@ def to_anndata(
     ``min_overlap``. The matrix is re-indexed to the chosen axis order;
     entities missing from the target are an error (``missing="error"``)
     or NaN-filled (``missing="nan"``).
+
+    ``obs_column`` / ``var_column`` name a ``target.obs`` / ``target.var``
+    column whose per-row labels (canonical ids or aliases) are matched
+    instead of ``obs_names`` / ``var_names``: each row gets the embedding
+    of its label, repeated labels share one vector, and ``missing``
+    applies to unknown labels. The axis names are left untouched. A
+    column absent from the target falls back to the axis names.
     """
     if target is None:
         return to_anndata_many([result], keys=[key] if key is not None else None)
@@ -714,15 +766,17 @@ def to_anndata(
         # rather than silently guessing an axis.
         attach_to = "obs"
 
-    axis = _resolve_axis(result, target, attach_to, min_overlap)
+    obs_column = _alignment_column(target.obs, obs_column, "obs")
+    var_column = _alignment_column(target.var, var_column, "var")
+    axis = _resolve_axis(result, target, attach_to, min_overlap, obs_column=obs_column, var_column=var_column)
     if axis == "obs":
-        mat = _reindex_matrix(result, list(target.obs_names), missing, "obs")
+        mat = _reindex_matrix(result, _axis_labels(target, "obs", obs_column), missing, "obs", obs_column)
         target.obsm[out_key] = mat
-        _add_alias_columns(target.obs, result)
+        _add_alias_columns(target.obs, result, obs_column)
     else:
-        mat = _reindex_matrix(result, list(target.var_names), missing, "var")
+        mat = _reindex_matrix(result, _axis_labels(target, "var", var_column), missing, "var", var_column)
         target.varm[out_key] = mat
-        _add_alias_columns(target.var, result)
+        _add_alias_columns(target.var, result, var_column)
     _record_embedding_uns(target, result, out_key)
     logger.info(
         "Attached %s embedding into target.%sm[%r].",
@@ -741,8 +795,14 @@ def to_anndata_many(
     keys: Sequence[str] | None = None,
     missing: Literal["error", "nan"] = "error",
     min_overlap: float = 1.0,
+    obs_column: str | None = None,
+    var_column: str | None = None,
 ) -> AnnData:
-    """Export one or more results to AnnData without writing embeddings into ``.X``."""
+    """Export one or more results to AnnData without writing embeddings into ``.X``.
+
+    ``obs_column`` / ``var_column`` are forwarded to :func:`to_anndata`
+    when attaching to ``target``; standalone output ignores them.
+    """
     items = _as_result_list(results)
     if keys is not None and len(keys) != len(items):
         raise ValueError(f"output routing: keys length must match results length ({len(keys)} != {len(items)}).")
@@ -758,6 +818,8 @@ def to_anndata_many(
             key=key,
             missing=missing,
             min_overlap=min_overlap,
+            obs_column=obs_column,
+            var_column=var_column,
         )
     return target
 
@@ -777,6 +839,8 @@ def route_output(
     include_matrix: bool = True,
     min_overlap: float = 1.0,
     random_state: int = 0,
+    obs_column: str | None = None,
+    var_column: str | None = None,
 ) -> AnnData | pd.DataFrame | dict[str, pd.DataFrame] | dict | dict[str, dict]:
     """The single user-facing output contract shared by ``BioEmbedder.embed``.
 
@@ -789,7 +853,9 @@ def route_output(
     * ``output="table"`` returns / writes a DataFrame and **ignores**
       ``target`` (warns if one was passed).
     * ``output="anndata"`` builds a standalone AnnData when ``target`` is
-      ``None``, else attaches into ``target.obsm``/``.varm``.
+      ``None``, else attaches into ``target.obsm``/``.varm``, aligning
+      rows on ``target.obs[obs_column]`` / ``target.var[var_column]``
+      labels when given (see :func:`to_anndata`).
     """
     if output not in ("anndata", "table", "payload"):
         raise ValueError(f"output must be 'anndata', 'table', or 'payload', got {output!r}.")
@@ -826,6 +892,8 @@ def route_output(
         keys=keys,
         missing=missing,
         min_overlap=min_overlap,
+        obs_column=obs_column,
+        var_column=var_column,
     )
 
 

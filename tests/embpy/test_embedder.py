@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import torch
 
-from embpy.errors import ConfigError, IdentifierError, ModelNotFoundError
+from embpy.errors import ConfigError, DependencyError, IdentifierError, ModelNotFoundError
 
 
 class TestBioEmbedderInit:
@@ -287,6 +287,44 @@ class TestBioEmbedderGetModel:
 
         with pytest.raises((ModelNotFoundError, RuntimeError)):
             embedder._get_model("completely_nonexistent_model_xyz_123")
+
+    @pytest.fixture
+    def no_esm_sdk(self, monkeypatch):
+        """Simulate a machine without the ``esm`` SDK, whether or not it is installed here."""
+        import embpy.models.protein_models as pm
+
+        monkeypatch.setattr(pm, "_HAVE_ESMC", False)
+        monkeypatch.setattr(pm, "ESMC", None, raising=False)
+
+    @pytest.mark.usefixtures("no_esm_sdk")
+    @pytest.mark.parametrize("model_name", ["esmc_300m", "esmc_600m", "esmc_6b"])
+    @patch("embpy.embedder.GeneResolver")
+    def test_esmc_without_sdk_raises_dependency_error(self, mock_resolver_cls, model_name):
+        """A missing ESM SDK is a DependencyError naming the extra, not a NameError in a ModelLoadError."""
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+
+        with pytest.raises(DependencyError) as excinfo:
+            embedder._get_model(model_name)
+
+        err = excinfo.value
+        assert err.package == "embpy[esm3]"
+        assert f"model '{model_name}'" in str(err)
+        assert "pip install embpy[esm3]" in str(err)
+        assert "pip install esm --no-deps" in str(err)
+        assert isinstance(err.__cause__, ImportError)
+        assert model_name not in embedder.model_cache
+
+    @pytest.mark.usefixtures("no_esm_sdk")
+    @patch("embpy.embedder.GeneResolver")
+    def test_embed_protein_esmc_without_sdk_raises_dependency_error(self, mock_resolver_cls):
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+
+        with pytest.raises(DependencyError, match=r"embpy\[esm3\]"):
+            embedder.embed_protein("MTEYKLVVVG", model="esmc_300m", id_type="sequence")
 
 
 # =====================================================================

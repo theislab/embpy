@@ -455,6 +455,58 @@ class TestESMCWrapper:
         with pytest.raises(ValueError, match="Invalid pooling"):
             w.embed("MTEYKLVVVG", pooling_strategy="invalid")
 
+    @staticmethod
+    def _import_without_esm(monkeypatch):
+        """Execute a private copy of protein_models with the ``esm`` SDK unimportable.
+
+        ``sys.modules["esm"] = None`` makes ``from esm... import`` raise ImportError, but
+        Python answers ``from esm.models.esmc import ESMC`` straight from a cached
+        ``sys.modules["esm.models.esmc"]`` without consulting the parent. If the SDK is
+        installed, importing the real module above has cached those submodules, so they are
+        evicted first. A private copy (never registered in ``sys.modules``) then exercises the
+        real import guard without reloading ``embpy.models.protein_models``, which would orphan
+        the wrapper classes the registry and other tests hold.
+        """
+        import importlib.util
+        import sys
+
+        import embpy.models.protein_models as real
+
+        for name in [n for n in sys.modules if n == "esm" or n.startswith("esm.")]:
+            monkeypatch.delitem(sys.modules, name)
+        monkeypatch.setitem(sys.modules, "esm", None)
+        spec = importlib.util.spec_from_file_location("embpy.models._protein_models_no_esm", real.__file__)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_import_guard_binds_names_when_sdk_missing(self, monkeypatch):
+        """The guard must bind ESMC (as ESM3 does) -- an unbound name is a NameError at load."""
+        pm = self._import_without_esm(monkeypatch)
+        assert pm._HAVE_ESMC is False
+        assert pm.ESMC is None
+
+    def test_load_without_sdk_raises_import_error(self, monkeypatch):
+        """Missing SDK is an ImportError, so BioEmbedder can turn it into a DependencyError."""
+        pm = self._import_without_esm(monkeypatch)
+        w = pm.ESMCWrapper()
+        with pytest.raises(ImportError, match="'esm' package is required") as excinfo:
+            w.load(torch.device("cpu"))
+        assert "pip install esm --no-deps" in str(excinfo.value)
+        assert w.client is None
+
+    def test_load_with_sdk_uses_from_pretrained(self, monkeypatch):
+        """The SDK-present path is unchanged by the missing-SDK guard."""
+        import embpy.models.protein_models as pm
+
+        fake_esmc = MagicMock()
+        monkeypatch.setattr(pm, "_HAVE_ESMC", True)
+        monkeypatch.setattr(pm, "ESMC", fake_esmc, raising=False)
+        w = pm.ESMCWrapper("esmc_300m")
+        w.load(torch.device("cpu"))
+        fake_esmc.from_pretrained.assert_called_once_with("esmc_300m")
+        assert w.client is fake_esmc.from_pretrained.return_value.to.return_value.eval.return_value
+
 
 # =====================================================================
 # ESM3Wrapper

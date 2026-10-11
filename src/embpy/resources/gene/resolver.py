@@ -107,6 +107,42 @@ def _mygene_query(query_url: str, params: dict) -> dict:
     return response.json()
 
 
+# HTTP statuses from Ensembl REST that are worth retrying: rate limiting
+# (429) and any server-side failure (5xx). Other 4xx (400 bad symbol, 404
+# unknown ID) are permanent and are handed straight back to the caller.
+_ENSEMBL_RETRY_STATUSES = frozenset({429, *range(500, 600)})
+
+# Upper bound on a server-supplied ``Retry-After`` so a bogus header cannot
+# stall a run; normal exponential backoff is capped by ``max_delay`` below.
+_ENSEMBL_MAX_RETRY_AFTER = 60.0
+
+
+class _TransientEnsemblError(requests.RequestException):
+    """Internal signal that Ensembl answered with a retryable HTTP status.
+
+    Raised inside ``_ensembl_get`` so ``retry_with_backoff`` can retry it.
+    Carries the response so the final one can be handed back to the caller
+    once the retries are exhausted, and the server's ``Retry-After`` (if
+    any) as ``retry_after`` so the helper waits at least that long.
+    """
+
+    def __init__(self, response: requests.Response, url: str, retry_after: float | None = None):
+        super().__init__(f"HTTP {response.status_code} from {url}", response=response)
+        self.retry_after = retry_after
+
+
+def _retry_after_seconds(resp: requests.Response) -> float | None:
+    """Seconds to wait according to ``Retry-After`` (plus 0.5s margin), if usable."""
+    value = resp.headers.get("Retry-After")
+    if value is None:
+        return None
+    try:
+        return min(float(value) + 0.5, _ENSEMBL_MAX_RETRY_AFTER)
+    except (TypeError, ValueError):
+        # HTTP-date form (or garbage): fall back to exponential backoff.
+        return None
+
+
 def _ensembl_get(
     url: str,
     headers: dict | None = None,
@@ -114,28 +150,39 @@ def _ensembl_get(
     max_retries: int = 5,
     base_delay: float = 1.0,
 ) -> requests.Response:
-    """HTTP GET with automatic retry on Ensembl 429 rate-limit errors.
+    """HTTP GET with automatic retry on transient Ensembl failures.
 
-    Respects the ``Retry-After`` header when present; otherwise uses
-    exponential backoff starting at *base_delay* seconds.
+    Retries HTTP 429 and 5xx responses as well as connection errors and
+    timeouts, with exponential backoff (via ``retry_with_backoff``)
+    starting at *base_delay* seconds. Respects the ``Retry-After`` header
+    when present. Other 4xx responses are returned immediately.
+
+    Once *max_retries* attempts have been made, the last response is
+    returned as-is (callers use ``raise_for_status()`` / ``.ok``), and a
+    last connection error or timeout is re-raised, exactly as a single
+    ``requests.get`` would behave.
     """
     if headers is None:
         headers = {}
-    for attempt in range(max_retries):
+
+    @retry_with_backoff(
+        max_attempts=max(1, max_retries),
+        base_delay=base_delay,
+        max_delay=10.0,
+        retryable=(requests.ConnectionError, requests.Timeout, _TransientEnsemblError),
+        on_retry=_emit_retry_event,
+    )
+    def _attempt() -> requests.Response:
         resp = requests.get(url, headers=headers, timeout=timeout)
-        if resp.status_code != 429:
-            return resp
-        retry_after = resp.headers.get("Retry-After")
-        if retry_after is not None:
-            wait = float(retry_after) + 0.5
-        else:
-            wait = base_delay * (2 ** attempt)
-        logging.debug(
-            "Ensembl 429 for %s -- retry %d/%d in %.1fs",
-            url, attempt + 1, max_retries, wait,
-        )
-        time.sleep(wait)
-    return resp
+        if resp.status_code in _ENSEMBL_RETRY_STATUSES:
+            raise _TransientEnsemblError(resp, url, _retry_after_seconds(resp))
+        return resp
+
+    try:
+        return _attempt()
+    except _TransientEnsemblError as exc:
+        # Retries exhausted: surface the last response like a plain GET would.
+        return exc.response
 
 
 def _looks_like_smiles(s: str) -> bool:

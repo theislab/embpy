@@ -19,6 +19,7 @@ try:
     _HAVE_ESMC = True
 except ImportError:
     _HAVE_ESMC = False
+    ESMC = None  # type: ignore
 
 try:
     from esm.models.esm3 import ESM3
@@ -455,13 +456,19 @@ class ESMCWrapper(BaseModelWrapper):
 
         Raises
         ------
+        ImportError
+            If the ESMC SDK (the ``esm`` package) is not installed.
         RuntimeError
-            If the ESMC SDK is not installed or loading the client fails.
+            If loading the client fails.
         """
         if self.client is not None:
             return
-        if not hasattr(ESMC, "from_pretrained"):
-            raise RuntimeError("ESMC SDK not installed.")
+        if not _HAVE_ESMC:
+            raise ImportError(
+                "The 'esm' package is required for ESM-C. "
+                "Recommended install: pip install esm --no-deps "
+                "(the embpy[esm3] extra also works, but caps transformers below 4.48.2)."
+            )
         self.device = device
         logging.info(f"Loading ESMC client '{self.model_name}' onto {device} …")
         try:
