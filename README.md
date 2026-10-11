@@ -157,10 +157,14 @@ py -3.12 -m pip install "embpy @ git+https://github.com/theislab/embpy.git@vibe_
 **Verify the install:**
 
 ```bash
-# Linux / macOS
+# Linux / macOS -- core or [test] install (no PyTorch)
+python -c "import embpy; print(embpy.__version__)"
+# Linux / macOS -- [cpu] or [gpu] install
 python -c "import embpy, torch; print(embpy.__version__, torch.__version__)"
 
-# Windows
+# Windows -- core or [test] install (no PyTorch)
+py -3.12 -c "import embpy; print(embpy.__version__)"
+# Windows -- [cpu] or [gpu] install
 py -3.12 -c "import embpy, torch; print(embpy.__version__, torch.__version__)"
 ```
 

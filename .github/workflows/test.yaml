@@ -81,18 +81,41 @@ jobs:
       - name: Report coverage
         run: coverage report
 
+  # Runs the README's [cpu] install (Option A: pip, Option B: uv) on the PR's own
+  # checkout, then checks that it really gave the CPU build of PyTorch -- the
+  # CUDA build is ~3 GB and is what [cpu] used to pull on Linux (issue #46).
   test-readme-install:
-    name: README Install Test
+    name: README Install Test (${{ matrix.installer }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        installer: [pip, uv]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # hatch-vcs derives the version from git tags
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install exactly as README specifies
+      - name: Set up uv
+        if: matrix.installer == 'uv'
+        uses: astral-sh/setup-uv@v6
+      - name: Install as README Option A (pip)
+        if: matrix.installer == 'pip'
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install ".[models]"
-      - name: Verify
-        run: python -c "import embpy, torch; from embpy import BioEmbedder; print(embpy.__version__, torch.__version__)"
+          pip install ".[cpu]"
+      - name: Install as README Option B (uv)
+        if: matrix.installer == 'uv'
+        run: |
+          uv venv --python 3.12
+          source .venv/bin/activate
+          uv pip install ".[cpu]"
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+      - name: Verify the CPU build of PyTorch and one real embedding
+        run: |
+          python -c "import torch; assert torch.__version__.endswith('+cpu'), f'expected the CPU build, got torch {torch.__version__}'"
+          python -c "import embpy, torch; print(embpy.__version__, torch.__version__)"
+          python -c "from embpy import BioEmbedder; a = BioEmbedder(device='cpu').embed(['CCO'], entity_type='molecule', id_type='smiles', model='morgan_fp', output='anndata'); print(a)"
