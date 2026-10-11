@@ -180,7 +180,7 @@ up-to-date list and per-extra caveats):
 ```bash
 pip install "embpy[seqmodels]"     # Borzoi, Enformer
 pip install "embpy[alphagenome]"   # AlphaGenome (cloud API; needs ALPHAGENOME_API_KEY)
-pip install "embpy[scooby]"        # Scooby (installs from git; see pyproject.toml)
+pip install "embpy[scooby]" "scooby @ git+https://github.com/gagneurlab/scooby.git"   # Scooby (model package is GitHub-only)
 pip install "embpy[esm3]"          # ESM-3 / ESM-C
 pip install "embpy[helical]"       # Helical-backed single-cell models
 pip install "embpy[state]"         # Arc STATE

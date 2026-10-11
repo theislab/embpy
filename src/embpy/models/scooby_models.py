@@ -14,8 +14,8 @@ try:
     from scooby.utils.utils import undo_squashed_scale as _scooby_undo_squashed_scale
 except ImportError:
     logging.warning(
-        "scooby not installed, so ScoobyWrapper is unavailable. It is an optional extra "
-        'because it installs from a git URL: pip install "embpy[scooby]"'
+        "scooby not installed, so ScoobyWrapper is unavailable. It is published on GitHub "
+        'only: pip install "embpy[scooby]" "scooby @ git+https://github.com/gagneurlab/scooby.git"'
     )
     Scooby = None  # type: ignore
     _scooby_undo_squashed_scale = None  # type: ignore
@@ -180,7 +180,10 @@ class ScoobyWrapper(BaseModelWrapper):
             logging.warning(f"Scooby '{self.model_name}' already loaded.")
             return
         if Scooby is None:
-            raise ImportError("scooby not installed; cannot load ScoobyWrapper.")
+            raise ImportError(
+                "scooby not installed; cannot load ScoobyWrapper. It is published on GitHub only: "
+                'pip install "embpy[scooby]" "scooby @ git+https://github.com/gagneurlab/scooby.git"'
+            )
 
         logging.info(f"Loading Scooby '{self.model_name}' …")
         try:

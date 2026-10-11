@@ -176,6 +176,28 @@ class TestIsolatedBackendsStayOut:
         assert not any("[flash]" in item for item in opt["seqmodels"])
 
 
+class TestPublishableToPyPI:
+    """PyPI rejects any upload whose dependencies point at a URL.
+
+    ``[scooby]`` carried ``scooby @ git+https://...``, which would have failed the
+    release upload rather than any test. Keep every requirement a plain name.
+    """
+
+    def test_no_dependency_or_extra_uses_a_direct_url(self) -> None:
+        project = _project()
+        groups = {"dependencies": project["dependencies"], **project["optional-dependencies"]}
+        offenders = [
+            f"[{group}] {raw}"
+            for group, entries in groups.items()
+            for raw in entries
+            if Requirement(raw).url
+        ]
+        assert not offenders, (
+            "PyPI rejects direct URL requirements; install these separately and "
+            f"document the command instead: {offenders}"
+        )
+
+
 class TestFlashzoiIsGatedAtRuntime:
     def test_flashzoi_keys_are_registered(self) -> None:
         pytest.importorskip("torch")

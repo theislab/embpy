@@ -221,7 +221,7 @@ column says what actually happens today rather than what is intended.
 | Backend | Install | Status / why it is separate |
 | --- | --- | --- |
 | Caduceus | `uv pip install "embpy[caduceus]"` | resolves cleanly (`mamba-ssm`), but the wheel builds against your installed torch — install the matching torch first. Needs a CUDA toolchain if no wheel matches. |
-| Scooby | `uv pip install "embpy[scooby]"` | installs from a git URL, so it is not PyPI-only |
+| Scooby | `uv pip install "embpy[scooby]" "scooby @ git+https://github.com/gagneurlab/scooby.git"` | the `scooby` model package is published on GitHub only, so it is installed by URL next to the extra. (The `scooby` on PyPI is an unrelated project.) |
 | Evo (v1/v1.5) | `uv pip install "embpy[evo]"` | **Linux only.** Depends on `triton`, which publishes no macOS wheels, so this is unsatisfiable on macOS. |
 | Evo 2 | `uv pip install "embpy[evo2]"` | **needs Python 3.11 or 3.12** — `evo2` declares `requires-python >=3.11,<3.13`, so it cannot install into a 3.13 environment at all. Needs its own venv (below). |
 | Flashzoi | `uv pip install "embpy[flashzoi]" --no-build-isolation` | the four `flashzoi_*` keys set `flashed=true` and need `flash_attn`, which is NVIDIA-only and builds against your installed torch. The eight plain `borzoi_*` keys need none of it. |

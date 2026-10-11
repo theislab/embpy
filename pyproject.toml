@@ -244,10 +244,14 @@ optional-dependencies.alphagenome = [
   "alphagenome>=0.7",
 ]
 # Scooby (gagneurlab/scooby): single-cell-resolution DNA sequence model built
-# on the Borzoi trunk, conditioned on a precomputed per-cell embedding. 
+# on the Borzoi trunk, conditioned on a precomputed per-cell embedding.
+# The `scooby` model package itself is only published on GitHub, and PyPI
+# rejects uploads whose dependencies point at a URL, so it cannot be listed
+# here. (The `scooby` project on PyPI is an unrelated tool -- do not add it by
+# name.) Install it alongside this extra:
+#   pip install "embpy[scooby]" "scooby @ git+https://github.com/gagneurlab/scooby.git"
 optional-dependencies.scooby = [
   "snapatac2-scooby",
-  "scooby @ git+https://github.com/gagneurlab/scooby.git",
 ]
 # MiniMol molecule GNN. Kept separate because it transitively depends on
 # `torch-sparse`, `torch-scatter` etc. which fail to build via pip unless
@@ -338,8 +342,8 @@ optional-dependencies.morphology = [
 #   * helical -- transitively needs the igraph C library (louvain) which
 #     pip cannot build; use conda/pixi for helical instead
 #   * minimol -- transitive torch-sparse build chain; use conda/pixi instead
-#   * scooby -- pulls in `scooby` and `peft` via direct git references (see
-#     the scooby extra above); install it explicitly if you need it
+#   * scooby -- the model package installs from GitHub, not PyPI (see the
+#     scooby extra above); install it explicitly if you need it
 #   * alphagenome -- calls a hosted API and needs an ALPHAGENOME_API_KEY;
 #     kept opt-in so "all" doesn't imply an external API account
 # Install those explicitly in a separate env if you need them.
@@ -394,9 +398,6 @@ optional-dependencies.test = [
 urls.Documentation = "https://embpy.readthedocs.io/"
 urls.Homepage = "https://github.com/theislab/embpy"
 urls.Source = "https://github.com/theislab/embpy"
-
-[tool.hatch.metadata]
-allow-direct-references = true
 
 # Derive the package version from git tags (e.g. tag `v0.1.0` -> version 0.1.0).
 # No need to bump a version string by hand anymore.
