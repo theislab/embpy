@@ -72,7 +72,13 @@ pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 **Option B — with `uv` (faster resolver, recommended):**
 
 ```bash
+# Create and activate an environment first (uv installs into it)
+uv venv --python 3.12 && source .venv/bin/activate
+
+# CPU-only
 uv pip install "embpy[cpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+
+# GPU (NVIDIA CUDA)
 uv pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 ```
 
@@ -118,15 +124,13 @@ py -3.12 -c "import embpy, torch; from embpy import BioEmbedder; print(embpy.__v
 ### 🧪 Installing the `vibe_embpy` branch (for reviewers / contributors)
 
 The `vibe_embpy` branch contains the latest cross-platform compatibility fixes
-(Windows support, encoding fixes, FASTA strictness). Install it directly from the
-upstream repository — no need to clone anything.
+(Windows support, encoding fixes, FASTA strictness). For a normal install, use the
+`[cpu]` or `[gpu]` commands above: they already install this branch. Only running
+the tests needs a clone.
 
 **🐧 Linux / macOS:**
 
 ```bash
-# With ML model backends (recommended)
-pip install "embpy[models] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
-
 # With test dependencies + run tests (requires a clone so the tests folder exists)
 git clone --branch vibe_embpy https://github.com/theislab/embpy.git
 cd embpy
@@ -140,9 +144,6 @@ pip install "embpy @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 **🪟 Windows:**
 
 ```powershell
-# With ML model backends (recommended)
-py -3.12 -m pip install "embpy[models] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
-
 # With test dependencies + run tests (requires a clone so the tests folder exists)
 git clone --branch vibe_embpy https://github.com/theislab/embpy.git
 cd embpy
@@ -164,7 +165,7 @@ py -3.12 -c "import embpy, torch; print(embpy.__version__, torch.__version__)"
 ```
 
 > Once this branch is merged into `main` and a new version is published to PyPI,
-> the install simplifies to just `pip install "embpy[models]"`.
+> the same commands work without the `@ git+...` part, e.g. `pip install "embpy[gpu]"`.
 
 ---
 
