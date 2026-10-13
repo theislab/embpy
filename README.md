@@ -533,16 +533,8 @@ for the model keys available in your environment.
 - perturbation/action embeddings can be kept entity-aligned in `.uns`
 - `.X` remains expression/count-like data or a sparse placeholder
 
-See the [technical guide](docs/technical.md#standardized-output-contract) for
+See the [Architecture & Technical Guide](docs/technical.md#standardized-output-contracts) for
 the full contract.
-
-## Documentation
-
-- [API reference](docs/api.md): per-function reference generated from docstrings
-- [Technical guide](docs/technical.md): output contract, install matrix, package
-  layout, and developer notes
-- [Contributing](docs/contributing.md)
-- [Changelog](docs/changelog.md)
 
 ## Citation
 
