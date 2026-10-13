@@ -953,9 +953,12 @@ def compute_umap(
         }
     except Exception as exc:
         logger.error("compute_umap failed on %s: %s", path, exc, exc_info=True)
-        return {
+        resp = {
             "status": "error",
             "error_type": type(exc).__name__,
             "error": str(exc),
             "path": str(path),
         }
+        if isinstance(exc, (ImportError, ModuleNotFoundError)):
+            resp["suggestion"] = "Install scanpy using 'pip install scanpy' or 'pip install embpy[mcp]' to enable compute_umap."
+        return resp

@@ -67,6 +67,7 @@ scripts.embpy-mcp = "embpy.mcp.server:main"
 # Model Context Protocol (MCP) server with bioinformatics skills
 optional-dependencies.mcp = [
   "mcp>=1.0.0",
+  "scanpy>=1.10",
 ]
 
 
