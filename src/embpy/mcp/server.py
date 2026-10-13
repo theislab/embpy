@@ -1,8 +1,8 @@
 """Model Context Protocol (MCP) server for embpy single-cell bioinformatics skills.
 
-Serves tools over standard input/output (stdio) with strict stdio isolation:
-all diagnostic logging, warnings, and library prints are directed to stderr
-so that stdout carries exclusively clean JSON-RPC protocol frames.
+Serves 7 core single-cell bioinformatics tools over standard input/output (stdio)
+with strict stdio isolation: all diagnostic logging, warnings, and library prints
+are directed to stderr so that stdout carries exclusively clean JSON-RPC protocol frames.
 """
 
 from __future__ import annotations
@@ -18,7 +18,15 @@ try:
 except (ImportError, ModuleNotFoundError):
     from mcp.server.fastmcp import FastMCP  # type: ignore[no-redef]
 
-from .tools import embed_cells, evaluate_scib, inspect_anndata
+from .tools import (
+    compute_umap,
+    embed_cells,
+    evaluate_perturbations,
+    evaluate_scib,
+    inspect_anndata,
+    list_available_models,
+    map_gene_identifiers,
+)
 
 logger = logging.getLogger("embpy.mcp")
 
@@ -56,18 +64,27 @@ def create_server(name: str = "embpy-mcp") -> FastMCP:
     server = FastMCP(
         name=name,
         instructions=(
-            "embpy MCP Server provides bioinformatics and single-cell machine learning skills "
-            "for inspecting AnnData (.h5ad) datasets, computing biological foundation-model and "
-            "PCA embeddings via BioEmbedder, and evaluating representation quality using scIB metrics."
+            "embpy MCP Server provides native single-cell bioinformatics and machine learning skills: "
+            "1. inspect_anndata: Inspect .h5ad metadata, layers, and count vs normalized nature. "
+            "2. list_available_models: Check installed foundation models, compute devices, and optional extras. "
+            "3. map_gene_identifiers: Convert and validate gene IDs between Ensembl and HGNC symbols. "
+            "4. embed_cells: Run multi-model embeddings (PCA, scVI, foundation models) via BioEmbedder. "
+            "5. evaluate_scib: Benchmark embeddings on biological conservation and batch integration. "
+            "6. evaluate_perturbations: Score perturbation prediction accuracy via ArcInstitute cell-eval. "
+            "7. compute_umap: Compute kNN graph and 2D UMAP coordinates on chosen representations."
         ),
     )
 
-    # Register core single-cell bioinformatics tools
+    # Register all 7 tools
     server.tool(name="inspect_anndata")(inspect_anndata)
+    server.tool(name="list_available_models")(list_available_models)
+    server.tool(name="map_gene_identifiers")(map_gene_identifiers)
     server.tool(name="embed_cells")(embed_cells)
     server.tool(name="evaluate_scib")(evaluate_scib)
+    server.tool(name="evaluate_perturbations")(evaluate_perturbations)
+    server.tool(name="compute_umap")(compute_umap)
 
-    logger.info("embpy MCP server initialized with %d tools: inspect_anndata, embed_cells, evaluate_scib", 3)
+    logger.info("embpy MCP server initialized with 7 bioinformatics tools.")
     return server
 
 

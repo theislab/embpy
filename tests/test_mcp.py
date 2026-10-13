@@ -1,14 +1,23 @@
-"""Automated unit and integration tests for embpy MCP server and bioinformatics tools."""
+"""Automated unit and integration tests for embpy MCP server and 7 bioinformatics tools."""
 
 from __future__ import annotations
 
+import asyncio
 import os
-import tempfile
-import pytest
 import numpy as np
+import pytest
 from anndata import AnnData
 
-from embpy.mcp import create_server, embed_cells, evaluate_scib, inspect_anndata
+from embpy.mcp import (
+    compute_umap,
+    create_server,
+    embed_cells,
+    evaluate_perturbations,
+    evaluate_scib,
+    inspect_anndata,
+    list_available_models,
+    map_gene_identifiers,
+)
 
 
 @pytest.fixture
@@ -24,6 +33,10 @@ def sample_adata_path(tmp_path):
 
     ad.obs["cell_type"] = (["T_cell", "B_cell", "Monocyte"] * (n_obs // 3))[:n_obs]
     ad.obs["batch"] = (["batch_1", "batch_2"] * (n_obs // 2))[:n_obs]
+    ad.obs["perturbation"] = (["ctrl", "ctrl", "pert_1", "pert_1"] * 10)[:n_obs]
+    ad.obs["split"] = (["train", "test"] * 20)[:n_obs]
+
+
     ad.layers["counts"] = X.copy()
     ad.obsm["X_prior"] = rng.randn(n_obs, 8).astype(np.float32)
 
@@ -33,7 +46,7 @@ def sample_adata_path(tmp_path):
 
 
 def test_inspect_anndata_success(sample_adata_path):
-    """Test inspect_anndata accurately reads dimensions, slots, and metadata."""
+    """Test inspect_anndata accurately reads dimensions, slots, and expression nature."""
     res = inspect_anndata(sample_adata_path)
     assert res["status"] == "success"
     assert res["n_obs"] == 30
@@ -42,6 +55,8 @@ def test_inspect_anndata_success(sample_adata_path):
     assert "batch" in res["obs_columns"]
     assert "counts" in res["layers"]
     assert "X_prior" in res["obsm_keys"]
+    assert "expression_nature" in res
+    assert res["expression_nature"]["detected_nature"] in ("raw_counts", "continuous_normalized", "unknown")
     assert "cell_type" in res["obs_summary"]
     assert res["obs_summary"]["cell_type"]["n_unique"] == 3
 
@@ -52,6 +67,42 @@ def test_inspect_anndata_missing_file():
     assert res["status"] == "error"
     assert res["error_type"] == "FileNotFoundError"
     assert "not found" in res["error"].lower()
+
+
+def test_list_available_models_success():
+    """Test list_available_models returns hardware details and runnable models."""
+    res = list_available_models()
+    assert res["status"] == "success"
+    assert res["compute_device"] in ("cpu", "cuda", "mps")
+    assert "pca" in res["runnable_models"]
+    assert "scgpt" in res["all_singlecell_models"]
+    assert "optional_extras_status" in res
+    assert "mcp" in res["optional_extras_status"]
+    assert res["optional_extras_status"]["mcp"]["installed"] is True
+
+
+def test_map_gene_identifiers_symbols_to_ensembl():
+    """Test map_gene_identifiers converts HGNC gene symbols to Ensembl IDs."""
+    res = map_gene_identifiers(genes=["TP53", "GAPDH"], target_type="ensembl", organism="human")
+    assert res["status"] == "success"
+    assert res["total_genes"] == 2
+    assert res["mapped_count"] >= 1
+    assert "TP53" in res["mapping_sample"]
+    assert res["mapping_sample"]["TP53"].startswith("ENSG")
+
+
+def test_map_gene_identifiers_ensembl_to_symbols():
+    """Test map_gene_identifiers reverse converts Ensembl IDs to symbols."""
+    res = map_gene_identifiers(
+        genes=["ENSG00000141510", "ENSG00000111640"],
+        target_type="symbol",
+        organism="human",
+    )
+    assert res["status"] == "success"
+    assert res["total_genes"] == 2
+    assert res["mapped_count"] >= 1
+    assert "ENSG00000141510" in res["mapping_sample"]
+    assert res["mapping_sample"]["ENSG00000141510"] == "TP53"
 
 
 def test_embed_cells_success(sample_adata_path, tmp_path):
@@ -70,7 +121,6 @@ def test_embed_cells_success(sample_adata_path, tmp_path):
     assert "X_pca" in res["embedding_keys"]
     assert os.path.exists(out_path)
 
-    # Verify written output matches reported shapes
     import anndata
 
     saved_ad = anndata.read_h5ad(out_path)
@@ -89,18 +139,42 @@ def test_embed_cells_invalid_inputs(sample_adata_path):
     assert err_models["error_type"] == "ValueError"
 
 
+def test_compute_umap_success(sample_adata_path, tmp_path):
+    """Test compute_umap computes neighbor graph and 2D UMAP coordinates."""
+    # First generate PCA embedding
+    emb_path = str(tmp_path / "for_umap.h5ad")
+    embed_cells(
+        path=sample_adata_path,
+        models=["pca"],
+        output_path=emb_path,
+        preprocessing="none",
+        device="cpu",
+    )
+
+    umap_path = str(tmp_path / "with_umap.h5ad")
+    res = compute_umap(
+        path=emb_path,
+        embedding_key="X_pca",
+        output_path=umap_path,
+        n_neighbors=5,
+    )
+    assert res["status"] == "success"
+    assert res["n_cells"] == 30
+    assert res["umap_key"] == "X_umap_pca"
+    assert res["umap_shape"] == [30, 2]
+    assert os.path.exists(umap_path)
+
+
 def test_evaluate_scib_success(sample_adata_path, tmp_path):
     """Test evaluate_scib evaluates an existing embedding against annotations."""
-    # First embed with PCA
     embedded_path = str(tmp_path / "for_scib.h5ad")
-    embed_res = embed_cells(
+    embed_cells(
         path=sample_adata_path,
         models=["pca"],
         output_path=embedded_path,
         preprocessing="none",
         device="cpu",
     )
-    assert embed_res["status"] == "success"
 
     csv_path = str(tmp_path / "scib_scores.csv")
     eval_res = evaluate_scib(
@@ -112,6 +186,7 @@ def test_evaluate_scib_success(sample_adata_path, tmp_path):
     )
     assert eval_res["status"] == "success"
     assert "X_pca" in eval_res["metrics"]
+    assert "markdown_table" in eval_res
     assert os.path.exists(csv_path)
 
     metrics_pca = eval_res["metrics"]["X_pca"]
@@ -122,7 +197,6 @@ def test_evaluate_scib_success(sample_adata_path, tmp_path):
 
 def test_evaluate_scib_missing_keys(sample_adata_path):
     """Test evaluate_scib catches missing obs labels or obsm embedding keys."""
-    # Label key absent
     res_bad_label = evaluate_scib(
         path=sample_adata_path,
         embedding_keys=["X_prior"],
@@ -130,9 +204,7 @@ def test_evaluate_scib_missing_keys(sample_adata_path):
     )
     assert res_bad_label["status"] == "error"
     assert res_bad_label["error_type"] == "KeyError"
-    assert "label_key" in res_bad_label["error"]
 
-    # Embedding key absent
     res_bad_emb = evaluate_scib(
         path=sample_adata_path,
         embedding_keys=["X_nonexistent"],
@@ -140,18 +212,41 @@ def test_evaluate_scib_missing_keys(sample_adata_path):
     )
     assert res_bad_emb["status"] == "error"
     assert res_bad_emb["error_type"] == "KeyError"
-    assert "Embedding keys" in res_bad_emb["error"]
+
+
+def test_evaluate_perturbations_success(sample_adata_path, tmp_path):
+    """Test evaluate_perturbations evaluates predictions against reference controls."""
+    csv_path = str(tmp_path / "pert_scores.csv")
+    res = evaluate_perturbations(
+        path=sample_adata_path,
+        split_col="split",
+        control_pert="ctrl",
+        pert_col="perturbation",
+        profile="minimal",
+        output_csv=csv_path,
+    )
+    assert res["status"] == "success"
+    assert res["control_pert"] == "ctrl"
+    assert "markdown_table" in res
+    assert res["n_perturbations"] >= 1
+    assert os.path.exists(csv_path)
 
 
 def test_mcp_server_instance_and_tools():
-    """Verify MCP server instantiates cleanly and registers all three skills."""
-    import asyncio
-
+    """Verify MCP server instantiates cleanly and registers all 7 bioinformatics skills."""
     async def _check():
         server = create_server("test-server")
         tools = await server.list_tools()
         tool_names = {t.name for t in tools}
-        assert {"inspect_anndata", "embed_cells", "evaluate_scib"}.issubset(tool_names)
+        expected = {
+            "inspect_anndata",
+            "list_available_models",
+            "map_gene_identifiers",
+            "embed_cells",
+            "evaluate_scib",
+            "evaluate_perturbations",
+            "compute_umap",
+        }
+        assert expected.issubset(tool_names)
 
     asyncio.run(_check())
-

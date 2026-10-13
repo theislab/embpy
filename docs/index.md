@@ -37,7 +37,7 @@
 
 - Explore the [Getting Started Guide](getting-started.md) for quick installation and minimal examples.
 - Work through practical tutorials in the [Hands-On Workflows & Recipes Guide](hands-on.md).
-- Connect `embpy` with AI assistants via the [MCP Server & AI Skills Guide](mcp.md).
+- Connect `embpy` with AI assistants via the [Agentic MCP Skills Guide](mcp/index.md).
 - Understand OS and hardware specifics in the [Cross-Platform & Hardware Guide](cross-platform.md).
 - Dive into the [Architecture Overview](technical.md) for architectural details.
 - Review the [API Reference](api-reference.md) for automated module documentation.
