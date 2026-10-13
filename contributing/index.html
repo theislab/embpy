@@ -734,10 +734,9 @@
 <hr />
 <h2 id="local-development-workflow">Local Development Workflow<a class="headerlink" href="#local-development-workflow" title="Permanent link">&para;</a></h2>
 <h3 id="1-clone-set-up-tracking">1. Clone &amp; Set Up Tracking<a class="headerlink" href="#1-clone-set-up-tracking" title="Permanent link">&para;</a></h3>
-<p>Clone the repository and switch to the development branch:</p>
+<p>Clone the repository:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/theislab/embpy.git
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>embpy
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>git<span class="w"> </span>checkout<span class="w"> </span>vibe_embpy
 </span></code></pre></div>
 <h3 id="2-environment-setup">2. Environment Setup<a class="headerlink" href="#2-environment-setup" title="Permanent link">&para;</a></h3>
 <p>We recommend setting up an isolated virtual environment:</p>
@@ -760,11 +759,7 @@
 <tbody>
 <tr>
 <td><code>main</code></td>
-<td>Production-ready releases.</td>
-</tr>
-<tr>
-<td><code>vibe_embpy</code></td>
-<td>Primary active development branch for modern pip/uv packaging and cross-platform enhancements.</td>
+<td>Primary branch for active development, releases, and documentation.</td>
 </tr>
 <tr>
 <td><code>feat/&lt;name&gt;</code></td>
@@ -780,7 +775,7 @@
 </tr>
 </tbody>
 </table>
-<p>Please ensure all new feature branches branch from and target <code>vibe_embpy</code>.</p>
+<p>Please ensure all new feature branches branch from and target <code>main</code>.</p>
 <hr />
 <h2 id="running-tests">Running Tests<a class="headerlink" href="#running-tests" title="Permanent link">&para;</a></h2>
 <p>We use <code>pytest</code> for automated testing:</p>
