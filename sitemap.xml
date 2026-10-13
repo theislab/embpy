@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://theislab.github.io/embpy/</loc>
+         <lastmod>2026-10-13</lastmod>
+    </url>
+    <url>
+         <loc>https://theislab.github.io/embpy/api-reference/</loc>
+         <lastmod>2026-10-13</lastmod>
+    </url>
+    <url>
+         <loc>https://theislab.github.io/embpy/contributing/</loc>
+         <lastmod>2026-10-13</lastmod>
+    </url>
+    <url>
+         <loc>https://theislab.github.io/embpy/cross-platform/</loc>
+         <lastmod>2026-10-13</lastmod>
+    </url>
+    <url>
+         <loc>https://theislab.github.io/embpy/getting-started/</loc>
+         <lastmod>2026-10-13</lastmod>
+    </url>
+    <url>
+         <loc>https://theislab.github.io/embpy/hands-on/</loc>
+         <lastmod>2026-10-13</lastmod>
+    </url>
+    <url>
+         <loc>https://theislab.github.io/embpy/technical/</loc>
+         <lastmod>2026-10-13</lastmod>
+    </url>
+</urlset>
