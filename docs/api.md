@@ -131,6 +131,7 @@ Resolvers fetch biological sequences and identifiers; annotators add rich metada
     resources.GeneAnnotator
     resources.ProteinAnnotator
     resources.MoleculeAnnotator
+    resources.ChEMBLAnnotator
     resources.CellLineAnnotator
 ```
 
@@ -217,6 +218,7 @@ Resolvers fetch biological sequences and identifiers; annotators add rich metada
     :toctree: generated
 
     tl.annotate_molecules
+    tl.annotate_drug_perturbations
     tl.annotate_gene_perturbations
     tl.annotate_proteins
     tl.annotate_genes
@@ -242,6 +244,7 @@ Resolvers fetch biological sequences and identifiers; annotators add rich metada
     :toctree: generated
 
     tl.benchmark_embeddings
+    tl.compute_scib_metrics
     tl.compute_metrics
     tl.cell_eval
     tl.run_cell_eval
@@ -447,9 +450,6 @@ Resolvers fetch biological sequences and identifiers; annotators add rich metada
     pp.load_lamin
     pp.list_lamin_datasets
     pp.lamin_info
-    pp.load_scperturb
-    pp.list_scperturb_datasets
-    pp.scperturb_info
 ```
 
 ### Morphology Preprocessing

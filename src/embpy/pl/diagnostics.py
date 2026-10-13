@@ -19,7 +19,6 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from anndata import AnnData
-from matplotlib.figure import Figure
 
 
 def within_vs_between_similarity(

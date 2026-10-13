@@ -117,7 +117,7 @@ class AliasCache:
             self._loaded = True
             return
         try:
-            raw = json.loads(self.path.read_text())
+            raw = json.loads(self.path.read_text(encoding='utf-8'))
             if not isinstance(raw, dict):
                 raise ValueError("cache root is not a dict")
             if int(raw.get("version", 0)) != int(self.version):
@@ -217,7 +217,7 @@ def _step_pyensembl(
 def _step_hgnc(symbol: str) -> tuple[str | None, str]:
     """Query HGNC ``fetch/symbol`` to find the approved name."""
     try:
-        import requests  # noqa: PLC0415
+        import requests
     except ImportError:
         return None, "no_requests"
     url = f"https://rest.genenames.org/fetch/symbol/{symbol}"
@@ -250,7 +250,7 @@ def _step_hgnc(symbol: str) -> tuple[str | None, str]:
 def _step_hgnc_alias(symbol: str) -> tuple[str | None, str]:
     """Fallback to HGNC ``search/alias_symbol`` for withdrawn names."""
     try:
-        import requests  # noqa: PLC0415
+        import requests
     except ImportError:
         return None, "no_requests"
     url = f"https://rest.genenames.org/search/alias_symbol/{symbol}"
@@ -288,7 +288,7 @@ def _step_ensembl_retry(
     the audit log shows where the breakdown is.
     """
     try:
-        import requests  # noqa: PLC0415
+        import requests
     except ImportError:
         return None, "no_requests"
     url = f"https://rest.ensembl.org/lookup/symbol/{organism}/{symbol}"
@@ -315,7 +315,7 @@ def _step_ensembl_retry(
 def _step_mygene(symbol: str, organism: str) -> tuple[str | None, str]:
     """MyGene.info is the most tolerant: keyword-style query."""
     try:
-        import requests  # noqa: PLC0415
+        import requests
     except ImportError:
         return None, "no_requests"
     url = "https://mygene.info/v3/query"

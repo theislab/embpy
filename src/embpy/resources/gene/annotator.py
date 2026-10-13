@@ -24,6 +24,13 @@ import requests
 logger = logging.getLogger(__name__)
 
 MYGENE = "https://mygene.info/v3"
+# Request sizes for the two paginated sources. They are *caps*, not measurements:
+# a gene with 300 STRING partners still reports DEFAULT_PPI_PARTNERS. The summary
+# columns written by annotate_adata therefore carry companion `*_at_limit` flags
+# so a saturated value is distinguishable from a real count.
+DEFAULT_PPI_PARTNERS = 10
+DEFAULT_DISEASE_ASSOCIATIONS = 20
+
 STRING_API = "https://string-db.org/api"
 OPEN_TARGETS = "https://api.platform.opentargets.org/api/v4/graphql"
 GWAS_CATALOG = "https://www.ebi.ac.uk/gwas/rest/api"
@@ -348,7 +355,7 @@ class GeneAnnotator:
     def get_protein_interactions(
         self,
         gene: str,
-        n_partners: int = 10,
+        n_partners: int = DEFAULT_PPI_PARTNERS,
         score_threshold: int = 400,
     ) -> list[dict[str, Any]]:
         """Get top protein-protein interaction partners from STRING-DB.
@@ -459,7 +466,7 @@ class GeneAnnotator:
     def get_disease_associations(
         self,
         gene: str,
-        top_n: int = 20,
+        top_n: int = DEFAULT_DISEASE_ASSOCIATIONS,
     ) -> list[dict[str, Any]]:
         """Get disease associations from Open Targets Platform (human only).
 
@@ -749,6 +756,22 @@ class GeneAnnotator:
         adata.obs["gene_n_disease_assoc"] = n_diseases_col
         adata.obs["gene_n_transcription_factors"] = n_tfs_col
         adata.obs["gene_top_tissue"] = top_tissue_col
+
+        # `gene_n_ppi_partners` and `gene_n_disease_assoc` count what was *fetched*,
+        # and the fetch is capped, so for a well-studied gene they report the cap
+        # rather than the truth. Flag the saturated rows instead of letting a
+        # constant column look like a measurement -- regressing on one of these
+        # without the flag is a silent mistake.
+        adata.obs["gene_n_ppi_partners_at_limit"] = [
+            n >= DEFAULT_PPI_PARTNERS for n in n_ppi_col
+        ]
+        adata.obs["gene_n_disease_assoc_at_limit"] = [
+            n >= DEFAULT_DISEASE_ASSOCIATIONS for n in n_diseases_col
+        ]
+        adata.uns["gene_annotation_limits"] = {
+            "gene_n_ppi_partners": DEFAULT_PPI_PARTNERS,
+            "gene_n_disease_assoc": DEFAULT_DISEASE_ASSOCIATIONS,
+        }
 
         logger.info(
             "Gene annotations stored in adata.obs (gene_*) and adata.uns"

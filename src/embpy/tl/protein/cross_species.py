@@ -23,7 +23,7 @@ def build_cross_species_adata(
     source_species: str = "human",
     orthology_type: str = "ortholog_one2one",
     pooling_strategy: str = "mean",
-) -> "anndata.AnnData":
+) -> anndata.AnnData:
     """Embed orthologous proteins across species into a single AnnData.
 
     Resolves orthologs using :class:`OrthologResolver`, fetches protein
@@ -141,10 +141,10 @@ def build_cross_species_adata(
 
 
 def ortholog_similarity_matrix(
-    adata: "anndata.AnnData",
+    adata: anndata.AnnData,
     obsm_key: str = "X_emb",
     metric: str = "cosine",
-) -> "pandas.DataFrame":
+) -> pandas.DataFrame:
     """Compute pairwise similarity between all proteins in the AnnData.
 
     Returns a labeled DataFrame with gene symbol + species as index.
@@ -172,9 +172,9 @@ def ortholog_similarity_matrix(
 
 
 def identity_vs_similarity(
-    adata: "anndata.AnnData",
+    adata: anndata.AnnData,
     obsm_key: str = "X_emb",
-) -> "pandas.DataFrame":
+) -> pandas.DataFrame:
     """Compute per-ortholog-pair sequence identity vs embedding similarity.
 
     For each pair of proteins from the same gene family but different

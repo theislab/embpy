@@ -8,7 +8,6 @@ from embpy.tl.genomics.region_utils import (
     BORZOI_ISM_SHUFFLE_PRESETS,
     MotifHit,
     RegionContext,
-    RegionEffectResult,
     RegionEmbedder,
     apply_haplotype,
     dinucleotide_shuffle,
@@ -406,7 +405,10 @@ class TestPredictHaplotypeEffect:
     def test_reference_mismatch_raises(self, stub_window):
         emb = RegionEmbedder(StubProfileModel(), seed=0)
         region = RegionContext(chrom="chr1", start=2000, end=2100, context_window=4096, window_start=0)
-        with pytest.raises(ValueError, match="expected reference"):
+        # `predict_haplotype_effect` aggregates mismatches across all variants
+        # and raises the summary message; "expected reference" is what the
+        # per-variant `apply_haplotype` path emits (asserted separately above).
+        with pytest.raises(ValueError, match="do not match the reference base"):
             emb.predict_haplotype_effect(region, stub_window, [(2001, "C", "T")])
 
 
@@ -565,12 +567,13 @@ def test_minus_strand_scores_the_same_locus_as_plus_strand():
     bins. Strand belongs in the output tracks, not the input orientation.
     """
     import numpy as np
+
     from embpy.tl.genomics import RegionContext, RegionEmbedder
 
     seq = "AAAC" * 4096
     emb = RegionEmbedder(_toy_wrapper(), seed=0)
-    common = dict(chrom="chr1", start=1000, end=1000 + len(seq), context_window=len(seq),
-                  window_start=0)
+    common = {"chrom": "chr1", "start": 1000, "end": 1000 + len(seq), "context_window": len(seq),
+                  "window_start": 0}
     plus = emb._predict(seq, RegionContext(strand="+", **common))
     minus = emb._predict(seq, RegionContext(strand="-", **common))
     np.testing.assert_allclose(
@@ -586,7 +589,8 @@ def test_single_substitution_haplotype_equals_single_variant_score():
     minus-strand SNPContext hitting the bug above. This pins them together.
     """
     import numpy as np
-    from embpy.tl.genomics import (RegionContext, RegionEmbedder, SNPContext, SNPEmbedder)
+
+    from embpy.tl.genomics import RegionContext, RegionEmbedder, SNPContext, SNPEmbedder
 
     seq = "AAAC" * 4096
     pos_1based, ref, alt = 2049, seq[2048], "T" if seq[2048] != "T" else "G"
@@ -610,6 +614,7 @@ def test_single_substitution_haplotype_equals_single_variant_score():
 def test_reference_mismatch_error_diagnoses_off_by_one():
     """An off-by-one lands on a neighbouring base; the error should say so."""
     import pytest
+
     from embpy.tl.genomics.snp_utils import _apply_snp
 
     seq = "AAAGTTT"          # the G sits at 0-based offset 3
@@ -625,7 +630,9 @@ def test_reference_mismatch_error_diagnoses_off_by_one():
 def test_haplotype_reports_reference_mismatch_rate():
     """strict=False must report HOW MANY substitutions failed, not warn once per variant."""
     import logging
+
     import pytest
+
     from embpy.tl.genomics import RegionContext, RegionEmbedder
 
     seq = "AAAC" * 4096

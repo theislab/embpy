@@ -11,7 +11,6 @@ from anndata import AnnData
 
 from embpy.pp.basic import PerturbationProcessor, reduce_embeddings
 
-
 # =====================================================================
 # Fixtures
 # =====================================================================

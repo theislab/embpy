@@ -306,7 +306,7 @@ def _upload(args: argparse.Namespace) -> int:
                     "repo_id": args.repo_id,
                     "package": str(package_root),
                     "remote_prefixes": planned,
-                    "n_embeddings": len((manifest.get("embeddings") or {})),
+                    "n_embeddings": len(manifest.get("embeddings") or {}),
                 },
                 indent=2,
             )
@@ -409,7 +409,7 @@ def _read_manifest(package_root: Path) -> dict[str, Any]:
     manifest_path = package_root / "manifest.json"
     if not manifest_path.is_file():
         raise FileNotFoundError(f"Missing package manifest: {manifest_path}")
-    return json.loads(manifest_path.read_text())
+    return json.loads(manifest_path.read_text(encoding='utf-8'))
 
 
 def _planned_remote_prefixes(manifest: dict[str, Any], *, include_dataset_card: bool = False) -> list[str]:

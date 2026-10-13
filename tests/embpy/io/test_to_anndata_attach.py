@@ -83,6 +83,39 @@ def test_custom_key():
     assert "X_myemb" in out.obsm
 
 
+def test_obs_column_alignment_never_overwrites_label_column():
+    # The alias scheme shares the label column's name: NaN rows must not clobber the labels.
+    res = EmbeddingResult(
+        matrix=np.array([[1, 2], [3, 4]], dtype=np.float32),
+        entity_ids=("ENSG1", "ENSG2"),
+        entity_type="gene",
+        id_scheme="ensembl_gene_id",
+        provenance=EmbeddingProvenance(model="m"),
+        aliases={"ENSG1": {"gene_symbol": "TP53"}, "ENSG2": {"gene_symbol": "MYC"}},
+    )
+    tgt = _make_target(["cell1", "cell2", "cell3"], ["g1"])
+    tgt.obs["gene_symbol"] = ["MYC", "unknown", "TP53"]
+
+    to_anndata(res, target=tgt, attach_to="obs", obs_column="gene_symbol", missing="nan", key="X_pert_m")
+
+    mat = tgt.obsm["X_pert_m"]
+    np.testing.assert_allclose(mat[[0, 2]], np.array([[3, 4], [1, 2]], dtype=np.float32))
+    assert np.isnan(mat[1]).all()
+    assert list(tgt.obs["gene_symbol"]) == ["MYC", "unknown", "TP53"]
+    assert list(tgt.obs_names) == ["cell1", "cell2", "cell3"]
+
+
+def test_obs_column_absent_from_target_falls_back_to_obs_names(caplog):
+    import logging
+
+    res = _result(["pertA", "pertB"])
+    tgt = _make_target(["pertA", "pertB"], ["g1"])
+    with caplog.at_level(logging.WARNING):
+        out = to_anndata(res, target=tgt, attach_to="obs", obs_column="perturbation")
+    np.testing.assert_allclose(out.obsm["X_emb__gene__m"], res.matrix)
+    assert any("aligning on target.obs_names" in r.message for r in caplog.records)
+
+
 def test_attach_to_uns_stores_entity_aligned_payload():
     res = _result(["ENSG1", "ENSG2"])
     tgt = _make_target(["cell1", "cell2"], ["g1"])
@@ -132,3 +165,70 @@ def test_materialize_perturbation_obsm_reads_legacy_embpy_namespace():
     materialize_perturbation_obsm(tgt, embedding_key="X_pert_old", perturbation_key="perturbation")
 
     np.testing.assert_allclose(tgt.obsm["X_pert_old"], np.array([[1, 2]], dtype=np.float32))
+
+
+# =====================================================================
+# Molecule ids: the canonical form is the key, the input form is an alias
+# =====================================================================
+
+
+def _molecule_result(canonical_ids, aliases, n_dims=4):
+    return EmbeddingResult(
+        matrix=np.arange(
+            len(canonical_ids) * n_dims, dtype=np.float32
+        ).reshape(len(canonical_ids), n_dims),
+        entity_ids=tuple(canonical_ids),
+        entity_type="molecule",
+        id_scheme="canonical_smiles",
+        provenance=EmbeddingProvenance(model="morgan_fp"),
+        aliases=aliases,
+    )
+
+
+# Kekule caffeine and its canonical SMILES: the same molecule, two strings.
+KEKULE_CAFFEINE = "CN1C=NC2=C1C(=O)N(C(=O)N2C)C"
+CANONICAL_CAFFEINE = "Cn1c(=O)c2c(ncn2C)n(C)c1=O"
+
+
+def test_non_canonical_smiles_attaches_via_input_alias():
+    """A caller who passed a non-canonical SMILES indexed their AnnData by it.
+
+    embpy canonicalises molecule ids on the way in, so the result carries the
+    canonical string while the target's .obs_names carry the form the caller
+    typed. Without the input-form alias, re-indexing raises "target .obs_names
+    have no embedding" for a molecule that embedded perfectly well.
+    """
+    result = _molecule_result(
+        [CANONICAL_CAFFEINE],
+        {CANONICAL_CAFFEINE: {"input_smiles": KEKULE_CAFFEINE}},
+    )
+    target = AnnData(X=np.zeros((1, 1), dtype=np.float32))
+    target.obs_names = [KEKULE_CAFFEINE]
+
+    out = to_anndata(result, target=target, attach_to="obs", key="X_morgan")
+
+    assert np.array_equal(out.obsm["X_morgan"], result.matrix)
+
+
+def test_canonical_smiles_still_attaches_directly():
+    result = _molecule_result([CANONICAL_CAFFEINE], None)
+    target = AnnData(X=np.zeros((1, 1), dtype=np.float32))
+    target.obs_names = [CANONICAL_CAFFEINE]
+
+    out = to_anndata(result, target=target, attach_to="obs", key="X_morgan")
+
+    assert np.array_equal(out.obsm["X_morgan"], result.matrix)
+
+
+def test_build_aliases_records_the_input_smiles():
+    from embpy.io._canon import build_aliases
+
+    aliases = build_aliases(
+        "molecule",
+        canon=[CANONICAL_CAFFEINE, "CCO"],
+        raw=[KEKULE_CAFFEINE, "CCO"],
+        alias_cols={},
+    )
+    assert aliases[CANONICAL_CAFFEINE]["input_smiles"] == KEKULE_CAFFEINE
+    # An input that was already canonical is not its own alias.
+    assert "CCO" not in aliases

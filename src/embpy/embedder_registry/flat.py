@@ -19,7 +19,8 @@ Byte-equivalence with the pre-split snapshot is guarded by
 
 from __future__ import annotations
 
-from ..models.base import BaseModelWrapper
+from embpy.models.base import BaseModelWrapper
+
 from .api import API_MODELS
 from .dna import (
     DNA_MODELS,
@@ -32,7 +33,6 @@ from .morphology import MORPHOLOGY_MODELS
 from .protein import PROTEIN_MODELS
 from .singlecell import SINGLECELL_MODELS
 from .text import TEXT_MODELS
-
 
 # Merge order: DNA, Protein, Molecule, Text, Morphology, Single-cell,
 # API. This groups DNA entries together; in the pre-split flat dict

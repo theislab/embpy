@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from ..models.base import BaseModelWrapper
-from ..models.molecule_models import (
+from embpy.models.base import BaseModelWrapper
+from embpy.models.molecule_models import (
     ChembertaWrapper,
     MHGGNNWrapper,
     MiniMolWrapper,
@@ -11,7 +11,6 @@ from ..models.molecule_models import (
     MolformerWrapper,
     RDKitWrapper,
 )
-
 
 MOLECULE_MODELS: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     "chemberta2MTR": (ChembertaWrapper, "DeepChem/ChemBERTa-77M-MTR"),

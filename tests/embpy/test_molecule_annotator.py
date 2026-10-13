@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import numpy as np
 import pytest
 
 from embpy.resources.molecule_annotator import MoleculeAnnotator
@@ -52,7 +51,7 @@ class TestPhysicochemicalProperties:
 
 
 class TestBioactivities:
-    @patch("embpy.resources.molecule_annotator._get_json")
+    @patch("embpy.resources.molecule.annotator._get_json")
     def test_get_bioactivities(self, mock_get, annotator):
         mock_get.side_effect = [
             {"molecules": [{"molecule_chembl_id": "CHEMBL25"}]},
@@ -74,7 +73,7 @@ class TestBioactivities:
         assert len(activities) == 1
         assert activities[0]["activity_type"] == "IC50"
 
-    @patch("embpy.resources.molecule_annotator._get_json")
+    @patch("embpy.resources.molecule.annotator._get_json")
     def test_no_chembl_id(self, mock_get, annotator):
         mock_get.return_value = None
         activities = annotator.get_bioactivities("INVALID")
@@ -82,7 +81,7 @@ class TestBioactivities:
 
 
 class TestTargetProteins:
-    @patch("embpy.resources.molecule_annotator._get_json")
+    @patch("embpy.resources.molecule.annotator._get_json")
     def test_get_targets(self, mock_get, annotator):
         mock_get.side_effect = [
             {"molecules": [{"molecule_chembl_id": "CHEMBL25"}]},
@@ -102,19 +101,39 @@ class TestTargetProteins:
 
 
 class TestCrossReferences:
-    @patch("embpy.resources.molecule_annotator._get_json")
-    def test_get_cross_references(self, mock_get, annotator):
-        mock_get.side_effect = [
-            {"IdentifierList": {"CID": [702]}},
-            {"molecules": [{"molecule_chembl_id": "CHEMBL545"}]},
-            {"InformationList": {"Information": [
+    # Dispatched by URL rather than by call order: get_cross_references fans
+    # out across four PubChem/ChEMBL endpoints, and an ordered side_effect
+    # list silently reassigns payloads whenever that sequence changes.
+    @staticmethod
+    def _fake_get_json(url, params=None, timeout=30):
+        if "/cids/JSON" in url:
+            return {"IdentifierList": {"CID": [702]}}
+        if "IsomericSMILES" in url:
+            return {"PropertyTable": {"Properties": [{"SMILES": "CCO"}]}}
+        if "molecule.json" in url:
+            return {"molecules": [{"molecule_chembl_id": "CHEMBL545"}]}
+        if "RegistryID" in url:
+            return {"InformationList": {"Information": [
                 {"RegistryID": ["CHEBI:16236", "DB00898", "C00469"]},
-            ]}},
-            {"PropertyTable": {"Properties": [{"InChIKey": "LFQSCWFLJHTTHZ-UHFFFAOYSA-N"}]}},
-        ]
-        refs = annotator.get_cross_references("ethanol")
+            ]}}
+        if "InChIKey" in url:
+            return {"PropertyTable": {"Properties": [
+                {"InChIKey": "LFQSCWFLJHTTHZ-UHFFFAOYSA-N"},
+            ]}}
+        return None
+
+    def test_get_cross_references(self, annotator):
+        with patch(
+            "embpy.resources.molecule.annotator._get_json",
+            side_effect=self._fake_get_json,
+        ):
+            refs = annotator.get_cross_references("ethanol")
         assert refs["pubchem_cid"] == 702
-        assert "chebi_id" in refs
+        assert refs["chembl_id"] == "CHEMBL545"
+        assert refs["chebi_id"] == "CHEBI:16236"
+        assert refs["drugbank_id"] == "DB00898"
+        assert refs["kegg_compound_id"] == "C00469"
+        assert refs["inchikey"] == "LFQSCWFLJHTTHZ-UHFFFAOYSA-N"
 
 
 # =====================================================================

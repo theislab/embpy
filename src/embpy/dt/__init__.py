@@ -152,7 +152,7 @@ def load(
     :class:`~anndata.AnnData` ready for use with :func:`embpy.tl.run_pipeline`.
     """
     card = info(dataset)
-    from ..pp.hf_handler import HFHandler
+    from embpy.pp.hf_handler import HFHandler
 
     hf = HFHandler(card.repo, token=token)
     logger.info("Downloading dataset '%s' from %s …", card.name, card.repo)
@@ -181,7 +181,7 @@ def load(
 # ------------------------------------------------------------------
 
 
-def _make_loader(name: str):  # noqa: ANN202
+def _make_loader(name: str):
     """Create a dataset-specific loader function."""
     card = _DATASET_REGISTRY[name]
 

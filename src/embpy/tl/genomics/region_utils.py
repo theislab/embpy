@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import logging
 import shutil
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
 import numpy as np
 
-from .snp_utils import _reverse_complement, profile_variant_effect_score
+from .snp_utils import profile_variant_effect_score
 
 logger = logging.getLogger(__name__)
 

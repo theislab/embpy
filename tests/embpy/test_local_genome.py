@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import tempfile
+import importlib.util
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import pytest
+
+_HAS_PYSAM = importlib.util.find_spec("pysam") is not None
 
 
 class TestGeneResolverDownloadGenome:
-    @patch("embpy.resources.gene_resolver.GeneResolver.__init__", return_value=None)
+    @patch("embpy.resources.gene.resolver.GeneResolver.__init__", return_value=None)
     def test_download_genome_unsupported_species(self, mock_init):
         from embpy.resources.gene_resolver import GeneResolver
 
@@ -33,20 +34,22 @@ class TestGeneResolverDownloadGenome:
         assert GeneResolver._SPECIES_ASSEMBLY["mouse"][1] == "GRCm39"
 
 
+@pytest.mark.skipif(not _HAS_PYSAM, reason="pysam not installed (pip install embpy[genome])")
 class TestGeneResolverLocalIndexedSequence:
     @pytest.fixture
     def resolver_with_genome(self, tmp_path):
         """Create a GeneResolver with a tiny mock genome FASTA."""
         import pysam
+
         from embpy.resources.gene_resolver import GeneResolver
 
         fa_path = tmp_path / "test_genome.fa"
         fa_path.write_text(
             ">1\n"
             "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG\n"
-            "GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAG\n"
+            "GCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTAGCTA\n"
             ">17\n"
-            "NNNATCGATCGAAATTTCCCGGGAAATTTCCCGGGNNNN\n"
+            "NNNATCGATCGAAATTTCCCGGGAAATTTCCCGGGNNNNN\n"
             "ATCGATCGATCGATCGATCGATCGATCGATCGATCGATCG\n"
         )
         pysam.faidx(str(fa_path))
@@ -120,7 +123,7 @@ class TestGeneResolverReverseComplement:
 
 
 class TestGeneResolverLocalFirstFallback:
-    @patch("embpy.resources.gene_resolver.GeneResolver.__init__", return_value=None)
+    @patch("embpy.resources.gene.resolver.GeneResolver.__init__", return_value=None)
     def test_get_dna_sequence_tries_local_first(self, mock_init):
         from embpy.resources.gene_resolver import GeneResolver
 
@@ -136,7 +139,7 @@ class TestGeneResolverLocalFirstFallback:
             seq = gr.get_dna_sequence("TP53", id_type="symbol", organism="human")
             assert seq == "ATCGATCG"
 
-    @patch("embpy.resources.gene_resolver.GeneResolver.__init__", return_value=None)
+    @patch("embpy.resources.gene.resolver.GeneResolver.__init__", return_value=None)
     def test_falls_back_to_api_when_no_genome(self, mock_init):
         from embpy.resources.gene_resolver import GeneResolver
 
@@ -147,7 +150,7 @@ class TestGeneResolverLocalFirstFallback:
         gr.ensembl = None
 
         with patch.object(gr, "_load_genome_if_available", return_value=False), \
-             patch("embpy.resources.gene_resolver._ensembl_get") as mock_api:
+             patch("embpy.resources.gene.resolver._ensembl_get") as mock_api:
             mock_resp = MagicMock()
             mock_resp.status_code = 200
             mock_resp.json.return_value = {"id": "ENSG00000141510"}
@@ -155,7 +158,7 @@ class TestGeneResolverLocalFirstFallback:
             mock_resp.raise_for_status = MagicMock()
             mock_api.return_value = mock_resp
 
-            seq = gr.get_dna_sequence("TP53", id_type="symbol", organism="human")
+            gr.get_dna_sequence("TP53", id_type="symbol", organism="human")
             assert mock_api.called
 
 

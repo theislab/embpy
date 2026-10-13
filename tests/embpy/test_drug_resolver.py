@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from embpy.resources.drug_resolver import DrugResolver
 
@@ -41,7 +42,7 @@ class TestNameToSmiles:
             mock.raise_for_status = MagicMock()
 
             if call_count[0] == 1:
-                mock.raise_for_status.side_effect = Exception("Not found")
+                mock.raise_for_status.side_effect = requests.HTTPError("Not found")
                 return mock
             elif call_count[0] == 2:
                 mock.json.return_value = {"IdentifierList": {"CID": [702]}}
@@ -56,7 +57,7 @@ class TestNameToSmiles:
 
     def test_returns_none_on_failure(self, resolver):
         mock = MagicMock()
-        mock.raise_for_status.side_effect = Exception("API error")
+        mock.raise_for_status.side_effect = requests.HTTPError("API error")
 
         with patch("embpy.resources.drug_resolver.requests.get", return_value=mock):
             result = resolver.name_to_smiles("completely_fake_drug_xyz")
@@ -253,6 +254,12 @@ class TestNameToSmilesSaltFallback:
     """Verify salt-stripping fallback in name_to_smiles."""
 
     def test_falls_back_to_cleaned_name(self, resolver):
+        # The CIRpy fallback uses the cirpy library's own network stack, which
+        # the requests.get patch below does not intercept. Left live, it resolves
+        # the salted name directly (e.g. "ethanol (hydrochloride)" -> "Cl.CCO")
+        # and short-circuits the salt-stripping retry this test exercises. Disable
+        # it so the fallback chain is fully deterministic.
+        resolver._cirpy_available = False
         call_count = [0]
 
         def side_effect(url, **kwargs):
@@ -261,14 +268,14 @@ class TestNameToSmilesSaltFallback:
             mock.raise_for_status = MagicMock()
 
             if "(hydrochloride)" in url or "hydrochloride" in url:
-                mock.raise_for_status.side_effect = Exception("Not found")
+                mock.raise_for_status.side_effect = requests.HTTPError("Not found")
                 return mock
 
             if "IsomericSMILES" in url:
                 mock.json.return_value = {"PropertyTable": {"Properties": [{"IsomericSMILES": "CCO"}]}}
                 return mock
 
-            mock.raise_for_status.side_effect = Exception("Not found")
+            mock.raise_for_status.side_effect = requests.HTTPError("Not found")
             return mock
 
         with patch("embpy.resources.drug_resolver.requests.get", side_effect=side_effect):
@@ -284,12 +291,12 @@ class TestCirpyFallback:
 
         def http_always_fails(url, **kwargs):
             mock = MagicMock()
-            mock.raise_for_status.side_effect = Exception("Not found")
+            mock.raise_for_status.side_effect = requests.HTTPError("Not found")
             return mock
 
         with (
             patch("embpy.resources.drug_resolver.requests.get", side_effect=http_always_fails),
-            patch("embpy.resources.drug_resolver.cirpy") as mock_cirpy,
+            patch("embpy.resources.molecule.resolver.cirpy") as mock_cirpy,
         ):
             mock_cirpy.resolve.return_value = "CCO"
             result = resolver._try_resolve("some-obscure-drug")
@@ -301,7 +308,7 @@ class TestCirpyFallback:
 
         def http_always_fails(url, **kwargs):
             mock = MagicMock()
-            mock.raise_for_status.side_effect = Exception("Not found")
+            mock.raise_for_status.side_effect = requests.HTTPError("Not found")
             return mock
 
         with patch("embpy.resources.drug_resolver.requests.get", side_effect=http_always_fails):

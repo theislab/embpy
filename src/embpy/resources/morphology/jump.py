@@ -76,7 +76,6 @@ def get_jump_item_location_metadata(
     """
     from broad_babel import query
     from broad_babel.data import get_table
-
     from jump_portrait.fetch import get_index_file
 
     if input_column not in ("standard_key", "JCP2022"):

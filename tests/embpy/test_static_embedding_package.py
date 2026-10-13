@@ -9,8 +9,8 @@ import pytest
 from embpy.pp.static_embeddings import (
     StaticEmbeddingSource,
     StaticEmbeddingStore,
-    load_static_embedding_source_config,
     load_static_embedding_package,
+    load_static_embedding_source_config,
     prepare_static_embedding_package,
     read_static_embedding_table,
     render_static_embedding_dataset_card,
@@ -352,7 +352,7 @@ def test_static_embedding_dataset_card_from_manifest(tmp_path):
 
     card_path = write_static_embedding_dataset_card(package_root, repo_id="theislab/Embpy_Data")
     assert card_path == package_root / "README.md"
-    assert "Species keys: `human_9606`" in card_path.read_text()
+    assert "Species keys: `human_9606`" in card_path.read_text(encoding='utf-8')
     with pytest.raises(FileExistsError, match="Dataset card already exists"):
         write_static_embedding_dataset_card(package_root)
 

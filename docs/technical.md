@@ -1,230 +1,48 @@
-# Technical Guide
+# Architecture & Technical Design
 
-This page holds the details that are useful when building on top of embpy, but
-too heavy for the GitHub README.
+![embpy architecture](embpy_architecture.svg)
 
-For per-function documentation, see the [API reference](api.md).
+`embpy` relies on a highly modular architecture that isolates heavy dependencies, ensuring that the core package remains lightweight, responsive, and cross-platform.
 
-## Package Layout
+---
 
-This repository contains the public `embpy` Python package:
+## The Embedder Protocol
 
-| Package | Purpose | Source |
-| --- | --- | --- |
-| `embpy` | Embeddings, resolvers, annotations, preprocessing, plotting, and analysis utilities. | `src/embpy/` |
+At the heart of `embpy` is the `BioEmbedder`. It acts as a unified factory, instantiating and dispatching specific model wrappers based on the requested entity type and model name.
 
-## Standardized Output Contract
-
-`BioEmbedder.embed(...)` is the preferred user-facing embedding entry point.
-It accepts direct identifiers, pandas objects, AnnData objects, and supported
-input files such as CSV, TSV, and Parquet.
-
-The output can be:
-
-- `output="anndata"` for scverse workflows
-- `output="table"` for embedding tables
-- `output="payload"` for canonical IDs, matrix, aliases, and provenance
-
-Generated embeddings are never placed in `.X`.
-
-| Entity type | Default AnnData location | Notes |
-| --- | --- | --- |
-| genes | `.varm` | Feature-aligned by default, canonicalized to gene IDs when possible. |
-| gene perturbation labels | `.obsm` | Set `is_perturbation=True` when genes are row-level action labels. |
-| proteins | `.varm` | Feature-aligned, usually keyed by UniProt/canonical protein IDs. |
-| molecules | `.obsm` | Observation-aligned, canonical SMILES used when possible. |
-| text and sequences | `.obsm` | Observation-aligned raw inputs. |
-| cells | `.obsm` | One vector per cell. |
-| perturbation morphology/actions | `.uns` | Entity-aligned payload; materialize to `.obsm` only when a downstream model needs one vector per observation. |
-
-For gene perturbation/action embeddings, attach directly to rows:
+All underlying embedding wrappers inherit from the `BaseModelWrapper` interface:
 
 ```python
-adata = embedder.embed(
-    adata,
-    entity_type="gene",
-    obs_column="perturbation",
-    id_type="symbol",
-    model="esm2_650M",
-    output="anndata",
-    is_perturbation=True,
-    key="X_pert_esm2_650M",
-)
+class BaseModelWrapper:
+    def load(self, device: torch.device):
+        """Load tokenizer, weights, and move model to device."""
+        pass
+        
+    def embed(self, sequences: list[str]) -> np.ndarray:
+        """Execute forward pass and pool representations."""
+        pass
 ```
 
-For entity-aligned perturbation payloads, such as morphology embeddings,
-keep the source-of-truth table in `.uns` and materialize a row-aligned
-matrix when needed:
+### Lazy Imports
+Wrappers perform lazy imports of heavy frameworks (`transformers`, `torch_geometric`, `rdkit`, etc.) inside their respective `.load()` methods. This allows users to import `embpy` in fractions of a second without forcing large deep learning dependencies into process memory until needed.
 
-```python
-from embpy.io import materialize_perturbation_obsm
+---
 
-adata = materialize_perturbation_obsm(
-    adata,
-    embedding_key="X_pert_esm2_650M",
-    perturbation_key="perturbation",
-    obsm_key="X_pert_esm2_650M",
-)
-```
+## Standardized Output Contracts
 
-## Input Normalization
+The `.embed()` method formats generated representations according to user specifications:
 
-`BioEmbedder.embed(...)` normalizes inputs before model inference:
+- `output="numpy"` / `output="tensor"`: Returns numerical matrices for standard data science workflows.
+- `output="anndata"`: Automatically aligns representations with `.obsm` (for observation/cell/molecule embeddings) or `.varm` (for feature/protein/gene embeddings), preserving metadata and dimensions.
+- `output="table"`: Returns a pandas DataFrame with canonical index identifiers.
+- `output="payload"`: Returns raw dictionaries with metadata, aliases, and provenance for downstream pipeline integration.
 
-- Python lists, tuples, NumPy arrays, and pandas Series are treated as
-  identifier collections.
-- Multi-column pandas DataFrames require `identifier_column=...`.
-- AnnData identifiers can come from `.obs_names`, `.var_names`,
-  `obs_column=...`, or `var_column=...`.
-- File inputs can be CSV, TSV, or Parquet.
+---
 
-Canonical biological IDs are used as primary keys where possible. Original
-symbols, names, SMILES, and user inputs are preserved as aliases and metadata.
+## Adding a New Model
 
-## Single-Cell Preprocessing Policy
-
-Cell embeddings go through the single-cell preprocessing policy owned by
-`embpy.pp`.
-
-Use:
-
-```python
-embedder.embed(
-    adata,
-    entity_type="cell",
-    model="pca",
-    preprocessing="auto",
-    output="anndata",
-)
-```
-
-`preprocessing="auto"` resolves the appropriate preparation for the requested
-model. The policy can preserve raw counts, create `.layers["counts"]`, create
-`.layers["log_normalized"]`, select highly variable genes, and record the
-resolved preprocessing choices in `.uns["embpy_cell_embeddings"]`.
-
-Users can still override the important knobs:
-
-- `n_top_genes`
-- `select_hvg`
-- `target_sum`
-- `log_transform`
-- `scale`
-- `min_genes`
-- `min_cells`
-- `max_pct_mito`
-- `pca_use_hvg`
-
-## Environments and Installation
-
-Pixi is the recommended development path:
-
-```bash
-pixi install -e default
-pixi run -e default verify
-```
-
-Common environments:
-
-```bash
-pixi install -e default      # CPU/dev
-pixi install -e mps          # Apple Silicon/PyTorch MPS
-pixi install -e gpu          # Linux CUDA GPU
-pixi install -e boltz        # Boltz-specific examples
-pixi install -e alphagenome  # AlphaGenome cloud API client (opt-in)
-pixi install -e scooby       # Scooby single-cell DNA model (opt-in, git install)
-```
-
-Pip users can start with:
-
-```bash
-pip install embpy
-```
-
-Optional model families may require extra dependencies. Large GPU models should
-be installed in an environment with compatible PyTorch/CUDA wheels.
-
-Pip extras for individual model families (see `pyproject.toml` for the full,
-up-to-date list and per-extra caveats):
-
-```bash
-pip install "embpy[seqmodels]"     # Borzoi, Enformer
-pip install "embpy[alphagenome]"   # AlphaGenome (cloud API; needs ALPHAGENOME_API_KEY)
-pip install "embpy[scooby]"        # Scooby (installs from git; see pyproject.toml)
-pip install "embpy[esm3]"          # ESM-3 / ESM-C
-pip install "embpy[helical]"       # Helical-backed single-cell models
-pip install "embpy[state]"         # Arc STATE
-pip install "embpy[stack]"         # Arc STACK
-pip install "embpy[all]"           # every extra that installs cleanly via plain pip
-```
-
-`embpy[all]` intentionally excludes extras that need a compiler/CUDA toolchain
-or pre-built C library (`caduceus`, `evo2`, `helical`), need torch
-pre-installed to build (`minimol`), pin incompatible dependency versions
-(`esm3`, `boltz`), install from a git URL (`scooby`), or call an external
-hosted API (`alphagenome`) -- install those explicitly.
-
-`AlphaGenomeWrapper` calls a hosted API rather than loading local weights, so
-set `ALPHAGENOME_API_KEY` in the environment before calling `.load()`.
-
-## Model Keys
-
-The active model registry depends on the installed optional dependencies.
-
-Use:
-
-```python
-from embpy import BioEmbedder
-
-embedder = BioEmbedder(device="auto")
-embedder.list_available_models()
-```
-
-for the model keys available in the current environment.
-
-The registry covers DNA, protein, molecule, single-cell, morphology, text, and
-structure-backed models.
-
-## Annotations
-
-High-level annotation helpers live in `embpy.tl`:
-
-```python
-from embpy import tl
-
-tl.annotate_gene_perturbations(adata, column="gene")
-tl.annotate_proteins(adata, column="protein")
-tl.annotate_molecules(adata, column="smiles")
-```
-
-Resource-level annotators live in `embpy.resources`:
-
-```python
-from embpy.resources import CellLineAnnotator
-
-annotator = CellLineAnnotator()
-annotator.annotate_adata(adata, column="cell_line")
-```
-
-## Plotting and Analysis
-
-Analysis helpers live in `embpy.tl`; plotting helpers live in `embpy.pl`.
-
-Common functions include:
-
-- `tl.compute_similarity`
-- `tl.compute_distance_matrix`
-- `tl.compute_knn_overlap`
-- `tl.rank_perturbations`
-- `pl.plot_embedding_space`
-- `pl.knn_overlap`
-- `pl.cross_embedding_correlation`
-- `pl.embedding_norms`
-
-See the [API reference](api.md) for the full list.
-
-## Developer Notes
-
-Keep user-facing examples in the README and notebooks centered on
-`BioEmbedder.embed(...)`. Lower-level helpers may remain public and documented,
-but tutorials should introduce them only when they clarify a real workflow.
+To integrate a new embedding model into `embpy`:
+1. Subclass `BaseModelWrapper` in the appropriate modality module (`src/embpy/models/`).
+2. Implement `.load(device)` using lazy imports for external libraries.
+3. Implement `.embed(inputs)` returning pooled NumPy arrays or PyTorch tensors.
+4. Register the model string identifier in the modality registry.

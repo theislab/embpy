@@ -9,6 +9,7 @@ torch = pytest.importorskip("torch")
 matplotlib = pytest.importorskip("matplotlib")
 
 import matplotlib
+
 matplotlib.use("Agg")
 
 from embpy.pl.morphology.cell_painting import _mono_cmap, plot_cell_painting

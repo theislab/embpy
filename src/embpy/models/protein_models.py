@@ -1,4 +1,6 @@
 # embpy/models/protein_models.py
+from __future__ import annotations
+
 import logging
 import re
 from collections.abc import Sequence
@@ -17,6 +19,7 @@ try:
     _HAVE_ESMC = True
 except ImportError:
     _HAVE_ESMC = False
+    ESMC = None  # type: ignore
 
 try:
     from esm.models.esm3 import ESM3
@@ -27,7 +30,9 @@ except ImportError:
     _HAVE_ESM3 = False
     ESM3 = None  # type: ignore
     ESM3InferenceClient = None  # type: ignore
-from transformers import AutoModel, AutoTokenizer, T5EncoderModel, T5Tokenizer
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from transformers import AutoModel, AutoTokenizer, T5EncoderModel, T5Tokenizer
 
 
 class ESM2Wrapper(BaseModelWrapper):
@@ -71,6 +76,7 @@ class ESM2Wrapper(BaseModelWrapper):
             raise ValueError("model_path_or_name must be provided for ESM2Wrapper.")
 
         logging.info(f"Loading ESM2 model '{self.model_name}'...")
+        from transformers import AutoTokenizer, AutoModel
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
             self.model = AutoModel.from_pretrained(self.model_name)
@@ -416,6 +422,12 @@ class ESMCWrapper(BaseModelWrapper):
 
     model_type = "protein"
     available_pooling_strategies = ["mean", "max", "cls", "none"]
+    # The ESM SDK computes attention with F.scaled_dot_product_attention
+    # unconditionally (esm/layers/attention.py:70,76 -- both the masked and
+    # unmasked branch), so the per-head matrix never exists as a tensor and no
+    # hook can recover it. Declared False so extract_attention fails fast with an
+    # explanation instead of running a forward pass that cannot produce weights.
+    has_attention = False
 
     def __init__(self, model_path_or_name: str = "esmc_300m", **kwargs: Any):
         """
@@ -444,13 +456,19 @@ class ESMCWrapper(BaseModelWrapper):
 
         Raises
         ------
+        ImportError
+            If the ESMC SDK (the ``esm`` package) is not installed.
         RuntimeError
-            If the ESMC SDK is not installed or loading the client fails.
+            If loading the client fails.
         """
         if self.client is not None:
             return
-        if not hasattr(ESMC, "from_pretrained"):
-            raise RuntimeError("ESMC SDK not installed.")
+        if not _HAVE_ESMC:
+            raise ImportError(
+                "The 'esm' package is required for ESM-C. "
+                "Recommended install: pip install esm --no-deps "
+                "(the embpy[esm3] extra also works, but caps transformers below 4.48.2)."
+            )
         self.device = device
         logging.info(f"Loading ESMC client '{self.model_name}' onto {device} …")
         try:
@@ -672,6 +690,7 @@ class ProtT5Wrapper(BaseModelWrapper):
             raise ValueError("model_path_or_name must be provided for ProtT5Wrapper.")
 
         logging.info("Loading ProtT5 model '%s' …", self.model_name)
+        from transformers import T5Tokenizer, T5EncoderModel
         try:
             self.tokenizer = T5Tokenizer.from_pretrained(self.model_name, do_lower_case=False)
             # Use T5EncoderModel to avoid decoder overhead
@@ -896,6 +915,10 @@ class ESM3Wrapper(BaseModelWrapper):
 
     model_type = "protein"
     available_pooling_strategies = ["mean", "max", "cls", "none"]
+    # Same fused-kernel limit as ESM-C: the shared esm SDK attention layer calls
+    # F.scaled_dot_product_attention (esm/layers/attention.py:70,76). The Forge
+    # API checkpoints are remote in any case, so no local tensor exists to hook.
+    has_attention = False
 
     def __init__(
         self,

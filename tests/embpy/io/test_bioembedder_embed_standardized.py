@@ -167,6 +167,95 @@ def test_embed_gene_perturbations_align_to_symbol_obs_names(monkeypatch):
     assert list(out.obs["gene_symbol"]) == ["TP53", "MYC"]
 
 
+_LABEL_VECTORS = {"TP53": [1.0, 2.0], "MYC": [3.0, 4.0]}
+
+
+def _fake_label_embed_genes_batch(**kwargs):
+    # One vector per requested identifier (repeats included); unknown labels fail to embed.
+    return [
+        np.array(_LABEL_VECTORS[i], dtype=np.float32) if i in _LABEL_VECTORS else None for i in kwargs["identifiers"]
+    ]
+
+
+def _barcoded_perturbation_target(labels):
+    from anndata import AnnData
+
+    target = AnnData(X=np.zeros((len(labels), 1), dtype=np.float32))
+    target.obs_names = [f"cell{i}" for i in range(len(labels))]
+    target.var_names = ["placeholder"]
+    target.obs["perturbation"] = labels
+    return target
+
+
+def _embed_perturbation_column(emb, target, **kwargs):
+    return emb.embed(
+        target,
+        entity_type="gene",
+        obs_column="perturbation",
+        id_type="symbol",
+        model="toy",
+        output="anndata",
+        is_perturbation=True,
+        key="X_pert_toy",
+        **kwargs,
+    )
+
+
+def test_embed_gene_perturbations_align_on_obs_column_labels(monkeypatch):
+    emb = _bare_embedder()
+    monkeypatch.setattr(emb, "embed_genes_batch", _fake_label_embed_genes_batch)
+    target = _barcoded_perturbation_target(["TP53", "MYC", "TP53", "MYC"])
+
+    out = _embed_perturbation_column(emb, target)
+
+    expected = np.array([[1.0, 2.0], [3.0, 4.0], [1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    np.testing.assert_array_equal(out.obsm["X_pert_toy"], expected)
+    assert list(out.obs_names) == ["cell0", "cell1", "cell2", "cell3"]
+    assert list(out.obs["perturbation"]) == ["TP53", "MYC", "TP53", "MYC"]
+    assert list(out.obs["gene_symbol"]) == ["TP53", "MYC", "TP53", "MYC"]
+
+
+def test_embed_gene_perturbations_obs_column_missing_error_names_labels(monkeypatch):
+    emb = _bare_embedder()
+    monkeypatch.setattr(emb, "embed_genes_batch", _fake_label_embed_genes_batch)
+    target = _barcoded_perturbation_target(["TP53", "non-targeting", "MYC", "non-targeting"])
+
+    with pytest.raises(ValueError, match=r"First missing: \['non-targeting'\]") as excinfo:
+        _embed_perturbation_column(emb, target, missing="error")
+
+    assert "2 target .obs rows" in str(excinfo.value)
+    assert "cell" not in str(excinfo.value)
+
+
+def test_embed_gene_perturbations_obs_column_missing_nan_fills_unknown_rows(monkeypatch):
+    emb = _bare_embedder()
+    monkeypatch.setattr(emb, "embed_genes_batch", _fake_label_embed_genes_batch)
+    target = _barcoded_perturbation_target(["TP53", "non-targeting", "MYC", "non-targeting"])
+
+    out = _embed_perturbation_column(emb, target, missing="nan")
+
+    mat = out.obsm["X_pert_toy"]
+    np.testing.assert_array_equal(mat[[0, 2]], np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32))
+    assert np.isnan(mat[[1, 3]]).all()
+    assert list(out.obs["perturbation"]) == ["TP53", "non-targeting", "MYC", "non-targeting"]
+
+
+def test_embed_genes_align_on_var_column_labels(monkeypatch):
+    from anndata import AnnData
+
+    emb = _bare_embedder()
+    monkeypatch.setattr(emb, "embed_genes_batch", _fake_label_embed_genes_batch)
+    target = AnnData(X=np.zeros((1, 3), dtype=np.float32))
+    target.var_names = ["feat0", "feat1", "feat2"]
+    target.var["symbol"] = ["MYC", "TP53", "MYC"]
+
+    out = emb.embed(target, entity_type="gene", var_column="symbol", model="toy", output="anndata", key="X_gene_toy")
+
+    expected = np.array([[3.0, 4.0], [1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    np.testing.assert_array_equal(out.varm["X_gene_toy"], expected)
+    assert list(out.var_names) == ["feat0", "feat1", "feat2"]
+
+
 def test_embed_whole_genome_uses_ensembl_ids_and_prefetched_sequences(monkeypatch):
     emb = _bare_embedder()
     seen = {}

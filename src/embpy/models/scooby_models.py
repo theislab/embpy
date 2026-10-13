@@ -9,12 +9,14 @@ import torch.nn.functional as F
 
 from .base import BaseModelWrapper
 
-
 try:
     from scooby.modeling import Scooby
     from scooby.utils.utils import undo_squashed_scale as _scooby_undo_squashed_scale
 except ImportError:
-    logging.warning("scooby not installed; ScoobyWrapper will be nonfunctional.")
+    logging.warning(
+        "scooby not installed, so ScoobyWrapper is unavailable. It is published on GitHub "
+        'only: pip install "embpy[scooby]" "scooby @ git+https://github.com/gagneurlab/scooby.git"'
+    )
     Scooby = None  # type: ignore
     _scooby_undo_squashed_scale = None  # type: ignore
 
@@ -52,24 +54,24 @@ class ScoobyWrapper(BaseModelWrapper):
     # (whose defaults are examples for the multiome bone-marrow dataset and
     # do not match the actual released checkpoints for OneK1K/Epicardioids).
     KNOWN_CHECKPOINTS: dict[str, dict[str, Any]] = {
-        "lauradmartens/onek1k-scooby": dict(
-            cell_emb_dim=10,
-            n_tracks=2,
-            use_transform_borzoi_emb=True,
-            clip_soft=5.0,
-        ),
-        "johahi/neurips-scooby": dict(
-            cell_emb_dim=14,
-            n_tracks=3,
-            use_transform_borzoi_emb=True,
-            clip_soft=5.0,
-        ),
-        "lauradmartens/epicardioids-scooby": dict(
-            cell_emb_dim=50,
-            n_tracks=3,
-            use_transform_borzoi_emb=True,
-            clip_soft=5.0,
-        ),
+        "lauradmartens/onek1k-scooby": {
+            "cell_emb_dim": 10,
+            "n_tracks": 2,
+            "use_transform_borzoi_emb": True,
+            "clip_soft": 5.0,
+        },
+        "johahi/neurips-scooby": {
+            "cell_emb_dim": 14,
+            "n_tracks": 3,
+            "use_transform_borzoi_emb": True,
+            "clip_soft": 5.0,
+        },
+        "lauradmartens/epicardioids-scooby": {
+            "cell_emb_dim": 50,
+            "n_tracks": 3,
+            "use_transform_borzoi_emb": True,
+            "clip_soft": 5.0,
+        },
     }
 
     def __init__(
@@ -178,7 +180,10 @@ class ScoobyWrapper(BaseModelWrapper):
             logging.warning(f"Scooby '{self.model_name}' already loaded.")
             return
         if Scooby is None:
-            raise ImportError("scooby not installed; cannot load ScoobyWrapper.")
+            raise ImportError(
+                "scooby not installed; cannot load ScoobyWrapper. It is published on GitHub only: "
+                'pip install "embpy[scooby]" "scooby @ git+https://github.com/gagneurlab/scooby.git"'
+            )
 
         logging.info(f"Loading Scooby '{self.model_name}' …")
         try:
@@ -305,9 +310,10 @@ class ScoobyWrapper(BaseModelWrapper):
 
     @property
     def profile_offset_bp(self) -> int:
-        """bp offset of profile bin 0 relative to the start of the model's
+        """Bp offset of profile bin 0 relative to the start of the model's
         input window (identical mechanism to `BorzoiWrapper.profile_offset_bp`
-        since Scooby shares Borzoi's trunk/crop)."""
+        since Scooby shares Borzoi's trunk/crop).
+        """
         if self.model is None:
             raise RuntimeError("Scooby model not loaded. Call load() first.")
         crop_length = self.model.crop.target_length

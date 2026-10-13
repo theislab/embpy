@@ -1,6 +1,6 @@
-from .resolver import ORGANISM_TAXON, ProteinResolver
 from .annotator import ProteinAnnotator
-from .ortholog import OrthologResolver, OrthologResult, SPECIES_MAP
+from .ortholog import SPECIES_MAP, OrthologResolver, OrthologResult
+from .resolver import ORGANISM_TAXON, ProteinResolver
 
 __all__ = [
     "ORGANISM_TAXON",

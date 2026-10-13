@@ -241,8 +241,9 @@ def cluster_annotation_enrichment(
     Long-format ``pandas.DataFrame`` with columns
     ``cluster, term, in_cluster, overall, in_freq, overall_freq, enrichment``.
     """
-    import pandas as pd
     from collections import Counter
+
+    import pandas as pd
 
     if cluster_key not in adata.obs.columns:
         raise KeyError(f"'{cluster_key}' not in adata.obs.")
@@ -252,7 +253,7 @@ def cluster_annotation_enrichment(
     def _terms_of(value) -> list[str]:
         if value is None:
             return []
-        if isinstance(value, (list, tuple, set, frozenset)):
+        if isinstance(value, list | tuple | set | frozenset):
             return [str(t) for t in value if t is not None]
         if isinstance(value, float) and np.isnan(value):
             return []

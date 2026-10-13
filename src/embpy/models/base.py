@@ -1,10 +1,60 @@
-import logging
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
-from typing import Any, Literal
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
-import torch
+
+from embpy._lazy import lazy_module
+
+if TYPE_CHECKING:
+    import torch
+else:
+    # `BaseModelWrapper` is an ABC over torch models, but importing it must not
+    # require torch: `embpy.embedder` (and therefore the resolver / IO / analysis
+    # layers) reaches this module on the lightweight core install where torch is
+    # absent. Every `torch.` reference below is inside a method body, so the real
+    # import happens on the first tensor operation, not here. See `embpy._lazy`.
+    torch = lazy_module("torch")
+
+
+def raise_for_gated_repo(exc: BaseException, model_name: str) -> None:
+    """Turn a Hugging Face access failure into advice instead of "could not load".
+
+    A gated repository answers with 401/403 and a message about accepting the
+    licence and authenticating. Wrappers catch broadly and re-raise a generic
+    ``RuntimeError("Could not load X")``, which discards the one part the user can
+    act on -- ``InstaDeepAI/NTv3_8M_pre`` fails this way, and the surfaced error
+    says nothing about needing an account.
+
+    Call this first inside the ``except`` block. It raises ``PermissionError``
+    with the fix when the chain looks like an access problem, and returns quietly
+    otherwise so the caller keeps its own handling.
+    """
+    text = ""
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text += f"\n{current}"
+        current = current.__cause__ or current.__context__
+
+    low = text.lower()
+    if not any(
+        marker in low
+        for marker in ("gated repo", "is restricted", "401 client error", "403 client error")
+    ):
+        return
+
+    raise PermissionError(
+        f"'{model_name}' is a gated Hugging Face repository, so the weights cannot be "
+        "downloaded anonymously. Accept the licence at "
+        f"https://huggingface.co/{model_name} and authenticate with "
+        "`huggingface-cli login` (or set HF_TOKEN), then retry. This is an access "
+        "problem, not a missing package -- no extra will fix it."
+    ) from exc
 
 
 class BaseModelWrapper(ABC):
@@ -28,6 +78,14 @@ class BaseModelWrapper(ABC):
 
     model_type: Literal["dna", "protein", "molecule", "text", "ppi", "unknown"] = "unknown"
     available_pooling_strategies: list[str] = ["mean", "max", "median", "none"]  # Common defaults
+
+    #: Whether the wrapped architecture computes attention weights that can be
+    #: extracted via :meth:`extract_attention`. Set to ``False`` for
+    #: attention-free architectures (state-space models such as Caduceus,
+    #: implicit long-convolution models such as HyenaDNA, message-passing GNNs
+    #: such as MiniMol), where attention weights do not exist and a request must
+    #: fail loudly rather than return something meaningless.
+    has_attention: bool = True
 
     def __init__(self, model_path_or_name: str | None = None, **kwargs: Any):
         """
@@ -117,14 +175,27 @@ class BaseModelWrapper(ABC):
         embeddings : torch.Tensor
             Tensor of shape ``(batch, seq_len, hidden_dim)`` or ``(seq_len, hidden_dim)``.
         strategy : str
-            Pooling strategy (``'mean'``, ``'max'``, ``'cls'``, ``'median'``,
-            ``'none'``).  ``'none'`` returns the raw tensor as-is.
+            Pooling strategy. Must also be listed in this wrapper's
+            ``available_pooling_strategies``, otherwise a ``ValueError`` is
+            raised — subclasses expose different subsets. Supported here:
+
+            * ``'mean'`` — arithmetic mean over the token axis.
+            * ``'max'`` — element-wise maximum over the token axis.
+            * ``'median'`` — element-wise median over the token axis, using
+              :func:`torch.median` semantics: for an *even* number of tokens
+              this is the **lower** of the two middle values rather than
+              their average, so it can differ from :func:`numpy.median`.
+              (This matches the median pooling in the Enformer and Borzoi
+              wrappers.)
+            * ``'cls'`` — the first token's embedding, no aggregation.
+            * ``'none'`` — the raw tensor, unpooled.
 
         Returns
         -------
         np.ndarray
-            Pooled embedding of shape ``(hidden_dim,)`` or ``(batch, hidden_dim)``,
-            or raw ``(seq_len, hidden_dim)`` when ``strategy='none'``.
+            Pooled embedding of shape ``(hidden_dim,)`` for a 2D input, or
+            ``(batch, hidden_dim)`` for a 3D input. When ``strategy='none'``
+            the tensor is returned with its original shape, unpooled.
         """
         if strategy not in self.available_pooling_strategies:
             raise ValueError(f"Invalid pooling strategy '{strategy}'. Available: {self.available_pooling_strategies}")
@@ -140,7 +211,7 @@ class BaseModelWrapper(ABC):
             elif strategy == "cls":
                 pooled = embeddings[:, 0, :]
             elif strategy == "median":
-                pooled = embeddings[0, :]
+                pooled = embeddings.median(dim=1).values
             else:
                 raise ValueError(f"Pooling strategy '{strategy}' not implemented for batched tensors.")
         elif embeddings.dim() == 2:  # No batch dimension
@@ -151,7 +222,7 @@ class BaseModelWrapper(ABC):
             elif strategy == "cls":
                 pooled = embeddings[0, :]
             elif strategy == "median":
-                pooled = embeddings[0, :]
+                pooled = embeddings.median(dim=0).values
             else:
                 raise ValueError(f"Pooling strategy '{strategy}' not implemented for single tensors.")
         else:
@@ -214,6 +285,26 @@ class BaseModelWrapper(ABC):
             f"Cannot auto-detect number of layers for {type(self.model).__name__}. "
             "Override get_num_layers() in your wrapper subclass."
         )
+
+    def _model_device(self) -> torch.device:
+        """Device the model's parameters actually live on.
+
+        Preferred over ``self.device``, which records what was *requested* and can
+        disagree with reality (e.g. a wrapper that falls back to CPU). Extraction
+        inputs are usually built by a tokenizer, which returns CPU tensors, so they
+        must be moved here or the forward pass fails on MPS/CUDA.
+        """
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+        try:
+            device = next(self.model.parameters()).device
+        except (StopIteration, AttributeError, TypeError):  # paramless or non-Module
+            device = None
+        # Guard the isinstance: mocks and stand-ins return something that is not a
+        # real torch.device, and passing that to .to() fails confusingly.
+        if isinstance(device, torch.device):
+            return device
+        return self.device if isinstance(self.device, torch.device) else torch.device("cpu")
 
     def _get_layer_modules(self) -> torch.nn.ModuleList:
         """
@@ -342,6 +433,10 @@ class BaseModelWrapper(ABC):
         ``(N+1)`` tensors (embedding output + N layer outputs).
         """
         model: Any = self.model
+        device = self._model_device()
+        input_ids = input_ids.to(device)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device)
         with torch.no_grad():
             outputs = model(
                 input_ids=input_ids,
@@ -418,6 +513,7 @@ class BaseModelWrapper(ABC):
             handles.append(handle)
 
         try:
+            input_tensor = input_tensor.to(self._model_device())
             with torch.no_grad():
                 self.model(input_tensor)  # type: ignore[misc]
         finally:
@@ -425,6 +521,316 @@ class BaseModelWrapper(ABC):
                 h.remove()
 
         return captured
+
+    @staticmethod
+    def _looks_like_attention(tensor: Any) -> bool:
+        """Whether ``tensor`` has the shape and normalisation of attention weights.
+
+        Attention is ``(batch, heads, seq, seq)`` or ``(batch, seq, seq)`` and each
+        query row sums to 1. Checking the row sums matters: a hook sees every tensor a
+        module emits, and a square activation would otherwise be mistaken for
+        attention.
+        """
+        if not isinstance(tensor, torch.Tensor) or tensor.ndim not in (3, 4):
+            return False
+        if tensor.shape[-1] != tensor.shape[-2]:
+            return False
+        with torch.no_grad():
+            sums = tensor.float().sum(dim=-1)
+            return bool(torch.allclose(sums, torch.ones_like(sums), atol=1e-3))
+
+    def _extract_attention_hook(
+        self,
+        input_tensor: torch.Tensor,
+        layers: list[int] | None,
+    ) -> dict[int, torch.Tensor]:
+        """Extract attention from non-HuggingFace models using forward hooks.
+
+        The counterpart to :meth:`_extract_hidden_states_hook`, using the same
+        :meth:`_get_layer_modules` discovery. Two things make attention harder than
+        hidden states:
+
+        * Some modules only return weights when asked. ``torch.nn.MultiheadAttention``
+          takes ``need_weights``, and ``nn.TransformerEncoderLayer`` hardcodes it to
+          ``False`` internally, so a plain forward hook sees ``None``. A forward
+          *pre*-hook flips that kwarg back on without touching the model definition.
+        * Fused kernels never materialise the matrix at all. If a layer routes through
+          ``F.scaled_dot_product_attention``, FlashAttention or a Triton kernel, the
+          weights exist only inside the kernel and **no hook can recover them** -- such
+          layers are simply absent from the returned dict.
+
+        Returns
+        -------
+        dict[int, torch.Tensor]
+            Layer index -> attention tensor, for whichever layers yielded one. Layers
+            whose attention could not be observed are omitted rather than faked.
+        """
+        layer_modules = self._get_layer_modules()
+        n = len(layer_modules)
+
+        target_layers = list(range(n)) if layers is None else list(layers)
+        norm_layers: list[int] = []
+        for idx in target_layers:
+            norm_idx = idx if idx >= 0 else n + idx
+            if not (0 <= norm_idx < n):
+                raise IndexError(
+                    f"Layer index {idx} out of range. "
+                    f"Model has {n} layers (indices 0 to {n - 1}, or -{n} to -1)."
+                )
+            norm_layers.append(norm_idx)
+
+        captured: dict[int, torch.Tensor] = {}
+        handles: list[Any] = []
+
+        def _find_attention(obj: Any, depth: int = 0) -> torch.Tensor | None:
+            if depth > 2:
+                return None
+            if BaseModelWrapper._looks_like_attention(obj):
+                return obj  # type: ignore[return-value]
+            if isinstance(obj, tuple | list):
+                for item in obj:
+                    found = _find_attention(item, depth + 1)
+                    if found is not None:
+                        return found
+            return None
+
+        def _weight_flags(module: Any) -> dict[str, Any]:
+            """Kwargs that make ``module`` return its attention weights.
+
+            Attention modules that *can* hand back weights default to not doing so,
+            and they do not agree on the spelling: ``torch.nn.MultiheadAttention``
+            takes ``need_weights``, while LLM-Foundry-derived blocks (Tahoe's
+            ``GroupedQueryAttention``) take ``needs_weights``. Both compute the
+            matrix either way and simply drop it, so flipping the flag recovers it
+            without touching the model.
+            """
+            import inspect
+
+            try:
+                params = inspect.signature(module.forward).parameters
+            except (TypeError, ValueError):  # pragma: no cover - C-implemented forward
+                params = {}
+
+            flags: dict[str, Any] = {}
+            if "need_weights" in params or isinstance(module, torch.nn.MultiheadAttention):
+                flags["need_weights"] = True
+                if "average_attn_weights" in params or isinstance(
+                    module, torch.nn.MultiheadAttention
+                ):
+                    # Keep per-head resolution; averaged weights lose the head axis.
+                    flags["average_attn_weights"] = False
+            if "needs_weights" in params:
+                flags["needs_weights"] = True
+            return flags
+
+        def _make_pre_hook(flags: dict[str, Any]) -> Any:
+            # Ask modules that can return weights to actually do so.
+            def pre_hook(module: Any, args: Any, kwargs: Any) -> Any:
+                return args, {**kwargs, **flags}
+
+            return pre_hook
+
+        def _make_hook(li: int) -> Any:
+            def hook_fn(module: Any, inp: Any, output: Any) -> None:
+                found = _find_attention(output)
+                if found is not None:
+                    captured[li] = found.detach()
+
+            return hook_fn
+
+        for layer_idx in norm_layers:
+            module = layer_modules[layer_idx]
+            # module.modules() yields the module itself first, then its descendants.
+            # Both are candidates: the weights are usually emitted by an inner
+            # attention module, but a layer can also be the attention module itself.
+            for sub in module.modules():
+                handles.append(sub.register_forward_hook(_make_hook(layer_idx)))
+                flags = _weight_flags(sub)
+                if flags:
+                    handles.append(
+                        sub.register_forward_pre_hook(_make_pre_hook(flags), with_kwargs=True)
+                    )
+
+        try:
+            input_tensor = input_tensor.to(self._model_device())
+            with torch.no_grad():
+                self.model(input_tensor)  # type: ignore[misc]
+        finally:
+            for h in handles:
+                h.remove()
+
+        return captured
+
+    # =================================================================
+    # Attention extraction
+    # =================================================================
+
+    @staticmethod
+    @contextmanager
+    def _eager_attention(model: Any) -> Iterator[None]:
+        """Force eager attention for the duration of a forward pass.
+
+        Yields with ``model`` configured to materialise attention weights, then
+        restores whatever implementation it was using before. Older transformers
+        releases have no ``set_attn_implementation``; there the config attribute
+        is the supported switch, and releases predating both already default to
+        eager, so the fallback is a no-op.
+        """
+        config = getattr(model, "config", None)
+        previous = getattr(config, "_attn_implementation", None) if config is not None else None
+        if previous is None or previous == "eager":
+            yield
+            return
+
+        setter = getattr(model, "set_attn_implementation", None)
+        try:
+            if callable(setter):
+                setter("eager")
+            else:
+                config._attn_implementation = "eager"
+            yield
+        finally:
+            if callable(setter):
+                try:
+                    setter(previous)
+                except Exception:  # noqa: BLE001 - restoring is best-effort
+                    config._attn_implementation = previous
+            else:
+                config._attn_implementation = previous
+
+    def extract_attention(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor | None = None,
+        layers: list[int] | None = None,
+    ) -> dict[int, torch.Tensor]:
+        """
+        Extract per-layer attention weight matrices.
+
+        Only HuggingFace models expose attention weights in a uniform way, via
+        ``output_attentions=True``. The returned tuple has exactly one entry per
+        transformer layer (there is **no** embedding-layer entry, unlike
+        :meth:`extract_hidden_states`), so layer index ``i`` maps directly to
+        the ``i``-th transformer block's attention.
+
+        Parameters
+        ----------
+        input_ids : torch.Tensor
+            Tokenised input of shape ``(batch, seq_len)``.
+        attention_mask : torch.Tensor, optional
+            Attention mask of shape ``(batch, seq_len)``. Pass it for padded
+            batches so masked positions do not leak attention mass.
+        layers : list[int], optional
+            Layer indices to return. Negative values count from the end
+            (``-1`` = last layer). If ``None``, every layer is returned.
+
+        Returns
+        -------
+        dict[int, torch.Tensor]
+            Mapping from normalised layer index to an attention tensor of shape
+            ``(batch, n_heads, seq_len, seq_len)``. Each query row sums to 1.
+
+        Raises
+        ------
+        RuntimeError
+            If the model is not loaded, or if the model produced no attention
+            weights (typically because it is using a fused attention kernel
+            such as SDPA or FlashAttention that does not expose them).
+        NotImplementedError
+            If the wrapped architecture has no attention
+            (:attr:`has_attention` is ``False``) or is not a HuggingFace model.
+        IndexError
+            If a requested layer index is out of range.
+
+        Examples
+        --------
+        >>> wrapper.load(torch.device("cpu"))
+        >>> ids = tok("MKT", return_tensors="pt")["input_ids"]
+        >>> attn = wrapper.extract_attention(ids, layers=[-1])
+        >>> attn[next(iter(attn))].shape  # (batch, heads, seq, seq)
+        torch.Size([1, 20, 5, 5])
+        """
+        # has_attention is a class attribute, so it is knowable without weights.
+        # Check it before the load guard: an architecture that cannot produce
+        # attention at all should say so, rather than telling the caller to load
+        # a model that would not help. This also gives the right answer for
+        # wrappers that keep their module somewhere other than .model.
+        if not self.has_attention:
+            raise NotImplementedError(
+                f"{type(self).__name__} wraps an architecture whose attention "
+                "weights are not observable -- either it is attention-free "
+                "(state-space, implicit convolution, graph message passing) or it "
+                "computes attention with a fused kernel that never materialises "
+                "the matrix. Use extract_hidden_states() for per-layer "
+                "activations instead."
+            )
+
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call load() first.")
+
+        if not self._is_huggingface_model():
+            # Non-HF models have no uniform output_attentions flag, so fall back to
+            # forward hooks (mirroring extract_hidden_states). This succeeds only for
+            # architectures that actually materialise the matrix; fused-kernel
+            # attention (SDPA / FlashAttention / Triton) cannot be observed by any
+            # hook, and yields nothing.
+            captured = self._extract_attention_hook(input_ids, layers)
+            if not captured:
+                raise NotImplementedError(
+                    f"{type(self).__name__} is not a HuggingFace model and no attention "
+                    "weights could be captured by forward hooks. This normally means the "
+                    "model uses a fused attention kernel (torch SDPA, FlashAttention or "
+                    "Triton), which never materialises the attention matrix, so it cannot "
+                    "be recovered without changing the model. Use extract_hidden_states() "
+                    "for per-layer activations instead."
+                )
+            return captured
+
+        model: Any = self.model
+        device = self._model_device()
+        input_ids = input_ids.to(device)
+        if attention_mask is not None:
+            attention_mask = attention_mask.to(device)
+        # transformers >= 4.48 defaults most architectures to SDPA, and that fused
+        # kernel returns no per-head weights: output_attentions=True then yields
+        # None, which is indistinguishable from an architecture that has no
+        # attention at all. Eager exists for every HF architecture that does have
+        # attention, so run the forward pass under eager and restore the model's
+        # own implementation afterwards.
+        with self._eager_attention(model), torch.no_grad():
+            outputs = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                output_attentions=True,
+                output_hidden_states=False,
+            )
+
+        attns: tuple[torch.Tensor, ...] | None = getattr(outputs, "attentions", None)
+        if attns is None or any(a is None for a in attns):
+            raise RuntimeError(
+                "The model returned no attention weights even under eager "
+                "attention. This means the architecture hard-codes a fused "
+                "attention kernel (FlashAttention or a Triton kernel) that never "
+                "materialises the per-head matrix, so it cannot be recovered "
+                "without changing the model. Use extract_hidden_states() for "
+                "per-layer activations instead."
+            )
+
+        n = len(attns)  # one entry per transformer layer; NO embedding offset
+        target_layers = list(range(n)) if layers is None else list(layers)
+
+        result: dict[int, torch.Tensor] = {}
+        for idx in target_layers:
+            norm_idx = idx if idx >= 0 else n + idx
+            if not (0 <= norm_idx < n):
+                raise IndexError(
+                    f"Layer index {idx} out of range. "
+                    f"Model has {n} attention layers (indices 0 to {n - 1}, "
+                    f"or -{n} to -1)."
+                )
+            result[norm_idx] = attns[norm_idx]
+
+        return result
 
     # =================================================================
     # Convenience: embed from a specific layer

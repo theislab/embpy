@@ -54,7 +54,7 @@ def test_npz_roundtrip_with_sidecar(tmp_path):
     assert list(back["entity_ids"]) == ["ENSG1", "ENSG2", "ENSG3"]
     assert list(back["dim_names"]) == ["dim_0", "dim_1"]
 
-    meta = json.loads(side.read_text())
+    meta = json.loads(side.read_text(encoding='utf-8'))
     assert meta["entity_type"] == "gene"
     assert meta["id_scheme"] == "ensembl_gene_id"
     assert meta["provenance"]["model"] == "m"

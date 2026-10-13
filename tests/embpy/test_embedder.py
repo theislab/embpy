@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import torch
 
-from embpy.errors import ConfigError, IdentifierError, ModelNotFoundError
+from embpy.errors import ConfigError, DependencyError, IdentifierError, ModelNotFoundError
 
 
 class TestBioEmbedderInit:
@@ -288,6 +288,44 @@ class TestBioEmbedderGetModel:
         with pytest.raises((ModelNotFoundError, RuntimeError)):
             embedder._get_model("completely_nonexistent_model_xyz_123")
 
+    @pytest.fixture
+    def no_esm_sdk(self, monkeypatch):
+        """Simulate a machine without the ``esm`` SDK, whether or not it is installed here."""
+        import embpy.models.protein_models as pm
+
+        monkeypatch.setattr(pm, "_HAVE_ESMC", False)
+        monkeypatch.setattr(pm, "ESMC", None, raising=False)
+
+    @pytest.mark.usefixtures("no_esm_sdk")
+    @pytest.mark.parametrize("model_name", ["esmc_300m", "esmc_600m", "esmc_6b"])
+    @patch("embpy.embedder.GeneResolver")
+    def test_esmc_without_sdk_raises_dependency_error(self, mock_resolver_cls, model_name):
+        """A missing ESM SDK is a DependencyError naming the extra, not a NameError in a ModelLoadError."""
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+
+        with pytest.raises(DependencyError) as excinfo:
+            embedder._get_model(model_name)
+
+        err = excinfo.value
+        assert err.package == "embpy[esm3]"
+        assert f"model '{model_name}'" in str(err)
+        assert "pip install embpy[esm3]" in str(err)
+        assert "pip install esm --no-deps" in str(err)
+        assert isinstance(err.__cause__, ImportError)
+        assert model_name not in embedder.model_cache
+
+    @pytest.mark.usefixtures("no_esm_sdk")
+    @patch("embpy.embedder.GeneResolver")
+    def test_embed_protein_esmc_without_sdk_raises_dependency_error(self, mock_resolver_cls):
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+
+        with pytest.raises(DependencyError, match=r"embpy\[esm3\]"):
+            embedder.embed_protein("MTEYKLVVVG", model="esmc_300m", id_type="sequence")
+
 
 # =====================================================================
 # embed_protein / embed_proteins_batch
@@ -469,6 +507,7 @@ class TestEmbedCells:
 
     @patch("embpy.embedder.GeneResolver")
     def test_embed_cells_pca(self, mock_resolver_cls):
+        pytest.importorskip("scanpy")  # standard cell preprocessing requires scanpy
         from embpy.embedder import BioEmbedder
 
         embedder = BioEmbedder(device="cpu")
@@ -512,6 +551,7 @@ class TestEmbedCells:
 
     @patch("embpy.embedder.GeneResolver")
     def test_embed_cells_metadata(self, mock_resolver_cls):
+        pytest.importorskip("scanpy")  # standard cell preprocessing requires scanpy
         from embpy.embedder import BioEmbedder
 
         embedder = BioEmbedder(device="cpu")
@@ -610,6 +650,7 @@ class TestEmbedCells:
 
     @patch("embpy.embedder.GeneResolver")
     def test_embed_cells_copy(self, mock_resolver_cls):
+        pytest.importorskip("scanpy")  # standard cell preprocessing requires scanpy
         from embpy.embedder import BioEmbedder
 
         embedder = BioEmbedder(device="cpu")
@@ -706,6 +747,7 @@ class TestEmbedAdata:
 
     @patch("embpy.embedder.GeneResolver")
     def test_cell_models_only(self, mock_resolver_cls):
+        pytest.importorskip("scanpy")  # standard cell preprocessing requires scanpy
         from embpy.embedder import BioEmbedder
 
         embedder = BioEmbedder(device="cpu")
@@ -780,6 +822,7 @@ class TestEmbedAdata:
 
     @patch("embpy.embedder.GeneResolver")
     def test_combined_cell_and_perturbation(self, mock_resolver_cls):
+        pytest.importorskip("scanpy")  # standard cell preprocessing requires scanpy
         from embpy.embedder import BioEmbedder
 
         embedder = BioEmbedder(device="cpu")
@@ -836,3 +879,88 @@ class TestEmbedAdata:
         assert "n_perturbations_embedded" in meta
         assert meta["type"] == "perturbation"
         assert meta["storage"] == "uns"
+
+
+class TestLayerSelectionSupport:
+    """`layer=` must reach models that support it and be refused by those that don't.
+
+    Silently returning default-layer vectors for a model that ignores
+    ``target_layer`` is the failure mode these tests exist to prevent.
+    """
+
+    @staticmethod
+    def _detects(sig_owner):
+        from embpy.embedder import BioEmbedder
+
+        return BioEmbedder._wrapper_supports_layer_selection(sig_owner)
+
+    def test_detects_explicit_target_layer(self):
+        class Supported:
+            def embed(self, input, pooling_strategy="mean", target_layer=None, **kw): ...
+
+        assert self._detects(Supported) is True
+
+    def test_detects_target_layer_on_embed_batch(self):
+        class SupportedBatch:
+            def embed_batch(self, inputs, pooling_strategy="mean", target_layer=None, **kw): ...
+
+        assert self._detects(SupportedBatch) is True
+
+    def test_bare_kwargs_does_not_count_as_support(self):
+        """**kwargs swallows target_layer and returns default-layer vectors."""
+
+        class Swallower:
+            def embed(self, input, pooling_strategy="mean", **kw): ...
+
+            def embed_batch(self, inputs, pooling_strategy="mean", **kw): ...
+
+        assert self._detects(Swallower) is False
+
+    def test_no_embed_methods_is_unsupported(self):
+        class Empty:
+            pass
+
+        assert self._detects(Empty) is False
+
+    @patch("embpy.embedder.GeneResolver")
+    def test_real_wrappers_are_classified_correctly(self, _mock):
+        from embpy.models.molecule_models import ChembertaWrapper, RDKitWrapper
+        from embpy.models.protein_models import ESM2Wrapper
+
+        assert self._detects(ESM2Wrapper) is True  # declares target_layer
+        assert self._detects(RDKitWrapper) is False  # fingerprints have no layers
+        assert self._detects(ChembertaWrapper) is False  # transformer, not yet wired
+
+    @patch("embpy.embedder.GeneResolver")
+    def test_unsupported_model_raises_with_actionable_message(self, _mock):
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        with pytest.raises(ValueError, match="cannot provide it") as exc:
+            embedder._assert_layer_selection_supported("morgan_fp", 3)
+        assert "morgan_fp" in str(exc.value)
+        assert "layer=3" in str(exc.value)
+
+    @patch("embpy.embedder.GeneResolver")
+    def test_static_lookup_model_raises(self, _mock):
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        with pytest.raises(ValueError, match="static lookup table"):
+            embedder._assert_layer_selection_supported("genept", 1)
+
+    @patch("embpy.embedder.GeneResolver")
+    def test_supported_model_passes(self, _mock):
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        embedder._assert_layer_selection_supported("esm2_8M", -4)  # must not raise
+
+    @patch("embpy.embedder.GeneResolver")
+    def test_layer_zero_is_a_real_selection_not_absence(self, _mock):
+        """``0`` is falsy; an `or`-chain would silently drop it."""
+        from embpy.embedder import BioEmbedder
+
+        embedder = BioEmbedder(device="cpu")
+        with pytest.raises(ValueError, match="layer=0"):
+            embedder._assert_layer_selection_supported("morgan_fp", 0)

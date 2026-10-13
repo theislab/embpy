@@ -64,6 +64,49 @@ extensions = [
 
 autosummary_generate = True
 autodoc_member_order = "groupwise"
+# Heavy / optional third-party packages that the docs build (Read the Docs runs
+# `pip install .[doc]`, i.e. the lightweight core) does not install. autodoc
+# imports modules to read their docstrings, so without these mocks the API
+# pages for the model wrappers / resolvers would fail to import. Keep this in
+# sync with the optional extras in pyproject.toml.
+autodoc_mock_imports = [
+    # NOTE: torch is intentionally NOT mocked. Mocking it makes ``torch.Tensor``
+    # a non-class Mock, and modern scipy/array-api-compat (pulled in transitively
+    # by seaborn -> scipy.stats) calls ``issubclass(x, torch.Tensor)`` at import
+    # time, which then raises "issubclass() arg 2 must be a class...". The docs
+    # build installs a real CPU-only torch instead (see .readthedocs.yaml).
+    "torch_geometric",
+    "transformers",
+    "sentencepiece",
+    "pysam",
+    "pyensembl",
+    "Bio",
+    "scanpy",
+    "scib",
+    "xgboost",
+    "esm",
+    "helical",
+    "evo",
+    "evo2",
+    "mamba_ssm",
+    "causal_conv1d",
+    "borzoi_pytorch",
+    "enformer_pytorch",
+    "minimol",
+    "boltz",
+    "arc_state",
+    "arc_stack",
+    "lamindb",
+    "pertpy",
+    "cell_eval",
+    "jump_portrait",
+    # NOTE: h5py is intentionally NOT mocked. anndata (a hard dependency, so
+    # always installed) registers a singledispatch handler on
+    # ``h5py.AttributeManager`` at import time; when h5py is mocked, Sphinx's
+    # autodoc mock recurses in ``_make_subclass`` under ``typing.get_type_hints``
+    # and the build hangs until Read the Docs kills it at the 900s limit. The
+    # real h5py is small and present, so import it for real.
+]
 default_role = "literal"
 napoleon_google_docstring = False
 napoleon_numpy_docstring = True

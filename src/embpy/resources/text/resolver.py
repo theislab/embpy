@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from typing import Any, Literal
+from typing import Literal
 
 import requests
 
@@ -218,7 +218,7 @@ class TextResolver:
 
     def _fetch_uniprot(self, identifier: str) -> str:
         """Fetch protein function description from UniProt."""
-        from embpy.resources.protein_resolver import ProteinResolver, ORGANISM_TAXON
+        from embpy.resources.protein_resolver import ProteinResolver
 
         if re.match(r"^[A-Z][0-9][A-Z0-9]{3}[0-9](-\d+)?$", identifier):
             accession = identifier
@@ -237,13 +237,11 @@ class TextResolver:
             return ""
 
         parts = []
-        protein_name = ""
         prot_desc = data.get("proteinDescription", {})
         rec_name = prot_desc.get("recommendedName", {})
         if rec_name:
             full = rec_name.get("fullName", {}).get("value", "")
             if full:
-                protein_name = full
                 parts.append(f"{full}.")
 
         comments = data.get("comments", [])

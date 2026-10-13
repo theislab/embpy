@@ -316,9 +316,10 @@ class HFHandler:
         name
             Dataset name used as the filename stem in the repo.
         """
-        with tempfile.NamedTemporaryFile(suffix=".h5ad", delete=False) as f:
-            adata.write_h5ad(f.name)
-            self.upload_file(f.name, f"raw/{name}.h5ad")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir) / f"{name}.h5ad"
+            adata.write_h5ad(tmp_path)
+            self.upload_file(str(tmp_path), f"raw/{name}.h5ad")
 
     # ── metadata ─────────────────────────────────────────────────────
 
@@ -331,9 +332,10 @@ class HFHandler:
             A DataFrame, or path to an existing Parquet/CSV file.
         """
         if isinstance(metadata, pd.DataFrame):
-            with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
-                metadata.to_parquet(f.name, index=False)
-                self.upload_file(f.name, "metadata/perturbations.parquet")
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmp_path = Path(tmpdir) / "metadata.parquet"
+                metadata.to_parquet(tmp_path, index=False)
+                self.upload_file(str(tmp_path), "metadata/perturbations.parquet")
         else:
             self.upload_file(metadata, "metadata/perturbations.parquet")
 

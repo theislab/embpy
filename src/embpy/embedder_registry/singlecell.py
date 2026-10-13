@@ -19,7 +19,6 @@ automatically.
 
 from __future__ import annotations
 
-from ..models.base import BaseModelWrapper
-
+from embpy.models.base import BaseModelWrapper
 
 SINGLECELL_MODELS: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {}

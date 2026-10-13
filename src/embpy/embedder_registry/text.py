@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from ..models.base import BaseModelWrapper
-from ..models.text_models import LlamaEmbeddingWrapper, TextLLMWrapper
-
+from embpy.models.base import BaseModelWrapper
+from embpy.models.text_models import LlamaEmbeddingWrapper, TextLLMWrapper
 
 TEXT_MODELS: dict[str, tuple[type[BaseModelWrapper] | None, str | None]] = {
     "minilm_l6_v2": (TextLLMWrapper, "sentence-transformers/all-MiniLM-L6-v2"),
