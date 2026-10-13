@@ -15,9 +15,9 @@
 
 ---
 
-## Recent `vibe_embpy` Enhancements
+## Modern Packaging & Cross-Platform Features
 
-The `vibe_embpy` development line brings key structural and usability improvements:
+`embpy` brings key structural and usability improvements:
 
 ### 1. Pure `pip` & `uv` Compatibility
 - **Lightweight Core:** A bare `pip install embpy` installs only essential libraries (`numpy`, `pandas`, `anndata`, `scikit-learn`, `rdkit`) without requiring a C++ compiler or CUDA drivers.

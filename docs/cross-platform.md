@@ -9,7 +9,7 @@
 ### POSIX-Specific Library Gating (Windows)
 Certain underlying genomics libraries (`pysam`, `pyensembl`) rely on POSIX system calls and C-compilers that do not build cleanly on native Windows without Cygwin/WSL.
 
-- In `vibe_embpy`, `embpy` gates these packages conditionally on Windows.
+- `embpy` gates these packages conditionally on Windows.
 - Sequence extraction, protein embedding, molecule modeling, and AnnData transformations run 100% natively on Windows using pure-Python and standard cross-platform libraries.
 - For workflows requiring direct local `.bam` or indexed `.bed` file slicing via `pysam`, use WSL2 or Linux containers.
 

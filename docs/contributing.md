@@ -8,12 +8,11 @@ Thank you for your interest in contributing to `embpy`! This guide outlines our 
 
 ### 1. Clone & Set Up Tracking
 
-Clone the repository and switch to the development branch:
+Clone the repository:
 
 ```bash
 git clone https://github.com/theislab/embpy.git
 cd embpy
-git checkout vibe_embpy
 ```
 
 ### 2. Environment Setup
@@ -35,13 +34,12 @@ pip install -e ".[models,test,dev]"
 
 | Branch Pattern | Purpose |
 |---|---|
-| `main` | Production-ready releases. |
-| `vibe_embpy` | Primary active development branch for modern pip/uv packaging and cross-platform enhancements. |
+| `main` | Primary branch for active development, releases, and documentation. |
 | `feat/<name>` | New features, model wrappers, or substantial additions. |
 | `fix/<name>` | Bug fixes and compatibility adjustments. |
 | `docs/<name>` | Documentation updates and guides. |
 
-Please ensure all new feature branches branch from and target `vibe_embpy`.
+Please ensure all new feature branches branch from and target `main`.
 
 ---
 

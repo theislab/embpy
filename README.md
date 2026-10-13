@@ -4,9 +4,9 @@
 [![Documentation][badge-docs]][documentation]
 [![Docs: MkDocs](https://img.shields.io/badge/docs-MkDocs%20Material-526cfe?logo=materialformkdocs&logoColor=white)](docs/)
 
-[badge-tests]: https://img.shields.io/github/actions/workflow/status/theislab/embpy/test.yaml?branch=vibe_embpy
-[badge-docs]: https://img.shields.io/github/actions/workflow/status/theislab/embpy/docs.yaml?branch=vibe_embpy&label=docs
-[tests]: https://github.com/theislab/embpy/actions/workflows/test.yaml?query=branch%3Avibe_embpy
+[badge-tests]: https://img.shields.io/github/actions/workflow/status/theislab/embpy/test.yaml?branch=main
+[badge-docs]: https://img.shields.io/github/actions/workflow/status/theislab/embpy/docs.yaml?branch=main&label=docs
+[tests]: https://github.com/theislab/embpy/actions/workflows/test.yaml?query=branch%3Amain
 [documentation]: https://theislab.github.io/embpy/
 
 **embpy** is a Python toolkit for generating biological embeddings with one
@@ -70,10 +70,10 @@ A bare install gives the lightweight core (resolvers, IO, annotation, plotting) 
 > ```bash
 > # pip: install that torch first; embpy then keeps it
 > pip install torch --index-url https://download.pytorch.org/whl/cu126
-> pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+> pip install "embpy[gpu]"
 >
 > # uv: one line
-> uv pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy" --torch-backend=cu126
+> uv pip install "embpy[gpu]" --torch-backend=cu126
 > ```
 
 ---
@@ -85,10 +85,10 @@ A bare install gives the lightweight core (resolvers, IO, annotation, plotting) 
 ```bash
 # CPU-only (Note: On Linux pip, you must install torch first to avoid the CUDA bundle)
 pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install "embpy[cpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+pip install "embpy[cpu]"
 
 # GPU (NVIDIA CUDA)
-pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+pip install "embpy[gpu]"
 ```
 
 **Option B — with `uv` (faster resolver, recommended):**
@@ -98,10 +98,10 @@ pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
 uv venv --python 3.12 && source .venv/bin/activate
 
 # CPU-only
-uv pip install "embpy[cpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+uv pip install "embpy[cpu]"
 
 # GPU (NVIDIA CUDA)
-uv pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+uv pip install "embpy[gpu]"
 ```
 
 **Quick verification:**
@@ -127,10 +127,10 @@ py -3.12 --version # confirm 3.12 is available
 
 ```powershell
 # CPU-only (recommended for most Windows users)
-py -3.12 -m pip install "embpy[cpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+py -3.12 -m pip install "embpy[cpu]"
 
 # GPU (only if you have an NVIDIA GPU with CUDA)
-py -3.12 -m pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+py -3.12 -m pip install "embpy[gpu]"
 ```
 
 **Step 3 — Verify:**
@@ -143,37 +143,34 @@ py -3.12 -c "import embpy, torch; from embpy import BioEmbedder; print(embpy.__v
 
 ---
 
-### 🧪 Installing the `vibe_embpy` branch (for reviewers / contributors)
+### 🧪 Installing from Source (for development / contributors)
 
-The `vibe_embpy` branch contains the latest cross-platform compatibility fixes
-(Windows support, encoding fixes, FASTA strictness). For a normal install, use the
-`[cpu]` or `[gpu]` commands above: they already install this branch. Only running
-the tests needs a clone.
+If you are developing `embpy` or running the test suite, clone the repository and install in editable mode:
 
 **🐧 Linux / macOS:**
 
 ```bash
-# With test dependencies + run tests (requires a clone so the tests folder exists)
-git clone --branch vibe_embpy https://github.com/theislab/embpy.git
+# With test dependencies + run tests
+git clone https://github.com/theislab/embpy.git
 cd embpy
 pip install -e ".[test]"
 python -m pytest tests/ -v
 
 # Core only (no ML backends)
-pip install "embpy @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+pip install -e .
 ```
 
 **🪟 Windows:**
 
 ```powershell
-# With test dependencies + run tests (requires a clone so the tests folder exists)
-git clone --branch vibe_embpy https://github.com/theislab/embpy.git
+# With test dependencies + run tests
+git clone https://github.com/theislab/embpy.git
 cd embpy
 py -3.12 -m pip install -e ".[test]"
 py -3.12 -m pytest tests/ -v
 
 # Core only (no ML backends)
-py -3.12 -m pip install "embpy @ git+https://github.com/theislab/embpy.git@vibe_embpy"
+py -3.12 -m pip install -e .
 ```
 
 **Verify the install:**
@@ -223,8 +220,8 @@ export UV_LINK_MODE=copy   # the uv cache and the environment are often on diffe
 
 ```bash
 uv venv .venv --python 3.12 && source .venv/bin/activate
-uv pip install "embpy[cpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"   # CPU node
-uv pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy"   # GPU node
+uv pip install "embpy[cpu]"   # CPU node
+uv pip install "embpy[gpu]"   # GPU node
 ```
 
 The default `[gpu]` build runs on GPUs from the Turing generation onwards (`sm_75` and newer, e.g. A100,
@@ -232,13 +229,13 @@ H100). Older **V100** (Volta) GPUs report CUDA as available, but every operation
 `no kernel image is available`. On those nodes, ask uv for the CUDA 12.6 build instead:
 
 ```bash
-uv pip install "embpy[gpu] @ git+https://github.com/theislab/embpy.git@vibe_embpy" --torch-backend=cu126
+uv pip install "embpy[gpu]" --torch-backend=cu126
 ```
 
 **4. Run the notebooks.** They live in the repository, so clone it first:
 
 ```bash
-git clone --branch vibe_embpy https://github.com/theislab/embpy.git && cd embpy
+git clone https://github.com/theislab/embpy.git && cd embpy
 uv pip install ipykernel jupyter
 jupyter nbconvert --to notebook --execute docs/notebooks/01_embed_any_model.ipynb --output /tmp/out.ipynb
 ```

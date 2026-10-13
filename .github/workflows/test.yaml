@@ -2,9 +2,9 @@ name: Test
 
 on:
   push:
-    branches: [main, vibe_embpy]
+    branches: [main]
   pull_request:
-    branches: [main, vibe_embpy]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
