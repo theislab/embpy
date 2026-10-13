@@ -7,7 +7,7 @@
 [badge-tests]: https://img.shields.io/github/actions/workflow/status/theislab/embpy/test.yaml?branch=main
 [badge-docs]: https://img.shields.io/readthedocs/embpy
 [tests]: https://github.com/theislab/embpy/actions/workflows/test.yaml
-[documentation]: https://vipreshgupta.github.io/embpy/
+[documentation]: https://theislab.github.io/embpy/
 
 **embpy** is a Python toolkit for generating biological embeddings with one
 unified API.
@@ -36,7 +36,7 @@ scverse-friendly plotting and analysis utilities.
 
 Complete, interactive documentation and API references are available:
 
-- 🌐 **[Online Documentation](https://vipreshgupta.github.io/embpy/)**
+- 🌐 **[Online Documentation](https://theislab.github.io/embpy/)** | **[ReadTheDocs](https://embpy.readthedocs.io/)**
 - 📂 **Documentation Guides in this Repository**:
   - [📘 **Overview & Architecture**](docs/index.md)
   - [🚀 **Getting Started & Installation**](docs/getting-started.md)
