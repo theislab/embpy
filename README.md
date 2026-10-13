@@ -43,8 +43,10 @@ Complete, interactive documentation and API references are available:
   - [🧪 **Hands-On Workflows & Practical Recipes**](docs/hands-on.md)
   - [💻 **Cross-Platform & Hardware Guide**](docs/cross-platform.md)
   - [🏛️ **Architecture & Technical Design**](docs/technical.md)
+  - [🤖 **Model Context Protocol (MCP) & AI Skills**](docs/mcp.md)
   - [📚 **API Reference**](docs/api-reference.md)
   - [🤝 **Contributing Guide**](docs/contributing.md)
+
 
 ### Running Documentation Locally
 ```bash
