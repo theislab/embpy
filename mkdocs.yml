@@ -84,6 +84,7 @@ exclude_docs: |
 nav:
   - Overview: index.md
   - Getting Started: getting-started.md
+  - Hands-On Workflows: hands-on.md
   - Cross-Platform & Hardware: cross-platform.md
   - Architecture: technical.md
   - API Reference: api-reference.md

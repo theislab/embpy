@@ -36,6 +36,7 @@ The `vibe_embpy` development line brings key structural and usability improvemen
 ## Next Steps
 
 - Explore the [Getting Started Guide](getting-started.md) for quick installation and minimal examples.
+- Work through practical tutorials in the [Hands-On Workflows & Recipes Guide](hands-on.md).
 - Understand OS and hardware specifics in the [Cross-Platform & Hardware Guide](cross-platform.md).
 - Dive into the [Architecture Overview](technical.md) for architectural details.
 - Review the [API Reference](api-reference.md) for automated module documentation.

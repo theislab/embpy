@@ -118,3 +118,35 @@ adata = embedder.embed(
 
 print("Stored representation:", adata.varm["X_esm2"].shape)
 ```
+
+### Quick Molecule Embedding
+
+Embed chemical compounds directly from SMILES strings using molecular transformers or fingerprints:
+
+```python
+from embpy import BioEmbedder
+
+embedder = BioEmbedder(device="cpu")
+
+# SMILES for Aspirin and Caffeine
+smiles = [
+    "CC(=O)OC1=CC=CC=C1C(=O)O",
+    "CN1C=NC2=C1C(=O)N(C(=O)N2C)C",
+]
+
+# Compute embeddings as a pandas DataFrame table
+df = embedder.embed(
+    smiles,
+    entity_type="molecule",
+    model="chemberta2",
+    output="table",
+)
+print("Molecule embedding shape:", df.shape)
+```
+
+---
+
+## Next Steps
+
+Ready for practical, real-world examples? Check out the [Hands-On Workflows & Recipes Guide](hands-on.md) covering clustering, drug similarity screening, and single-cell perturbation screens.
+
