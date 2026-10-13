@@ -62,6 +62,13 @@ dependencies = [
 ]
 
 scripts.embpy-static-embeddings = "embpy.scripts.package_static_embeddings:main"
+scripts.embpy-mcp = "embpy.mcp.server:main"
+
+# Model Context Protocol (MCP) server with bioinformatics skills
+optional-dependencies.mcp = [
+  "mcp>=1.0.0",
+]
+
 
 optional-dependencies.torch = [
   "torch>=2.5.1",
