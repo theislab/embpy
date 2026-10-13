@@ -543,13 +543,16 @@ def embed_cells(
                 "models": [str(m) for m in (model_list if "model_list" in locals() else [models])],
             }
         logger.error("embed_cells failed on %s: %s", path, exc, exc_info=True)
-        return {
+        resp = {
             "status": "error",
             "error_type": type(exc).__name__,
             "error": msg,
             "path": str(path),
             "models": [str(m) for m in (model_list if "model_list" in locals() else [models])],
         }
+        if isinstance(exc, (ImportError, ModuleNotFoundError)):
+            resp["suggestion"] = "Install scanpy using 'pip install scanpy' or single-cell extras using 'pip install embpy[mcp,cpu]'."
+        return resp
 
 
 def evaluate_scib(
