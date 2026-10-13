@@ -2,11 +2,12 @@
 
 [![Tests][badge-tests]][tests]
 [![Documentation][badge-docs]][documentation]
+[![Docs: MkDocs](https://img.shields.io/badge/docs-MkDocs%20Material-526cfe?logo=materialformkdocs&logoColor=white)](docs/)
 
 [badge-tests]: https://img.shields.io/github/actions/workflow/status/theislab/embpy/test.yaml?branch=main
 [badge-docs]: https://img.shields.io/readthedocs/embpy
 [tests]: https://github.com/theislab/embpy/actions/workflows/test.yaml
-[documentation]: https://embpy.readthedocs.io/
+[documentation]: https://vipreshgupta.github.io/embpy/
 
 **embpy** is a Python toolkit for generating biological embeddings with one
 unified API.
@@ -30,6 +31,27 @@ scverse-friendly plotting and analysis utilities.
 - Adds real metadata annotations for genes, proteins, molecules, and cell
   lines.
 - Provides plotting and comparison helpers for embedding quality checks.
+
+## 📖 Documentation
+
+Complete, interactive documentation and API references are available:
+
+- 🌐 **[Online Documentation](https://vipreshgupta.github.io/embpy/)**
+- 📂 **Documentation Guides in this Repository**:
+  - [📘 **Overview & Architecture**](docs/index.md)
+  - [🚀 **Getting Started & Installation**](docs/getting-started.md)
+  - [🧪 **Hands-On Workflows & Practical Recipes**](docs/hands-on.md)
+  - [💻 **Cross-Platform & Hardware Guide**](docs/cross-platform.md)
+  - [🏛️ **Architecture & Technical Design**](docs/technical.md)
+  - [📚 **API Reference**](docs/api-reference.md)
+  - [🤝 **Contributing Guide**](docs/contributing.md)
+
+### Running Documentation Locally
+```bash
+pip install mkdocs-material "mkdocstrings[python]"
+mkdocs serve
+```
+Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** in your browser for live-reloaded documentation.
 
 ## Install
 
