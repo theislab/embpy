@@ -1,0 +1,91 @@
+site_name: embpy
+site_description: Universal multi-modal embeddings for biological sequences, cells, and molecules.
+site_url: https://theislab.github.io/embpy/
+repo_url: https://github.com/theislab/embpy
+repo_name: theislab/embpy
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - toc.integrate
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    # Palette toggle for light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    # Palette toggle for dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: numpy
+            docstring_options:
+              warn_unknown_params: false
+              warn_missing_types: false
+              warnings: false
+            show_source: true
+            show_root_heading: true
+            heading_level: 3
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+exclude_docs: |
+  *.py
+  *.bib
+  Makefile
+  conf.py
+  generate_schematic.py
+  _static/*
+  _templates/*
+  extensions/*
+  notebooks/*
+  api.md
+  references.md
+  changelog.md
+  attention_extraction.md
+  static_embeddings.md
+
+nav:
+  - Overview: index.md
+  - Getting Started: getting-started.md
+  - Hands-On Workflows: hands-on.md
+  - Cross-Platform & Hardware: cross-platform.md
+  - Architecture: technical.md
+  - API Reference: api-reference.md
+  - Contributing: contributing.md
