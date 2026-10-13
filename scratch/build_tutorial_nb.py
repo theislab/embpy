@@ -39,9 +39,12 @@ cells.append(nbf.v4.new_code_cell("""import os
 import sys
 
 # Ensure local embpy source tree is loaded
-src_path = os.path.abspath("src")
-if src_path not in sys.path:
-    sys.path.insert(0, src_path)
+for candidate in ["src", "../src", os.path.join(os.getcwd(), "src"), os.path.join(os.path.dirname(os.getcwd()), "src")]:
+    if os.path.isdir(candidate):
+        full_path = os.path.abspath(candidate)
+        if full_path not in sys.path:
+            sys.path.insert(0, full_path)
+        break
 
 import json
 import asyncio
@@ -273,6 +276,170 @@ simulated_query = {"path": dataset_path}
 response = execute_agent_tool_call("inspect_anndata", simulated_query)
 print("Agent Received Response:")
 print(f"  Status: {response['status']}, Cells: {response['n_obs']}, Genes: {response['n_vars']}")
+"""))
+
+# Section 11: Connect to an LLM Client (Optional)
+cells.append(nbf.v4.new_markdown_cell("""## 7. Connect to an LLM Client (Optional: Claude & Ollama)
+
+In real-world agentic systems, you connect the `embpy` MCP tool suite to an LLM provider such as **Anthropic Claude** or a locally hosted model via **Ollama**.
+
+The LLM receives the schema of each bioinformatics tool, reasons about user inquiries, and decides when to emit a structured tool call. The application executes the tool via `embpy` and returns the output back to the LLM for a final grounded scientific response.
+"""))
+
+cells.append(nbf.v4.new_code_cell("""# =========================================================================
+# Option A: End-to-End Tool Calling with Anthropic Claude
+# =========================================================================
+import os
+
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+
+claude_tools_schema = [
+    {
+        "name": "inspect_anndata",
+        "description": "Inspect single-cell AnnData (.h5ad) dataset dimensions, observation columns, and expression nature.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Filesystem path to the .h5ad dataset"}
+            },
+            "required": ["path"]
+        }
+    },
+    {
+        "name": "map_gene_identifiers",
+        "description": "Convert gene identifiers between HGNC symbols and Ensembl IDs using embpy.GeneResolver.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "genes": {"type": "array", "items": {"type": "string"}, "description": "List of gene symbols or Ensembl IDs"},
+                "target_type": {"type": "string", "enum": ["ensembl", "symbol"], "description": "Target identifier format"}
+            },
+            "required": ["genes"]
+        }
+    }
+]
+
+if ANTHROPIC_API_KEY:
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        
+        user_prompt = f"Please inspect the single-cell dataset at '{dataset_path}' and tell me how many cells and genes it contains."
+        print(f"User Prompt: {user_prompt}\\n")
+        
+        # Step 1: Send user inquiry and tool definitions to Claude
+        response = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=1024,
+            tools=claude_tools_schema,
+            messages=[{"role": "user", "content": user_prompt}]
+        )
+        
+        # Step 2: Handle tool calls
+        tool_uses = [c for c in response.content if c.type == "tool_use"]
+        if tool_uses:
+            for tool_call in tool_uses:
+                print(f"🤖 Claude requested tool: '{tool_call.name}'")
+                print(f"   Arguments: {tool_call.input}")
+                
+                # Execute tool using our local registry
+                tool_result = execute_agent_tool_call(tool_call.name, tool_call.input)
+                
+                # Step 3: Return tool output to Claude
+                followup = client.messages.create(
+                    model="claude-3-5-sonnet-20241022",
+                    max_tokens=1024,
+                    tools=claude_tools_schema,
+                    messages=[
+                        {"role": "user", "content": user_prompt},
+                        {"role": "assistant", "content": response.content},
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_call.id,
+                                    "content": str(tool_result)
+                                }
+                            ]
+                        }
+                    ]
+                )
+                print(f"\\n🤖 Claude Final Response:\\n{followup.content[0].text}")
+    except Exception as err:
+        print(f"Claude API execution encountered an error: {err}")
+else:
+    print("ℹ️ ANTHROPIC_API_KEY is not set.")
+    print("   To run live Claude tool-calling:")
+    print("   1. pip install anthropic")
+    print("   2. export ANTHROPIC_API_KEY='sk-ant-api03-...'")
+    print("   3. Re-run this cell to see Claude autonomously inspect the dataset.")
+"""))
+
+cells.append(nbf.v4.new_code_cell("""# =========================================================================
+# Option B: End-to-End Tool Calling with Local Ollama (e.g. Llama 3.1)
+# =========================================================================
+
+ollama_tools_schema = [
+    {
+        "type": "function",
+        "function": {
+            "name": "inspect_anndata",
+            "description": "Inspect single-cell AnnData (.h5ad) dataset dimensions, observation columns, and expression nature.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Filesystem path to the .h5ad dataset"}
+                },
+                "required": ["path"]
+            }
+        }
+    }
+]
+
+try:
+    import ollama
+    
+    user_prompt = f"Inspect the single-cell dataset at '{dataset_path}' and report its observation columns."
+    print(f"User Prompt: {user_prompt}\\n")
+    
+    # Step 1: Send prompt and tool definitions to local Ollama model
+    ollama_response = ollama.chat(
+        model="llama3.1",
+        messages=[{"role": "user", "content": user_prompt}],
+        tools=ollama_tools_schema,
+    )
+    
+    # Step 2: Check if model emitted tool calls
+    if ollama_response.message.tool_calls:
+        for tool in ollama_response.message.tool_calls:
+            print(f"🦙 Ollama requested tool: {tool.function.name}")
+            print(f"   Arguments: {tool.function.arguments}")
+            tool_output = execute_agent_tool_call(tool.function.name, tool.function.arguments)
+            
+            # Step 3: Send tool result back to Ollama
+            final_response = ollama.chat(
+                model="llama3.1",
+                messages=[
+                    {"role": "user", "content": user_prompt},
+                    ollama_response.message,
+                    {
+                        "role": "tool",
+                        "content": str(tool_output),
+                    }
+                ]
+            )
+            print(f"\\n🦙 Ollama Final Response:\\n{final_response.message.content}")
+    else:
+        print(f"🦙 Ollama Direct Response:\\n{ollama_response.message.content}")
+
+except Exception as err:
+    print(f"ℹ️ Ollama connection skipped ({err}).")
+    print("   To run local tool-calling with open-weights LLMs:")
+    print("   1. Install Ollama: https://ollama.com")
+    print("   2. Run: ollama run llama3.1")
+    print("   3. pip install ollama")
+    print("   4. Re-run this cell for zero-cost, local offline agent tool dispatching.")
 """))
 
 # Clean up
