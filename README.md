@@ -4,9 +4,9 @@
 [![Documentation][badge-docs]][documentation]
 [![Docs: MkDocs](https://img.shields.io/badge/docs-MkDocs%20Material-526cfe?logo=materialformkdocs&logoColor=white)](docs/)
 
-[badge-tests]: https://img.shields.io/github/actions/workflow/status/theislab/embpy/test.yaml?branch=main
-[badge-docs]: https://img.shields.io/readthedocs/embpy
-[tests]: https://github.com/theislab/embpy/actions/workflows/test.yaml
+[badge-tests]: https://img.shields.io/github/actions/workflow/status/theislab/embpy/test.yaml?branch=vibe_embpy
+[badge-docs]: https://img.shields.io/github/actions/workflow/status/theislab/embpy/docs.yaml?branch=vibe_embpy&label=docs
+[tests]: https://github.com/theislab/embpy/actions/workflows/test.yaml?query=branch%3Avibe_embpy
 [documentation]: https://theislab.github.io/embpy/
 
 **embpy** is a Python toolkit for generating biological embeddings with one
