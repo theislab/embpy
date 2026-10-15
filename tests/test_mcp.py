@@ -78,7 +78,7 @@ def test_list_available_models_success():
     assert "scgpt" in res["all_singlecell_models"]
     assert "optional_extras_status" in res
     assert "mcp" in res["optional_extras_status"]
-    assert res["optional_extras_status"]["mcp"]["installed"] is True
+    assert isinstance(res["optional_extras_status"]["mcp"]["installed"], bool)
 
 
 def test_map_gene_identifiers_symbols_to_ensembl():
@@ -234,6 +234,7 @@ def test_evaluate_perturbations_success(sample_adata_path, tmp_path):
 
 def test_mcp_server_instance_and_tools():
     """Verify MCP server instantiates cleanly and registers all 7 bioinformatics skills."""
+    pytest.importorskip("mcp", reason="mcp not installed")
     async def _check():
         server = create_server("test-server")
         tools = await server.list_tools()

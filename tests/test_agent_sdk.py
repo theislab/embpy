@@ -12,6 +12,8 @@ import sys
 from typing import AsyncIterator
 import pytest
 
+pytest.importorskip("claude_agent_sdk", reason="claude-agent-sdk not installed; skip Claude SDK tests")
+
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
@@ -143,6 +145,7 @@ async def test_assistant_message_pipeline_stream() -> None:
 
 def test_mcp_server_tool_registry_contains_sdk_targets() -> None:
     """Assert that the embpy MCP server exposes all 9 universal skills required by Claude SDK."""
+    pytest.importorskip("mcp", reason="mcp not installed")
     server = create_server()
     registered_tool_names = set(server._tool_manager._tools.keys()) if hasattr(server, "_tool_manager") else set()
 

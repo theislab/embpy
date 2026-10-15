@@ -643,7 +643,7 @@ def list_model_registry(entity_type: str | None = None) -> dict[str, Any]:
             device_name = "CPU"
 
         extras = {
-            "mcp": {"installed": True},
+            "mcp": {"installed": bool(importlib.util.find_spec("mcp") is not None)},
             "seqmodels": {"installed": bool(importlib.util.find_spec("borzoi_pytorch") is not None)},
             "genome": {"installed": bool(importlib.util.find_spec("pyensembl") is not None or importlib.util.find_spec("pysam") is not None)},
             "eval": {"installed": bool(importlib.util.find_spec("cell_eval") is not None)},
