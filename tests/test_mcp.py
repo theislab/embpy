@@ -167,6 +167,7 @@ def test_compute_umap_success(sample_adata_path, tmp_path):
 
 def test_evaluate_scib_success(sample_adata_path, tmp_path):
     """Test evaluate_scib evaluates an existing embedding against annotations."""
+    pytest.importorskip("scib", reason="scib is not installed")
     embedded_path = str(tmp_path / "for_scib.h5ad")
     embed_cells(
         path=sample_adata_path,
@@ -216,6 +217,7 @@ def test_evaluate_scib_missing_keys(sample_adata_path):
 
 def test_evaluate_perturbations_success(sample_adata_path, tmp_path):
     """Test evaluate_perturbations evaluates predictions against reference controls."""
+    pytest.importorskip("cell_eval", reason="cell-eval is not installed")
     csv_path = str(tmp_path / "pert_scores.csv")
     res = evaluate_perturbations(
         path=sample_adata_path,

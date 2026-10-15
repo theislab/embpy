@@ -356,7 +356,7 @@ optional-dependencies.morphology = [
 #     kept opt-in so "all" doesn't imply an external API account
 # Install those explicitly in a separate env if you need them.
 optional-dependencies.all = [
-  "embpy[models,bio,genome,ppi,lamindb,pertpy,scanpy,scib,benchmark,morphology,seqmodels]",
+  "embpy[models,bio,genome,ppi,lamindb,pertpy,scanpy,scib,benchmark,morphology,seqmodels,mcp]",
 ]
 # Convenience bundles that combine "all" with a specific torch build. These
 # intentionally omit caduceus/evo2 so a plain `pip install embpy[all-cu124]`
