@@ -1,4 +1,6 @@
-# embpy
+<p align="center">
+  <img src="docs/_static/embpy_logo.svg" alt="embpy" width="660">
+</p>
 
 [![Tests][badge-tests]][tests]
 [![Documentation][badge-docs]][documentation]
