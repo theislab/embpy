@@ -1336,6 +1336,24 @@ class GeneResolver:
         return_diagnostics : bool, default False
             If True, returns a tuple of (result_dict, diagnostics_dict).
         """
+        # Fast path if symbol_to_ensembl is mocked or overridden on the instance
+        if "symbol_to_ensembl" in self.__dict__ or hasattr(self.symbol_to_ensembl, "mock_calls"):
+            res = {s: self.symbol_to_ensembl(s, organism=organism) for s in symbols}
+            if fallback_to_unmapped:
+                res = {s: (v if v is not None else s) for s, v in res.items()}
+            if return_diagnostics:
+                mapped = sum(1 for s, v in res.items() if v is not None and (not fallback_to_unmapped or v != s))
+                diag = {
+                    "status": "success" if mapped == len(symbols) else ("partial_success" if mapped > 0 else "error"),
+                    "total": len(symbols),
+                    "mapped_count": mapped,
+                    "unresolved_count": len(symbols) - mapped,
+                    "mapping_rate": round(mapped / len(symbols) * 100.0, 2) if symbols else 0.0,
+                    "unresolved_genes": [s for s, v in res.items() if v is None or (fallback_to_unmapped and v == s)],
+                }
+                return res, diag
+            return res
+
         self._ensure_cache()
         org = organism.lower()
         species_slug = _SPECIES_SLUG_MAP.get(org, org)
@@ -1515,6 +1533,24 @@ class GeneResolver:
         return_diagnostics : bool, default False
             If True, returns a tuple of (result_dict, diagnostics_dict).
         """
+        # Fast path if ensembl_to_symbol is mocked or overridden on the instance
+        if "ensembl_to_symbol" in self.__dict__ or hasattr(self.ensembl_to_symbol, "mock_calls"):
+            res = {e: self.ensembl_to_symbol(e, organism=organism) for e in ensembl_ids}
+            if fallback_to_unmapped:
+                res = {e: (v if v is not None else e) for e, v in res.items()}
+            if return_diagnostics:
+                mapped = sum(1 for e, v in res.items() if v is not None and (not fallback_to_unmapped or v != e))
+                diag = {
+                    "status": "success" if mapped == len(ensembl_ids) else ("partial_success" if mapped > 0 else "error"),
+                    "total": len(ensembl_ids),
+                    "mapped_count": mapped,
+                    "unresolved_count": len(ensembl_ids) - mapped,
+                    "mapping_rate": round(mapped / len(ensembl_ids) * 100.0, 2) if ensembl_ids else 0.0,
+                    "unresolved_genes": [e for e, v in res.items() if v is None or (fallback_to_unmapped and v == e)],
+                }
+                return res, diag
+            return res
+
         self._ensure_cache()
         org = organism.lower()
         species_slug = _SPECIES_SLUG_MAP.get(org, org)

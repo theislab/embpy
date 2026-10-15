@@ -81,8 +81,20 @@ def test_list_available_models_success():
     assert isinstance(res["optional_extras_status"]["mcp"]["installed"], bool)
 
 
-def test_map_gene_identifiers_symbols_to_ensembl():
+def test_map_gene_identifiers_symbols_to_ensembl(monkeypatch):
     """Test map_gene_identifiers converts HGNC gene symbols to Ensembl IDs."""
+    from embpy.resources.gene.resolver import GeneResolver
+
+    monkeypatch.setattr(
+        GeneResolver,
+        "symbols_to_ensembl_batch",
+        lambda self, symbols, organism="human", **kwargs: (
+            {"TP53": "ENSG00000141510", "GAPDH": "ENSG00000111640"},
+            {"status": "success", "mapped_count": 2, "unresolved_count": 0, "mapping_rate": 100.0, "total": 2},
+        )
+        if kwargs.get("return_diagnostics")
+        else {"TP53": "ENSG00000141510", "GAPDH": "ENSG00000111640"},
+    )
     res = map_gene_identifiers(genes=["TP53", "GAPDH"], target_type="ensembl", organism="human")
     assert res["status"] in ("success", "partial_success")
     assert res["total_genes"] == 2
@@ -91,8 +103,20 @@ def test_map_gene_identifiers_symbols_to_ensembl():
     assert res["mapping_sample"]["TP53"].startswith("ENSG")
 
 
-def test_map_gene_identifiers_ensembl_to_symbols():
+def test_map_gene_identifiers_ensembl_to_symbols(monkeypatch):
     """Test map_gene_identifiers reverse converts Ensembl IDs to symbols."""
+    from embpy.resources.gene.resolver import GeneResolver
+
+    monkeypatch.setattr(
+        GeneResolver,
+        "ensembl_to_symbols_batch",
+        lambda self, ensembl_ids, organism="human", **kwargs: (
+            {"ENSG00000141510": "TP53", "ENSG00000111640": "GAPDH"},
+            {"status": "success", "mapped_count": 2, "unresolved_count": 0, "mapping_rate": 100.0, "total": 2},
+        )
+        if kwargs.get("return_diagnostics")
+        else {"ENSG00000141510": "TP53", "ENSG00000111640": "GAPDH"},
+    )
     res = map_gene_identifiers(
         genes=["ENSG00000141510", "ENSG00000111640"],
         target_type="symbol",
@@ -103,6 +127,34 @@ def test_map_gene_identifiers_ensembl_to_symbols():
     assert res["mapped_count"] >= 1
     assert "ENSG00000141510" in res["mapping_sample"]
     assert res["mapping_sample"]["ENSG00000141510"] == "TP53"
+
+
+def test_map_gene_identifiers_partial_success_fallback(monkeypatch):
+    """Test map_gene_identifiers reports partial_success and diagnostics when network fails."""
+    from embpy.resources.gene.resolver import GeneResolver
+
+    monkeypatch.setattr(
+        GeneResolver,
+        "symbols_to_ensembl_batch",
+        lambda self, symbols, organism="human", **kwargs: (
+            {"TP53": "ENSG00000141510", "UNRESOLVED_GENE": None},
+            {
+                "status": "partial_success",
+                "mapped_count": 1,
+                "unresolved_count": 1,
+                "mapping_rate": 50.0,
+                "warning": "Ensembl REST API timed out on 1 genes.",
+                "action_required": "Install embpy[genome] for offline resolution.",
+            },
+        )
+        if kwargs.get("return_diagnostics")
+        else {"TP53": "ENSG00000141510", "UNRESOLVED_GENE": None},
+    )
+    res = map_gene_identifiers(genes=["TP53", "UNRESOLVED_GENE"], target_type="ensembl", organism="human")
+    assert res["status"] == "partial_success"
+    assert res["mapped_count"] == 1
+    assert res["unresolved_count"] == 1
+    assert "warning" in res
 
 
 def test_embed_cells_success(sample_adata_path, tmp_path):
