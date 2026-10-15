@@ -89,9 +89,9 @@ nav:
   - Architecture: technical.md
   - Agentic MCP Skills:
       - Overview: mcp/index.md
-      - Tools Reference: mcp/tools-reference.md
       - Client Setup: mcp/client-setup.md
-      - Example Prompts: mcp/example-prompts.md
+      - Skills Reference: mcp/skills-reference.md
+      - Agent Mega-Prompts: mcp/prompts.md
   - API Reference: api-reference.md
   - Contributing: contributing.md
 

@@ -1,8 +1,9 @@
-"""Model Context Protocol (MCP) server for embpy single-cell bioinformatics skills.
+"""Model Context Protocol (MCP) server for embpy bioinformatics skills.
 
-Serves 7 core single-cell bioinformatics tools over standard input/output (stdio)
-with strict stdio isolation: all diagnostic logging, warnings, and library prints
-are directed to stderr so that stdout carries exclusively clean JSON-RPC protocol frames.
+Serves the complete universal single-cell and multi-modal biological embedding pipeline
+over standard input/output (stdio) with strict stdio isolation: all diagnostic logging,
+warnings, and library prints are directed to stderr so that stdout carries exclusively
+clean JSON-RPC protocol frames.
 """
 
 from __future__ import annotations
@@ -14,18 +15,29 @@ from typing import Any
 
 # Backward and forward compatibility across mcp 1.x and 2.x
 try:
-    from mcp.server.mcpserver import MCPServer as FastMCP
+    try:
+        from mcp.server.mcpserver import MCPServer as FastMCP
+    except (ImportError, ModuleNotFoundError):
+        from mcp.server.fastmcp import FastMCP  # type: ignore[no-redef]
 except (ImportError, ModuleNotFoundError):
-    from mcp.server.fastmcp import FastMCP  # type: ignore[no-redef]
+    FastMCP = None  # type: ignore[misc,assignment]
 
 from .tools import (
+    annotate_metadata,
+    benchmark_perturbations,
+    benchmark_scib,
+    compute_embeddings,
     compute_umap,
     embed_cells,
     evaluate_perturbations,
     evaluate_scib,
     inspect_anndata,
+    inspect_data,
     list_available_models,
+    list_model_registry,
     map_gene_identifiers,
+    preprocess_counts,
+    resolve_identifiers,
 )
 
 logger = logging.getLogger("embpy.mcp")
@@ -61,30 +73,48 @@ def create_server(name: str = "embpy-mcp") -> FastMCP:
     """
     _setup_stderr_logging()
 
+    if FastMCP is None:
+        raise ImportError(
+            "The 'mcp' package is required to create an MCP server. "
+            "Install it via 'pip install \"embpy[mcp]\"' or 'pip install mcp'."
+        )
+
     server = FastMCP(
         name=name,
         instructions=(
-            "embpy MCP Server provides native single-cell bioinformatics and machine learning skills: "
-            "1. inspect_anndata: Inspect .h5ad metadata, layers, and count vs normalized nature. "
-            "2. list_available_models: Check installed foundation models, compute devices, and optional extras. "
-            "3. map_gene_identifiers: Convert and validate gene IDs between Ensembl and HGNC symbols. "
-            "4. embed_cells: Run multi-model embeddings (PCA, scVI, foundation models) via BioEmbedder. "
-            "5. evaluate_scib: Benchmark embeddings on biological conservation and batch integration. "
-            "6. evaluate_perturbations: Score perturbation prediction accuracy via ArcInstitute cell-eval. "
-            "7. compute_umap: Compute kNN graph and 2D UMAP coordinates on chosen representations."
+            "embpy Universal MCP Server exposes an end-to-end biological representation pipeline: "
+            "1. inspect_data: Inspect .h5ad metadata, layers, candidate label/batch columns, and count nature. "
+            "2. resolve_identifiers: Harmonize biological IDs (Ensembl to HGNC, molecule names to SMILES). "
+            "3. preprocess_counts: Filter, library size normalize, log1p, and select HVGs, saving to disk. "
+            "4. list_model_registry: Check available foundation models (~150), modalities, and compute hardware. "
+            "5. compute_embeddings: Run multi-model embeddings (PCA, scVI, foundation models) via BioEmbedder. "
+            "6. annotate_metadata: Enrich AnnData with GO terms, pathways, disease associations, and pharmacology. "
+            "7. compute_umap: Compute kNN graph and 2D UMAP coordinates on chosen representation. "
+            "8. benchmark_scib: Benchmark embeddings on biological conservation and batch integration. "
+            "9. benchmark_perturbations: Score perturbation prediction accuracy via ArcInstitute cell-eval."
         ),
     )
 
-    # Register all 7 tools
+    # Register 9 universal tools
+    server.tool(name="inspect_data")(inspect_data)
+    server.tool(name="resolve_identifiers")(resolve_identifiers)
+    server.tool(name="preprocess_counts")(preprocess_counts)
+    server.tool(name="list_model_registry")(list_model_registry)
+    server.tool(name="compute_embeddings")(compute_embeddings)
+    server.tool(name="annotate_metadata")(annotate_metadata)
+    server.tool(name="compute_umap")(compute_umap)
+    server.tool(name="benchmark_scib")(benchmark_scib)
+    server.tool(name="benchmark_perturbations")(benchmark_perturbations)
+
+    # Register backward-compatible aliases
     server.tool(name="inspect_anndata")(inspect_anndata)
-    server.tool(name="list_available_models")(list_available_models)
     server.tool(name="map_gene_identifiers")(map_gene_identifiers)
+    server.tool(name="list_available_models")(list_available_models)
     server.tool(name="embed_cells")(embed_cells)
     server.tool(name="evaluate_scib")(evaluate_scib)
     server.tool(name="evaluate_perturbations")(evaluate_perturbations)
-    server.tool(name="compute_umap")(compute_umap)
 
-    logger.info("embpy MCP server initialized with 7 bioinformatics tools.")
+    logger.info("embpy MCP server initialized with 9 universal tools and aliases.")
     return server
 
 

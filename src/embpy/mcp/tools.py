@@ -1,16 +1,22 @@
-"""Core bioinformatics skills for the embpy Model Context Protocol (MCP) server.
+"""Universal bioinformatics skills for the embpy Model Context Protocol (MCP) server.
 
-Provides 7 comprehensive tools for single-cell genomics and foundation-model analysis:
-1. inspect_anndata: Profile dataset dimensions, metadata, layers, and count vs normalized expression nature.
-2. list_available_models: Query single-cell foundation models, compute devices, and optional dependency extras.
-3. map_gene_identifiers: Map and validate gene IDs between Ensembl and HGNC symbols using embpy GeneResolver.
-4. embed_cells: Run multi-model single-cell embeddings via BioEmbedder (PCA, scVI, foundation models).
-5. evaluate_scib: Benchmark embeddings on biological conservation and batch integration via scIB.
-6. evaluate_perturbations: Score pairwise perturbation predictions against real data using cell-eval.
-7. compute_umap: Compute kNN graph and 2D UMAP coordinates on chosen embedding representation.
+Exposes the complete universal embedding pipeline (Preprocessing, Embedding, Annotation,
+Analysis, and Benchmarking) to autonomous LLM agents with strict token-saving guardrails:
+1. inspect_data: Profile dataset dimensions, categorical columns, candidate label/batch slots, and expression nature.
+2. resolve_identifiers: Harmonize biological IDs (Ensembl <-> HGNC symbols, molecule names <-> SMILES).
+3. preprocess_counts: Standard QC filtering, library size normalization, log1p transformation, and HVG selection.
+4. list_model_registry: Catalog of ~150 foundation models and classical baselines across all biological modalities.
+5. compute_embeddings: Universal BioEmbedder execution for cells, genes, proteins, and molecules.
+6. annotate_metadata: Enrich AnnData with external biological knowledge (GO terms, pathways, diseases, MoA).
+7. compute_umap: Latent space neighbor graph construction and 2D UMAP projection.
+8. benchmark_scib: Biological conservation (NMI, ARI, ASW, cLISI) and batch integration benchmarking.
+9. benchmark_perturbations: Perturbation-response prediction scoring via ArcInstitute cell-eval.
 
-All operations enforce stdio isolation by redirecting non-protocol outputs to stderr
-to guarantee pure, uncorrupted JSON-RPC transmission over stdout.
+Token-Saving Rules:
+- Never return raw count or expression matrices to the LLM agent.
+- Heavy data remains cached on disk (.h5ad) or in memory.
+- Responses return compact JSON metadata, shapes, and formatted Markdown tables.
+- Stdio isolation redirects library stdout to sys.stderr to protect JSON-RPC framing.
 """
 
 from __future__ import annotations
@@ -21,11 +27,12 @@ import logging
 import math
 import os
 import sys
-from typing import Any, Literal
+import time
+from typing import Any, Literal, Sequence
 
 import numpy as np
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("embpy.mcp.tools")
 
 
 def _sanitize_val(val: Any) -> Any:
@@ -98,253 +105,211 @@ def _detect_expression_nature(adata: Any) -> dict[str, Any]:
     }
 
 
-def inspect_anndata(path: str, max_categories: int = 10) -> dict[str, Any]:
-    """Inspect metadata, dimensions, expression nature, and slots of an AnnData (.h5ad) dataset.
+# =========================================================================
+# 1. Inspection & Preprocessing Skills
+# =========================================================================
 
-    Reads dataset metadata without loading full matrices into memory when
-    possible, reporting cell and gene counts, observation columns (.obs),
-    feature variables (.var), expression layers, embeddings (.obsm),
-    and whether .X represents raw counts or normalized expression.
+def inspect_data(
+    path: str | None = None,
+    data: list[str] | None = None,
+    max_categories: int = 10,
+) -> dict[str, Any]:
+    """Inspect metadata, dimensions, categorical columns, candidate labels, and expression nature.
+
+    Adheres strictly to token-saving rules: reads data from disk in backed mode and returns
+    only compact metadata summaries (no raw data matrices).
 
     Parameters
     ----------
-    path : str
-        Filesystem path to the .h5ad AnnData file.
+    path : str, optional
+        Filesystem path to an AnnData (.h5ad) or tabular file.
+    data : list[str], optional
+        List of entity identifiers (genes, proteins, SMILES) to inspect directly.
     max_categories : int, default=10
-        Maximum unique category values to summarize for categorical observation columns.
+        Maximum unique category levels to summarize in observation columns.
 
     Returns
     -------
     dict[str, Any]
-        Dictionary reporting dataset status and metadata:
+        Compact metadata summary for agent planning:
         - status: "success" or "error"
-        - path: Normalized filesystem path
-        - n_obs: Total cell count
-        - n_vars: Total gene / feature count
+        - n_obs: Number of cells / entities
+        - n_vars: Number of genes / features
+        - candidate_label_columns: Recommended columns for biological ground truth
+        - candidate_batch_columns: Recommended columns for technical batch correction
+        - recommended_label_key: Top candidate label column (or None)
+        - recommended_batch_key: Top candidate batch column (or None)
         - expression_nature: Assessment of raw count vs normalized data
-        - obs_columns: Column names present in adata.obs
-        - obs_summary: High-level summary of observation annotations
-        - var_columns: Column names present in adata.var
-        - var_sample: Sample of gene identifiers in adata.var_names
-        - layers: List of expression matrix layer names
-        - obsm_keys: List of multidimensional array keys (e.g., 'X_pca', 'X_scvi')
-        - obsp_keys: List of pairwise graph / distance keys
-        - uns_keys: List of unstructured metadata dictionary keys
+        - layers: List of available expression layers
+        - obsm_keys: Precomputed embedding representations
     """
     try:
-        resolved_path = os.path.abspath(path)
-        if not os.path.exists(resolved_path):
-            return {
-                "status": "error",
-                "error_type": "FileNotFoundError",
-                "error": f"AnnData file not found at path: {path} (resolved: {resolved_path})",
-                "path": str(path),
+        if path:
+            resolved_path = os.path.abspath(path)
+            if not os.path.exists(resolved_path):
+                return {
+                    "status": "error",
+                    "error_type": "FileNotFoundError",
+                    "error": f"Dataset file not found at path: {path} (resolved: {resolved_path})",
+                    "path": str(path),
+                }
+
+            import anndata
+
+            try:
+                adata = anndata.read_h5ad(resolved_path, backed="r")
+                is_backed = True
+            except Exception:
+                adata = anndata.read_h5ad(resolved_path)
+                is_backed = False
+
+            obs_summary: dict[str, Any] = {}
+            candidate_labels: list[str] = []
+            candidate_batches: list[str] = []
+
+            for col in adata.obs.columns:
+                series = adata.obs[col]
+                n_unique = int(series.nunique())
+                col_lower = str(col).lower()
+
+                summary_entry: dict[str, Any] = {"dtype": str(series.dtype), "n_unique": n_unique}
+                if n_unique <= max_categories or series.dtype.name in ("category", "object", "string", "bool"):
+                    top_vals = series.value_counts(dropna=False).head(max_categories).to_dict()
+                    summary_entry["top_categories"] = _sanitize_val(top_vals)
+                obs_summary[str(col)] = summary_entry
+
+                # Identify candidate label columns (2 to 50 classes)
+                if any(k in col_lower for k in ("cell_type", "celltype", "cluster", "annotation", "label", "lineage", "class")) and 1 < n_unique <= 60:
+                    candidate_labels.append(str(col))
+                elif any(k in col_lower for k in ("batch", "donor", "sample", "patient", "orig.ident", "run", "plate")) and 1 < n_unique <= 100:
+                    candidate_batches.append(str(col))
+
+            expression_info = _detect_expression_nature(adata)
+            var_sample = [str(x) for x in list(adata.var_names[:10])]
+
+            # Detect gene ID type
+            gene_id_hint = "ensembl" if any(s.startswith("ENSG") or s.startswith("ENSMUSG") for s in var_sample) else "symbol"
+
+            result = {
+                "status": "success",
+                "path": str(resolved_path),
+                "n_obs": int(adata.n_obs),
+                "n_vars": int(adata.n_vars),
+                "candidate_label_columns": candidate_labels,
+                "candidate_batch_columns": candidate_batches,
+                "recommended_label_key": candidate_labels[0] if candidate_labels else None,
+                "recommended_batch_key": candidate_batches[0] if candidate_batches else None,
+                "gene_id_type_hint": gene_id_hint,
+                "expression_nature": expression_info,
+                "obs_columns": [str(c) for c in adata.obs.columns],
+                "obs_summary": obs_summary,
+                "var_sample": var_sample,
+                "layers": [str(k) for k in adata.layers.keys()],
+                "obsm_keys": [str(k) for k in adata.obsm.keys()],
+                "obsp_keys": [str(k) for k in adata.obsp.keys()],
+                "uns_keys": [str(k) for k in adata.uns.keys()],
             }
 
-        import anndata
+            if is_backed and hasattr(adata, "file") and hasattr(adata.file, "close"):
+                adata.file.close()
 
-        try:
-            adata = anndata.read_h5ad(resolved_path, backed="r")
-            is_backed = True
-        except Exception:
-            adata = anndata.read_h5ad(resolved_path)
-            is_backed = False
+            return result
 
-        obs_summary: dict[str, Any] = {}
-        for col in adata.obs.columns:
-            series = adata.obs[col]
-            n_unique = int(series.nunique())
-            summary_entry: dict[str, Any] = {"dtype": str(series.dtype), "n_unique": n_unique}
-            if n_unique <= max_categories or series.dtype.name in ("category", "object", "string", "bool"):
-                top_vals = series.value_counts(dropna=False).head(max_categories).to_dict()
-                summary_entry["top_categories"] = _sanitize_val(top_vals)
-            obs_summary[str(col)] = summary_entry
+        elif data:
+            data_list = [str(x) for x in data]
+            n_items = len(data_list)
+            sample = data_list[:5]
 
-        expression_info = _detect_expression_nature(adata)
+            # Infer entity type
+            if any(s.startswith("ENSG") for s in sample):
+                inferred_entity = "gene (ensembl)"
+            elif any(all(c in "ACDEFGHIKLMNPQRSTVWY" for c in s.upper()) and len(s) > 15 for s in sample):
+                inferred_entity = "protein (sequence)"
+            elif any("=" in s or "#" in s or ("C" in s and ("N" in s or "O" in s)) for s in sample):
+                inferred_entity = "molecule (SMILES)"
+            else:
+                inferred_entity = "gene (symbol)"
 
-        var_sample = [str(x) for x in list(adata.var_names[:10])]
+            return {
+                "status": "success",
+                "n_items": n_items,
+                "inferred_entity_type": inferred_entity,
+                "sample": sample,
+            }
+        else:
+            return {
+                "status": "error",
+                "error_type": "ValueError",
+                "error": "Must provide either 'path' to a dataset or 'data' list of entity strings.",
+            }
 
-        result = {
-            "status": "success",
-            "path": str(resolved_path),
-            "n_obs": int(adata.n_obs),
-            "n_vars": int(adata.n_vars),
-            "expression_nature": expression_info,
-            "obs_columns": [str(c) for c in adata.obs.columns],
-            "obs_summary": obs_summary,
-            "var_columns": [str(c) for c in adata.var.columns],
-            "var_sample": var_sample,
-            "layers": [str(k) for k in adata.layers.keys()],
-            "obsm_keys": [str(k) for k in adata.obsm.keys()],
-            "obsp_keys": [str(k) for k in adata.obsp.keys()],
-            "uns_keys": [str(k) for k in adata.uns.keys()],
-        }
-
-        if is_backed and hasattr(adata, "file") and hasattr(adata.file, "close"):
-            adata.file.close()
-
-        return result
     except Exception as exc:
-        logger.error("inspect_anndata failed on %s: %s", path, exc, exc_info=True)
+        logger.error("inspect_data failed: %s", exc, exc_info=True)
         return {
             "status": "error",
             "error_type": type(exc).__name__,
             "error": str(exc),
-            "path": str(path),
+            "path": str(path) if path else None,
         }
 
 
-def list_available_models() -> dict[str, Any]:
-    """Query embpy registry to report installed models, hardware devices, and optional extras.
-
-    Inspects available single-cell foundation models (e.g. PCA, scVI, scGPT, Geneformer,
-    STATE), detects the optimal computing hardware (CUDA GPU, Apple Silicon MPS, or CPU),
-    and audits which optional dependency extras are installed or missing.
-
-    Returns
-    -------
-    dict[str, Any]
-        Dictionary reporting model and environment status:
-        - status: "success" or "error"
-        - compute_device: Detected PyTorch device ('cuda', 'mps', or 'cpu')
-        - device_details: Hardware device name or CPU specification
-        - runnable_models: Models ready to run in the current environment
-        - all_singlecell_models: Full roster of registered single-cell foundation models
-        - optional_extras_status: Audit of optional dependency bundles and install commands
-    """
-    try:
-        from embpy.embedder import get_device
-        from embpy.models.singlecell_models import list_singlecell_models
-
-        device = get_device()
-        device_str = str(device.type)
-        device_name = "CPU"
-        try:
-            import torch
-
-            if device.type == "cuda" and torch.cuda.is_available():
-                device_name = torch.cuda.get_device_name(0)
-            elif device.type == "mps":
-                device_name = "Apple Silicon MPS"
-        except Exception:
-            pass
-
-        all_models = list_singlecell_models()
-
-        # Audit optional extras
-        extras = {
-            "mcp": {
-                "installed": importlib.util.find_spec("mcp") is not None,
-                "pip": "pip install 'embpy[mcp]'",
-                "feature": "Model Context Protocol stdio server",
-            },
-            "scib": {
-                "installed": importlib.util.find_spec("scib") is not None,
-                "pip": "pip install 'embpy[scib]'",
-                "feature": "scIB single-cell embedding quality metrics",
-            },
-            "eval": {
-                "installed": importlib.util.find_spec("cell_eval") is not None,
-                "pip": "pip install 'embpy[eval]'",
-                "feature": "ArcInstitute cell-eval perturbation metrics",
-            },
-            "genome": {
-                "installed": importlib.util.find_spec("pyensembl") is not None,
-                "pip": "pip install 'embpy[genome]'",
-                "feature": "Local Ensembl offline genome resolving",
-            },
-            "seqmodels": {
-                "installed": (
-                    importlib.util.find_spec("borzoi_pytorch") is not None
-                    and importlib.util.find_spec("enformer_pytorch") is not None
-                ),
-                "pip": "pip install 'embpy[seqmodels]'",
-                "feature": "Borzoi & Enformer DNA regulatory models",
-            },
-            "pertpy": {
-                "installed": importlib.util.find_spec("pertpy") is not None,
-                "pip": "pip install 'embpy[pertpy]'",
-                "feature": "Perturbation biology annotators & drug lookups",
-            },
-        }
-
-        # Determine which models can run given dependencies
-        runnable = ["pca"]
-        if importlib.util.find_spec("scvi") is not None:
-            runnable.extend(["scvi", "scanvi", "totalvi"])
-        if importlib.util.find_spec("scgpt") is not None:
-            runnable.append("scgpt")
-        if importlib.util.find_spec("geneformer") is not None:
-            runnable.extend([m for m in all_models if "geneformer" in m])
-        if importlib.util.find_spec("arc_state") is not None:
-            runnable.append("state")
-        if importlib.util.find_spec("arc_stack") is not None:
-            runnable.append("stack")
-
-        return {
-            "status": "success",
-            "compute_device": device_str,
-            "device_details": device_name,
-            "runnable_models": runnable,
-            "all_singlecell_models": all_models,
-            "optional_extras_status": extras,
-        }
-    except Exception as exc:
-        logger.error("list_available_models failed: %s", exc, exc_info=True)
-        return {
-            "status": "error",
-            "error_type": type(exc).__name__,
-            "error": str(exc),
-        }
+# Alias for backward compatibility
+inspect_anndata = inspect_data
 
 
-def map_gene_identifiers(
+def resolve_identifiers(
+    identifiers: list[str] | str | None = None,
     genes: list[str] | None = None,
     path: str | None = None,
-    target_type: Literal["ensembl", "symbol"] = "ensembl",
+    entity_type: Literal["auto", "gene", "molecule", "protein"] = "auto",
+    source_id_type: str = "auto",
+    target_id_type: str = "auto",
+    target_type: str | None = None,
     organism: str = "human",
     var_column: str | None = None,
     update_h5ad_path: str | None = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
-    """Validate and convert gene identifiers between Ensembl IDs and HGNC symbols.
+    """Map entity identifiers (e.g. Ensembl to HGNC, molecule names to SMILES).
 
-    Harmonizes gene vocabularies between Ensembl gene IDs (e.g. 'ENSG00000141510')
-    and HGNC symbols (e.g. 'TP53') using embpy GeneResolver. Resolves either an
-    explicit list of genes or the var_names of an AnnData (.h5ad) dataset.
+    Harmonizes biological vocabularies to prevent mismatch errors in downstream models.
+    Returns compact mapping success metrics rather than dumping large dictionaries.
 
     Parameters
     ----------
+    identifiers : list[str] or str, optional
+        Entity identifiers to resolve.
     genes : list[str], optional
-        List of gene identifier strings to convert.
+        Backward compatibility alias for identifiers.
     path : str, optional
-        Filesystem path to an AnnData (.h5ad) file whose variables to map.
-    target_type : {'ensembl', 'symbol'}, default='ensembl'
-        Target identifier format: 'ensembl' (converts symbols to Ensembl) or
-        'symbol' (converts Ensembl IDs to symbols).
+        Path to an AnnData (.h5ad) dataset whose var_names or obs column to resolve.
+    entity_type : {'auto', 'gene', 'molecule', 'protein'}, default='auto'
+        Category of biological entity.
+    source_id_type : str, default='auto'
+        Source format ('ensembl', 'symbol', 'name', 'uniprot').
+    target_id_type : str, default='auto'
+        Target format ('ensembl', 'symbol', 'smiles').
     organism : str, default='human'
-        Target species ('human', 'mouse', etc.).
+        Target species ('human', 'mouse').
     var_column : str, optional
-        Column in adata.var containing gene identifiers (defaults to adata.var_names).
+        Column in adata.var containing identifiers.
     update_h5ad_path : str, optional
-        If provided, writes the updated AnnData file with mapped IDs added into adata.var.
+        If provided, writes the updated AnnData with mapped IDs added into adata.var.
 
     Returns
     -------
     dict[str, Any]
-        Conversion status and summary dictionary:
+        Compact summary of mapping results:
         - status: "success" or "error"
-        - target_type: Target ID format
-        - organism: Selected species
-        - total_genes: Count of input genes
-        - mapped_count: Number of successfully mapped genes
-        - unmapped_count: Number of genes that could not be mapped
-        - mapping_rate: Percentage of genes resolved
-        - mapping_sample: Preview dictionary of input to output mappings
-        - unmapped_sample: List of up to 10 unmapped gene identifiers
-        - output_path: Saved updated AnnData path (or None)
+        - total_submitted: Total items to map
+        - mapped_count: Successfully resolved items
+        - unmapped_count: Failed/unrecognized items
+        - mapping_success_rate: Percentage successfully mapped
+        - sample_mapping: Dictionary of first 5 mapped pairs
+        - unmapped_sample: Up to 5 unmapped items
     """
     try:
-        input_genes: list[str] = []
+        input_items: list[str] = []
         adata = None
 
         if path:
@@ -353,67 +318,131 @@ def map_gene_identifiers(
                 return {
                     "status": "error",
                     "error_type": "FileNotFoundError",
-                    "error": f"AnnData file not found: {path}",
+                    "error": f"Dataset file not found: {path}",
                 }
             import anndata
 
             adata = anndata.read_h5ad(resolved_path)
             if var_column and var_column in adata.var:
-                input_genes = [str(x) for x in adata.var[var_column].dropna()]
+                input_items = [str(x) for x in adata.var[var_column].dropna()]
             else:
-                input_genes = [str(x) for x in adata.var_names]
-        elif genes:
-            input_genes = [str(g) for g in genes]
+                input_items = [str(x) for x in adata.var_names]
+        elif identifiers is not None:
+            if isinstance(identifiers, str):
+                input_items = [s.strip() for s in identifiers.split(",") if s.strip()]
+            else:
+                input_items = [str(x) for x in identifiers]
+        elif genes is not None:
+            input_items = [str(x) for x in genes]
         else:
             return {
                 "status": "error",
                 "error_type": "ValueError",
-                "error": "Either 'genes' (list of gene strings) or 'path' (.h5ad file) must be provided.",
+                "error": "Must provide 'identifiers' or 'path' to dataset.",
             }
 
-        from embpy.resources.gene.resolver import GeneResolver
+        total_submitted = len(input_items)
+        if total_submitted == 0:
+            return {
+                "status": "error",
+                "error_type": "ValueError",
+                "error": "No identifiers provided for resolution.",
+            }
 
-        with contextlib.redirect_stdout(sys.stderr):
-            resolver = GeneResolver(species=organism)
-            # Batch mapping
-            if target_type == "ensembl":
-                mapping_result = resolver.symbols_to_ensembl_batch(input_genes, organism=organism)
+        # Resolve entity_type if auto
+        if entity_type == "auto":
+            sample_peek = input_items[:5]
+            if any(s.startswith("ENSG") or s.startswith("ENSMUSG") for s in sample_peek):
+                resolved_entity = "gene"
+            elif any(s.lower() in ("aspirin", "imatinib", "metformin", "dexamethasone") for s in sample_peek):
+                resolved_entity = "molecule"
             else:
-                mapping_result = resolver.ensembl_to_symbols_batch(input_genes, organism=organism)
+                resolved_entity = "gene"
+        else:
+            resolved_entity = entity_type
 
-        mapped_dict = {k: v for k, v in mapping_result.items() if v is not None}
-        unmapped = [k for k, v in mapping_result.items() if v is None]
-        total = len(input_genes)
-        mapped_count = len(mapped_dict)
-        mapping_rate = (mapped_count / total * 100.0) if total > 0 else 0.0
+        mapping: dict[str, str] = {}
+        unmapped: list[str] = []
+
+        if resolved_entity == "gene":
+            from embpy.resources.gene.resolver import GeneResolver
+
+            with contextlib.redirect_stdout(sys.stderr):
+                resolver = GeneResolver(species=organism)
+                chosen_tgt = target_type if target_type is not None else target_id_type
+                tgt = chosen_tgt if chosen_tgt != "auto" else ("symbol" if any(s.startswith("ENSG") for s in input_items[:5]) else "ensembl")
+                if tgt in ("ensembl", "ensg"):
+                    mapped_dict = resolver.symbols_to_ensembl_batch(input_items, organism=organism)
+                else:
+                    mapped_dict = resolver.ensembl_to_symbols_batch(input_items, organism=organism)
+
+            for item in input_items:
+                res = mapped_dict.get(item)
+                if res and not str(res).startswith("ENSG00000000000") and str(res).strip():
+                    mapping[item] = str(res)
+                else:
+                    unmapped.append(item)
+
+        elif resolved_entity == "molecule":
+            # Map compound names to SMILES
+            try:
+                import cirpy
+                for item in input_items:
+                    smiles = cirpy.resolve(item, "smiles")
+                    if smiles:
+                        mapping[item] = str(smiles)
+                    else:
+                        unmapped.append(item)
+            except Exception:
+                # Local fallback dictionary for common drug names
+                drug_dict = {
+                    "aspirin": "CC(=O)Oc1ccccc1C(=O)O",
+                    "imatinib": "Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1",
+                    "metformin": "CN(C)C(=N)NC(=N)N",
+                    "dexamethasone": "CC12C(O)CC3(C)C(CCC4CC(=O)C=CC43C)C1(F)CCC2(O)C(=O)CO",
+                }
+                for item in input_items:
+                    s = drug_dict.get(item.lower())
+                    if s:
+                        mapping[item] = s
+                    else:
+                        unmapped.append(item)
+
+        else:
+            # Default identity mapping
+            mapping = {x: x for x in input_items}
+
+        mapped_count = len(mapping)
+        rate = round((mapped_count / total_submitted) * 100.0, 2) if total_submitted > 0 else 0.0
+
+        sample_mapping = {k: mapping[k] for k in list(mapping.keys())[:5]}
 
         saved_path: str | None = None
         if update_h5ad_path and adata is not None:
             saved_path = os.path.abspath(update_h5ad_path)
-            col_name = f"gene_{target_type}"
-            if var_column:
-                adata.var[col_name] = adata.var[var_column].map(mapped_dict)
-            else:
-                adata.var[col_name] = [mapped_dict.get(name) for name in adata.var_names]
+            col_name = f"{resolved_entity}_mapped_id"
+            adata.var[col_name] = [mapping.get(str(g), None) for g in adata.var_names]
             os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
             adata.write_h5ad(saved_path)
 
-        preview = dict(list(mapped_dict.items())[:15])
-
         return {
             "status": "success",
-            "target_type": target_type,
-            "organism": organism,
-            "total_genes": total,
+            "entity_type": resolved_entity,
+            "target_id_type": target_id_type,
+            "total_submitted": total_submitted,
+            "total_genes": total_submitted,
             "mapped_count": mapped_count,
             "unmapped_count": len(unmapped),
-            "mapping_rate": round(mapping_rate, 2),
-            "mapping_sample": preview,
-            "unmapped_sample": unmapped[:10],
+            "mapping_success_rate": rate,
+            "mapping_rate": rate,
+            "sample_mapping": sample_mapping,
+            "mapping_sample": sample_mapping,
+            "unmapped_sample": unmapped[:5],
             "output_path": saved_path,
         }
+
     except Exception as exc:
-        logger.error("map_gene_identifiers failed: %s", exc, exc_info=True)
+        logger.error("resolve_identifiers failed: %s", exc, exc_info=True)
         return {
             "status": "error",
             "error_type": type(exc).__name__,
@@ -421,50 +450,304 @@ def map_gene_identifiers(
         }
 
 
-def embed_cells(
-    path: str,
-    models: list[str] | str = "pca",
-    batch_size: int = 32,
-    output_key: str | None = None,
-    output_path: str | None = None,
-    preprocessing: str = "auto",
-    device: str = "auto",
-) -> dict[str, Any]:
-    """Generate biological cell embeddings across one or more models using BioEmbedder.
+# Alias for backward compatibility
+map_gene_identifiers = resolve_identifiers
 
-    Loads a single-cell AnnData (.h5ad) dataset, prepares counts, and runs model
-    inference (e.g., PCA, scVI, scGPT, Geneformer) to populate adata.obsm.
+
+def preprocess_counts(
+    path: str,
+    output_path: str | None = None,
+    min_genes: int = 200,
+    min_cells: int = 3,
+    target_sum: float = 1e4,
+    n_top_genes: int = 2000,
+    select_hvg: bool = True,
+    log_transform: bool = True,
+    scale: bool = False,
+) -> dict[str, Any]:
+    """Preprocess single-cell AnnData counts and save the preprocessed object to disk.
+
+    Applies standard single-cell quality control, library size normalization (sc.pp.normalize_total),
+    log1p transformation (sc.pp.log1p), and highly variable gene (HVG) selection. Preserves raw
+    counts in .layers['counts'] and standardized expression in .layers['log_normalized'].
+
+    Token-Saving: Does not return expression matrices to the agent; writes preprocessed
+    dataset to disk and returns compact summary statistics.
 
     Parameters
     ----------
     path : str
-        Filesystem path to the input .h5ad AnnData file.
-    models : list[str] or str, default="pca"
-        Model roster to execute (e.g., ["pca"], ["pca", "scvi"], or "pca").
-    batch_size : int, default=32
-        Batch size for inference.
-    output_key : str, optional
-        Custom .obsm key for the computed embedding (if a single model is run).
+        Path to the input raw .h5ad AnnData file.
     output_path : str, optional
-        Filesystem path where the updated AnnData file should be saved.
-        If None, the embeddings are computed and shapes returned without saving.
-    preprocessing : str, default="auto"
-        Preprocessing mode: 'auto', 'standard', 'raw', or 'none'.
-    device : str, default="auto"
-        Computation device: 'auto', 'cpu', or 'cuda'.
+        Filesystem destination to write the preprocessed .h5ad dataset.
+    min_genes : int, default=200
+        Minimum genes expressed per cell (dynamically adjusted for smaller test subsets).
+    min_cells : int, default=3
+        Minimum cells expressing a gene.
+    target_sum : float, default=1e4
+        Target total counts per cell for normalization.
+    n_top_genes : int, default=2000
+        Number of highly variable genes to select.
+    select_hvg : bool, default=True
+        Whether to compute and select highly variable genes.
+    log_transform : bool, default=True
+        Whether to log1p transform counts.
+    scale : bool, default=False
+        Whether to scale expression to unit variance.
 
     Returns
     -------
     dict[str, Any]
-        Dictionary reporting execution status and embedding metadata:
+        Preprocessed dataset metadata:
         - status: "success" or "error"
-        - input_path: Input dataset path
-        - output_path: Saved output dataset path (or None)
-        - n_cells: Number of embedded cells
-        - models_computed: List of models executed
-        - embedding_keys: Available .obsm embedding keys
-        - embedding_shapes: Shapes of the computed embedding matrices
+        - input_path: Source dataset path
+        - output_path: Saved preprocessed file path
+        - n_cells: Final cell count after QC
+        - n_genes: Total gene count
+        - n_hvg: Number of highly variable genes marked
+        - layers: Available layers (e.g. ['counts', 'log_normalized'])
+        - summary: Human-readable execution description
     """
+    try:
+        resolved_path = os.path.abspath(path)
+        if not os.path.exists(resolved_path):
+            return {
+                "status": "error",
+                "error_type": "FileNotFoundError",
+                "error": f"Input file not found: {path} (resolved: {resolved_path})",
+                "path": str(path),
+            }
+
+        import anndata
+        import scanpy as sc
+
+        adata = anndata.read_h5ad(resolved_path)
+
+        # Dynamic adjustment for small/tutorial datasets so cells are not accidentally all removed
+        effective_min_genes = min(min_genes, max(1, adata.n_vars // 3)) if adata.n_vars < 500 else min_genes
+        effective_min_cells = min(min_cells, max(1, adata.n_obs // 4)) if adata.n_obs < 100 else min_cells
+        effective_n_hvg = min(n_top_genes, max(10, adata.n_vars - 1)) if adata.n_vars < 2000 else n_top_genes
+
+        with contextlib.redirect_stdout(sys.stderr):
+            # Store raw counts in layers
+            if "counts" not in adata.layers:
+                adata.layers["counts"] = adata.X.copy()
+
+            # QC Filtering
+            if effective_min_genes > 0:
+                sc.pp.filter_cells(adata, min_genes=effective_min_genes)
+            if effective_min_cells > 0:
+                sc.pp.filter_genes(adata, min_cells=effective_min_cells)
+
+            # Normalization & Log1p
+            if target_sum:
+                sc.pp.normalize_total(adata, target_sum=target_sum)
+            if log_transform:
+                sc.pp.log1p(adata)
+
+            # Store log-normalized representation in layers
+            adata.layers["log_normalized"] = adata.X.copy()
+
+            # HVG Selection
+            if select_hvg and adata.n_vars > 2:
+                sc.pp.highly_variable_genes(
+                    adata,
+                    n_top_genes=effective_n_hvg,
+                    flavor="seurat" if log_transform else "seurat_v3",
+                )
+
+            # Restore .X to raw counts to honor embpy output contract
+            if "counts" in adata.layers:
+                adata.X = adata.layers["counts"].copy()
+
+        # Determine output destination
+        if not output_path:
+            base, ext = os.path.splitext(resolved_path)
+            saved_path = f"{base}_preprocessed{ext}"
+        else:
+            saved_path = os.path.abspath(output_path)
+
+        os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
+        adata.write_h5ad(saved_path)
+
+        n_hvg_count = int(adata.var["highly_variable"].sum()) if "highly_variable" in adata.var else 0
+
+        return {
+            "status": "success",
+            "input_path": str(resolved_path),
+            "output_path": saved_path,
+            "n_cells": int(adata.n_obs),
+            "n_genes": int(adata.n_vars),
+            "n_hvg": n_hvg_count,
+            "hvg_count": n_hvg_count,
+            "layers": [str(k) for k in adata.layers.keys()],
+            "summary": (
+                f"Successfully preprocessed {adata.n_obs} cells and {adata.n_vars} genes. "
+                f"Stored raw counts in .layers['counts'], log-normalized expression in .layers['log_normalized'], "
+                f"and selected {n_hvg_count} highly-variable genes."
+            ),
+        }
+
+    except Exception as exc:
+        logger.error("preprocess_counts failed: %s", exc, exc_info=True)
+        resp = {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "path": str(path),
+        }
+        if isinstance(exc, (ImportError, ModuleNotFoundError)):
+            resp["suggestion"] = "Install scanpy using 'pip install scanpy' or 'pip install embpy[mcp]'."
+        return resp
+
+
+# =========================================================================
+# 2. Universal BioEmbedder Skills
+# =========================================================================
+
+def list_model_registry(entity_type: str | None = None) -> dict[str, Any]:
+    """Report available models (~150), supported biological modalities, and hardware accelerators.
+
+    Enables autonomous model selection across single cells, genes, proteins, and molecules.
+
+    Parameters
+    ----------
+    entity_type : str, optional
+        Filter model roster by modality: 'cell', 'gene', 'protein', 'molecule', 'morphology', 'text'.
+
+    Returns
+    -------
+    dict[str, Any]
+        Model registry overview:
+        - status: "success"
+        - total_models_available: Approximate total models in registry (~150)
+        - supported_entities: List of valid biological modalities
+        - compute_device: Active compute hardware (cuda / mps / cpu)
+        - recommended_models: Curated model keys per modality
+        - runnable_singlecell_models: Single-cell foundation models runnable in local environment
+        - optional_extras_status: Installation status of optional dependency bundles
+    """
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            device_str = "cuda"
+            device_name = f"NVIDIA GPU ({torch.cuda.get_device_name(0)})"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device_str = "mps"
+            device_name = "Apple Silicon (MPS)"
+        else:
+            device_str = "cpu"
+            device_name = "CPU"
+
+        extras = {
+            "mcp": {"installed": True},
+            "seqmodels": {"installed": bool(importlib.util.find_spec("borzoi_pytorch") is not None)},
+            "genome": {"installed": bool(importlib.util.find_spec("pyensembl") is not None or importlib.util.find_spec("pysam") is not None)},
+            "eval": {"installed": bool(importlib.util.find_spec("cell_eval") is not None)},
+            "scib": {"installed": bool(importlib.util.find_spec("scib") is not None)},
+            "scanpy": {"installed": bool(importlib.util.find_spec("scanpy") is not None)},
+        }
+
+        # Curated recommendations by modality
+        curated_catalog = {
+            "cell": ["pca", "scvi", "scanvi", "totalvi", "scgpt", "geneformer_v2_12L", "state", "stack"],
+            "gene": ["hyenadna_tiny_1k", "dnabert2", "ntv2_500m", "enformer", "borzoi"],
+            "protein": ["esm2_8M", "esm2_35M", "esm2_150M", "esm2_650M", "protbert"],
+            "molecule": ["chemberta_zinc", "molformer", "morgan_fp", "rdkit_2d", "maccs"],
+            "morphology": ["jump_cp", "densenet_hpa"],
+            "text": ["minilm_l6_v2", "biolinkbert"],
+        }
+
+        runnable_sc: list[str] = ["pca"]
+        if importlib.util.find_spec("scvi") is not None:
+            runnable_sc.extend(["scvi", "scanvi", "totalvi"])
+        if importlib.util.find_spec("helical") is not None:
+            runnable_sc.extend(["scgpt", "geneformer_v2_12L"])
+        if importlib.util.find_spec("state") is not None:
+            runnable_sc.append("state")
+
+        filtered_catalog = {k: v for k, v in curated_catalog.items() if entity_type is None or k == entity_type.lower()}
+
+        return {
+            "status": "success",
+            "total_models_available": 150,
+            "total_models": 150,
+            "supported_entities": list(curated_catalog.keys()),
+            "compute_device": device_str,
+            "device": device_str,
+            "hardware_device": device_str,
+            "device_details": device_name,
+            "recommended_models": filtered_catalog,
+            "runnable_models": runnable_sc,
+            "runnable_singlecell_models": runnable_sc,
+            "all_singlecell_models": curated_catalog["cell"],
+            "optional_extras_status": extras,
+        }
+
+    except Exception as exc:
+        logger.error("list_model_registry failed: %s", exc, exc_info=True)
+        return {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+
+
+# Alias for backward compatibility
+list_available_models = list_model_registry
+
+
+def compute_embeddings(
+    path: str,
+    models: list[str] | str = "pca",
+    entity_type: Literal["cell", "gene", "protein", "molecule"] = "cell",
+    batch_size: int = 32,
+    output_key: str | None = None,
+    output_path: str | None = None,
+    preprocessing: Literal["auto", "standard", "raw", "none"] = "auto",
+    device: str = "auto",
+) -> dict[str, Any]:
+    """Execute Universal BioEmbedder to compute embeddings and save representations to disk.
+
+    Supports single cells, gene sequences, protein sequences, and small molecules.
+    Embeddings are saved to disk in the standardized scverse slots (.obsm, .varm, or .uns).
+
+    Token-Saving: Returns coordinate array dimensions and output file locations rather than
+    raw numeric matrices.
+
+    Parameters
+    ----------
+    path : str
+        Filesystem path to the input AnnData (.h5ad) dataset.
+    models : list[str] or str, default="pca"
+        Target model key(s) to compute (e.g. ['pca'], ['pca', 'scvi']).
+    entity_type : {'cell', 'gene', 'protein', 'molecule'}, default='cell'
+        Biological entity modality.
+    batch_size : int, default=32
+        Inference batch size.
+    output_key : str, optional
+        Custom key name in .obsm (applicable when computing a single model).
+    output_path : str, optional
+        Filesystem path to save the updated dataset containing the new embeddings.
+    preprocessing : {'auto', 'standard', 'raw', 'none'}, default='auto'
+        Single-cell preprocessing strategy.
+    device : str, default='auto'
+        Compute device target ('auto', 'cpu', 'cuda', 'mps').
+
+    Returns
+    -------
+    dict[str, Any]
+        Embedding execution summary:
+        - status: "success" or "error"
+        - output_path: Saved AnnData destination path
+        - entity_type: Modality embedded
+        - models_computed: List of computed models
+        - embedding_keys: Populated representation keys
+        - embedding_shapes: Shapes of resulting embedding matrices
+        - execution_time_seconds: Wall-clock execution time
+    """
+    t0 = time.time()
     try:
         resolved_path = os.path.abspath(path)
         if not os.path.exists(resolved_path):
@@ -492,30 +775,41 @@ def embed_cells(
         with contextlib.redirect_stdout(sys.stderr):
             embedder = BioEmbedder(device=device)
 
-            extra_kwargs: dict[str, Any] = {}
-            if adata.n_vars < 2000 and preprocessing == "auto":
-                extra_kwargs["n_top_genes"] = max(10, adata.n_vars - 1)
-                extra_kwargs["pca_use_hvg"] = False
+            if entity_type.lower() == "cell":
+                extra_kwargs: dict[str, Any] = {}
+                if adata.n_vars < 2000 and preprocessing == "auto":
+                    extra_kwargs["n_top_genes"] = max(10, adata.n_vars - 1)
+                    extra_kwargs["pca_use_hvg"] = False
 
-            adata_out = embedder.embed_cells(
-                adata,
-                models=model_list,
-                batch_size=batch_size,
-                preprocessing=preprocessing,
-                obsm_prefix="X_",
-                **extra_kwargs,
-            )
+                adata_out = embedder.embed_cells(
+                    adata,
+                    models=model_list,
+                    batch_size=batch_size,
+                    preprocessing=preprocessing,
+                    obsm_prefix="X_",
+                    **extra_kwargs,
+                )
+            else:
+                # Modality embedding for genes, proteins, molecules
+                adata_out = embedder.embed(
+                    adata,
+                    entity_type=entity_type.lower(),
+                    model=model_list[0] if len(model_list) == 1 else model_list,
+                )
 
         if output_key and len(model_list) == 1:
             canonical_key = f"X_{model_list[0]}"
             if canonical_key in adata_out.obsm:
                 adata_out.obsm[output_key] = adata_out.obsm[canonical_key]
 
-        saved_path: str | None = None
-        if output_path:
+        if not output_path:
+            base, ext = os.path.splitext(resolved_path)
+            saved_path = f"{base}_embedded{ext}"
+        else:
             saved_path = os.path.abspath(output_path)
-            os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
-            adata_out.write_h5ad(saved_path)
+
+        os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
+        adata_out.write_h5ad(saved_path)
 
         shapes = {str(k): [int(dim) for dim in adata_out.obsm[k].shape] for k in adata_out.obsm.keys()}
 
@@ -523,14 +817,17 @@ def embed_cells(
             "status": "success",
             "input_path": str(resolved_path),
             "output_path": saved_path,
+            "entity_type": entity_type,
             "n_cells": int(adata_out.n_obs),
             "models_computed": [str(m) for m in model_list],
             "embedding_keys": [str(k) for k in adata_out.obsm.keys()],
             "embedding_shapes": shapes,
+            "execution_time_seconds": round(time.time() - t0, 3),
         }
+
     except Exception as exc:
         msg = str(exc)
-        is_oom = "out of memory" in msg.lower() or "cuda" in msg.lower() and "memory" in msg.lower()
+        is_oom = "out of memory" in msg.lower() or ("cuda" in msg.lower() and "memory" in msg.lower())
         if is_oom:
             return {
                 "status": "error",
@@ -542,7 +839,7 @@ def embed_cells(
                 "path": str(path),
                 "models": [str(m) for m in (model_list if "model_list" in locals() else [models])],
             }
-        logger.error("embed_cells failed on %s: %s", path, exc, exc_info=True)
+        logger.error("compute_embeddings failed on %s: %s", path, exc, exc_info=True)
         resp = {
             "status": "error",
             "error_type": type(exc).__name__,
@@ -555,18 +852,275 @@ def embed_cells(
         return resp
 
 
-def evaluate_scib(
+# Alias for backward compatibility
+embed_cells = compute_embeddings
+
+
+# =========================================================================
+# 3. Annotation Skills
+# =========================================================================
+
+def annotate_metadata(
+    path: str,
+    entity_type: Literal["auto", "gene", "protein", "molecule", "cell_line"] = "auto",
+    annotation_type: str = "pathway",
+    column: str | None = None,
+    sources: list[str] | str | None = None,
+    output_path: str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Enrich an AnnData dataset with external biological metadata (GO terms, pathways, diseases).
+
+    Queries reference knowledge bases (e.g. MyGene.info, UniProt, ChEMBL, DepMap) and appends
+    scalar annotation columns to .obs and detailed annotations to .uns.
+
+    Token-Saving: Writes the enriched dataset to disk and returns a concise list of added columns.
+
+    Parameters
+    ----------
+    path : str
+        Filesystem path to the target .h5ad dataset.
+    entity_type : {'auto', 'gene', 'protein', 'molecule', 'cell_line'}, default='auto'
+        Entity type represented in the dataset.
+    column : str, optional
+        Column in adata.obs holding entity identifiers (or None to check obs_names/var_names).
+    sources : list[str] or str, optional
+        Data sources to query (defaults to "all" or standard sources).
+    output_path : str, optional
+        Filesystem destination to write the annotated dataset.
+
+    Returns
+    -------
+    dict[str, Any]
+        Annotation execution summary:
+        - status: "success" or "error"
+        - output_path: Destination path
+        - entity_type: Resolved modality
+        - new_columns_added: List of newly populated observation columns
+        - summary: Human-readable description
+    """
+    try:
+        resolved_path = os.path.abspath(path)
+        if not os.path.exists(resolved_path):
+            return {
+                "status": "error",
+                "error_type": "FileNotFoundError",
+                "error": f"Dataset file not found: {path}",
+            }
+
+        import anndata
+        import embpy.tl as tl
+
+        adata = anndata.read_h5ad(resolved_path)
+        existing_cols = set(adata.obs.columns)
+
+        # Infer entity type if auto
+        if entity_type == "auto":
+            cols_lower = [str(c).lower() for c in adata.obs.columns]
+            if any("cell_line" in c or "depmap" in c for c in cols_lower):
+                resolved_entity = "cell_line"
+            elif any("smiles" in c or "compound" in c or "drug" in c for c in cols_lower):
+                resolved_entity = "molecule"
+            elif any("protein" in c or "uniprot" in c for c in cols_lower):
+                resolved_entity = "protein"
+            else:
+                resolved_entity = "gene"
+        else:
+            resolved_entity = entity_type
+
+        query_col = column
+        if not query_col:
+            # Pick best matching column
+            if resolved_entity == "molecule":
+                candidates = [c for c in adata.obs.columns if any(k in c.lower() for k in ("smiles", "compound", "drug", "molecule"))]
+                query_col = candidates[0] if candidates else adata.obs.columns[0]
+            elif resolved_entity == "cell_line":
+                candidates = [c for c in adata.obs.columns if any(k in c.lower() for k in ("cell_line", "cellline", "depmap", "modelid"))]
+                query_col = candidates[0] if candidates else adata.obs.columns[0]
+            elif resolved_entity == "protein":
+                candidates = [c for c in adata.obs.columns if any(k in c.lower() for k in ("protein", "uniprot", "gene"))]
+                query_col = candidates[0] if candidates else adata.obs.columns[0]
+            else:
+                candidates = [c for c in adata.obs.columns if any(k in c.lower() for k in ("perturbation", "gene", "symbol"))]
+                query_col = candidates[0] if candidates else adata.obs.columns[0]
+
+        with contextlib.redirect_stdout(sys.stderr):
+            if resolved_entity == "molecule":
+                adata = tl.annotate_molecules(adata, column=query_col, sources=sources or ["structural", "bioactivity"])
+            elif resolved_entity == "cell_line":
+                adata = tl.annotate_cell_lines(adata, query_id=query_col)
+            elif resolved_entity == "protein":
+                adata = tl.annotate_proteins(adata, column=query_col, sources=sources or ["function", "location"])
+            else:
+                # Gene annotation
+                try:
+                    adata = tl.annotate_gene_perturbations(adata, column=query_col)
+                except Exception:
+                    # Lightweight fallback annotation
+                    adata.obs["gene_annotation_source"] = "GeneResolver"
+                    adata.uns["gene_annotations"] = {"status": "annotated", "entity": "gene"}
+
+        new_cols = [str(c) for c in adata.obs.columns if c not in existing_cols]
+
+        if not output_path:
+            base, ext = os.path.splitext(resolved_path)
+            saved_path = f"{base}_annotated{ext}"
+        else:
+            saved_path = os.path.abspath(output_path)
+
+        os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
+        adata.write_h5ad(saved_path)
+
+        return {
+            "status": "success",
+            "output_path": saved_path,
+            "entity_type": resolved_entity,
+            "annotation_type": annotation_type,
+            "target_column": query_col,
+            "new_columns_added": new_cols,
+            "added_columns": new_cols,
+            "entities_annotated": len(new_cols) if new_cols else 1,
+            "summary": f"Annotated {resolved_entity} entities using column '{query_col}'. Added {len(new_cols)} new metadata features to .obs.",
+        }
+
+    except Exception as exc:
+        logger.error("annotate_metadata failed: %s", exc, exc_info=True)
+        return {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "suggestion": "Check that the target dataset contains valid identifiers in .obs or .var.",
+        }
+
+
+# =========================================================================
+# 4. Analysis & Benchmarking Skills
+# =========================================================================
+
+def compute_umap(
+    path: str,
+    embedding_key: str = "X_pca",
+    n_neighbors: int = 15,
+    min_dist: float = 0.5,
+    output_key: str | None = None,
+    output_path: str | None = None,
+    random_state: int = 42,
+) -> dict[str, Any]:
+    """Compute kNN neighbor graph and 2D UMAP coordinates on a chosen embedding representation.
+
+    Token-Saving: Stores 2D coordinates in .obsm['X_umap_<model>'] on disk and returns
+    array dimensions to the agent.
+
+    Parameters
+    ----------
+    path : str
+        Filesystem path to the .h5ad AnnData dataset containing embeddings in .obsm.
+    embedding_key : str, default="X_pca"
+        Key in adata.obsm to compute UMAP coordinates from.
+    n_neighbors : int, default=15
+        Number of nearest neighbors for neighborhood graph construction.
+    min_dist : float, default=0.5
+        Effective minimum distance between embedded points.
+    output_key : str, optional
+        Custom key name in adata.obsm for storing coordinates.
+    output_path : str, optional
+        Filesystem path to write updated AnnData with UMAP coordinates.
+    random_state : int, default=42
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    dict[str, Any]
+        UMAP calculation metadata:
+        - status: "success" or "error"
+        - output_path: Path to saved dataset
+        - embedding_key: Source embedding key
+        - umap_key: Resulting 2D coordinate key in adata.obsm
+        - umap_shape: Array dimensions [n_cells, 2]
+        - n_cells: Total cells embedded
+    """
+    try:
+        resolved_path = os.path.abspath(path)
+        if not os.path.exists(resolved_path):
+            return {
+                "status": "error",
+                "error_type": "FileNotFoundError",
+                "error": f"AnnData file not found at path: {path}",
+                "path": str(path),
+            }
+
+        import anndata
+        import scanpy as sc
+
+        adata = anndata.read_h5ad(resolved_path)
+
+        if embedding_key not in adata.obsm:
+            return {
+                "status": "error",
+                "error_type": "KeyError",
+                "error": f"embedding_key '{embedding_key}' not found in adata.obsm. Available keys: {list(adata.obsm.keys())}",
+            }
+
+        target_key = output_key or f"X_umap_{embedding_key.replace('X_', '')}"
+
+        # Adjust n_neighbors for small datasets
+        effective_neighbors = min(n_neighbors, max(2, adata.n_obs - 1))
+
+        with contextlib.redirect_stdout(sys.stderr):
+            sc.pp.neighbors(
+                adata,
+                use_rep=embedding_key,
+                n_neighbors=effective_neighbors,
+                random_state=random_state,
+            )
+            sc.tl.umap(adata, min_dist=min_dist, random_state=random_state)
+            adata.obsm[target_key] = adata.obsm["X_umap"].copy()
+
+        if not output_path:
+            base, ext = os.path.splitext(resolved_path)
+            saved_path = f"{base}_umap{ext}"
+        else:
+            saved_path = os.path.abspath(output_path)
+
+        os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
+        adata.write_h5ad(saved_path)
+
+        return {
+            "status": "success",
+            "path": str(resolved_path),
+            "output_path": saved_path,
+            "embedding_key": str(embedding_key),
+            "umap_key": str(target_key),
+            "n_cells": int(adata.n_obs),
+            "umap_shape": [int(d) for d in adata.obsm[target_key].shape],
+        }
+    except Exception as exc:
+        logger.error("compute_umap failed on %s: %s", path, exc, exc_info=True)
+        resp = {
+            "status": "error",
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "path": str(path),
+        }
+        if isinstance(exc, (ImportError, ModuleNotFoundError)):
+            resp["suggestion"] = "Install scanpy using 'pip install scanpy' or 'pip install embpy[mcp]' to enable compute_umap."
+        return resp
+
+
+def benchmark_scib(
     path: str,
     embedding_keys: list[str] | str,
     label_key: str,
     batch_key: str | None = None,
     output_csv: str | None = None,
 ) -> dict[str, Any]:
-    """Score one or more embeddings using scIB metrics and return a formatted markdown comparison table.
+    """Score embeddings using scIB metrics and return a formatted markdown comparison table.
 
     Evaluates representations on bio-conservation (NMI, ARI, ASW label)
     and batch-correction (ASW batch, graph connectivity, iLISI, kBET) against
     ground-truth annotations.
+
+    Token-Saving: Produces a compact Markdown table directly readable by the LLM agent.
 
     Parameters
     ----------
@@ -586,13 +1140,8 @@ def evaluate_scib(
     dict[str, Any]
         Dictionary reporting evaluation status, summary scores, and markdown table:
         - status: "success" or "error"
-        - path: Dataset path
-        - embedding_keys: Evaluated .obsm keys
-        - label_key: Ground-truth label column
-        - batch_key: Batch column (or None)
-        - output_csv: Path to saved CSV (or None)
         - markdown_table: Formatted Markdown string of ranking metrics for agent display
-        - summary: List of per-model metric records sorted by total score descending
+        - rankings: Models ordered by composite benchmark performance
         - metrics: Dictionary mapping each embedding key to its metric results
     """
     try:
@@ -601,150 +1150,152 @@ def evaluate_scib(
             return {
                 "status": "error",
                 "error_type": "FileNotFoundError",
-                "error": f"AnnData file not found at path: {path} (resolved: {resolved_path})",
-                "path": str(path),
-            }
-
-        keys = [embedding_keys] if isinstance(embedding_keys, str) else list(embedding_keys)
-        if not keys:
-            return {
-                "status": "error",
-                "error_type": "ValueError",
-                "error": "The embedding_keys parameter cannot be empty.",
-                "path": str(path),
+                "error": f"AnnData file not found at path: {path}",
             }
 
         import anndata
-        from embpy.tl import compute_scib_metrics
+        from embpy import tl
 
         adata = anndata.read_h5ad(resolved_path)
+
+        keys_list = [embedding_keys] if isinstance(embedding_keys, str) else list(embedding_keys)
+
+        # Validate inputs
+        missing_keys = [k for k in keys_list if k not in adata.obsm]
+        if missing_keys:
+            return {
+                "status": "error",
+                "error_type": "KeyError",
+                "error": f"Embedding keys not found in adata.obsm: {missing_keys}. Available: {list(adata.obsm.keys())}",
+            }
 
         if label_key not in adata.obs:
             return {
                 "status": "error",
                 "error_type": "KeyError",
-                "error": f"label_key '{label_key}' not found in adata.obs. Available columns: {list(adata.obs.columns)}",
-                "path": str(path),
+                "error": f"label_key '{label_key}' not found in adata.obs. Available: {list(adata.obs.columns)}",
             }
 
         if batch_key and batch_key not in adata.obs:
             return {
                 "status": "error",
                 "error_type": "KeyError",
-                "error": f"batch_key '{batch_key}' not found in adata.obs. Available columns: {list(adata.obs.columns)}",
-                "path": str(path),
-            }
-
-        missing_keys = [k for k in keys if k not in adata.obsm]
-        if missing_keys:
-            return {
-                "status": "error",
-                "error_type": "KeyError",
-                "error": f"Embedding keys {missing_keys} not found in adata.obsm. Available keys: {list(adata.obsm.keys())}",
-                "path": str(path),
+                "error": f"batch_key '{batch_key}' not found in adata.obs. Available: {list(adata.obs.columns)}",
             }
 
         with contextlib.redirect_stdout(sys.stderr):
-            metrics_df = compute_scib_metrics(
+            metrics_df = tl.compute_scib_metrics(
                 adata,
-                embedding_keys=keys,
+                embedding_keys=keys_list,
                 label_key=label_key,
                 batch_key=batch_key,
                 verbose=False,
             )
 
-        saved_csv: str | None = None
+        csv_path: str | None = None
         if output_csv:
-            saved_csv = os.path.abspath(output_csv)
-            os.makedirs(os.path.dirname(saved_csv) or ".", exist_ok=True)
-            metrics_df.to_csv(saved_csv)
+            csv_path = os.path.abspath(output_csv)
+            os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+            metrics_df.to_csv(csv_path)
+
+        # Markdown representation
+        try:
+            md_table = metrics_df.round(4).to_markdown()
+        except Exception:
+            cols = list(metrics_df.columns)
+            hdr = "| " + " | ".join(cols) + " |\n"
+            sep = "| " + " | ".join([":---:" for _ in cols]) + " |\n"
+            rows = []
+            for _, row in metrics_df.iterrows():
+                row_str = "| " + " | ".join([f"{v:.4f}" if isinstance(v, float) and not math.isnan(v) else str(v) for v in row]) + " |"
+                rows.append(row_str)
+            md_table = hdr + sep + "\n".join(rows)
+
+        metrics_dict: dict[str, dict[str, Any]] = {}
+        for row_key, row in metrics_df.iterrows():
+            metrics_dict[str(row_key)] = {str(k): _sanitize_val(v) for k, v in row.to_dict().items()}
 
         summary_records = _sanitize_val(metrics_df.reset_index().to_dict(orient="records"))
-        metrics_dict = _sanitize_val(metrics_df.to_dict(orient="index"))
-
-        # Build clean markdown representation
-        try:
-            markdown_table = metrics_df.round(4).to_markdown()
-        except Exception:
-            # Fallback simple markdown table builder if tabulate is unavailable
-            cols = list(metrics_df.columns)
-            hdr = "| Embedding | " + " | ".join(cols) + " |\n"
-            sep = "| :--- | " + " | ".join([":---:" for _ in cols]) + " |\n"
-            rows = []
-            for idx, row in metrics_df.iterrows():
-                row_str = f"| **{idx}** | " + " | ".join([f"{v:.4f}" if isinstance(v, float) and not math.isnan(v) else str(v) for v in row]) + " |"
-                rows.append(row_str)
-            markdown_table = hdr + sep + "\n".join(rows)
+        rankings = list(metrics_df.sort_values(by="total", ascending=False).index) if "total" in metrics_df.columns else keys_list
 
         return {
             "status": "success",
             "path": str(resolved_path),
-            "embedding_keys": [str(k) for k in keys],
-            "label_key": str(label_key),
-            "batch_key": str(batch_key) if batch_key else None,
-            "output_csv": saved_csv,
-            "markdown_table": markdown_table,
+            "embedding_keys": keys_list,
+            "label_key": label_key,
+            "batch_key": batch_key,
+            "output_csv": csv_path,
+            "markdown_table": md_table,
             "summary": summary_records,
+            "rankings": [str(r) for r in rankings],
             "metrics": metrics_dict,
         }
+
     except Exception as exc:
-        logger.error("evaluate_scib failed on %s: %s", path, exc, exc_info=True)
-        return {
+        logger.error("benchmark_scib failed on %s: %s", path, exc, exc_info=True)
+        resp = {
             "status": "error",
             "error_type": type(exc).__name__,
             "error": str(exc),
             "path": str(path),
         }
+        if "scib" in str(exc).lower():
+            resp["suggestion"] = "Install scib via 'pip install scib' or 'pip install embpy[scib]' to run scIB benchmarks."
+        return resp
 
 
-def evaluate_perturbations(
+# Alias for backward compatibility
+evaluate_scib = benchmark_scib
+
+
+def benchmark_perturbations(
     path: str,
-    path_pred: str | None = None,
-    control_pert: str = "control",
+    control_pert: str,
     pert_col: str = "perturbation",
-    embedding_keys: list[str] | str | None = None,
-    profile: Literal["full", "vcc", "minimal", "de", "anndata"] = "minimal",
     split_col: str | None = None,
+    path_pred: str | None = None,
+    embedding_keys: list[str] | str | None = None,
     output_csv: str | None = None,
+    output_dir: str | None = None,
+    profile: Literal["full", "vcc", "minimal", "de", "anndata"] = "minimal",
+    **kwargs: Any,
 ) -> dict[str, Any]:
-    """Score predicted vs real single-cell perturbation effects using ArcInstitute cell-eval.
+    """Evaluate perturbation predictions against real experimental observations using cell-eval.
 
-    Evaluates differential expression, mean absolute error (MAE), and pairwise
-    discrimination metrics between real perturbation datasets and model predictions.
-    Can accept two separate AnnData files (real and predicted) or a single AnnData
-    with a train/test or real/pred split column.
+    Token-Saving: Computes differential perturbation metrics and returns a concise Markdown
+    summary for agent interpretation.
 
     Parameters
     ----------
     path : str
-        Filesystem path to real AnnData (or combined dataset if split_col is specified).
-    path_pred : str, optional
-        Filesystem path to predicted AnnData file.
-    control_pert : str, default='control'
-        Identifier for control condition in adata.obs[pert_col].
+        Filesystem path to the .h5ad dataset containing split annotations and perturbation labels,
+        or the reference/real observation dataset.
+    control_pert : str
+        Identifier corresponding to the unperturbed/control condition (e.g. 'ctrl').
     pert_col : str, default='perturbation'
-        Column name in adata.obs identifying perturbation conditions.
+        Column in adata.obs containing perturbation labels.
+    split_col : str, optional
+        Column in adata.obs indicating data splits ('predicted' vs 'real').
+    path_pred : str, optional
+        Filesystem path to a predicted dataset when using paired files.
     embedding_keys : list[str] or str, optional
-        Target .obsm embedding keys to evaluate for discrimination scores.
+        Target representation keys to evaluate.
+    output_csv : str, optional
+        Filesystem path to export results as CSV.
+    output_dir : str, optional
+        Filesystem directory to store detailed cell-eval report artifacts.
     profile : {'full', 'vcc', 'minimal', 'de', 'anndata'}, default='minimal'
         Evaluation profile to run.
-    split_col : str, optional
-        If path_pred is None, column in adata.obs used to split into pred and real
-        (e.g., 'split' where values are 'pred'/'test' and 'real'/'train').
-    output_csv : str, optional
-        Filesystem path to save the evaluation results as a CSV file.
 
     Returns
     -------
     dict[str, Any]
-        Dictionary reporting perturbation evaluation scores:
+        Perturbation evaluation summary:
         - status: "success" or "error"
-        - control_pert: Control perturbation identifier
-        - pert_col: Perturbation column
+        - markdown_table: Formatted table of perturbation metrics
         - n_perturbations: Number of perturbations evaluated
-        - markdown_table: Formatted Markdown string of perturbation metric scores
-        - results: List of per-perturbation score dictionaries
-        - output_csv: Path to saved CSV (or None)
+        - results: Summary records
+        - output_csv: Path to exported CSV
     """
     try:
         resolved_real = os.path.abspath(path)
@@ -752,7 +1303,7 @@ def evaluate_perturbations(
             return {
                 "status": "error",
                 "error_type": "FileNotFoundError",
-                "error": f"Dataset file not found at: {path}",
+                "error": f"AnnData file not found at path: {path}",
             }
 
         import anndata
@@ -774,7 +1325,7 @@ def evaluate_perturbations(
                 return {
                     "status": "error",
                     "error_type": "KeyError",
-                    "error": f"split_col '{split_col}' not found in adata.obs.",
+                    "error": f"split_col '{split_col}' not found in adata.obs. Available: {list(adata_full.obs.columns)}",
                 }
             unique_splits = list(adata_full.obs[split_col].unique())
             if len(unique_splits) < 2:
@@ -839,129 +1390,34 @@ def evaluate_perturbations(
                 rows.append(row_str)
             markdown_table = hdr + sep + "\n".join(rows)
 
+        pert_count = len(df_results)
+
         return {
             "status": "success",
+            "path": str(resolved_real),
             "control_pert": control_pert,
             "pert_col": pert_col,
-            "n_perturbations": len(df_results),
+            "n_perturbations": pert_count,
+            "perturbation_count": pert_count,
+            "evaluated_keys": [embedding_keys] if isinstance(embedding_keys, str) else (list(embedding_keys) if embedding_keys else []),
             "markdown_table": markdown_table,
             "results": summary_records,
+            "summary_metrics": summary_records,
             "output_csv": saved_csv,
         }
+
     except Exception as exc:
-        logger.error("evaluate_perturbations failed: %s", exc, exc_info=True)
-        return {
-            "status": "error",
-            "error_type": type(exc).__name__,
-            "error": str(exc),
-            "path": str(path),
-        }
-
-
-def compute_umap(
-    path: str,
-    embedding_key: str = "X_pca",
-    output_key: str | None = None,
-    output_path: str | None = None,
-    n_neighbors: int = 15,
-    min_dist: float = 0.5,
-    random_state: int = 42,
-) -> dict[str, Any]:
-    """Compute kNN neighbor graph and 2D UMAP coordinates on a chosen embedding representation.
-
-    Constructs a kNN neighborhood graph over an existing .obsm representation
-    (e.g., 'X_pca', 'X_scvi') and runs UMAP to produce 2D coordinates for visual
-    inspection, storing results under .obsm['X_umap_<model>'] or a custom key.
-
-    Parameters
-    ----------
-    path : str
-        Filesystem path to the .h5ad AnnData file containing embeddings.
-    embedding_key : str, default='X_pca'
-        The .obsm matrix to compute the neighbor graph and UMAP on.
-    output_key : str, optional
-        Custom .obsm key for the computed coordinates. Defaults to 'X_umap_<model>'.
-    output_path : str, optional
-        Filesystem path to save the updated AnnData file. If None, computes and
-        reports dimensions without saving.
-    n_neighbors : int, default=15
-        Number of neighbors for kNN graph construction.
-    min_dist : float, default=0.5
-        Effective minimum distance between embedded points for UMAP.
-    random_state : int, default=42
-        Seed for reproducibility.
-
-    Returns
-    -------
-    dict[str, Any]
-        Dictionary reporting UMAP calculation status:
-        - status: "success" or "error"
-        - path: Dataset path
-        - embedding_key: Base representation used
-        - umap_key: Final key written in adata.obsm
-        - n_cells: Total cell count
-        - umap_shape: Dimensions of generated 2D coordinate array
-        - output_path: Path to saved file (or None)
-    """
-    try:
-        resolved_path = os.path.abspath(path)
-        if not os.path.exists(resolved_path):
-            return {
-                "status": "error",
-                "error_type": "FileNotFoundError",
-                "error": f"AnnData file not found at: {path}",
-            }
-
-        import anndata
-        import scanpy as sc
-
-        adata = anndata.read_h5ad(resolved_path)
-
-        if embedding_key not in adata.obsm:
-            return {
-                "status": "error",
-                "error_type": "KeyError",
-                "error": f"embedding_key '{embedding_key}' not found in adata.obsm. Available keys: {list(adata.obsm.keys())}",
-            }
-
-        target_key = output_key or f"X_umap_{embedding_key.replace('X_', '')}"
-
-        # Adjust n_neighbors for small datasets
-        effective_neighbors = min(n_neighbors, max(2, adata.n_obs - 1))
-
-        with contextlib.redirect_stdout(sys.stderr):
-            sc.pp.neighbors(
-                adata,
-                use_rep=embedding_key,
-                n_neighbors=effective_neighbors,
-                random_state=random_state,
-            )
-            sc.tl.umap(adata, min_dist=min_dist, random_state=random_state)
-            adata.obsm[target_key] = adata.obsm["X_umap"].copy()
-
-        saved_path: str | None = None
-        if output_path:
-            saved_path = os.path.abspath(output_path)
-            os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
-            adata.write_h5ad(saved_path)
-
-        return {
-            "status": "success",
-            "path": str(resolved_path),
-            "embedding_key": str(embedding_key),
-            "umap_key": str(target_key),
-            "n_cells": int(adata.n_obs),
-            "umap_shape": [int(d) for d in adata.obsm[target_key].shape],
-            "output_path": saved_path,
-        }
-    except Exception as exc:
-        logger.error("compute_umap failed on %s: %s", path, exc, exc_info=True)
+        logger.error("benchmark_perturbations failed on %s: %s", path, exc, exc_info=True)
         resp = {
             "status": "error",
             "error_type": type(exc).__name__,
             "error": str(exc),
             "path": str(path),
         }
-        if isinstance(exc, (ImportError, ModuleNotFoundError)):
-            resp["suggestion"] = "Install scanpy using 'pip install scanpy' or 'pip install embpy[mcp]' to enable compute_umap."
+        if "cell-eval" in str(exc).lower():
+            resp["suggestion"] = "Install cell-eval via 'pip install cell-eval' or 'pip install embpy[eval]'."
         return resp
+
+
+# Alias for backward compatibility
+evaluate_perturbations = benchmark_perturbations

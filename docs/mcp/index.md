@@ -1,115 +1,107 @@
-# Agentic MCP Skills & Workflows
+# Autonomous Agentic Bioinformatics: The Universal `embpy` MCP Architecture
 
-Single-cell biology workflows are increasingly dynamic, spanning data triage, gene identifier harmonization, foundation model embedding, integration benchmarking, and perturbation scoring. The **Model Context Protocol (MCP)** server for `embpy` connects AI assistants (such as **Claude Desktop**, **Cursor**, **Windsurf**, and autonomous agents) directly to single-cell foundation models and scverse analytical pipelines.
+Single-cell biology workflows are increasingly dynamic, requiring seamless orchestration across data triage, identifier harmonization, foundation model embedding, external biological knowledge enrichment, and comparative benchmarking. 
+
+The **Model Context Protocol (MCP)** server for `embpy` exposes the entire universal embedding and analytical pipeline directly to AI assistants (**Claude Desktop**, **Cursor**, **Windsurf**, and autonomous agent frameworks) as a reliable, self-correcting state machine.
 
 ---
 
-## 1. Why MCP for Single-Cell Biology?
+## 1. The Context Window Bottleneck & "Token-Saving" Guardrails
 
-Historically, computational biologists and bioinformaticians spend hours writing boilerplate code to:
-- Inspect large `.h5ad` AnnData files to verify cell counts, batch columns, and normalization status.
-- Diagnose missing gene identifiers (e.g., reconciling Ensembl gene IDs with HGNC symbols for Geneformer or scGPT).
-- Run high-dimensional embedding workflows across multiple foundation models (`pca`, `scvi`, `scgpt`, `geneformer`, `state`).
-- Benchmark integration metrics using `scIB` and evaluate perturbation responses with `cell-eval`.
+Connecting Large Language Models (LLMs) directly to single-cell genomics presents a critical architectural challenge: **Context Window Exhaustion**.
 
-With `embpy`'s native MCP server, an AI assistant becomes an active laboratory collaborator capable of executing real, sandboxed bioinformatics operations via standard tool calling.
+A typical single-cell dataset with 15,000 cells and 2,000 highly variable genes contains over **30,000,000 numerical matrix entries**. Serializing even a tiny fraction of this raw matrix into an LLM context window crashes the model or exhausts tokens within a single turn.
+
+`embpy` enforces strict **Token-Saving Guardrails**:
+
+1. **Never Return Raw Matrices:** Tool invocations never output high-dimensional count arrays or dense float tensors into the LLM context. Data remains cached in standard `.h5ad` files or persistent disk structures.
+2. **Compact Metadata Responses:** Every tool returns a concise JSON envelope containing:
+   - Execution status (`success` or `error`)
+   - Filesystem destination paths for downstream steps
+   - Matrix dimensions and shapes (e.g. `(60, 50)`)
+   - Mapping success percentages and sample pairs
+   - Formatted Markdown summary tables for metrics that the LLM can interpret effortlessly.
+3. **Graceful Error Trapping:** Scanpy, PyTorch, or AnnData exceptions (e.g., shape mismatches, missing observation columns, out-of-memory warnings) are caught and converted into actionable error messages, allowing the AI agent to adjust its parameters autonomously.
+4. **Stdio Protocol Isolation:** All runtime diagnostics, C++ stderr logs, and library chatter are strictly redirected to `sys.stderr`, ensuring `sys.stdout` remains pristine JSON-RPC 2.0 frames.
+
+---
+
+## 2. The 4-Pillar Universal State Machine
+
+The `embpy` MCP server organizes biological representation learning into four autonomous pillars:
 
 ```mermaid
 flowchart TD
-    subgraph Client["AI Coding Assistant / Agent Client"]
-        User["User Prompt"] --> Agent["LLM Reasoning Engine"]
-        Agent --> ToolCall["MCP Tool Call (JSON-RPC)"]
+    subgraph PillarA["Pillar 1: Inspection & Preprocessing"]
+        T1["inspect_data"] -->|"Inspect metadata & candidate keys"| T2["resolve_identifiers"]
+        T2 -->|"Harmonize Ensembl / HGNC / SMILES"| T3["preprocess_counts"]
+        T3 -->|"Normalize + log1p + HVG (write .h5ad)"| D1[("Preprocessed .h5ad on Disk")]
     end
 
-    subgraph Server["embpy MCP Server (embpy-mcp)"]
-        RPC["JSON-RPC 2.0 Dispatcher"]
-        subgraph Tools["Bioinformatics Tool Suite"]
-            T1["inspect_anndata"]
-            T2["list_available_models"]
-            T3["map_gene_identifiers"]
-            T4["embed_cells"]
-            T5["evaluate_scib"]
-            T6["evaluate_perturbations"]
-            T7["compute_umap"]
-        end
-        RPC --> Tools
+    subgraph PillarB["Pillar 2: Universal BioEmbedder"]
+        D1 --> T5["compute_embeddings"]
+        T4["list_model_registry"] -.->|"Query 150+ models"| T5
+        T5 -->|"Extract PCA / scVI / Foundation embeddings"| D2[("Embedded .h5ad (.obsm)")]
     end
 
-    subgraph Backends["Underlying Computational Backends"]
-        BE["embpy.BioEmbedder"]
-        GR["embpy.GeneResolver"]
-        SCIB["scIB Metrics (tl.compute_scib_metrics)"]
-        CE["cell-eval (tl.run_cell_eval)"]
-        SCANPY["Scanpy (sc.pp.neighbors / sc.tl.umap)"]
+    subgraph PillarC["Pillar 3: Biological Annotation"]
+        D2 --> T6["annotate_metadata"]
+        T6 -->|"Enrich GO terms, pathways, disease associations"| D3[("Annotated .h5ad")]
     end
 
-    ToolCall -- "stdio transport" --> RPC
-    T1 -. "h5py / AnnData read" .-> Backends
-    T2 -. "Registry introspection" .-> Backends
-    T3 -. "Identifier mapping" .-> GR
-    T4 -. "Foundation models" .-> BE
-    T5 -. "Batch & bio metrics" .-> SCIB
-    T6 -. "Perturbation metrics" .-> CE
-    T7 -. "2D Graph manifold" .-> SCANPY
-    RPC -- "stdio (pure JSON / Markdown)" --> Agent
-    Agent --> UserResponse["Grounded Scientific Response"]
+    subgraph PillarD["Pillar 4: Analysis & Benchmarking"]
+        D3 --> T7["compute_umap"]
+        D3 --> T8["benchmark_scib"]
+        D3 --> T9["benchmark_perturbations"]
+        T7 -->|"2D coordinates in .obsm['X_umap']"| Summary["Markdown Summary Tables to Agent"]
+        T8 -->|"Bio-conservation (NMI, ARI, ASW, cLISI)"| Summary
+        T9 -->|"Perturbation response evaluation"| Summary
+    end
+
+    classDef pillar fill:#f8fafc,stroke:#3b82f6,stroke-width:2px;
+    classDef disk fill:#e0f2fe,stroke:#0284c7,stroke-width:2px;
+    classDef tool fill:#f0fdf4,stroke:#16a34a,stroke-width:2px;
+    class PillarA,PillarB,PillarC,PillarD pillar;
+    class D1,D2,D3 disk;
 ```
 
----
+### Pillar 1: Inspection & Preprocessing
+- **`inspect_data`**: Profiles AnnData `.h5ad` files or raw lists, returning cell/gene counts, available `.obs` columns, `.obsm` keys, and whether `.X` is raw counts or log-normalized. Automatically identifies best candidate columns for cell types (`label_key`) and technical batches (`batch_key`).
+- **`resolve_identifiers`**: Harmonizes biological vocabularies (e.g. HGNC symbols to Ensembl IDs for Geneformer/scGPT, or chemical names to SMILES). Returns mapping rates without dumping large dictionaries.
+- **`preprocess_counts`**: Executes library-size normalization (`sc.pp.normalize_total`), log1p transformation (`sc.pp.log1p`), and highly variable gene (HVG) selection. Saves the preprocessed dataset to disk and returns only the file path and summary metrics.
 
-## 2. Protocol Isolation & Crash Resilience
+### Pillar 2: Universal BioEmbedder
+- **`list_model_registry`**: Returns the complete catalog of ~150 biological foundation models across single cells, genes, proteins, and molecules, along with compute hardware status (CUDA/MPS/CPU).
+- **`compute_embeddings`**: Wraps `BioEmbedder.embed()` to generate representations across models (e.g., `pca`, `scvi`, `scgpt`, `esm2`, `borzoi`). Saves embeddings to `.obsm` (or `.varm`/`.uns`) and returns the new dataset path and array dimensions.
 
-MCP requires clean, uncorrupted communication over standard I/O (`stdio`). Single-cell libraries like PyTorch, Scanpy, scvi-tools, and scIB frequently print progress bars, diagnostic logs, or CUDA warnings to standard output, which can corrupt the JSON-RPC message framing.
+### Pillar 3: Biological Metadata Annotation
+- **`annotate_metadata`**: Enriches `.obs` or `.uns` with external biological knowledge (e.g., GO biological processes, KEGG/Reactome pathways, disease mappings, pharmacology) based on entities present. Returns a list of newly added annotation columns.
 
-`embpy` enforces strict **stdio isolation and resilience**:
-
-1. **Stdio Redirection:** Standard output from internal library operations is captured and redirected to `sys.stderr`, guaranteeing that `sys.stdout` carries only valid JSON-RPC frames.
-2. **Resilient Exception Trapping:** If an operation encounters an out-of-memory (OOM) error, a missing annotation column, or a missing model checkpoint, the tool catches the exception and returns a structured JSON diagnostic payload rather than crashing the server.
-3. **JSON Sanitization:** All floating-point numbers (`NaN`, `Inf`, `-Inf`) and NumPy/Pandas types are automatically sanitized to compliant JSON representations.
+### Pillar 4: Analysis & Benchmarking
+- **`compute_umap`**: Computes neighbor graphs and 2D UMAP coordinates over any chosen embedding representation, storing coordinates under `.obsm['X_umap_<model>']` and reporting array dimensions.
+- **`benchmark_scib`**: Wraps `tl.compute_scib_metrics()` to score embeddings on biological conservation (NMI, ARI, ASW label) and batch correction (ASW batch, graph connectivity, cLISI). Returns a concise Markdown table for immediate agent interpretation.
+- **`benchmark_perturbations`**: Wraps `tl.run_cell_eval()` across paired or split datasets, scoring differential perturbation responses against reference controls. Returns a concise Markdown summary table.
 
 ---
 
 ## 3. Quick Start
 
-Install `embpy` with the optional `[mcp]` dependency:
+Install `embpy` with MCP support:
 
 ```bash
 pip install "embpy[mcp]"
 ```
 
-Launch the MCP server directly from your terminal:
+Start the MCP server via stdio:
 
 ```bash
 embpy-mcp
 ```
 
-Or invoke the Python module entrypoint:
+Or run via Python module:
 
 ```bash
 python -m embpy.mcp.server
 ```
 
----
-
-## 4. MCP Tools Overview
-
-The `embpy` MCP server registers 7 specialized bioinformatics tools:
-
-| Tool | Core Capability | Target Entities |
-| :--- | :--- | :--- |
-| [`inspect_anndata`](tools-reference.md#1-inspect_anndata) | Inspects `.h5ad` file metadata, cell/gene counts, categorical obs, layers, and raw/normalized status without full memory loading. | AnnData files |
-| [`list_available_models`](tools-reference.md#2-list_available_models) | Discovers installed single-cell foundation models, hardware accelerator availability, and optional package extras. | System environment |
-| [`map_gene_identifiers`](tools-reference.md#3-map_gene_identifiers) | Maps and validates gene IDs between Ensembl (ENSG...) and HGNC symbols using `embpy.GeneResolver`. | Gene identifiers |
-| [`embed_cells`](tools-reference.md#4-embed_cells) | Runs `BioEmbedder.embed_cells()` with configurable model rosters, batch sizes, and devices. | Single-cell datasets |
-| [`evaluate_scib`](tools-reference.md#5-evaluate_scib) | Benchmarks embedding biological conservation (NMI, ARI, ASW, cLISI) and batch correction using scIB. | Cell embeddings |
-| [`evaluate_perturbations`](tools-reference.md#6-evaluate_perturbations) | Evaluates pairwise perturbation-response prediction metrics using `cell-eval`. | Perturbed single cells |
-| [`compute_umap`](tools-reference.md#7-compute_umap) | Computes neighbor graphs and 2D UMAP coordinates on chosen embedding keys. | Latent embeddings |
-
----
-
-## 5. Explore Next
-
-- 🔧 **[Tools Reference](tools-reference.md):** Complete specification of parameters, options, return types, and schemas for all 7 tools.
-- ⚙️ **[Client Setup Guide](client-setup.md):** Ready-to-copy configurations for Claude Desktop, Cursor, Windsurf, and custom agent loops.
-- 💬 **[Example Prompts](example-prompts.md):** Tested natural language prompts for driving single-cell workflows with LLM agents.
-- 📓 **[Jupyter Tutorial Notebook (`tutorials/05_mcp_agent_workflows.ipynb`)](https://github.com/theislab/embpy/blob/main/tutorials/05_mcp_agent_workflows.ipynb):** Hands-on interactive walkthrough illustrating programmatic tool invocation and simulated agent tool loops.
+For IDE-specific connection instructions, see [Client Setup Guide](client-setup.md).
