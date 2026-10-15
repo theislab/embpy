@@ -87,5 +87,11 @@ nav:
   - Hands-On Workflows: hands-on.md
   - Cross-Platform & Hardware: cross-platform.md
   - Architecture: technical.md
+  - Agentic MCP Skills:
+      - Overview: mcp/index.md
+      - Client Setup: mcp/client-setup.md
+      - Skills Reference: mcp/skills-reference.md
+      - Agent Mega-Prompts: mcp/prompts.md
   - API Reference: api-reference.md
   - Contributing: contributing.md
+

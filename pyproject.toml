@@ -62,6 +62,14 @@ dependencies = [
 ]
 
 scripts.embpy-static-embeddings = "embpy.scripts.package_static_embeddings:main"
+scripts.embpy-mcp = "embpy.mcp.server:main"
+
+# Model Context Protocol (MCP) server with bioinformatics skills
+optional-dependencies.mcp = [
+  "mcp>=1.0.0",
+  "scanpy>=1.10",
+]
+
 
 optional-dependencies.torch = [
   "torch>=2.5.1",
@@ -348,7 +356,7 @@ optional-dependencies.morphology = [
 #     kept opt-in so "all" doesn't imply an external API account
 # Install those explicitly in a separate env if you need them.
 optional-dependencies.all = [
-  "embpy[models,bio,genome,ppi,lamindb,pertpy,scanpy,scib,benchmark,morphology,seqmodels]",
+  "embpy[models,bio,genome,ppi,lamindb,pertpy,scanpy,scib,benchmark,morphology,seqmodels,mcp]",
 ]
 # Convenience bundles that combine "all" with a specific torch build. These
 # intentionally omit caduceus/evo2 so a plain `pip install embpy[all-cu124]`

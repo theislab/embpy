@@ -54,6 +54,8 @@ class PerturbationProcessor:
         self,
         identifiers: Sequence[str],
         organism: str = "human",
+        fallback_to_unmapped: bool = False,
+        strict: bool = False,
     ) -> dict[str, str | None]:
         """Normalize gene identifiers to canonical Ensembl IDs.
 
@@ -63,6 +65,10 @@ class PerturbationProcessor:
             List of gene symbols or Ensembl IDs to normalize.
         organism
             Target organism for resolution.
+        fallback_to_unmapped
+            If True, unmapped symbols retain their input string.
+        strict
+            If True, raises GeneResolutionError on unmapped genes.
 
         Returns
         -------
@@ -75,10 +81,19 @@ class PerturbationProcessor:
             if kind == "ensembl_id":
                 result[ident] = ident.split(".")[0].strip()
             elif kind == "symbol":
-                ens = self.gene_resolver.symbol_to_ensembl(ident, organism=organism)
+                try:
+                    ens = self.gene_resolver.symbol_to_ensembl(
+                        ident,
+                        organism=organism,
+                        fallback_to_unmapped=fallback_to_unmapped,
+                        strict=strict,
+                    )
+                except TypeError:
+                    # In case a custom/mock resolver only accepts (ident, organism)
+                    ens = self.gene_resolver.symbol_to_ensembl(ident, organism=organism)
                 result[ident] = ens
             else:
-                result[ident] = None
+                result[ident] = ident if fallback_to_unmapped else None
         return result
 
     def resolve_identifiers(
@@ -86,6 +101,8 @@ class PerturbationProcessor:
         identifiers: Sequence[str],
         id_type: str = "auto",
         organism: str = "human",
+        fallback_to_unmapped: bool = False,
+        strict: bool = False,
     ) -> pd.DataFrame:
         """Resolve a mixed list of identifiers to a structured DataFrame.
 
@@ -98,6 +115,10 @@ class PerturbationProcessor:
             ``"smiles"``, ``"drug_name"``.
         organism
             Target organism for gene resolution.
+        fallback_to_unmapped
+            If True, unmapped symbols retain their input string.
+        strict
+            If True, raises GeneResolutionError on unmapped genes.
 
         Returns
         -------
@@ -115,10 +136,21 @@ class PerturbationProcessor:
                 canonical = ident.split(".")[0].strip()
                 resolved = True
             elif detected == "symbol":
-                ens = self.gene_resolver.symbol_to_ensembl(ident, organism=organism)
+                try:
+                    ens = self.gene_resolver.symbol_to_ensembl(
+                        ident,
+                        organism=organism,
+                        fallback_to_unmapped=fallback_to_unmapped,
+                        strict=strict,
+                    )
+                except TypeError:
+                    ens = self.gene_resolver.symbol_to_ensembl(ident, organism=organism)
                 if ens:
                     canonical = ens
                     resolved = True
+                elif fallback_to_unmapped:
+                    canonical = ident
+                    resolved = False
             elif detected == "smiles":
                 canonical = ident
                 resolved = True

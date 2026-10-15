@@ -45,8 +45,10 @@ Complete, interactive documentation and API references are available:
   - [🧪 **Hands-On Workflows & Practical Recipes**](docs/hands-on.md)
   - [💻 **Cross-Platform & Hardware Guide**](docs/cross-platform.md)
   - [🏛️ **Architecture & Technical Design**](docs/technical.md)
+  - [🤖 **Agentic Workflows & MCP Skills**](docs/mcp/index.md)
   - [📚 **API Reference**](docs/api-reference.md)
   - [🤝 **Contributing Guide**](docs/contributing.md)
+
 
 ### Running Documentation Locally
 ```bash
@@ -474,6 +476,17 @@ pl.plot_embedding_space(
 )
 ```
 
+### 🤖 Agentic Workflows & MCP Support
+
+`embpy` includes a native [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server exposing an extended suite of bioinformatics tools directly to AI coding assistants (Claude Desktop, Cursor, Windsurf) and autonomous agents. With MCP, your agent can inspect `.h5ad` datasets, map gene identifiers, execute foundation model cell embeddings (`pca`, `scvi`, `scgpt`, `geneformer`, `state`), run `scIB` bio-conservation benchmarks, evaluate perturbations, and project 2D UMAP coordinates.
+
+```bash
+pip install "embpy[mcp]"
+embpy-mcp
+```
+
+For complete tool references, setup guides, and example prompts, see the **[Agentic MCP Skills Documentation](docs/mcp/index.md)** or follow the interactive walkthrough in **[tutorials/05_mcp_agent_workflows.ipynb](tutorials/05_mcp_agent_workflows.ipynb)**.
+
 ## Tutorials
 
 **Start here** — a short, goal-oriented path:
@@ -493,6 +506,8 @@ pl.plot_embedding_space(
    analysis did not choose.
 6. [Reading a model's attention](docs/notebooks/06_attention_weights.ipynb) —
    extract per-layer attention and reduce it to AnnData-ready summaries.
+7. [Agentic MCP Workflows](tutorials/05_mcp_agent_workflows.ipynb) —
+   programmatic inspection, multi-model cell embedding, scIB conservation benchmarking, and autonomous agent tool loops.
 
 **By modality** — deeper, domain-specific workflows:
 
