@@ -195,6 +195,8 @@ def inspect_data(
                 "path": str(resolved_path),
                 "n_obs": int(adata.n_obs),
                 "n_vars": int(adata.n_vars),
+                "n_cells": int(adata.n_obs),
+                "n_genes": int(adata.n_vars),
                 "candidate_label_columns": candidate_labels,
                 "candidate_batch_columns": candidate_batches,
                 "recommended_label_key": candidate_labels[0] if candidate_labels else None,
