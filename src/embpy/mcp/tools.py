@@ -31,6 +31,9 @@ import time
 from typing import Any, Literal, Sequence
 
 import numpy as np
+import requests
+
+from embpy.errors import GeneResolutionError
 
 logger = logging.getLogger("embpy.mcp.tools")
 
@@ -365,6 +368,7 @@ def resolve_identifiers(
 
         mapping: dict[str, str] = {}
         unmapped: list[str] = []
+        diag: dict[str, Any] = {}
 
         if resolved_entity == "gene":
             from embpy.resources.gene.resolver import GeneResolver
@@ -374,9 +378,13 @@ def resolve_identifiers(
                 chosen_tgt = target_type if target_type is not None else target_id_type
                 tgt = chosen_tgt if chosen_tgt != "auto" else ("symbol" if any(s.startswith("ENSG") for s in input_items[:5]) else "ensembl")
                 if tgt in ("ensembl", "ensg"):
-                    mapped_dict = resolver.symbols_to_ensembl_batch(input_items, organism=organism)
+                    mapped_dict, diag = resolver.symbols_to_ensembl_batch(
+                        input_items, organism=organism, return_diagnostics=True
+                    )
                 else:
-                    mapped_dict = resolver.ensembl_to_symbols_batch(input_items, organism=organism)
+                    mapped_dict, diag = resolver.ensembl_to_symbols_batch(
+                        input_items, organism=organism, return_diagnostics=True
+                    )
 
             for item in input_items:
                 res = mapped_dict.get(item)
@@ -427,14 +435,24 @@ def resolve_identifiers(
             os.makedirs(os.path.dirname(saved_path) or ".", exist_ok=True)
             adata.write_h5ad(saved_path)
 
-        return {
-            "status": "success",
+        is_partial = (
+            diag.get("status") == "partial_success"
+            or (len(unmapped) > 0 and bool(diag.get("warning")))
+        )
+        warning_msg = diag.get("warning")
+        if is_partial and not warning_msg:
+            warning_msg = f"Ensembl REST API timed out on {len(unmapped)} genes. Proceeding with available mappings."
+        action_req = diag.get("action_required") or "Install embpy[genome] for offline resolution."
+
+        result_payload: dict[str, Any] = {
+            "status": "partial_success" if is_partial else "success",
             "entity_type": resolved_entity,
             "target_id_type": target_id_type,
             "total_submitted": total_submitted,
             "total_genes": total_submitted,
             "mapped_count": mapped_count,
             "unmapped_count": len(unmapped),
+            "unresolved_count": len(unmapped),
             "mapping_success_rate": rate,
             "mapping_rate": rate,
             "sample_mapping": sample_mapping,
@@ -442,9 +460,36 @@ def resolve_identifiers(
             "unmapped_sample": unmapped[:5],
             "output_path": saved_path,
         }
+        if is_partial:
+            result_payload["warning"] = warning_msg
+            result_payload["action_required"] = action_req
+
+        return result_payload
 
     except Exception as exc:
         logger.error("resolve_identifiers failed: %s", exc, exc_info=True)
+        is_conn = (
+            isinstance(exc, (requests.ConnectionError, requests.Timeout))
+            or isinstance(exc, GeneResolutionError)
+            or "timeout" in type(exc).__name__.lower()
+            or "connection" in type(exc).__name__.lower()
+        )
+        if is_conn:
+            failed_genes = getattr(exc, "failed_genes", [])
+            unresolved_count = (
+                len(failed_genes)
+                if failed_genes
+                else (len(input_items) if "input_items" in locals() and input_items else 0)
+            )
+            return {
+                "status": "partial_success",
+                "mapping_rate": 0.0,
+                "unresolved_count": unresolved_count,
+                "warning": f"Ensembl REST API timed out on {unresolved_count} genes. Proceeding with available mappings.",
+                "action_required": "Install embpy[genome] for offline resolution.",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+            }
         return {
             "status": "error",
             "error_type": type(exc).__name__,

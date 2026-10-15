@@ -288,16 +288,18 @@ def _step_ensembl_retry(
     the audit log shows where the breakdown is.
     """
     try:
-        import requests
+        from .resolver import _ensembl_get
     except ImportError:
-        return None, "no_requests"
+        _ensembl_get = None
+
     url = f"https://rest.ensembl.org/lookup/symbol/{organism}/{symbol}"
     try:
-        resp = requests.get(
-            url,
-            headers={"Content-Type": "application/json"},
-            timeout=10,
-        )
+        if _ensembl_get is not None:
+            resp = _ensembl_get(url, headers={"Content-Type": "application/json"}, timeout=10)
+        else:
+            import requests
+
+            resp = requests.get(url, headers={"Content-Type": "application/json"}, timeout=10)
     except Exception as e:  # noqa: BLE001
         return None, f"error:{type(e).__name__}"
     if resp.status_code != 200:

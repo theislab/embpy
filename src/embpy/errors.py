@@ -523,3 +523,53 @@ class ModelLoadError(EmbpyError):
         self.cause = cause
         detail = f": {cause}" if cause else ""
         super().__init__(message or f"Failed to load model '{model_name}'{detail}")
+
+
+class GeneResolutionError(EmbpyError):
+    """Raised when gene resolution fails under strict mode or due to fatal network/service failure.
+
+    Carries details on which gene identifiers failed to resolve, the target
+    organism, and actionable guidance for setting up offline pyensembl reference data.
+    """
+
+    category = "gene_resolution"
+    exit_code = 15
+
+    def __init__(
+        self,
+        message: str | None = None,
+        unresolved_genes: list[str] | None = None,
+        organism: str = "human",
+        details: dict[str, Any] | None = None,
+        failed_genes: list[str] | None = None,
+        species: str | None = None,
+        release: int = 110,
+    ) -> None:
+        target_org = species or organism
+        genes = failed_genes if failed_genes is not None else (unresolved_genes or [])
+        self.failed_genes = list(genes)
+        self.unresolved_genes = list(genes)
+        self.organism = target_org
+        self.species = target_org
+        self.release = release
+        self.details = dict(details or {})
+        species_clean = "homo_sapiens" if target_org.lower() in ("human", "homo_sapiens") else target_org.lower()
+        advice = (
+            "\nWarning: Ensembl REST API lookup timed out or failed. For fast, reliable, and offline gene lookups, install pyensembl via:\n"
+            '    pip install "embpy[genome]"\n'
+            "and download the local reference:\n"
+            f"    pyensembl install --release {release} --species {species_clean}"
+        )
+        if message is None:
+            n_unres = len(self.unresolved_genes)
+            sample = self.unresolved_genes[:5]
+            sample_str = f" (e.g. {sample})" if sample else ""
+            message = (
+                f"Failed to resolve {n_unres} gene identifier(s){sample_str} for organism '{target_org}'."
+                + advice
+            )
+        elif "embpy[genome]" not in message:
+            message = message + advice
+        super().__init__(message)
+
+

@@ -84,7 +84,7 @@ def test_list_available_models_success():
 def test_map_gene_identifiers_symbols_to_ensembl():
     """Test map_gene_identifiers converts HGNC gene symbols to Ensembl IDs."""
     res = map_gene_identifiers(genes=["TP53", "GAPDH"], target_type="ensembl", organism="human")
-    assert res["status"] == "success"
+    assert res["status"] in ("success", "partial_success")
     assert res["total_genes"] == 2
     assert res["mapped_count"] >= 1
     assert "TP53" in res["mapping_sample"]
@@ -98,7 +98,7 @@ def test_map_gene_identifiers_ensembl_to_symbols():
         target_type="symbol",
         organism="human",
     )
-    assert res["status"] == "success"
+    assert res["status"] in ("success", "partial_success")
     assert res["total_genes"] == 2
     assert res["mapped_count"] >= 1
     assert "ENSG00000141510" in res["mapping_sample"]

@@ -3,11 +3,12 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import pandas as pd
 import requests
 
+from embpy.errors import GeneResolutionError
 from embpy.observability import log_event, time_block
 from embpy.retry import retry_with_backoff
 
@@ -146,9 +147,10 @@ def _retry_after_seconds(resp: requests.Response) -> float | None:
 def _ensembl_get(
     url: str,
     headers: dict | None = None,
-    timeout: int = 30,
+    timeout: int = 10,
     max_retries: int = 5,
     base_delay: float = 1.0,
+    jitter: bool = False,
 ) -> requests.Response:
     """HTTP GET with automatic retry on transient Ensembl failures.
 
@@ -169,6 +171,7 @@ def _ensembl_get(
         max_attempts=max(1, max_retries),
         base_delay=base_delay,
         max_delay=10.0,
+        jitter=jitter,
         retryable=(requests.ConnectionError, requests.Timeout, _TransientEnsemblError),
         on_retry=_emit_retry_event,
     )
@@ -183,6 +186,87 @@ def _ensembl_get(
     except _TransientEnsemblError as exc:
         # Retries exhausted: surface the last response like a plain GET would.
         return exc.response
+
+
+def _ensembl_post(
+    url: str,
+    json_data: dict | list | None = None,
+    headers: dict | None = None,
+    timeout: int = 10,
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    jitter: bool = True,
+) -> requests.Response:
+    """HTTP POST with automatic retry on transient Ensembl failures.
+
+    Retries HTTP 429 and 5xx responses as well as connection errors and
+    timeouts, with exponential backoff and jitter starting at *base_delay* seconds.
+    Respects the ``Retry-After`` header when present. Other 4xx responses are
+    returned immediately.
+    """
+    if headers is None:
+        headers = {}
+    headers.setdefault("Content-Type", "application/json")
+    headers.setdefault("Accept", "application/json")
+
+    @retry_with_backoff(
+        max_attempts=max(1, max_retries),
+        base_delay=base_delay,
+        max_delay=10.0,
+        jitter=jitter,
+        retryable=(requests.ConnectionError, requests.Timeout, _TransientEnsemblError),
+        on_retry=_emit_retry_event,
+    )
+    def _attempt() -> requests.Response:
+        resp = requests.post(url, json=json_data, headers=headers, timeout=timeout)
+        if resp.status_code in _ENSEMBL_RETRY_STATUSES:
+            raise _TransientEnsemblError(resp, url, _retry_after_seconds(resp))
+        return resp
+
+    try:
+        return _attempt()
+    except _TransientEnsemblError as exc:
+        return exc.response
+
+
+_SPECIES_SLUG_MAP: dict[str, str] = {
+    "human": "homo_sapiens",
+    "homo_sapiens": "homo_sapiens",
+    "mouse": "mus_musculus",
+    "mus_musculus": "mus_musculus",
+    "rat": "rattus_norvegicus",
+    "rattus_norvegicus": "rattus_norvegicus",
+    "zebrafish": "danio_rerio",
+    "danio_rerio": "danio_rerio",
+    "fly": "drosophila_melanogaster",
+    "drosophila": "drosophila_melanogaster",
+    "drosophila_melanogaster": "drosophila_melanogaster",
+}
+
+
+def _get_ensembl_offline_warning(
+    species: str = "homo_sapiens",
+    release: int = 110,
+    reason: str = "lookup timed out",
+) -> str:
+    """Generate actionable diagnostic warning when Ensembl REST API lookup fails."""
+    species_name = _SPECIES_SLUG_MAP.get(species.lower(), species.lower())
+    return (
+        f"Warning: Ensembl REST API {reason}. For fast, reliable, and offline gene lookups, "
+        f'install pyensembl via:\n    pip install "embpy[genome]"\n'
+        f"and download the local reference:\n    pyensembl install --release {release} --species {species_name}"
+    )
+
+
+def default_gene_cache_path() -> Path:
+    """Return path to persistent gene ID resolution cache."""
+    env = os.environ.get("EMBPY_CACHE")
+    if env:
+        base = Path(env)
+    else:
+        home = Path.home() if os.environ.get("HOME") else Path("/tmp")
+        base = home / ".cache" / "embpy"
+    return base / "gene_id_cache.json"
 
 
 def _looks_like_smiles(s: str) -> bool:
@@ -322,6 +406,77 @@ class GeneResolver:
         # Local indexed genome (populated by download_genome())
         self._genome_fasta = None
         self._genome_dir: Path | None = None
+
+        # Local persistent & in-memory resolution cache
+        self._cache_file: Path | None = default_gene_cache_path()
+        self._symbol_cache: dict[tuple[str, str], str | None] = {}
+        self._ensembl_cache: dict[tuple[str, str], str | None] = {}
+        self._last_diagnostics: dict[str, Any] | None = None
+        self._load_cache()
+
+    def _ensure_cache(self) -> None:
+        if not hasattr(self, "_symbol_cache") or self._symbol_cache is None:
+            self._symbol_cache = {}
+        if not hasattr(self, "_ensembl_cache") or self._ensembl_cache is None:
+            self._ensembl_cache = {}
+        if not hasattr(self, "_cache_file"):
+            self._cache_file = default_gene_cache_path()
+        if not hasattr(self, "_last_diagnostics"):
+            self._last_diagnostics = None
+
+    def _load_cache(self) -> None:
+        self._ensure_cache()
+        if self._cache_file and self._cache_file.exists():
+            try:
+                import json
+
+                with open(self._cache_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    for k, v in data.get("symbols", {}).items():
+                        parts = k.split(":", 1)
+                        if len(parts) == 2:
+                            self._symbol_cache[(parts[0], parts[1])] = v
+                    for k, v in data.get("ensembl", {}).items():
+                        parts = k.split(":", 1)
+                        if len(parts) == 2:
+                            self._ensembl_cache[(parts[0], parts[1])] = v
+            except Exception as e:
+                logging.debug("Could not load gene cache: %s", e)
+
+    def _save_cache(self) -> None:
+        self._ensure_cache()
+        if not self._cache_file:
+            return
+        try:
+            import json
+
+            self._cache_file.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": 1,
+                "symbols": {
+                    f"{org}:{sym}": ens
+                    for (org, sym), ens in self._symbol_cache.items()
+                    if ens is not None
+                },
+                "ensembl": {
+                    f"{org}:{ens}": sym
+                    for (org, ens), sym in self._ensembl_cache.items()
+                    if sym is not None
+                },
+            }
+            tmp_path = self._cache_file.with_suffix(".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+            tmp_path.replace(self._cache_file)
+        except Exception as e:
+            logging.debug("Could not save gene cache: %s", e)
+
+    @property
+    def last_diagnostics(self) -> dict[str, Any] | None:
+        """Diagnostic summary from the most recent batch resolution."""
+        self._ensure_cache()
+        return self._last_diagnostics
 
     # ==================================================================
     # Bulk genome download + indexed access
@@ -948,64 +1103,109 @@ class GeneResolver:
         self,
         symbol: str,
         organism: str = "human",
+        *,
+        fallback_to_unmapped: bool = False,
+        strict: bool = False,
     ) -> str | None:
         """
         Resolve a gene symbol to an Ensembl *gene* ID (e.g., 'TP53' -> 'ENSG00000141510').
 
-        Tries pyensembl -> MyGene.info -> Ensembl REST API. For alias
-        handling (``AARS`` -> ``AARS1`` etc.), prefer :meth:`resolve_symbol`
-        which adds HGNC as the second step and caches the result on disk.
+        Tries cache -> pyensembl -> MyGene.info -> Ensembl REST API.
         """
+        self._ensure_cache()
         sym = symbol.strip()
+        org = organism.lower()
+
+        # 0) In-memory / disk cache
+        if (org, sym) in self._symbol_cache and self._symbol_cache[(org, sym)] is not None:
+            return self._symbol_cache[(org, sym)]
+
+        resolved_id: str | None = None
+        network_failed = False
+        fail_reason = "lookup timed out"
+
         # 1) pyensembl (offline once cached)
-        if self.ensembl is not None and organism.lower() in {self.species.lower(), "homo_sapiens" if self.species == "human" else self.species}:
+        if self.ensembl is not None and org in {self.species.lower(), "homo_sapiens" if self.species == "human" else self.species}:
             try:
                 genes = self.ensembl.genes_by_name(sym)
                 if not genes and sym.upper() != sym:
                     genes = self.ensembl.genes_by_name(sym.upper())
                 if genes:
-                    # If multiple, prefer canonical-looking ID (first is fine: Ensembl keeps them stable)
-                    return genes[0].gene_id
+                    resolved_id = genes[0].gene_id
             except Exception as e:  # noqa: BLE001
                 logging.debug(f"pyensembl failed for {sym}: {e}")
 
         # 2) MyGene.info (good with synonyms)
-        try:
-            resp = requests.get(
-                "https://mygene.info/v3/query",
-                params={
-                    "q": sym,
-                    "scopes": "symbol,alias,name",
-                    "species": organism,
-                    "fields": "ensembl.gene",
-                    "size": 1,
-                },
-                timeout=10,
-            )
-            resp.raise_for_status()
-            hits = resp.json().get("hits", [])
-            if hits:
-                ens = hits[0].get("ensembl", {})
-                if isinstance(ens, dict) and "gene" in ens:
-                    return ens["gene"]
-                if isinstance(ens, list) and ens:
-                    # pick the first gene field in the list
-                    for item in ens:
-                        if "gene" in item:
-                            return item["gene"]
-        except Exception as e:  # noqa: BLE001
-            logging.debug(f"MyGene.info failed for {sym}: {e}")
+        if not resolved_id:
+            try:
+                resp = requests.get(
+                    "https://mygene.info/v3/query",
+                    params={
+                        "q": sym,
+                        "scopes": "symbol,alias,name",
+                        "species": organism,
+                        "fields": "ensembl.gene",
+                        "size": 1,
+                    },
+                    timeout=10,
+                )
+                if resp.ok:
+                    hits = resp.json().get("hits", [])
+                    if hits:
+                        ens = hits[0].get("ensembl", {})
+                        if isinstance(ens, dict) and "gene" in ens:
+                            resolved_id = ens["gene"]
+                        elif isinstance(ens, list) and ens:
+                            for item in ens:
+                                if "gene" in item:
+                                    resolved_id = item["gene"]
+                                    break
+            except (requests.ConnectionError, requests.Timeout) as e:
+                logging.debug(f"MyGene.info network error for {sym}: {e}")
+            except Exception as e:  # noqa: BLE001
+                logging.debug(f"MyGene.info failed for {sym}: {e}")
 
         # 3) Ensembl REST
-        try:
-            url = f"https://rest.ensembl.org/lookup/symbol/{organism}/{sym}"
-            r = _ensembl_get(url, headers={"Content-Type": "application/json"}, timeout=10)
-            if r.ok:
-                return r.json().get("id")
-        except Exception as e:  # noqa: BLE001
-            logging.debug(f"Ensembl REST symbol->id failed for {sym}: {e}")
+        if not resolved_id:
+            species_slug = _SPECIES_SLUG_MAP.get(org, org)
+            url = f"https://rest.ensembl.org/lookup/symbol/{species_slug}/{sym}"
+            try:
+                r = _ensembl_get(url, headers={"Content-Type": "application/json"}, timeout=10)
+                if r.ok:
+                    resolved_id = r.json().get("id")
+                elif r.status_code in _ENSEMBL_RETRY_STATUSES:
+                    network_failed = True
+                    fail_reason = f"returned HTTP {r.status_code}"
+            except (requests.ConnectionError, requests.Timeout) as e:
+                network_failed = True
+                fail_reason = f"failed with {type(e).__name__}"
+                logging.debug(f"Ensembl REST symbol->id network error for {sym}: {e}")
+            except Exception as e:  # noqa: BLE001
+                logging.debug(f"Ensembl REST symbol->id failed for {sym}: {e}")
 
-        logging.warning(f"Could not resolve Ensembl ID for symbol '{symbol}'")
+        if resolved_id:
+            self._symbol_cache[(org, sym)] = resolved_id
+            self._ensembl_cache[(org, resolved_id)] = sym
+            self._save_cache()
+            return resolved_id
+
+        # Not resolved
+        if network_failed:
+            logging.warning(_get_ensembl_offline_warning(organism, getattr(self, "release_version", 110), reason=fail_reason))
+        else:
+            logging.warning(f"Could not resolve Ensembl ID for symbol '{symbol}'")
+
+        if strict:
+            raise GeneResolutionError(
+                f"Could not resolve Ensembl ID for symbol '{symbol}'",
+                failed_genes=[symbol],
+                species=organism,
+                release=getattr(self, "release_version", 110),
+            )
+
+        if fallback_to_unmapped:
+            return symbol
+
         return None
 
     # -------- Ensembl gene ID -> Symbol --------
@@ -1013,62 +1213,456 @@ class GeneResolver:
         self,
         ensembl_gene_id: str,
         organism: str = "human",
+        *,
+        fallback_to_unmapped: bool = False,
+        strict: bool = False,
     ) -> str | None:
         """
         Resolve an Ensembl gene ID (e.g., 'ENSG00000141510') to a preferred gene symbol (e.g., 'TP53').
 
-        Tries pyensembl -> MyGene.info -> Ensembl REST API.
+        Tries cache -> pyensembl -> MyGene.info -> Ensembl REST API.
         """
+        self._ensure_cache()
         ens = ensembl_gene_id.strip().split(".")[0]  # drop version if provided
+        org = organism.lower()
+
+        # 0) Cache
+        if (org, ens) in self._ensembl_cache and self._ensembl_cache[(org, ens)] is not None:
+            return self._ensembl_cache[(org, ens)]
+
+        resolved_sym: str | None = None
+        network_failed = False
+        fail_reason = "lookup timed out"
+
         # 1) pyensembl
-        if self.ensembl is not None and organism.lower() in {self.species.lower(), "homo_sapiens" if self.species == "human" else self.species}:
+        if self.ensembl is not None and org in {self.species.lower(), "homo_sapiens" if self.species == "human" else self.species}:
             try:
                 g = self.ensembl.gene_by_id(ens)
                 if g and getattr(g, "gene_name", None):
-                    return g.gene_name
+                    resolved_sym = g.gene_name
             except Exception as e:  # noqa: BLE001
                 logging.debug(f"pyensembl failed for {ens}: {e}")
 
         # 2) MyGene.info
-        try:
-            resp = requests.get(
-                "https://mygene.info/v3/query",
-                params={
-                    "q": ens,
-                    "scopes": "ensembl.gene",
-                    "species": organism,
-                    "fields": "symbol,name",
-                    "size": 1,
-                },
-                timeout=10,
-            )
-            resp.raise_for_status()
-            hits = resp.json().get("hits", [])
-            if hits:
-                return hits[0].get("symbol") or hits[0].get("name")
-        except Exception as e:  # noqa: BLE001
-            logging.debug(f"MyGene.info failed for {ens}: {e}")
+        if not resolved_sym:
+            try:
+                resp = requests.get(
+                    "https://mygene.info/v3/query",
+                    params={
+                        "q": ens,
+                        "scopes": "ensembl.gene",
+                        "species": organism,
+                        "fields": "symbol,name",
+                        "size": 1,
+                    },
+                    timeout=10,
+                )
+                if resp.ok:
+                    hits = resp.json().get("hits", [])
+                    if hits:
+                        resolved_sym = hits[0].get("symbol") or hits[0].get("name")
+            except (requests.ConnectionError, requests.Timeout) as e:
+                logging.debug(f"MyGene.info network error for {ens}: {e}")
+            except Exception as e:  # noqa: BLE001
+                logging.debug(f"MyGene.info failed for {ens}: {e}")
 
         # 3) Ensembl REST
-        try:
-            url = f"https://rest.ensembl.org/lookup/id/{ens}"
-            r = _ensembl_get(url, headers={"Content-Type": "application/json"}, timeout=10)
-            if r.ok:
-                return r.json().get("display_name")
-        except Exception as e:  # noqa: BLE001
-            logging.debug(f"Ensembl REST id->symbol failed for {ens}: {e}")
+        if not resolved_sym:
+            try:
+                url = f"https://rest.ensembl.org/lookup/id/{ens}"
+                r = _ensembl_get(url, headers={"Content-Type": "application/json"}, timeout=10)
+                if r.ok:
+                    resolved_sym = r.json().get("display_name")
+                elif r.status_code in _ENSEMBL_RETRY_STATUSES:
+                    network_failed = True
+                    fail_reason = f"returned HTTP {r.status_code}"
+            except (requests.ConnectionError, requests.Timeout) as e:
+                network_failed = True
+                fail_reason = f"failed with {type(e).__name__}"
+                logging.debug(f"Ensembl REST id->symbol network error for {ens}: {e}")
+            except Exception as e:  # noqa: BLE001
+                logging.debug(f"Ensembl REST id->symbol failed for {ens}: {e}")
 
-        logging.warning(f"Could not resolve symbol for Ensembl ID '{ensembl_gene_id}'")
+        if resolved_sym:
+            self._ensembl_cache[(org, ens)] = resolved_sym
+            self._symbol_cache[(org, resolved_sym)] = ens
+            self._save_cache()
+            return resolved_sym
+
+        if network_failed:
+            logging.warning(_get_ensembl_offline_warning(organism, getattr(self, "release_version", 110), reason=fail_reason))
+        else:
+            logging.warning(f"Could not resolve symbol for Ensembl ID '{ensembl_gene_id}'")
+
+        if strict:
+            raise GeneResolutionError(
+                f"Could not resolve symbol for Ensembl ID '{ensembl_gene_id}'",
+                failed_genes=[ensembl_gene_id],
+                species=organism,
+                release=getattr(self, "release_version", 110),
+            )
+
+        if fallback_to_unmapped:
+            return ensembl_gene_id
+
         return None
 
-    # -------- Batch helpers (optional) --------
-    def symbols_to_ensembl_batch(self, symbols: list[str], organism: str = "human") -> dict[str, str | None]:
-        """Map many symbols → Ensembl IDs."""
-        return {s: self.symbol_to_ensembl(s, organism=organism) for s in symbols}
+    # -------- Batch helpers --------
+    def symbols_to_ensembl_batch(
+        self,
+        symbols: list[str],
+        organism: str = "human",
+        *,
+        chunk_size: int = 1000,
+        fallback_to_unmapped: bool = False,
+        strict: bool = False,
+        return_diagnostics: bool = False,
+    ) -> dict[str, str | None] | tuple[dict[str, str | None], dict[str, Any]]:
+        """Map many symbols → Ensembl IDs using cache, pyensembl, and chunked Ensembl REST POST.
 
-    def ensembl_to_symbols_batch(self, ensembl_ids: list[str], organism: str = "human") -> dict[str, str | None]:
-        """Map many Ensembl IDs → symbols."""
-        return {e: self.ensembl_to_symbol(e, organism=organism) for e in ensembl_ids}
+        Parameters
+        ----------
+        symbols : list[str]
+            List of gene symbols to map.
+        organism : str, default 'human'
+            Target organism for resolution.
+        chunk_size : int, default 1000
+            Maximum number of identifiers per POST request (Ensembl REST limits to 1000).
+        fallback_to_unmapped : bool, default False
+            If True, unmapped symbols retain their input string rather than None.
+        strict : bool, default False
+            If True, raises GeneResolutionError if any symbol cannot be resolved or if
+            the network request fails.
+        return_diagnostics : bool, default False
+            If True, returns a tuple of (result_dict, diagnostics_dict).
+        """
+        self._ensure_cache()
+        org = organism.lower()
+        species_slug = _SPECIES_SLUG_MAP.get(org, org)
+        release = getattr(self, "release_version", 110)
+
+        result: dict[str, str | None] = {}
+        to_lookup: list[str] = []
+        network_failed = False
+        network_err_msg = ""
+
+        # Step 0: Check in-memory/disk cache
+        for s in symbols:
+            sym = s.strip()
+            if not sym:
+                result[s] = None
+                continue
+            if (org, sym) in self._symbol_cache and self._symbol_cache[(org, sym)] is not None:
+                result[s] = self._symbol_cache[(org, sym)]
+            else:
+                to_lookup.append(s)
+
+        # Step 1: pyensembl local lookup if available
+        unresolved_after_pyensembl: list[str] = []
+        if self.ensembl is not None and org in {self.species.lower(), "homo_sapiens" if self.species == "human" else self.species}:
+            for s in to_lookup:
+                sym = s.strip()
+                try:
+                    genes = self.ensembl.genes_by_name(sym)
+                    if not genes and sym.upper() != sym:
+                        genes = self.ensembl.genes_by_name(sym.upper())
+                    if genes:
+                        ens_id = genes[0].gene_id
+                        result[s] = ens_id
+                        self._symbol_cache[(org, sym)] = ens_id
+                        self._ensembl_cache[(org, ens_id)] = sym
+                    else:
+                        unresolved_after_pyensembl.append(s)
+                except Exception as e:
+                    logging.debug(f"pyensembl failed for {sym}: {e}")
+                    unresolved_after_pyensembl.append(s)
+        else:
+            unresolved_after_pyensembl = to_lookup
+
+        # Step 2: Ensembl REST chunked POST
+        still_unresolved: list[str] = []
+        if unresolved_after_pyensembl:
+            post_url = f"https://rest.ensembl.org/lookup/symbol/{species_slug}"
+            for i in range(0, len(unresolved_after_pyensembl), chunk_size):
+                chunk = unresolved_after_pyensembl[i : i + chunk_size]
+                chunk_symbols = [c.strip() for c in chunk if c.strip()]
+                if not chunk_symbols:
+                    continue
+
+                try:
+                    resp = _ensembl_post(
+                        post_url,
+                        json_data={"symbols": chunk_symbols},
+                        timeout=10,
+                        max_retries=3,
+                        jitter=True,
+                    )
+                    if resp.ok:
+                        data = resp.json()
+                        if isinstance(data, dict):
+                            for orig in chunk:
+                                sym = orig.strip()
+                                val = data.get(sym)
+                                if isinstance(val, dict) and "id" in val:
+                                    ens_id = val["id"]
+                                    result[orig] = ens_id
+                                    self._symbol_cache[(org, sym)] = ens_id
+                                    self._ensembl_cache[(org, ens_id)] = sym
+                                else:
+                                    still_unresolved.append(orig)
+                        else:
+                            still_unresolved.extend(chunk)
+                    else:
+                        network_failed = True
+                        network_err_msg = f"HTTP {resp.status_code}"
+                        still_unresolved.extend(chunk)
+                except (requests.ConnectionError, requests.Timeout) as e:
+                    network_failed = True
+                    network_err_msg = str(e)
+                    still_unresolved.extend(chunk)
+                except Exception as e:
+                    network_failed = True
+                    network_err_msg = str(e)
+                    still_unresolved.extend(chunk)
+
+        # Step 3: For small remaining sets, fallback to individual symbol_to_ensembl (MyGene / alias)
+        final_unresolved: list[str] = []
+        for orig in still_unresolved:
+            sym = orig.strip()
+            if not network_failed:
+                try:
+                    ens_id = self.symbol_to_ensembl(sym, organism=organism, fallback_to_unmapped=False, strict=False)
+                    if ens_id:
+                        result[orig] = ens_id
+                        continue
+                except Exception:
+                    pass
+            final_unresolved.append(orig)
+            result[orig] = None
+
+        self._save_cache()
+
+        mapped_count = sum(1 for s in symbols if result.get(s) is not None)
+        total_count = len(symbols)
+        unmapped_count = len(final_unresolved)
+        rate = round((mapped_count / total_count) * 100.0, 2) if total_count > 0 else 0.0
+
+        warning_text = None
+        if network_failed:
+            warning_text = _get_ensembl_offline_warning(organism, release, reason=f"timed out or failed ({network_err_msg})")
+            logging.warning(warning_text)
+        elif final_unresolved:
+            logging.warning(f"Could not resolve Ensembl IDs for {len(final_unresolved)} symbols.")
+
+        if strict and final_unresolved:
+            raise GeneResolutionError(
+                f"Failed to resolve {len(final_unresolved)} gene identifier(s): {final_unresolved[:5]}{'...' if len(final_unresolved) > 5 else ''}",
+                failed_genes=final_unresolved,
+                species=organism,
+                release=release,
+            )
+
+        if fallback_to_unmapped:
+            for u in final_unresolved:
+                result[u] = u
+
+        diagnostics = {
+            "status": "partial_success" if (mapped_count > 0 and final_unresolved) else ("success" if not final_unresolved else "error"),
+            "total": total_count,
+            "mapped_count": mapped_count,
+            "unresolved_count": unmapped_count,
+            "mapping_rate": rate,
+            "unresolved_genes": final_unresolved,
+            "warning": warning_text or (f"Could not resolve {unmapped_count} genes." if final_unresolved else None),
+            "action_required": (
+                f'Install embpy[genome] for offline resolution: pip install "embpy[genome]" && '
+                f"pyensembl install --release {release} --species {species_slug}"
+                if final_unresolved
+                else None
+            ),
+        }
+        self._last_diagnostics = diagnostics
+
+        if return_diagnostics:
+            return result, diagnostics
+        return result
+
+    def ensembl_to_symbols_batch(
+        self,
+        ensembl_ids: list[str],
+        organism: str = "human",
+        *,
+        chunk_size: int = 1000,
+        fallback_to_unmapped: bool = False,
+        strict: bool = False,
+        return_diagnostics: bool = False,
+    ) -> dict[str, str | None] | tuple[dict[str, str | None], dict[str, Any]]:
+        """Map many Ensembl IDs → symbols using cache, pyensembl, and chunked Ensembl REST POST.
+
+        Parameters
+        ----------
+        ensembl_ids : list[str]
+            List of Ensembl gene IDs to map.
+        organism : str, default 'human'
+            Target organism for resolution.
+        chunk_size : int, default 1000
+            Maximum number of identifiers per POST request (Ensembl REST limits to 1000).
+        fallback_to_unmapped : bool, default False
+            If True, unmapped IDs retain their input string rather than None.
+        strict : bool, default False
+            If True, raises GeneResolutionError if any ID cannot be resolved or if
+            the network request fails.
+        return_diagnostics : bool, default False
+            If True, returns a tuple of (result_dict, diagnostics_dict).
+        """
+        self._ensure_cache()
+        org = organism.lower()
+        species_slug = _SPECIES_SLUG_MAP.get(org, org)
+        release = getattr(self, "release_version", 110)
+
+        result: dict[str, str | None] = {}
+        to_lookup: list[str] = []
+        network_failed = False
+        network_err_msg = ""
+
+        # Step 0: Check cache
+        for e in ensembl_ids:
+            ens = e.strip().split(".")[0]
+            if not ens:
+                result[e] = None
+                continue
+            if (org, ens) in self._ensembl_cache and self._ensembl_cache[(org, ens)] is not None:
+                result[e] = self._ensembl_cache[(org, ens)]
+            else:
+                to_lookup.append(e)
+
+        # Step 1: pyensembl
+        unresolved_after_pyensembl: list[str] = []
+        if self.ensembl is not None and org in {self.species.lower(), "homo_sapiens" if self.species == "human" else self.species}:
+            for e in to_lookup:
+                ens = e.strip().split(".")[0]
+                try:
+                    g = self.ensembl.gene_by_id(ens)
+                    if g and getattr(g, "gene_name", None):
+                        sym = g.gene_name
+                        result[e] = sym
+                        self._ensembl_cache[(org, ens)] = sym
+                        self._symbol_cache[(org, sym)] = ens
+                    else:
+                        unresolved_after_pyensembl.append(e)
+                except Exception as exc:
+                    logging.debug(f"pyensembl failed for {ens}: {exc}")
+                    unresolved_after_pyensembl.append(e)
+        else:
+            unresolved_after_pyensembl = to_lookup
+
+        # Step 2: Ensembl REST chunked POST
+        still_unresolved: list[str] = []
+        if unresolved_after_pyensembl:
+            post_url = "https://rest.ensembl.org/lookup/id"
+            for i in range(0, len(unresolved_after_pyensembl), chunk_size):
+                chunk = unresolved_after_pyensembl[i : i + chunk_size]
+                chunk_ids = [c.strip().split(".")[0] for c in chunk if c.strip()]
+                if not chunk_ids:
+                    continue
+
+                try:
+                    resp = _ensembl_post(
+                        post_url,
+                        json_data={"ids": chunk_ids},
+                        timeout=10,
+                        max_retries=3,
+                        jitter=True,
+                    )
+                    if resp.ok:
+                        data = resp.json()
+                        if isinstance(data, dict):
+                            for orig in chunk:
+                                ens = orig.strip().split(".")[0]
+                                val = data.get(ens) or data.get(orig)
+                                if isinstance(val, dict) and "display_name" in val:
+                                    sym = val["display_name"]
+                                    result[orig] = sym
+                                    self._ensembl_cache[(org, ens)] = sym
+                                    self._symbol_cache[(org, sym)] = ens
+                                else:
+                                    still_unresolved.append(orig)
+                        else:
+                            still_unresolved.extend(chunk)
+                    else:
+                        network_failed = True
+                        network_err_msg = f"HTTP {resp.status_code}"
+                        still_unresolved.extend(chunk)
+                except (requests.ConnectionError, requests.Timeout) as exc:
+                    network_failed = True
+                    network_err_msg = str(exc)
+                    still_unresolved.extend(chunk)
+                except Exception as exc:
+                    network_failed = True
+                    network_err_msg = str(exc)
+                    still_unresolved.extend(chunk)
+
+        # Step 3: Fallback
+        final_unresolved: list[str] = []
+        for orig in still_unresolved:
+            ens = orig.strip().split(".")[0]
+            if not network_failed:
+                try:
+                    sym = self.ensembl_to_symbol(ens, organism=organism, fallback_to_unmapped=False, strict=False)
+                    if sym:
+                        result[orig] = sym
+                        continue
+                except Exception:
+                    pass
+            final_unresolved.append(orig)
+            result[orig] = None
+
+        self._save_cache()
+
+        mapped_count = sum(1 for e in ensembl_ids if result.get(e) is not None)
+        total_count = len(ensembl_ids)
+        unmapped_count = len(final_unresolved)
+        rate = round((mapped_count / total_count) * 100.0, 2) if total_count > 0 else 0.0
+
+        warning_text = None
+        if network_failed:
+            warning_text = _get_ensembl_offline_warning(organism, release, reason=f"timed out or failed ({network_err_msg})")
+            logging.warning(warning_text)
+        elif final_unresolved:
+            logging.warning(f"Could not resolve symbols for {len(final_unresolved)} Ensembl IDs.")
+
+        if strict and final_unresolved:
+            raise GeneResolutionError(
+                f"Failed to resolve {len(final_unresolved)} Ensembl ID(s): {final_unresolved[:5]}{'...' if len(final_unresolved) > 5 else ''}",
+                failed_genes=final_unresolved,
+                species=organism,
+                release=release,
+            )
+
+        if fallback_to_unmapped:
+            for u in final_unresolved:
+                result[u] = u
+
+        diagnostics = {
+            "status": "partial_success" if (mapped_count > 0 and final_unresolved) else ("success" if not final_unresolved else "error"),
+            "total": total_count,
+            "mapped_count": mapped_count,
+            "unresolved_count": unmapped_count,
+            "mapping_rate": rate,
+            "unresolved_genes": final_unresolved,
+            "warning": warning_text or (f"Could not resolve {unmapped_count} genes." if final_unresolved else None),
+            "action_required": (
+                f'Install embpy[genome] for offline resolution: pip install "embpy[genome]" && '
+                f"pyensembl install --release {release} --species {species_slug}"
+                if final_unresolved
+                else None
+            ),
+        }
+        self._last_diagnostics = diagnostics
+
+        if return_diagnostics:
+            return result, diagnostics
+        return result
 
     def get_gene_regions(
         self,
