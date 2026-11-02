@@ -121,6 +121,8 @@ EXTRA_KNOWN = {
     "BioEmbedder().embed",
     "predicted",
     "None",
+    # Claude Code's MCP server startup timeout (environment variable).
+    "MCP_TIMEOUT=60000",
     # VCF column name.
     "CHROM",
     # Written as f"mol_{key}" from RDKit's property names (molecular_weight, logp, qed).

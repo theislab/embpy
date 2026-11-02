@@ -45,6 +45,7 @@ runs; `optional_extras_status` shows which extras are installed.
 | Symptom | Cause and fix |
 |---|---|
 | No embpy tools available | The server did not start: wrong Python in the config, or embpy/mcp not installed there. Run `python -m embpy.mcp.server` in a terminal with that Python and read the error. |
+| Server listed but "connecting" or failed, client log says the connection timed out | The first start of a large environment (cold disk cache) can exceed the client's 30 s limit. Start the session again, or raise the limit for Claude Code with the environment variable `MCP_TIMEOUT=60000`. |
 | `FileNotFoundError` for a file that exists | Relative paths resolve against the **server's** working directory, not yours. Pass absolute paths. |
 | First call that loads scipy never returns (Windows, MCP SDK 1.x) | Fixed in this version: the server preloads scipy at startup. Upgrade embpy if it still happens. |
 | `warning` / `action_required` mentioning Ensembl or MyGene | The lookup service was slow or unreachable; unmapped genes are not proven absent. Retry, or install `embpy[genome]` for offline lookups. |

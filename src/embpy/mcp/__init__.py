@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from .server import create_server, main
+from typing import Any
+
 from .tools import (
     annotate_metadata,
     benchmark_perturbations,
@@ -42,3 +43,14 @@ __all__ = [
     "evaluate_scib",
     "evaluate_perturbations",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    # Imported on first use rather than with the package: `python -m embpy.mcp.server`
+    # imports this package first, and an eager import of .server here makes runpy warn
+    # that the module was already imported, which MCP clients log as a server error.
+    if name in ("create_server", "main"):
+        from . import server
+
+        return getattr(server, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

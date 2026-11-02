@@ -124,11 +124,13 @@ def create_server(name: str = "embpy-mcp") -> FastMCP:
     return server
 
 
-# Native libraries the tools load lazily. Imported before the stdio transport
-# starts on Windows: the MCP 1.x stdio reader sits in a blocking ReadFile on
-# stdin, and a Fortran runtime (scipy's BLAS/LAPACK wrappers) that initialises
-# while that read is pending waits behind it on the stdin handle, so the first
-# tool call that imports scipy.linalg never returns.
+# Fortran-backed libraries the tools load lazily. On Windows with MCP SDK 1.x
+# the stdio reader sits in a blocking ReadFile on stdin, and a Fortran runtime
+# (scipy's BLAS/LAPACK wrappers) that initialises while that read is pending
+# waits behind it on the stdin handle, so the first tool call that imports
+# scipy.linalg never returns. Importing them before the transport starts avoids
+# it. Keep the list short: it delays the handshake, and clients give a server
+# about 30 s to answer (Claude Code's default MCP_TIMEOUT).
 _PRELOAD_MODULES = (
     "scipy.linalg",
     "scipy.sparse.linalg",
@@ -139,9 +141,19 @@ _PRELOAD_MODULES = (
     "scipy.interpolate",
     "sklearn.decomposition",
     "sklearn.neighbors",
-    "torch",
-    "scanpy",
 )
+
+
+def _needs_native_preload() -> bool:
+    """Only Windows with MCP SDK 1.x reads stdin in a way that deadlocks."""
+    if sys.platform != "win32":
+        return False
+    try:
+        from importlib.metadata import version
+
+        return int(version("mcp").split(".")[0]) < 2
+    except Exception:  # noqa: BLE001 -- unknown version: preload to be safe
+        return True
 
 
 def _preload_native_modules() -> None:
@@ -157,7 +169,7 @@ def _preload_native_modules() -> None:
 def main() -> None:
     """CLI entrypoint for embpy-mcp command."""
     _setup_stderr_logging()
-    if sys.platform == "win32":
+    if _needs_native_preload():
         _preload_native_modules()
     logger.info("Starting embpy MCP server on stdio transport...")
     server = create_server()
