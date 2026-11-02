@@ -48,6 +48,11 @@ RUNNABLE_SKILLS = [
     "embpy-cross-species-proteins",
     "embpy-variant-effects",
     "embpy-mcp-setup",
+    "embpy-fasta-embeddings",
+    "embpy-export-and-reuse-embeddings",
+    "embpy-layer-selection",
+    "embpy-differential-expression",
+    "embpy-embedding-quality-checks",
 ]
 TOOL_NAMES = (
     "inspect_data",
@@ -143,6 +148,18 @@ def _make_data(data: Path) -> None:
     predicted.X = np.clip(xo + rng.normal(scale=0.4, size=xo.shape), 0, None).astype(np.float32)
     predicted.obs_names = [f"pred_{i}" for i in range(predicted.n_obs)]
     predicted.write_h5ad(data / "predicted.h5ad")
+
+    # Two separable protein classes (hydrophobic vs charged), labelled in the header.
+    alphabets = {"A": "AILMFVW", "B": "DEKRNQST"}
+    with open(data / "proteins.fasta", "w") as fh:
+        for i in range(24):
+            cls = "AB"[i % 2]
+            seq = "".join(rng.choice(list(alphabets[cls]), size=int(rng.integers(40, 80))))
+            fh.write(f">prot{i} class={cls}\n{seq}\n")
+    with open(data / "promoters.fa", "w") as fh:
+        for i in range(8):
+            dna = "".join(rng.choice(list("ACGT"), size=200))
+            fh.write(f">promoter{i}\n{dna}\n")
 
 
 @pytest.mark.parametrize("skill", RUNNABLE_SKILLS)

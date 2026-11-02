@@ -121,6 +121,28 @@ EXTRA_KNOWN = {
     "BioEmbedder().embed",
     "predicted",
     "None",
+    # Cross-references and example values in the five core skills added later.
+    "embpy-layer-selection",
+    "embpy-embedding-visualization",
+    "embpy-perturbation-prediction-metrics",
+    "family",
+    "class=",
+    "embpy[bio]",
+    ".fasta",
+    ".fa",
+    ".faa",
+    ".fna",
+    ".fastq",
+    ".fq",
+    ".gz",
+    "X_esm2_8M",
+    "X_<model>",
+    "__dim_N",
+    "rank_genes_groups",
+    "embpy.io.load_legacy_embedding",
+    "pandas.read_csv",
+    "<file>.meta.json",
+    "idxmax",  # pandas Series.idxmax
     # Claude Code's MCP server startup timeout (environment variable).
     "MCP_TIMEOUT=60000",
     # VCF column name.
@@ -221,6 +243,11 @@ def test_skills_exist():
         "embpy-cross-species-proteins",
         "embpy-variant-effects",
         "embpy-mcp-setup",
+        "embpy-fasta-embeddings",
+        "embpy-export-and-reuse-embeddings",
+        "embpy-layer-selection",
+        "embpy-differential-expression",
+        "embpy-embedding-quality-checks",
     }
 
 
@@ -329,6 +356,7 @@ class _ApiChecker:
 
         self.root = embpy
         self.types: dict[str, type] = {}
+        self.imported: dict[str, object] = {}
         self.defined: set[str] = set()
         self.problems: list[str] = []
         self.checked = 0
@@ -338,6 +366,8 @@ class _ApiChecker:
         if isinstance(expr, ast.Name):
             if expr.id == "ep":
                 return self.root, None
+            if expr.id in self.imported:
+                return self.imported[expr.id], None
             if expr.id in self.types:
                 return self.types[expr.id], self.types[expr.id]
             return _UNRESOLVED, None
@@ -399,6 +429,15 @@ class _ApiChecker:
                 self.defined.add(node.name)
             elif isinstance(node, ast.ImportFrom):
                 self.defined.update(alias.asname or alias.name for alias in node.names)
+                if (node.module or "").split(".")[0] == "embpy":
+                    import importlib
+
+                    module = importlib.import_module(node.module)
+                    for alias in node.names:
+                        if not hasattr(module, alias.name):
+                            self.problems.append(f"from {node.module} import {alias.name}: no such name")
+                        else:
+                            self.imported[alias.asname or alias.name] = getattr(module, alias.name)
         for stmt in tree.body:
             for node in ast.walk(stmt):
                 if isinstance(node, ast.Call):

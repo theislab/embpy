@@ -21,8 +21,13 @@ loads a skill when a request matches its description.
 | `embpy-cross-species-proteins` | ortholog embeddings across species vs sequence identity |
 | `embpy-variant-effects` | SNP effect signals from DNA language models, single variants and VCFs |
 | `embpy-mcp-setup` | installing, connecting and troubleshooting the MCP server |
+| `embpy-fasta-embeddings` | embedding every sequence in a FASTA/FASTQ file, keeping header annotations |
+| `embpy-export-and-reuse-embeddings` | NPZ/CSV/Zarr export with provenance, reading exports back, common dimensions |
+| `embpy-layer-selection` | scoring every model layer against the user's labels and picking one |
+| `embpy-differential-expression` | DE genes per perturbation / cluster vs control or rest, clean tables |
+| `embpy-embedding-quality-checks` | NaN / constant / duplicate checks, collapse detection, cross-model comparison |
 
-The first three skills drive the MCP tools. The other eleven combine the tools with embpy's
+The first three skills drive the MCP tools. The other sixteen combine the tools with embpy's
 Python API (`embpy.tl`, `embpy.pl`), which the assistant runs through its shell.
 
 ## Installing
@@ -47,7 +52,7 @@ use only the MCP server; see [Client Setup](client-setup.md).
   every embpy Python call (`ep.tl.*`, `ep.pl.*`, `BioEmbedder` methods) exists and binds to its
   signature; and that every name quoted in backticks exists in the embpy source or model
   registry. The annotation and modality tables are compared with the tool's own tables.
-- `tests/test_skill_examples.py` runs the examples of the eleven Python-API skills, block by
+- `tests/test_skill_examples.py` runs the examples of the sixteen Python-API skills, block by
   block, on small generated datasets (MCP calls go to the real tool functions). It downloads
   small models and calls web services, so it runs only with `EMBPY_RUN_SKILL_EXAMPLES=1`
   (CI job `skill-examples`, non-blocking). Blocks marked `# Requires:` (a local genome FASTA)
