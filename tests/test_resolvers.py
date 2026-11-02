@@ -252,7 +252,9 @@ class TestMCPToolIntegration:
             )
             res = map_gene_identifiers(identifiers=["GENE1", "GENE2"], entity_type="gene")
 
-            assert res["status"] == "partial_success"
+            # Nothing was mapped, so this is an error, not a partial success.
+            assert res["status"] == "error"
+            assert res["error_type"] == "GeneResolutionError"
             assert res["mapping_rate"] == 0.0
             assert res["unresolved_count"] == 2
             assert "Ensembl REST API timed out on 2 genes" in res["warning"]

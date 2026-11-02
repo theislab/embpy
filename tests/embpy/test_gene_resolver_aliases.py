@@ -109,7 +109,7 @@ def test_chain_falls_back_to_mygene(monkeypatch, cache: AliasCache) -> None:
         if "mygene.info" in url:
             return _FakeResponse(
                 status_code=200,
-                payload={"hits": [{"symbol": "FOO"}]},
+                payload={"hits": [{"symbol": "FOO", "taxid": 9606}]},
             )
         return _make_400()
 

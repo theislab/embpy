@@ -81,6 +81,60 @@ jobs:
       - name: Report coverage
         run: coverage report
 
+  # The main matrix installs .[dev,test] without the MCP SDK, so the MCP tests
+  # skip there. This job installs it and sets EMBPY_REQUIRE_MCP=1, which turns
+  # those skips into failures, then drives the server through a real MCP client
+  # over stdio at both ends of the supported SDK range (pyproject: mcp>=1.23,<3).
+  test-mcp:
+    name: MCP server (${{ matrix.os }}, mcp ${{ matrix.mcp }})
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash -e {0}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            mcp: "1.23.0" # lowest supported
+          - os: ubuntu-latest
+            mcp: "1.30.0" # latest 1.x
+          - os: ubuntu-latest
+            mcp: "2.3.0" # latest 2.x
+            verify: true
+          # 1.x stdio on Windows deadlocked on scipy's Fortran runtime before
+          # embpy.mcp.server preloaded it; keep this combination covered.
+          - os: windows-latest
+            mcp: "1.30.0"
+    env:
+      EMBPY_REQUIRE_MCP: "1"
+      PYTHONUTF8: "1"
+      MPLBACKEND: agg
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: "**/pyproject.toml"
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip wheel hatch-vcs
+      - name: Pre-install CPU PyTorch
+        run: pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
+      - name: Install embpy with the MCP SDK
+        run: pip install -e ".[mcp,test,scib,eval]" "mcp==${{ matrix.mcp }}"
+      - name: Show MCP SDK version
+        run: python -c "import importlib.metadata as m; print('mcp', m.version('mcp'))"
+      - name: MCP tool and real-client tests
+        run: >-
+          pytest -v --color=yes
+          tests/test_mcp.py tests/test_mcp_client.py tests/test_resolvers.py
+          tests/embpy/test_gene_resolver_exact_lookup.py
+      - name: End-to-end verification script
+        if: ${{ matrix.verify }}
+        run: python verify_full_ecosystem.py
+
   # Runs the README's [cpu] install (Option A: pip, Option B: uv) on the PR's own
   # checkout, then checks that it really gave the CPU build of PyTorch -- the
   # CUDA build is ~3 GB and is what [cpu] used to pull on Linux (issue #46).

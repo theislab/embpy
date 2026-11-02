@@ -4,6 +4,9 @@ Spawns 'python -m embpy.mcp.server' as a sub-process, establishes a JSON-RPC ses
 over stdio, queries the tool list, and executes the complete 7-tool suite live:
 inspect_anndata, list_available_models, map_gene_identifiers, embed_cells,
 evaluate_scib, evaluate_perturbations, and compute_umap.
+
+Works with MCP SDK 1.x (camelCase result fields) and 2.x (snake_case). The
+pytest version of these checks is ``tests/test_mcp_client.py``.
 """
 
 from __future__ import annotations
@@ -19,6 +22,18 @@ from anndata import AnnData
 from mcp import StdioServerParameters
 from mcp.client.session import ClientSession
 from mcp.client.stdio import stdio_client
+
+
+def _field(obj, snake: str, camel: str):
+    value = getattr(obj, snake, None)
+    return getattr(obj, camel, None) if value is None else value
+
+
+def _payload(result) -> dict:
+    """JSON payload of a CallToolResult from either SDK major version."""
+    assert not _field(result, "is_error", "isError"), result
+    structured = _field(result, "structured_content", "structuredContent")
+    return structured if structured is not None else json.loads(result.content[0].text)
 
 
 def create_sample_h5ad(target_dir: str) -> str:
@@ -64,7 +79,7 @@ async def run_live_mcp_harness() -> None:
             async with ClientSession(read_stream, write_stream) as session:
                 print("[TEST HARNESS] Initializing MCP protocol session...")
                 init_result = await session.initialize()
-                print(f"[TEST HARNESS] Connected to server: {init_result.server_info.name} (v{init_result.server_info.version})")
+                print(f"[TEST HARNESS] Connected to server: {_field(init_result, "server_info", "serverInfo").name} (v{_field(init_result, "server_info", "serverInfo").version})")
 
                 # 1. tools/list verification
                 print("\n[TEST HARNESS] 1. Requesting tools/list...")
@@ -86,8 +101,7 @@ async def run_live_mcp_harness() -> None:
                 # 2. tools/call: list_available_models
                 print("\n[TEST HARNESS] 2. Executing list_available_models...")
                 models_call = await session.call_tool("list_available_models", {})
-                assert not models_call.is_error
-                models_payload = json.loads(models_call.content[0].text)
+                models_payload = _payload(models_call)
                 assert models_payload["status"] == "success"
                 print(f"               Compute device: {models_payload['compute_device']} ({models_payload['device_details']})")
                 print(f"               Runnable models: {models_payload['runnable_models']}")
@@ -98,8 +112,7 @@ async def run_live_mcp_harness() -> None:
                     "map_gene_identifiers",
                     {"genes": ["TP53", "GAPDH", "CD4"], "target_type": "ensembl", "organism": "human"},
                 )
-                assert not map_call.is_error
-                map_payload = json.loads(map_call.content[0].text)
+                map_payload = _payload(map_call)
                 assert map_payload["status"] == "success"
                 print(f"               Mapped {map_payload['mapped_count']}/{map_payload['total_genes']} genes ({map_payload['mapping_rate']}%)")
                 print(f"               Sample: {map_payload['mapping_sample']}")
@@ -107,8 +120,7 @@ async def run_live_mcp_harness() -> None:
                 # 4. tools/call: inspect_anndata
                 print("\n[TEST HARNESS] 4. Executing inspect_anndata...")
                 inspect_call = await session.call_tool("inspect_anndata", {"path": sample_path})
-                assert not inspect_call.is_error
-                inspect_payload = json.loads(inspect_call.content[0].text)
+                inspect_payload = _payload(inspect_call)
                 assert inspect_payload["status"] == "success"
                 print(f"               Dimensions: {inspect_payload['n_obs']} cells, {inspect_payload['n_vars']} genes")
                 print(f"               Expression nature: {inspect_payload['expression_nature']['detected_nature']}")
@@ -125,8 +137,7 @@ async def run_live_mcp_harness() -> None:
                         "device": "cpu",
                     },
                 )
-                assert not embed_call.is_error
-                embed_payload = json.loads(embed_call.content[0].text)
+                embed_payload = _payload(embed_call)
                 assert embed_payload["status"] == "success"
                 assert "X_pca" in embed_payload["embedding_keys"]
                 print(f"               Embedding computed: {embed_payload['embedding_keys']}")
@@ -138,8 +149,7 @@ async def run_live_mcp_harness() -> None:
                     "compute_umap",
                     {"path": embedded_path, "embedding_key": "X_pca", "output_path": umap_path, "n_neighbors": 5},
                 )
-                assert not umap_call.is_error
-                umap_payload = json.loads(umap_call.content[0].text)
+                umap_payload = _payload(umap_call)
                 assert umap_payload["status"] == "success"
                 print(f"               UMAP key: {umap_payload['umap_key']}, shape: {umap_payload['umap_shape']}")
 
@@ -155,8 +165,7 @@ async def run_live_mcp_harness() -> None:
                         "output_csv": scib_csv_path,
                     },
                 )
-                assert not scib_call.is_error
-                scib_payload = json.loads(scib_call.content[0].text)
+                scib_payload = _payload(scib_call)
                 assert scib_payload["status"] == "success"
                 print(f"               Total scIB score: {scib_payload['metrics']['X_pca'].get('total')}")
                 print(f"               Markdown table generated: {'Yes' if scib_payload.get('markdown_table') else 'No'}")
@@ -168,14 +177,15 @@ async def run_live_mcp_harness() -> None:
                     {
                         "path": sample_path,
                         "split_col": "split",
+                        "pred_label": "test",
+                        "ref_label": "train",
                         "control_pert": "ctrl",
                         "pert_col": "perturbation",
                         "profile": "minimal",
                         "output_csv": pert_csv_path,
                     },
                 )
-                assert not pert_call.is_error
-                pert_payload = json.loads(pert_call.content[0].text)
+                pert_payload = _payload(pert_call)
                 assert pert_payload["status"] == "success"
                 print(f"               Evaluated {pert_payload['n_perturbations']} perturbations.")
                 print(f"               Markdown table generated: {'Yes' if pert_payload.get('markdown_table') else 'No'}")

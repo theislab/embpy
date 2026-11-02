@@ -82,6 +82,6 @@ I have a list of drug candidates: `["aspirin", "imatinib", "metformin", "dexamet
 Using the `embpy` MCP server:
 1. Call `resolve_identifiers` with `entity_type="molecule"` to resolve these drug names into canonical SMILES strings.
 2. Query `list_model_registry` with `entity_type="molecule"` to check available molecular embedding models (e.g. ChemBERTa, Morgan fingerprints).
-3. Call `annotate_metadata` to retrieve known mechanism-of-action (MoA) and pharmacological pathways.
+3. If the compounds are in an `.h5ad` file, call `annotate_metadata` with `entity_type="molecule"` and `annotation_types=["interactions", "pathways"]` to retrieve ChEMBL targets / mechanism of action and KEGG pathways.
 4. Summarize the mapping success rate and chemical features for each compound in a clean Markdown table.
 ```

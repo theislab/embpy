@@ -40,7 +40,7 @@ flowchart TD
 
     subgraph PillarB["Pillar 2: Universal BioEmbedder"]
         D1 --> T5["compute_embeddings"]
-        T4["list_model_registry"] -.->|"Query 150+ models"| T5
+        T4["list_model_registry"] -.->|"Models per modality"| T5
         T5 -->|"Extract PCA / scVI / Foundation embeddings"| D2[("Embedded .h5ad (.obsm)")]
     end
 
@@ -67,15 +67,15 @@ flowchart TD
 
 ### Pillar 1: Inspection & Preprocessing
 - **`inspect_data`**: Profiles AnnData `.h5ad` files or raw lists, returning cell/gene counts, available `.obs` columns, `.obsm` keys, and whether `.X` is raw counts or log-normalized. Automatically identifies best candidate columns for cell types (`label_key`) and technical batches (`batch_key`).
-- **`resolve_identifiers`**: Harmonizes biological vocabularies (e.g. HGNC symbols to Ensembl IDs for Geneformer/scGPT, or chemical names to SMILES). Returns mapping rates without dumping large dictionaries.
+- **`resolve_identifiers`**: Maps gene symbols to Ensembl IDs (and back) in the requested species, and compound names or SMILES to canonical SMILES. An explicit `organism` is always respected; species detection is an opt-in `organism="auto"`. Ambiguous aliases are reported, not guessed. Returns mapping rates without dumping large dictionaries.
 - **`preprocess_counts`**: Executes library-size normalization (`sc.pp.normalize_total`), log1p transformation (`sc.pp.log1p`), and highly variable gene (HVG) selection. Saves the preprocessed dataset to disk and returns only the file path and summary metrics.
 
 ### Pillar 2: Universal BioEmbedder
-- **`list_model_registry`**: Returns the complete catalog of ~150 biological foundation models across single cells, genes, proteins, and molecules, along with compute hardware status (CUDA/MPS/CPU).
-- **`compute_embeddings`**: Wraps `BioEmbedder.embed()` to generate representations across models (e.g., `pca`, `scvi`, `scgpt`, `esm2`, `borzoi`). Saves embeddings to `.obsm` (or `.varm`/`.uns`) and returns the new dataset path and array dimensions.
+- **`list_model_registry`**: Lists, per modality, the models its execution path can run (single-cell, gene, perturbation, DNA, protein, molecule, text, morphology), with compute hardware status (CUDA/MPS/CPU).
+- **`compute_embeddings`**: Wraps `BioEmbedder.embed_cells()` / `BioEmbedder.embed()`. Inputs come from a chosen `obs_column` / `var_column`, and every model is checked against the modality before anything runs. Saves embeddings to `.obsm` or `.varm` and returns the new dataset path and array dimensions.
 
 ### Pillar 3: Biological Metadata Annotation
-- **`annotate_metadata`**: Enriches `.obs` or `.uns` with external biological knowledge (e.g., GO biological processes, KEGG/Reactome pathways, disease mappings, pharmacology) based on entities present. Returns a list of newly added annotation columns.
+- **`annotate_metadata`**: Runs the requested annotation types (GO terms, pathways, domains, diseases, interactions, expression, molecular properties) for each entity in the requested organism and sources. Reports per type how many entities were annotated, had no match, or hit a service error, and writes nothing when nothing was annotated.
 
 ### Pillar 4: Analysis & Benchmarking
 - **`compute_umap`**: Computes neighbor graphs and 2D UMAP coordinates over any chosen embedding representation, storing coordinates under `.obsm['X_umap_<model>']` and reporting array dimensions.
@@ -104,4 +104,4 @@ Or run via Python module:
 python -m embpy.mcp.server
 ```
 
-For IDE-specific connection instructions, see [Client Setup Guide](client-setup.md).
+For IDE-specific connection instructions, see [Client Setup Guide](client-setup.md). Every tool and argument is described in the [Tools Reference](tools-reference.md), and the [Agent Skills](skills.md) page explains the Claude Code skills that teach an assistant how to use them.

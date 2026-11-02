@@ -90,7 +90,8 @@ nav:
   - Agentic MCP Skills:
       - Overview: mcp/index.md
       - Client Setup: mcp/client-setup.md
-      - Skills Reference: mcp/skills-reference.md
+      - Tools Reference: mcp/tools-reference.md
+      - Agent Skills: mcp/skills.md
       - Agent Mega-Prompts: mcp/prompts.md
   - API Reference: api-reference.md
   - Contributing: contributing.md

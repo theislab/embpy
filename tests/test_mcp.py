@@ -1,4 +1,7 @@
-"""Automated unit and integration tests for embpy MCP server and 7 bioinformatics tools."""
+"""Unit and integration tests for the embpy MCP tools (the functions behind the MCP server).
+
+Calls through a real MCP client over stdio live in ``test_mcp_client.py``.
+"""
 
 from __future__ import annotations
 
@@ -28,6 +31,14 @@ from embpy.mcp import (
     preprocess_counts,
     resolve_identifiers,
 )
+
+
+def _require_mcp():
+    """Skip without the mcp package, unless EMBPY_REQUIRE_MCP=1 (set by the MCP CI job)."""
+    if os.environ.get("EMBPY_REQUIRE_MCP") == "1":
+        import mcp  # noqa: F401
+    else:
+        pytest.importorskip("mcp", reason="mcp not installed")
 
 
 @pytest.fixture
@@ -300,7 +311,8 @@ def test_evaluate_perturbations_success(sample_adata_path, tmp_path):
 
 def test_mcp_server_instance_and_tools():
     """Verify MCP server instantiates cleanly and registers all 7 bioinformatics skills."""
-    pytest.importorskip("mcp", reason="mcp not installed")
+    _require_mcp()
+
     async def _check():
         server = create_server("test-server")
         tools = await server.list_tools()
@@ -317,85 +329,6 @@ def test_mcp_server_instance_and_tools():
         assert expected.issubset(tool_names)
 
     asyncio.run(_check())
-
-
-def test_mcp_client_all_tools_roundtrip(sample_adata_path, tmp_path):
-    """Test calling every supported MCP tool through the real MCP server interface."""
-    pytest.importorskip("mcp", reason="mcp not installed")
-    pytest.importorskip("cell_eval", reason="cell-eval not installed")
-    pytest.importorskip("scib", reason="scib not installed")
-
-    async def _test_tools():
-        server = create_server("test-client-server")
-
-        # 1. inspect_data
-        r_inspect = await server.call_tool("inspect_data", {"path": sample_adata_path})
-        assert not r_inspect.is_error
-        assert r_inspect.structured_content["status"] == "success"
-
-        # 2. list_model_registry
-        r_models = await server.call_tool("list_model_registry", {"entity_type": "molecule"})
-        assert not r_models.is_error
-        assert r_models.structured_content["status"] == "success"
-        assert "molformer_base" in r_models.structured_content["recommended_models"]["molecule"]
-
-        # 3. resolve_identifiers (verify kwargs: Field required bug is fixed)
-        r_resolve = await server.call_tool("resolve_identifiers", {"identifiers": ["TP53", "BRCA1"]})
-        assert not r_resolve.is_error
-        assert r_resolve.structured_content["status"] == "success"
-        assert r_resolve.structured_content["sample_mapping"].get("TP53") == "ENSG00000141510"
-
-        # 4. preprocess_counts
-        prep_out = str(tmp_path / "mcp_prepped.h5ad")
-        r_prep = await server.call_tool(
-            "preprocess_counts",
-            {"path": sample_adata_path, "min_genes": 5, "scale": True, "auto_adjust": False, "output_path": prep_out},
-        )
-        assert not r_prep.is_error
-        assert r_prep.structured_content["status"] == "success"
-        assert "scaled" in r_prep.structured_content["layers"]
-
-        # 5. compute_embeddings
-        emb_out = str(tmp_path / "mcp_embedded.h5ad")
-        r_emb = await server.call_tool(
-            "compute_embeddings",
-            {"path": sample_adata_path, "models": "pca", "preprocessing": "none", "output_path": emb_out},
-        )
-        assert not r_emb.is_error
-        assert r_emb.structured_content["status"] == "success"
-
-        # 6. compute_umap
-        umap_out = str(tmp_path / "mcp_umap.h5ad")
-        r_umap = await server.call_tool("compute_umap", {"path": sample_adata_path, "embedding_key": "X_prior", "output_path": umap_out})
-        assert not r_umap.is_error
-        assert r_umap.structured_content["status"] == "success"
-
-        # 7. benchmark_scib
-        r_scib = await server.call_tool(
-            "benchmark_scib",
-            {"path": sample_adata_path, "embedding_keys": "X_prior", "label_key": "cell_type"},
-        )
-        assert not r_scib.is_error
-        assert r_scib.structured_content["status"] == "success"
-
-        # 8. benchmark_perturbations
-        pert_csv = str(tmp_path / "mcp_pert.csv")
-        r_pert = await server.call_tool(
-            "benchmark_perturbations",
-            {
-                "path": sample_adata_path,
-                "split_col": "split",
-                "pred_label": "test",
-                "ref_label": "train",
-                "control_pert": "ctrl",
-                "pert_col": "perturbation",
-                "output_csv": pert_csv,
-            },
-        )
-        assert not r_pert.is_error
-        assert r_pert.structured_content["status"] == "success"
-
-    asyncio.run(_test_tools())
 
 
 def test_gene_conversions_human_mouse_versioned():
@@ -497,24 +430,6 @@ def test_row_aligned_mappings_preserved(tmp_path):
     assert len(reopened_obs.obs["smiles_mapped"]) == n_obs
 
 
-def test_annotation_failure_reporting(sample_adata_path, tmp_path):
-    """Test simulating service failure returns an error report rather than a misleading success string."""
-    out_annotated = str(tmp_path / "should_not_exist_annotated.h5ad")
-
-    with mock.patch("embpy.tl.annotate_gene_perturbations", side_effect=RuntimeError("Connection to MyGene service failed")):
-        res = annotate_metadata(
-            path=sample_adata_path,
-            column="perturbation",
-            entity_type="gene",
-            output_path=out_annotated,
-        )
-        assert res["status"] == "error"
-        assert res["error_type"] == "RuntimeError"
-        assert res["successful_count"] == 0
-        assert "Connection to MyGene service failed" in res["error"]
-        assert not os.path.exists(out_annotated)
-
-
 def test_reverse_cache_official_symbol_casing():
     """Test that resolving lowercase user input does not poison reverse cache with incorrect casing."""
     # Resolve lowercase symbol
@@ -580,3 +495,401 @@ def test_dynamic_model_registry():
     assert "molformer_base" in mol_models
     assert "molformer" not in mol_models
 
+
+# ---------------------------------------------------------------------------
+# 1. The requested species is respected
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("symbol", ["EGFR", "Egfr", "egfr"])
+def test_explicit_organism_is_not_overridden_by_capitalization(symbol):
+    res = resolve_identifiers(identifiers=[symbol], organism="human", target_id_type="ensembl")
+    assert res["status"] == "success"
+    assert res["sample_mapping"][symbol] == "ENSG00000146648"
+    assert res["organism_used"] == {"human": 1}
+    if symbol != "EGFR":
+        assert "case-insensitive" in res["notes"][symbol]
+
+
+def test_explicit_mouse_organism_resolves_mouse_gene():
+    res = resolve_identifiers(identifiers=["EGFR"], organism="mouse", target_id_type="ensembl")
+    assert res["sample_mapping"]["EGFR"] == "ENSMUSG00000020122"
+    assert res["organism_used"] == {"mouse": 1}
+
+
+def test_ensembl_id_from_other_species_is_an_error():
+    res = resolve_identifiers(identifiers=["ENSMUSG00000059552"], organism="human")
+    assert res["status"] == "error"
+    assert res["error_type"] == "SpeciesMismatchError"
+    assert "ENSMUSG00000059552" in res["conflicting_identifiers"]
+
+
+def test_species_detection_is_opt_in_and_reported():
+    # Default: symbols are looked up in human whatever their case.
+    default = resolve_identifiers(identifiers=["Trp53"], target_id_type="ensembl")
+    assert default["organism_used"] == {"human": 1}
+    assert default["sample_mapping"].get("Trp53") != "ENSMUSG00000059552"
+
+    auto = resolve_identifiers(identifiers=["Trp53", "TP53"], organism="auto")
+    assert auto["status"] == "success"
+    assert auto["sample_mapping"]["Trp53"] == "ENSMUSG00000059552"
+    assert auto["sample_mapping"]["TP53"] == "ENSG00000141510"
+    assert auto["organism_used"] == {"mouse": 1, "human": 1}
+
+
+# ---------------------------------------------------------------------------
+# 2. Annotation success means the requested annotations were retrieved
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def gene_pert_path(tmp_path):
+    ad = AnnData(X=np.ones((3, 2), dtype=np.float32))
+    ad.obs_names = ["c0", "c1", "c2"]
+    ad.obs["perturbation"] = ["TP53", "GAPDH", "TP53"]
+    p = str(tmp_path / "genes.h5ad")
+    ad.write_h5ad(p)
+    return p
+
+
+def _fake_annotators(monkeypatch, *, go=None, pathways=None, fail=False):
+    """Patch the gene/protein annotators; record the organisms and calls they receive."""
+    import requests
+
+    from embpy.resources._service_errors import report_service_error
+    from embpy.resources.gene.annotator import GeneAnnotator
+    from embpy.resources.protein.annotator import ProteinAnnotator
+
+    seen = {"organisms": [], "calls": []}
+    orig_gene_init, orig_prot_init = GeneAnnotator.__init__, ProteinAnnotator.__init__
+
+    def gene_init(self, organism="human", rate_limit_delay=0.2):
+        seen["organisms"].append(("gene", organism))
+        orig_gene_init(self, organism=organism, rate_limit_delay=0)
+
+    def prot_init(self, organism="human", rate_limit_delay=0.2):
+        seen["organisms"].append(("protein", organism))
+        orig_prot_init(self, organism=organism, rate_limit_delay=0)
+
+    def get_pathways(self, gene):
+        seen["calls"].append(("pathways", gene))
+        if fail:
+            report_service_error("https://mygene.info/v3/query", requests.ConnectionError("down"))
+        return (pathways or {}).get(gene, {"reactome": [], "kegg": [], "wikipathways": []})
+
+    def annotate(self, identifier, id_type="auto", sources="all"):
+        seen["calls"].append(("uniprot:" + ",".join(sources), identifier, id_type))
+        if fail:
+            report_service_error("https://rest.uniprot.org", requests.Timeout("down"))
+            return {"identifier": identifier, "error": "Could not fetch UniProt entry"}
+        return {"identifier": identifier, "go_terms": (go or {}).get(identifier, {})}
+
+    monkeypatch.setattr(GeneAnnotator, "__init__", gene_init)
+    monkeypatch.setattr(ProteinAnnotator, "__init__", prot_init)
+    monkeypatch.setattr(GeneAnnotator, "get_pathways", get_pathways)
+    monkeypatch.setattr(ProteinAnnotator, "annotate", annotate)
+    return seen
+
+
+def test_annotation_runs_every_requested_type_for_the_requested_organism(monkeypatch, gene_pert_path, tmp_path):
+    go = {
+        "TP53": {"biological_process": [{"id": "GO:0006915"}]},
+        "GAPDH": {"molecular_function": [{"id": "GO:0004365"}]},
+    }
+    pathways = {"TP53": {"reactome": [{"id": "R-1"}], "kegg": [], "wikipathways": []}}
+    seen = _fake_annotators(monkeypatch, go=go, pathways=pathways)
+    out = str(tmp_path / "annotated.h5ad")
+    res = annotate_metadata(
+        path=gene_pert_path,
+        entity_type="gene",
+        annotation_types=["go", "pathways"],
+        column="perturbation",
+        organism="mouse",
+        output_path=out,
+    )
+    assert ("gene", "mouse") in seen["organisms"]
+    assert ("protein", "mouse") in seen["organisms"]
+    # GO goes to the GO operation, with symbol ids; both requested types ran.
+    assert ("uniprot:go", "TP53", "symbol") in seen["calls"]
+    assert ("pathways", "GAPDH") in seen["calls"]
+    assert res["status"] == "partial_success"  # GAPDH has no pathways
+    assert res["per_type"]["go"] == {"annotated": 2, "no_match": 0, "service_error": 0}
+    assert res["per_type"]["pathways"] == {"annotated": 1, "no_match": 1, "service_error": 0}
+    import anndata
+
+    saved = anndata.read_h5ad(out)
+    assert list(saved.obs["gene_go_n"]) == [1, 1, 1]
+    assert list(saved.obs["gene_pathways_n"]) == [1, 0, 1]
+
+
+def test_annotation_sources_are_honored(monkeypatch, gene_pert_path, tmp_path):
+    pathways = {g: {"reactome": [], "kegg": [{"id": "hsa1"}], "wikipathways": []} for g in ("TP53", "GAPDH")}
+    _fake_annotators(monkeypatch, pathways=pathways)
+    res = annotate_metadata(
+        path=gene_pert_path,
+        entity_type="gene",
+        annotation_types="pathways",
+        sources=["reactome"],
+        column="perturbation",
+        output_path=str(tmp_path / "o.h5ad"),
+    )
+    # Only Reactome was asked for, and it had nothing: KEGG hits must not count.
+    assert res["sources_queried"] == {"pathways": ["reactome"]}
+    assert res["status"] == "error"
+    assert res["error_type"] == "NoAnnotationsFound"
+
+    bad = annotate_metadata(
+        path=gene_pert_path, entity_type="gene", annotation_types="go", sources=["kegg"], column="perturbation"
+    )
+    assert bad["status"] == "error"
+    assert bad["error_type"] == "ValueError"
+
+
+def test_annotation_empty_responses_are_not_success(monkeypatch, gene_pert_path, tmp_path):
+    _fake_annotators(monkeypatch)
+    out = str(tmp_path / "should_not_exist.h5ad")
+    res = annotate_metadata(
+        path=gene_pert_path,
+        entity_type="gene",
+        annotation_types=["go", "pathways"],
+        column="perturbation",
+        output_path=out,
+    )
+    assert res["status"] == "error"
+    assert res["error_type"] == "NoAnnotationsFound"
+    assert res["per_type"]["go"]["no_match"] == 2
+    assert res["successful_count"] == 0
+    assert not os.path.exists(out)
+
+
+def test_annotation_service_failures_are_reported_as_failures(monkeypatch, gene_pert_path, tmp_path):
+    _fake_annotators(monkeypatch, fail=True)
+    out = str(tmp_path / "should_not_exist.h5ad")
+    res = annotate_metadata(
+        path=gene_pert_path,
+        entity_type="gene",
+        annotation_types=["go", "pathways"],
+        column="perturbation",
+        output_path=out,
+    )
+    assert res["status"] == "error"
+    assert res["error_type"] == "AnnotationServiceError"
+    assert res["per_type"]["go"]["service_error"] == 2
+    assert res["per_type"]["pathways"]["service_error"] == 2
+    assert res["service_errors_sample"]
+    assert not os.path.exists(out)
+
+
+def test_annotation_rejects_unsupported_requests(gene_pert_path):
+    res = annotate_metadata(
+        path=gene_pert_path, entity_type="gene", annotation_types="diseases", organism="mouse", column="perturbation"
+    )
+    assert res["status"] == "error"
+    assert "human" in res["error"]
+    res = annotate_metadata(path=gene_pert_path, entity_type="molecule", annotation_types="go", column="perturbation")
+    assert res["status"] == "error"
+    assert "not available" in res["error"]
+
+
+# ---------------------------------------------------------------------------
+# 3. Embedding inputs can come from a chosen column
+# ---------------------------------------------------------------------------
+
+
+def test_molecule_embedding_from_obs_column_matches_python_api(tmp_path):
+    import anndata
+    import pandas as pd
+
+    from embpy import BioEmbedder
+
+    adata = AnnData(obs=pd.DataFrame({"smiles": ["CCO", "CCN"]}, index=["sample_A", "sample_B"]))
+    in_path = str(tmp_path / "molecules.h5ad")
+    adata.write_h5ad(in_path)
+    out_path = str(tmp_path / "molecules_embedded.h5ad")
+
+    res = compute_embeddings(
+        path=in_path,
+        models="morgan_fp",
+        entity_type="molecule",
+        obs_column="smiles",
+        output_path=out_path,
+        device="cpu",
+    )
+    assert res["status"] == "success", res
+    (key,) = res["embedding_keys"]
+    assert res["embedding_slots"][key] == "obsm"
+    assert res["embedding_shapes"][key] == [2, 2048]
+
+    direct = BioEmbedder(device="cpu").embed(
+        anndata.read_h5ad(in_path), entity_type="molecule", model="morgan_fp", obs_column="smiles", output="anndata"
+    )
+    saved = anndata.read_h5ad(out_path)
+    np.testing.assert_array_equal(np.asarray(saved.obsm[key]), np.asarray(direct.obsm[key]))
+
+
+def test_embedding_input_options_are_in_the_tool_signature():
+    import inspect
+
+    params = inspect.signature(compute_embeddings).parameters
+    for name in ("obs_column", "var_column", "input_axis", "id_type", "organism"):
+        assert name in params
+
+
+def test_perturbation_embedding_requires_label_column(sample_adata_path):
+    res = compute_embeddings(path=sample_adata_path, models="gene2vec", entity_type="perturbation")
+    assert res["status"] == "error"
+    assert "obs_column" in res["error"]
+
+
+# ---------------------------------------------------------------------------
+# 4. Recommended models run on the modality they are recommended for
+# ---------------------------------------------------------------------------
+
+
+def test_every_recommended_model_is_valid_for_its_modality():
+    from embpy.mcp.tools import _EMBED_ROUTES, _RECOMMENDED_MODELS, _validate_embedding_model
+
+    assert set(_RECOMMENDED_MODELS) == set(_EMBED_ROUTES)
+    for modality, models in _RECOMMENDED_MODELS.items():
+        for model in models:
+            assert _validate_embedding_model(modality, model) is None, (modality, model)
+
+
+def test_every_alias_names_a_real_model():
+    from embpy.mcp.tools import MODEL_ALIASES, _model_kind
+
+    for alias, target in MODEL_ALIASES.items():
+        assert _model_kind(target) is not None, (alias, target)
+
+
+def test_registry_lists_only_models_each_path_can_run():
+    from embpy.mcp.tools import _validate_embedding_model
+
+    res = list_model_registry()
+    for modality, models in res["available_models"].items():
+        for model in models:
+            assert _validate_embedding_model(modality, model) is None, (modality, model)
+    assert "boltz2" not in res["available_models"]["morphology"]
+    assert "state" not in res["available_models"]["perturbation"]
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "model", "message"),
+    [
+        ("text", "bge_large", "Unknown model"),
+        ("morphology", "structure", "Unknown model"),
+        ("morphology", "boltz2", "protein model"),
+        ("perturbation", "state", "single_cell model"),
+        ("single_cell", "esm2_8M", "protein model"),
+    ],
+)
+def test_model_modality_mismatches_are_rejected_before_running(sample_adata_path, entity_type, model, message):
+    res = compute_embeddings(path=sample_adata_path, models=model, entity_type=entity_type, obs_column="perturbation")
+    assert res["status"] == "error"
+    assert res["error_type"] == "UnsupportedModelError"
+    assert message in res["error"]
+
+
+# ---------------------------------------------------------------------------
+# 5. Conversion requests are validated and status follows the final mappings
+# ---------------------------------------------------------------------------
+
+
+def test_unsupported_target_types_are_rejected():
+    res = resolve_identifiers(identifiers=["TP53"], target_id_type="banana")
+    assert res["status"] == "error"
+    assert "banana" in res["error"]
+    res = resolve_identifiers(identifiers=["TP53"], entity_type="gene", target_id_type="smiles")
+    assert res["status"] == "error"
+    res = resolve_identifiers(identifiers=["CCO"], entity_type="molecule", target_id_type="ensembl")
+    assert res["status"] == "error"
+
+
+def test_blank_identifiers_count_and_fail_strict_mode():
+    res = resolve_identifiers(identifiers=["TP53", "  "], strict=True)
+    assert res["status"] == "error"
+    assert res["blank_count"] == 1
+    assert res["error_type"] == "UnresolvedIdentifiersError"
+
+    lenient = resolve_identifiers(identifiers=["TP53", ""])
+    assert lenient["status"] == "partial_success"
+    assert lenient["total_submitted"] == 2
+    assert lenient["mapped_count"] == 1
+
+
+def test_status_follows_final_mappings(monkeypatch):
+    from embpy.resources.gene.resolver import GeneResolver
+
+    def fake_batch(self, symbols, organism="human", **kwargs):
+        res = {s: None for s in symbols}
+        diag = {"status": "partial_success", "unresolved_count": len(symbols), "warning": "Ensembl timed out."}
+        return (res, diag) if kwargs.get("return_diagnostics") else res
+
+    monkeypatch.setattr(GeneResolver, "symbols_to_ensembl_batch", fake_batch)
+    res = resolve_identifiers(identifiers=["NOT_A_GENE_1", "NOT_A_GENE_2"])
+    assert res["status"] == "error"
+    assert res["mapped_count"] == 0
+
+
+def test_molecule_conversion_reports_smiles_target():
+    res = resolve_identifiers(identifiers=["OCC"], entity_type="molecule")
+    assert res["status"] == "success"
+    assert res["target_id_type"] == "smiles"
+    assert res["sample_mapping"]["OCC"] == "CCO"
+
+
+def test_strict_mode_does_not_write_output(tmp_path):
+    adata = AnnData(X=np.ones((1, 2), dtype=np.float32))
+    adata.var_names = ["f0", "f1"]
+    adata.var["symbol"] = ["TP53", ""]
+    in_path = str(tmp_path / "in.h5ad")
+    adata.write_h5ad(in_path)
+    out_path = str(tmp_path / "out.h5ad")
+    res = resolve_identifiers(path=in_path, var_column="symbol", strict=True, output_path=out_path)
+    assert res["status"] == "error"
+    assert not os.path.exists(out_path)
+
+
+# ---------------------------------------------------------------------------
+# 6. Prediction and reference groups must differ
+# ---------------------------------------------------------------------------
+
+
+def test_identical_prediction_and_reference_labels_are_rejected(sample_adata_path):
+    res = benchmark_perturbations(
+        path=sample_adata_path,
+        split_col="split",
+        pred_label="test",
+        ref_label="test",
+        control_pert="ctrl",
+        pert_col="perturbation",
+    )
+    assert res["status"] == "error"
+    assert "themselves" in res["error"]
+
+
+def test_same_prediction_and_reference_data_is_rejected(sample_adata_path, tmp_path):
+    import shutil
+
+    res = benchmark_perturbations(
+        path=sample_adata_path, path_pred=sample_adata_path, control_pert="ctrl", pert_col="perturbation"
+    )
+    assert res["status"] == "error"
+    assert "same file" in res["error"]
+
+    copy_path = str(tmp_path / "copy.h5ad")
+    shutil.copy(sample_adata_path, copy_path)
+    res = benchmark_perturbations(
+        path=sample_adata_path, path_pred=copy_path, control_pert="ctrl", pert_col="perturbation"
+    )
+    assert res["status"] == "error"
+    assert "same cells" in res["error"]
+
+
+def test_auto_preprocessing_embeds_small_datasets(sample_adata_path, tmp_path):
+    """embed_cells' default QC (min_genes=200) would drop every cell of a 40-gene dataset."""
+    res = compute_embeddings(path=sample_adata_path, models="pca", device="cpu",
+                             output_path=str(tmp_path / "small_embedded.h5ad"))
+    assert res["status"] == "success", res
+    assert res["embedding_shapes"]["X_pca"][0] == 30
+    assert "min_genes" in res["preprocessing_adjustments"]

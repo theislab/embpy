@@ -65,8 +65,9 @@ scripts.embpy-static-embeddings = "embpy.scripts.package_static_embeddings:main"
 scripts.embpy-mcp = "embpy.mcp.server:main"
 
 # Model Context Protocol (MCP) server with bioinformatics skills
+# Tested in CI (test.yaml, job test-mcp) against 1.23.0, 1.30.0 and 2.3.0.
 optional-dependencies.mcp = [
-  "mcp>=1.0.0",
+  "mcp>=1.23,<3",
   "scanpy>=1.10",
 ]
 

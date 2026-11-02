@@ -485,7 +485,7 @@ pip install "embpy[mcp]"
 embpy-mcp
 ```
 
-For complete tool references, setup guides, and example prompts, see the **[Agentic MCP Skills Documentation](docs/mcp/index.md)** or follow the interactive walkthrough in **[tutorials/05_mcp_agent_workflows.ipynb](tutorials/05_mcp_agent_workflows.ipynb)**.
+The repository is also a Claude Code plugin whose [Agent Skills](docs/mcp/skills.md) (`skills/`) teach Claude how to use these tools (`claude --plugin-dir .`). For tool references, setup guides, and example prompts, see the **[MCP documentation](docs/mcp/index.md)** or follow the interactive walkthrough in **[tutorials/05_mcp_agent_workflows.ipynb](tutorials/05_mcp_agent_workflows.ipynb)**.
 
 ## Tutorials
 

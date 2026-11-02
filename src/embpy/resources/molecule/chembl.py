@@ -48,6 +48,8 @@ from typing import Any, Literal
 
 import requests
 
+from embpy.resources._service_errors import report_service_error
+
 logger = logging.getLogger(__name__)
 
 CHEMBL = "https://www.ebi.ac.uk/chembl/api/data"
@@ -143,6 +145,7 @@ def _get_json(url: str, params: dict | None = None, timeout: int = 30) -> dict |
         return resp.json()
     except Exception as e:  # noqa: BLE001
         logger.debug("Request failed for %s: %s", url, e)
+        report_service_error(url, e)
         return None
 
 

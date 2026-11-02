@@ -108,6 +108,136 @@ def _mygene_query(query_url: str, params: dict) -> dict:
     return response.json()
 
 
+_MYGENE_QUERY_URL = "https://mygene.info/v3/query"
+
+# NCBI taxon ids used to check that a MyGene.info hit belongs to the species
+# that was asked for, and the Ensembl gene-id prefix for that species.
+_SPECIES_TAXID: dict[str, int] = {
+    "human": 9606,
+    "homo_sapiens": 9606,
+    "mouse": 10090,
+    "mus_musculus": 10090,
+}
+_SPECIES_ENSEMBL_PREFIX: dict[str, str] = {
+    "human": "ENSG",
+    "homo_sapiens": "ENSG",
+    "mouse": "ENSMUSG",
+    "mus_musculus": "ENSMUSG",
+}
+
+
+def ensembl_id_matches_species(ensembl_id: str, organism: str) -> bool:
+    """Return False only when ``ensembl_id`` clearly belongs to another species.
+
+    Human gene ids are ``ENSG...`` and mouse ones ``ENSMUSG...``. Species
+    without a known prefix are accepted, since there is nothing to check.
+    """
+    prefix = _SPECIES_ENSEMBL_PREFIX.get(organism.lower())
+    if prefix is None:
+        return True
+    eid = ensembl_id.strip().upper()
+    if prefix == "ENSG":
+        # ``ENSG`` is a prefix of nothing else, but every other species'
+        # prefix (ENSMUSG, ENSDARG, ...) starts with ``ENS`` + letters.
+        return re.match(r"^ENSG\d", eid) is not None
+    return eid.startswith(prefix)
+
+
+def _mygene_hit_ensembl_ids(hit: dict, organism: str) -> list[str]:
+    ens = hit.get("ensembl")
+    entries = ens if isinstance(ens, list) else [ens] if isinstance(ens, dict) else []
+    ids = [str(e["gene"]) for e in entries if isinstance(e, dict) and e.get("gene")]
+    return [i for i in dict.fromkeys(ids) if ensembl_id_matches_species(i, organism)]
+
+
+def _mygene_exact_symbol_lookup(symbol: str, organism: str, *, timeout: float = 10) -> dict[str, Any]:
+    """Look up a gene on MyGene.info by exact symbol, then by exact alias.
+
+    MyGene's ``GET /query`` ignores ``scopes`` and runs a free-text search, so
+    ``q=P53`` ranks PURPL above TP53. Fielded queries (``symbol:"P53"``,
+    ``alias:"P53"``) match the field exactly (case-insensitively). Hits from
+    another species are dropped, and an alias shared by several genes is
+    reported as ambiguous rather than resolved to whichever ranks first.
+
+    Returns
+    -------
+    dict
+        ``status`` is ``"ok"``, ``"miss"``, ``"ambiguous"`` or
+        ``"error:<ExceptionName>"``. On ``"ok"``, ``symbol`` holds the
+        approved symbol and ``ensembl_id`` the gene id when MyGene lists
+        exactly one for the species (``None`` when it lists several, e.g.
+        alternate haplotypes, so callers can ask Ensembl for the primary one;
+        ``ensembl_ids`` lists them all).
+        On ``"ambiguous"``, ``candidates`` lists the approved symbols.
+    """
+    org = organism.lower()
+    taxid = _SPECIES_TAXID.get(org)
+    term = symbol.strip().replace('"', "")
+    if not term:
+        return {"status": "miss", "symbol": None, "ensembl_id": None, "candidates": []}
+
+    for field in ("symbol", "alias"):
+        try:
+            resp = requests.get(
+                _MYGENE_QUERY_URL,
+                params={
+                    "q": f'{field}:"{term}"',
+                    "species": organism,
+                    "fields": "symbol,taxid,ensembl.gene",
+                    "size": 10,
+                },
+                timeout=timeout,
+            )
+            if not resp.ok:
+                return {"status": f"error:HTTP{resp.status_code}", "symbol": None, "ensembl_id": None, "candidates": []}
+            hits = resp.json().get("hits", [])
+        except Exception as e:  # noqa: BLE001
+            return {"status": f"error:{type(e).__name__}", "symbol": None, "ensembl_id": None, "candidates": []}
+
+        hits = [h for h in hits if h.get("symbol") and (taxid is None or h.get("taxid") == taxid)]
+        if field == "symbol":
+            hits = [h for h in hits if str(h["symbol"]).upper() == term.upper()]
+        by_symbol: dict[str, dict] = {}
+        for h in hits:
+            by_symbol.setdefault(str(h["symbol"]), h)
+        if len(by_symbol) == 1:
+            approved, hit = next(iter(by_symbol.items()))
+            ids = _mygene_hit_ensembl_ids(hit, org)
+            return {
+                "status": "ok",
+                "symbol": approved,
+                "ensembl_id": ids[0] if len(ids) == 1 else None,
+                "ensembl_ids": ids,
+                "candidates": [approved],
+            }
+        if len(by_symbol) > 1:
+            return {"status": "ambiguous", "symbol": None, "ensembl_id": None, "candidates": sorted(by_symbol)}
+    return {"status": "miss", "symbol": None, "ensembl_id": None, "candidates": []}
+
+
+def _mygene_symbol_for_ensembl(ensembl_id: str, organism: str, *, timeout: float = 10) -> str | None:
+    """Return the approved symbol MyGene.info lists for an Ensembl gene id."""
+    taxid = _SPECIES_TAXID.get(organism.lower())
+    resp = requests.get(
+        _MYGENE_QUERY_URL,
+        params={
+            "q": f'ensembl.gene:"{ensembl_id}"',
+            "species": organism,
+            "fields": "symbol,taxid",
+            "size": 5,
+        },
+        timeout=timeout,
+    )
+    if not resp.ok:
+        return None
+    symbols = {
+        str(h["symbol"])
+        for h in resp.json().get("hits", [])
+        if h.get("symbol") and (taxid is None or h.get("taxid") == taxid)
+    }
+    return symbols.pop() if len(symbols) == 1 else None
+
+
 # HTTP statuses from Ensembl REST that are worth retrying: rate limiting
 # (429) and any server-side failure (5xx). Other 4xx (400 bad symbol, 404
 # unknown ID) are permanent and are handed straight back to the caller.
@@ -291,6 +421,12 @@ def _get_ensembl_offline_warning(
     )
 
 
+# Bumped whenever cached entries written by an older release can be wrong.
+# 2: reverse entries hold only a source's approved symbol, and MyGene lookups
+#    are exact symbol/alias queries instead of a free-text search.
+_GENE_CACHE_VERSION = 2
+
+
 def default_gene_cache_path() -> Path:
     """Return path to persistent gene ID resolution cache."""
     env = os.environ.get("EMBPY_CACHE")
@@ -444,6 +580,7 @@ class GeneResolver:
         self._cache_file: Path | None = default_gene_cache_path()
         self._symbol_cache: dict[tuple[str, str], str | None] = {}
         self._ensembl_cache: dict[tuple[str, str], str | None] = {}
+        self._ambiguous_symbols: dict[tuple[str, str], list[str]] = {}
         self._last_diagnostics: dict[str, Any] | None = None
         self._load_cache()
 
@@ -452,6 +589,8 @@ class GeneResolver:
             self._symbol_cache = {}
         if not hasattr(self, "_ensembl_cache") or self._ensembl_cache is None:
             self._ensembl_cache = {}
+        if not hasattr(self, "_ambiguous_symbols") or self._ambiguous_symbols is None:
+            self._ambiguous_symbols = {}
         if not hasattr(self, "_cache_file"):
             self._cache_file = default_gene_cache_path()
         if not hasattr(self, "_last_diagnostics"):
@@ -460,6 +599,7 @@ class GeneResolver:
     def _load_cache(self) -> None:
         self._ensure_cache()
         # Pre-seed in-memory cache with canonical landmark genes for instant offline resilience
+        seeded_reverse: set[tuple[str, str]] = set()
         if not self._symbol_cache:
             for organism, symbol, ensembl_id in _CANONICAL_GENE_SEEDS:
                 slug = _SPECIES_SLUG_MAP.get(organism, organism)
@@ -468,13 +608,23 @@ class GeneResolver:
                     self._symbol_cache[(org_key, symbol.lower())] = ensembl_id
                     self._symbol_cache[(org_key, symbol.upper())] = ensembl_id
                     self._ensembl_cache[(org_key, ensembl_id)] = symbol
+                    seeded_reverse.add((org_key, ensembl_id))
         if self._cache_file and self._cache_file.exists():
             try:
                 import json
 
                 with open(self._cache_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                if isinstance(data, dict):
+                if isinstance(data, dict) and data.get("version") != _GENE_CACHE_VERSION:
+                    # Older caches stored whatever the user typed as the reverse
+                    # (Ensembl -> symbol) entry, so an alias like 'P53' came back
+                    # instead of 'TP53', and their MyGene entries came from a
+                    # free-text search. Drop them; ids are re-resolved on demand.
+                    logging.info(
+                        "Ignoring gene cache %s written by an older embpy (version %r); it will be rebuilt.",
+                        self._cache_file, data.get("version"),
+                    )
+                elif isinstance(data, dict):
                     for k, v in data.get("symbols", {}).items():
                         parts = k.split(":", 1)
                         if len(parts) == 2:
@@ -485,13 +635,7 @@ class GeneResolver:
                         parts = k.split(":", 1)
                         if len(parts) == 2:
                             org_part, ens_part = parts[0], parts[1]
-                            if _is_ensembl_id(ens_part):
-                                # Clean / sanitize any legacy lowercase entries in reverse cache
-                                if isinstance(v, str):
-                                    if org_part in {"human", "homo_sapiens"} and v.islower():
-                                        v = v.upper()
-                                    elif org_part in {"mouse", "mus_musculus"} and v.islower():
-                                        v = v.capitalize()
+                            if _is_ensembl_id(ens_part) and (org_part, ens_part) not in seeded_reverse:
                                 self._ensembl_cache[(org_part, ens_part)] = v
             except Exception as e:
                 logging.debug("Could not load gene cache: %s", e)
@@ -505,7 +649,7 @@ class GeneResolver:
 
             self._cache_file.parent.mkdir(parents=True, exist_ok=True)
             payload = {
-                "version": 1,
+                "version": _GENE_CACHE_VERSION,
                 "symbols": {
                     f"{org}:{sym}": ens
                     for (org, sym), ens in self._symbol_cache.items()
@@ -1189,53 +1333,33 @@ class GeneResolver:
             except Exception as e:  # noqa: BLE001
                 logging.debug(f"pyensembl failed for {sym}: {e}")
 
-        # 2) MyGene.info (good with synonyms)
-        # TODO(pre-existing): MyGene fallback uses free-text search and accepts the first hit,
-        # which can return incorrect genes for short symbols (e.g. 'P53' returns 'PURPL'
-        # instead of 'TP53'). Tracked for a separate PR: must use specific symbol/alias queries
-        # (e.g. 'symbol:P53' or 'alias:P53') and verify returned gene name and species before accepting.
+        # 2) MyGene.info, exact symbol then exact alias (good with synonyms).
+        # When MyGene lists several Ensembl ids for the gene (alternate
+        # haplotypes), step 3 asks Ensembl for the primary one by approved symbol.
         if not resolved_id:
-            try:
-                resp = requests.get(
-                    "https://mygene.info/v3/query",
-                    params={
-                        "q": sym,
-                        "scopes": "symbol,alias,name",
-                        "species": organism,
-                        "fields": "symbol,ensembl.gene",
-                        "size": 1,
-                    },
-                    timeout=10,
+            hit = _mygene_exact_symbol_lookup(sym, org)
+            if hit["status"] == "ok":
+                official_sym = hit["symbol"]
+                resolved_id = hit["ensembl_id"]
+            elif hit["status"] == "ambiguous":
+                self._ambiguous_symbols[(org, sym)] = hit["candidates"]
+                logging.warning(
+                    "Symbol '%s' is an alias of several %s genes %s; leaving it unresolved.",
+                    sym, organism, hit["candidates"],
                 )
-                if resp.ok:
-                    hits = resp.json().get("hits", [])
-                    if hits:
-                        hit_symbol = hits[0].get("symbol")
-                        ens = hits[0].get("ensembl", {})
-                        if isinstance(ens, dict) and "gene" in ens:
-                            resolved_id = ens["gene"]
-                            official_sym = hit_symbol
-                        elif isinstance(ens, list) and ens:
-                            for item in ens:
-                                if "gene" in item:
-                                    resolved_id = item["gene"]
-                                    official_sym = hit_symbol
-                                    break
-            except (requests.ConnectionError, requests.Timeout) as e:
-                logging.debug(f"MyGene.info network error for {sym}: {e}")
-            except Exception as e:  # noqa: BLE001
-                logging.debug(f"MyGene.info failed for {sym}: {e}")
+            elif hit["status"].startswith("error"):
+                logging.debug(f"MyGene.info lookup failed for {sym}: {hit['status']}")
 
         # 3) Ensembl REST
         if not resolved_id:
             species_slug = _SPECIES_SLUG_MAP.get(org, org)
-            url = f"https://rest.ensembl.org/lookup/symbol/{species_slug}/{sym}"
+            url = f"https://rest.ensembl.org/lookup/symbol/{species_slug}/{official_sym or sym}"
             try:
                 r = _ensembl_get(url, headers={"Content-Type": "application/json"}, timeout=10)
                 if r.ok:
                     data = r.json()
                     resolved_id = data.get("id")
-                    official_sym = data.get("display_name")
+                    official_sym = data.get("display_name") or official_sym
                 elif r.status_code in _ENSEMBL_RETRY_STATUSES:
                     network_failed = True
                     fail_reason = f"returned HTTP {r.status_code}"
@@ -1246,16 +1370,20 @@ class GeneResolver:
             except Exception as e:  # noqa: BLE001
                 logging.debug(f"Ensembl REST symbol->id failed for {sym}: {e}")
 
+        if resolved_id and not ensembl_id_matches_species(resolved_id, org):
+            logging.warning(
+                "Discarding %s for symbol '%s': it is not a %s Ensembl gene id.", resolved_id, sym, organism
+            )
+            resolved_id = None
+
         if resolved_id:
-            if not official_sym:
-                if org in ("human", "homo_sapiens"):
-                    official_sym = sym.upper()
-                elif org in ("mouse", "mus_musculus"):
-                    official_sym = sym.capitalize()
-                else:
-                    official_sym = sym
             self._symbol_cache[(org, sym)] = resolved_id
-            self._ensembl_cache[(org, resolved_id)] = official_sym
+            # Only a source's approved symbol goes in the reverse cache. Writing
+            # the user's input there (e.g. the alias 'P53') would make every later
+            # Ensembl -> symbol lookup return the alias instead of 'TP53'.
+            if official_sym:
+                self._symbol_cache[(org, official_sym)] = resolved_id
+                self._ensembl_cache[(org, resolved_id)] = official_sym
             self._save_cache()
             return resolved_id
 
@@ -1313,24 +1441,10 @@ class GeneResolver:
             except Exception as e:  # noqa: BLE001
                 logging.debug(f"pyensembl failed for {ens}: {e}")
 
-        # 2) MyGene.info
+        # 2) MyGene.info, fielded on ensembl.gene and checked against the species
         if not resolved_sym:
             try:
-                resp = requests.get(
-                    "https://mygene.info/v3/query",
-                    params={
-                        "q": ens,
-                        "scopes": "ensembl.gene",
-                        "species": organism,
-                        "fields": "symbol,name",
-                        "size": 1,
-                    },
-                    timeout=10,
-                )
-                if resp.ok:
-                    hits = resp.json().get("hits", [])
-                    if hits:
-                        resolved_sym = hits[0].get("symbol") or hits[0].get("name")
+                resolved_sym = _mygene_symbol_for_ensembl(ens, org)
             except (requests.ConnectionError, requests.Timeout) as e:
                 logging.debug(f"MyGene.info network error for {ens}: {e}")
             except Exception as e:  # noqa: BLE001
@@ -1468,11 +1582,10 @@ class GeneResolver:
                     if genes:
                         ens_id = genes[0].gene_id
                         official_sym = getattr(genes[0], "gene_name", None) or getattr(genes[0], "name", None)
-                        if not official_sym:
-                            official_sym = sym.upper() if org in ("human", "homo_sapiens") else (sym.capitalize() if org in ("mouse", "mus_musculus") else sym)
                         result[s] = ens_id
                         self._symbol_cache[(org, sym)] = ens_id
-                        self._ensembl_cache[(org, ens_id)] = official_sym
+                        if official_sym:
+                            self._ensembl_cache[(org, ens_id)] = official_sym
                     else:
                         unresolved_after_pyensembl.append(s)
                 except Exception as e:
@@ -1508,11 +1621,10 @@ class GeneResolver:
                                 if isinstance(val, dict) and "id" in val:
                                     ens_id = val["id"]
                                     official_sym = val.get("display_name")
-                                    if not official_sym:
-                                        official_sym = sym.upper() if org in ("human", "homo_sapiens") else (sym.capitalize() if org in ("mouse", "mus_musculus") else sym)
                                     result[orig] = ens_id
                                     self._symbol_cache[(org, sym)] = ens_id
-                                    self._ensembl_cache[(org, ens_id)] = official_sym
+                                    if official_sym:
+                                        self._ensembl_cache[(org, ens_id)] = official_sym
                                 else:
                                     still_unresolved.append(orig)
                         else:
@@ -1578,6 +1690,11 @@ class GeneResolver:
             "unresolved_count": unmapped_count,
             "mapping_rate": rate,
             "unresolved_genes": final_unresolved,
+            "ambiguous": {
+                u: self._ambiguous_symbols[(org, u.strip())]
+                for u in final_unresolved
+                if (org, u.strip()) in self._ambiguous_symbols
+            },
             "warning": warning_text or (f"Could not resolve {unmapped_count} genes." if final_unresolved else None),
             "action_required": (
                 f'Install embpy[genome] for offline resolution: pip install "embpy[genome]" && '

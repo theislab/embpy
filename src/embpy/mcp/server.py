@@ -82,16 +82,22 @@ def create_server(name: str = "embpy-mcp") -> FastMCP:
     server = FastMCP(
         name=name,
         instructions=(
-            "embpy Universal MCP Server exposes an end-to-end biological representation pipeline: "
-            "1. inspect_data: Inspect .h5ad metadata, layers, candidate label/batch columns, and count nature. "
-            "2. resolve_identifiers: Harmonize biological IDs (Ensembl to HGNC, molecule names to SMILES). "
-            "3. preprocess_counts: Filter, library size normalize, log1p, and select HVGs, saving to disk. "
-            "4. list_model_registry: Check available foundation models (~150), modalities, and compute hardware. "
-            "5. compute_embeddings: Run multi-model embeddings (PCA, scVI, foundation models) via BioEmbedder. "
-            "6. annotate_metadata: Enrich AnnData with GO terms, pathways, disease associations, and pharmacology. "
-            "7. compute_umap: Compute kNN graph and 2D UMAP coordinates on chosen representation. "
-            "8. benchmark_scib: Benchmark embeddings on biological conservation and batch integration. "
-            "9. benchmark_perturbations: Score perturbation prediction accuracy via ArcInstitute cell-eval."
+            "embpy MCP server: tools for a biological representation pipeline. "
+            "1. inspect_data: .h5ad dimensions, layers, candidate label/batch columns, raw vs normalized counts. "
+            "2. resolve_identifiers: gene symbols <-> Ensembl ids, compound names/SMILES -> canonical SMILES. "
+            "The organism argument is always respected; omit it to use human (Ensembl prefixes still decide), "
+            "or pass 'auto' to opt into species detection. "
+            "3. preprocess_counts: filter, normalize, log1p, select HVGs, save to disk. "
+            "4. list_model_registry: models each modality can run, and the compute device. "
+            "5. compute_embeddings: run models for one modality; choose the input with obs_column / var_column. "
+            "Models are validated against the modality before anything runs. "
+            "6. annotate_metadata: GO, pathways, domains, diseases, interactions, expression; reports "
+            "per type how many entities were annotated, had no match, or hit a service error. "
+            "7. compute_umap: kNN graph and 2D UMAP on a chosen representation. "
+            "8. benchmark_scib: scIB bio-conservation / batch-integration metrics. "
+            "9. benchmark_perturbations: cell-eval scoring of predicted vs observed perturbations "
+            "(prediction and reference must be different groups). "
+            "Large data stays on disk; tools return compact JSON."
         ),
     )
 
@@ -118,9 +124,41 @@ def create_server(name: str = "embpy-mcp") -> FastMCP:
     return server
 
 
+# Native libraries the tools load lazily. Imported before the stdio transport
+# starts on Windows: the MCP 1.x stdio reader sits in a blocking ReadFile on
+# stdin, and a Fortran runtime (scipy's BLAS/LAPACK wrappers) that initialises
+# while that read is pending waits behind it on the stdin handle, so the first
+# tool call that imports scipy.linalg never returns.
+_PRELOAD_MODULES = (
+    "scipy.linalg",
+    "scipy.sparse.linalg",
+    "scipy.special",
+    "scipy.optimize",
+    "scipy.stats",
+    "scipy.spatial",
+    "scipy.interpolate",
+    "sklearn.decomposition",
+    "sklearn.neighbors",
+    "torch",
+    "scanpy",
+)
+
+
+def _preload_native_modules() -> None:
+    import importlib
+
+    for name in _PRELOAD_MODULES:
+        try:
+            importlib.import_module(name)
+        except Exception as exc:  # noqa: BLE001 -- optional dependencies may be absent
+            logger.debug("Preloading %s skipped: %s", name, exc)
+
+
 def main() -> None:
     """CLI entrypoint for embpy-mcp command."""
     _setup_stderr_logging()
+    if sys.platform == "win32":
+        _preload_native_modules()
     logger.info("Starting embpy MCP server on stdio transport...")
     server = create_server()
     try:

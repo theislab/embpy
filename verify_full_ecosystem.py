@@ -9,7 +9,7 @@ Demonstrates procedural execution across:
 
 Strictly verifies:
 1. Exact Pydantic/JSON schemas with zero **kwargs.
-2. Multi-entity resolution with automatic species inference (Human, Mouse, Molecule).
+2. Gene/molecule resolution that respects the requested species (detection is opt-in).
 3. Exact row-alignment preservation across duplicate indices and blank entries.
 4. Strict enforcement of preprocessing thresholds.
 5. Dynamic model registry catalog (~150 models).
@@ -74,25 +74,39 @@ def run_phase_a(tmpdir: str) -> dict[str, str]:
     # ---------------------------------------------------------
     # 2. Multi-Entity Resolution
     # ---------------------------------------------------------
-    print_section("A.2 Multi-Entity Resolution with Automatic Species Inference")
-    mixed_inputs = ["TP53", "EGFR", "Trp53", "Aspirin"]
-    print(f"Input Identifiers: {mixed_inputs}")
-    print("Expected:")
-    print("  - Human genes: TP53 -> ENSG00000141510, EGFR -> ENSG00000146648")
-    print("  - Mouse gene (auto-inferred species): Trp53 -> ENSMUSG00000059552")
-    print("  - Molecule name: Aspirin -> CC(=O)Oc1ccccc1C(=O)O")
+    print_section("A.2 Multi-Entity Resolution (explicit species, opt-in detection)")
 
-    res_mixed = tools.resolve_identifiers(identifiers=mixed_inputs)
-    print("\nResult Payload:")
-    print(json.dumps(res_mixed, indent=2))
+    def _resolve(label: str, **kwargs):
+        res = tools.resolve_identifiers(**kwargs)
+        keys = ("status", "error_type", "sample_mapping", "organism_used", "notes", "target_id_type")
+        print(f"{label}: {json.dumps({k: res[k] for k in keys if k in res})}")
+        return res
 
-    assert res_mixed["status"] == "success", f"Resolution failed: {res_mixed}"
-    mapping = res_mixed["sample_mapping"]
-    assert mapping.get("TP53") == "ENSG00000141510", f"Unexpected TP53 mapping: {mapping.get('TP53')}"
-    assert mapping.get("EGFR") == "ENSG00000146648", f"Unexpected EGFR mapping: {mapping.get('EGFR')}"
-    assert mapping.get("Trp53") == "ENSMUSG00000059552", f"Unexpected Trp53 mapping: {mapping.get('Trp53')}"
-    assert "CC(=O)Oc1ccccc1C(=O)O" in mapping.get("Aspirin", ""), f"Unexpected Aspirin mapping: {mapping.get('Aspirin')}"
-    print("\n[VERIFIED] Multi-entity resolution succeeded with 100% correct cross-species and molecule mapping.")
+    human = _resolve("Human (organism='human')", identifiers=["TP53", "EGFR"], organism="human")
+    assert human["status"] == "success", human
+    assert human["sample_mapping"] == {"TP53": "ENSG00000141510", "EGFR": "ENSG00000146648"}
+
+    # Capitalization never changes an explicitly requested species.
+    egfr = _resolve("'Egfr' with organism='human'", identifiers=["Egfr"], organism="human")
+    assert egfr["sample_mapping"]["Egfr"] == "ENSG00000146648", egfr
+    assert "case-insensitive" in egfr["notes"]["Egfr"]
+
+    mouse = _resolve("Mouse (organism='mouse')", identifiers=["Trp53"], organism="mouse")
+    assert mouse["sample_mapping"]["Trp53"] == "ENSMUSG00000059552", mouse
+
+    conflict = _resolve("Mouse Ensembl id with organism='human'", identifiers=["ENSMUSG00000059552"], organism="human")
+    assert conflict["status"] == "error" and conflict["error_type"] == "SpeciesMismatchError", conflict
+
+    auto = _resolve("Opt-in detection (organism='auto')", identifiers=["TP53", "Trp53"], organism="auto")
+    assert auto["organism_used"] == {"human": 1, "mouse": 1}, auto
+
+    aspirin = _resolve("Molecule name (entity_type='molecule')", identifiers=["Aspirin"], entity_type="molecule")
+    assert aspirin["target_id_type"] == "smiles", aspirin
+    assert "CC(=O)Oc1ccccc1C(=O)O" in aspirin["sample_mapping"].get("Aspirin", ""), aspirin
+
+    banana = _resolve("Unsupported target", identifiers=["TP53"], target_id_type="banana")
+    assert banana["status"] == "error", banana
+    print("\n[VERIFIED] Species are respected, detection is opt-in and reported, and targets are validated.")
 
     # ---------------------------------------------------------
     # 3. Row-Aligned Integrity
@@ -193,7 +207,7 @@ def run_phase_b(tmpdir: str) -> dict[str, str]:
     assert "molformer_base" in recommended["molecule"], "molformer_base must be in recommended molecule models"
     assert "molformer" not in recommended["molecule"], "Invalid placeholder 'molformer' detected!"
     assert any("esm2" in m for m in recommended["protein"]), "ESM-2 must be present in protein recommendations"
-    assert "pca" in recommended["cell"], "PCA must be present in cell recommendations"
+    assert "pca" in recommended["single_cell"], "PCA must be present in single_cell recommendations"
     print("\n[VERIFIED] Catalog is dynamically populated from internal registries with verified keys.")
 
     # ---------------------------------------------------------
@@ -318,12 +332,14 @@ def run_phase_c(tmpdir: str) -> None:
         path=gene_ann_in,
         output_path=gene_ann_out,
         entity_type="gene",
+        annotation_types=["go", "pathways"],
         column="perturbation",
     )
     print("Gene Annotation Result:")
     print(json.dumps(res_gene_ann, indent=2))
     assert res_gene_ann["status"] in ("success", "partial_success")
-    assert res_gene_ann["successful_count"] > 0
+    assert res_gene_ann["per_type"]["go"]["annotated"] > 0, "GO annotation must actually retrieve GO terms"
+    assert res_gene_ann["per_type"]["pathways"]["annotated"] > 0
 
     # Domain 2: Molecules (Structural Properties & Bioactivity)
     print("\n--- Domain 2: Molecule Annotations (RDKit & ChEMBL Metadata) ---")
@@ -340,11 +356,11 @@ def run_phase_c(tmpdir: str) -> None:
         output_path=mol_ann_out,
         entity_type="molecule",
         column="smiles",
-        sources=["structural", "bioactivity"],
+        annotation_types=["properties", "interactions"],
     )
     print("Molecule Annotation Result:")
     print(json.dumps(res_mol_ann, indent=2))
-    assert res_mol_ann["status"] == "success"
+    assert res_mol_ann["per_type"]["properties"]["annotated"] == 3, res_mol_ann
     assert "mol_molecular_weight" in res_mol_ann["new_columns_added"]
     assert "mol_logp" in res_mol_ann["new_columns_added"]
 
@@ -356,23 +372,41 @@ def run_phase_c(tmpdir: str) -> None:
     fail_out_h5ad = os.path.join(tmpdir, "fail_out.h5ad")
     adata_gene.write_h5ad(fail_h5ad)
 
-    print("Simulating connection drop in external metadata annotation service...")
-    with mock.patch("embpy.tl.annotate_gene_perturbations", side_effect=RuntimeError("Connection timeout to MyGene reference service")):
+    import requests
+
+    print("Simulating an outage of every annotation service...")
+    outage = requests.ConnectionError("Connection timeout to MyGene reference service")
+    with mock.patch("requests.get", side_effect=outage), mock.patch("requests.post", side_effect=outage):
         res_fail = tools.annotate_metadata(
             path=fail_h5ad,
             output_path=fail_out_h5ad,
             entity_type="gene",
+            annotation_types=["go", "pathways"],
             column="perturbation",
         )
-        print("Failure Response Payload:")
-        print(json.dumps(res_fail, indent=2))
+    print("Failure Response Payload:")
+    print(json.dumps(res_fail, indent=2))
+    assert res_fail["status"] == "error", f"Must return status='error', got {res_fail['status']}"
+    assert res_fail["error_type"] == "AnnotationServiceError"
+    assert res_fail["successful_count"] == 0
+    assert "Connection timeout" in res_fail["service_errors_sample"][0]["error"]
+    assert not os.path.exists(fail_out_h5ad), "Failed execution must not produce partial/placeholder file!"
 
-        assert res_fail["status"] == "error", f"Must return status='error', got {res_fail['status']}"
-        assert res_fail["error_type"] == "RuntimeError"
-        assert res_fail["successful_count"] == 0
-        assert "Connection timeout" in res_fail["error"]
-        assert not os.path.exists(fail_out_h5ad), "Failed execution must not produce partial/placeholder file!"
-        print("\n[VERIFIED] Failed service strictly returned error JSON; no placeholder 'annotated' strings generated.")
+    print("Simulating services that answer with no annotations...")
+    empty = mock.MagicMock(status_code=200, ok=True)
+    empty.json.return_value = {"hits": [], "results": []}
+    with mock.patch("requests.get", return_value=empty), mock.patch("requests.post", return_value=empty):
+        res_empty = tools.annotate_metadata(
+            path=fail_h5ad,
+            output_path=fail_out_h5ad,
+            entity_type="gene",
+            annotation_types=["go", "pathways"],
+            column="perturbation",
+        )
+    print(json.dumps({k: res_empty.get(k) for k in ("status", "error_type", "per_type")}, indent=2))
+    assert res_empty["status"] == "error" and res_empty["error_type"] == "NoAnnotationsFound"
+    assert not os.path.exists(fail_out_h5ad)
+    print("\n[VERIFIED] Outages and empty answers are reported as distinct errors; nothing is written.")
 
 
 def run_phase_d(tmpdir: str, cell_embedded_h5ad: str) -> None:
