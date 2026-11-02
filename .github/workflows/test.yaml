@@ -123,7 +123,7 @@ jobs:
       - name: Pre-install CPU PyTorch
         run: pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
       - name: Install embpy with the MCP SDK
-        run: pip install -e ".[mcp,test,scib,eval]" "mcp==${{ matrix.mcp }}"
+        run: pip install -e ".[mcp,test,scib,eval,models]" "mcp==${{ matrix.mcp }}"
       - name: Show MCP SDK version
         run: python -c "import importlib.metadata as m; print('mcp', m.version('mcp'))"
       - name: MCP tool and real-client tests
@@ -159,7 +159,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip wheel hatch-vcs
           pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[mcp,test,eval]"
+          pip install -e ".[mcp,test,eval,models,bio]"
       - name: Skill checks and examples
         run: pytest -v --color=yes tests/test_skills.py tests/test_skill_examples.py
 
