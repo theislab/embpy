@@ -1548,8 +1548,38 @@ def compute_embeddings(
                     **extra_kwargs,
                 )
             else:
+                # Rows with no identifier in the chosen column (e.g. control wells after
+                # name -> SMILES resolution) cannot be embedded; embpy rejects them.
+                column, axis = (obs_column, "obs") if obs_column else (var_column, "var") if var_column else (None, None)
+                has_id = None
+                if column is not None:
+                    values = getattr(adata, axis)[column]
+                    has_id = (values.notna() & (values.astype(str).str.strip() != "")).to_numpy()
+                    if not has_id.any():
+                        return {
+                            "status": "error",
+                            "error_type": "ValueError",
+                            "error": f"Column '{column}' holds no identifiers to embed.",
+                            "path": str(path),
+                        }
+                    if not has_id.all() and missing == "error":
+                        return {
+                            "status": "error",
+                            "error_type": "ValueError",
+                            "error": (
+                                f"{int((~has_id).sum())} rows have no value in '{column}' (e.g. controls). "
+                                "Pass missing='nan' to embed the other rows and leave these as NaN."
+                            ),
+                            "path": str(path),
+                        }
+                    if has_id.all():
+                        has_id = None
+
+                subset = adata
+                if has_id is not None:
+                    subset = adata[has_id].copy() if axis == "obs" else adata[:, has_id].copy()
                 adata_out = embedder.embed(
-                    adata,
+                    subset,
                     entity_type=route["backend"],
                     model=resolved_models[0] if len(resolved_models) == 1 else resolved_models,
                     id_type=id_type,
@@ -1564,6 +1594,18 @@ def compute_embeddings(
                     missing=missing,
                     output="anndata",
                 )
+                if has_id is not None:
+                    # Put the embedded rows back into the full dataset; the rest stay NaN.
+                    slot = "obsm" if axis == "obs" else "varm"
+                    for key in [k for k in getattr(adata_out, slot) if k not in getattr(adata, slot)]:
+                        part = np.asarray(getattr(adata_out, slot)[key], dtype=np.float32)
+                        full = np.full((len(has_id), part.shape[1]), np.nan, dtype=np.float32)
+                        full[has_id] = part
+                        getattr(adata, slot)[key] = full
+                    for key in adata_out.uns:
+                        if key not in adata.uns:
+                            adata.uns[key] = adata_out.uns[key]
+                    adata_out = adata
 
         after = {("obsm", k) for k in adata_out.obsm} | {("varm", k) for k in adata_out.varm} | {("uns", k) for k in adata_out.uns}
         added = sorted(after - before)
@@ -2138,7 +2180,16 @@ def annotate_metadata(
                 props = {e: (results[e].get("properties", {}).get("rdkit") or {}).get("physicochemical") or {} for e in entities}
                 prop_keys = list(dict.fromkeys(k for p in props.values() for k, v in p.items() if not isinstance(v, (dict, list))))
                 for key in prop_keys:
-                    adata.obs[f"mol_{key}"] = [props.get(v, {}).get(key) if v else None for v in values]
+                    column_values = [props.get(v, {}).get(key) if v else None for v in values]
+                    present = [x for x in column_values if x is not None]
+                    # Rows without the compound (controls) have no value. Keep numbers and flags
+                    # as floats with NaN, text as a categorical: both write to .h5ad with gaps.
+                    if all(isinstance(x, (bool, int, float, np.number, np.bool_)) for x in present):
+                        adata.obs[f"mol_{key}"] = np.array(
+                            [np.nan if x is None else float(x) for x in column_values], dtype=float
+                        )
+                    else:
+                        adata.obs[f"mol_{key}"] = pd.Categorical([None if x is None else str(x) for x in column_values])
                     new_cols.append(f"mol_{key}")
             adata.uns["embpy_annotations"] = {
                 "entity_type": resolved_entity,

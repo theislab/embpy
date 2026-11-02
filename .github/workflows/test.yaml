@@ -135,6 +135,34 @@ jobs:
         if: ${{ matrix.verify }}
         run: python verify_full_ecosystem.py
 
+  # Runs every example in the Python-API Agent Skills (skills/*/SKILL.md) on
+  # small generated datasets. They download small models and call Ensembl,
+  # UniProt, PubChem and ChEMBL, so a failure can be a network problem:
+  # reported, but not blocking.
+  skill-examples:
+    name: Agent Skill examples
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      EMBPY_RUN_SKILL_EXAMPLES: "1"
+      PYTHONUTF8: "1"
+      MPLBACKEND: agg
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: "**/pyproject.toml"
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip wheel hatch-vcs
+          pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[mcp,test,eval]"
+      - name: Skill checks and examples
+        run: pytest -v --color=yes tests/test_skills.py tests/test_skill_examples.py
+
   # Runs the README's [cpu] install (Option A: pip, Option B: uv) on the PR's own
   # checkout, then checks that it really gave the CPU build of PyTorch -- the
   # CUDA build is ~3 GB and is what [cpu] used to pull on Linux (issue #46).

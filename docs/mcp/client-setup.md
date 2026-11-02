@@ -85,7 +85,7 @@ Claude Desktop looks for server definitions in its configuration file:
     }
     ```
 
-After updating `claude_desktop_config.json`, fully quit and restart Claude Desktop. The hammer icon in the prompt box will show the 7 `embpy` bioinformatics tools.
+After updating `claude_desktop_config.json`, fully quit and restart Claude Desktop. The tools menu will list the 9 `embpy` tools (plus 6 backward-compatible aliases).
 
 ---
 

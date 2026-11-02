@@ -10,6 +10,20 @@ loads a skill when a request matches its description.
 | `embpy-single-cell-workflow` | inspect -> preprocess -> embed cells -> UMAP -> scIB, and perturbation benchmarks |
 | `embpy-entity-embeddings` | gene, perturbation, DNA, protein, molecule, text and morphology embeddings from a chosen column |
 | `embpy-identifiers-and-annotation` | gene and compound identifier mapping (species rules, ambiguous aliases) and annotation |
+| `embpy-similarity-search` | nearest neighbours and similarity rankings of genes, perturbations or compounds |
+| `embpy-embedding-clustering` | Leiden / k-means clustering, agreement with known labels, cluster enrichment |
+| `embpy-compare-embedding-models` | CKA, TSI/QSI, mutual-kNN and kNN-overlap comparisons between models |
+| `embpy-embedding-visualization` | UMAP / t-SNE / PCA plots, embedding grids, label-separation diagnostics |
+| `embpy-perturbation-screen-analysis` | CRISPR / Perturb-seq screens: phenotypic activity (mAP) and phenocopies |
+| `embpy-compound-screen-analysis` | compound screens: names -> SMILES, fingerprints, RDKit and ChEMBL annotation |
+| `embpy-perturbation-prediction-metrics` | scoring predicted vs observed perturbation responses against a baseline |
+| `embpy-embedding-task-benchmark` | which embedding best predicts a readout (IC50, expression) |
+| `embpy-cross-species-proteins` | ortholog embeddings across species vs sequence identity |
+| `embpy-variant-effects` | SNP effect signals from DNA language models, single variants and VCFs |
+| `embpy-mcp-setup` | installing, connecting and troubleshooting the MCP server |
+
+The first three skills drive the MCP tools. The other eleven combine the tools with embpy's
+Python API (`embpy.tl`, `embpy.pl`), which the assistant runs through its shell.
 
 ## Installing
 
@@ -27,18 +41,26 @@ use only the MCP server; see [Client Setup](client-setup.md).
 
 ## How they are checked
 
-- `tests/test_skills.py` parses every `SKILL.md` and checks the frontmatter, that every example
+- `tests/test_skills.py` parses every `SKILL.md` and checks the frontmatter; that every example
   tool call uses a registered tool with existing parameters and allowed values (models are
-  checked against the modality, annotation types and sources against the entity type), and that
-  every name quoted in backticks exists in the tool code or model registry. The annotation and
-  modality tables are compared with the tool's own tables.
+  checked against the modality, annotation types and sources against the entity type); that
+  every embpy Python call (`ep.tl.*`, `ep.pl.*`, `BioEmbedder` methods) exists and binds to its
+  signature; and that every name quoted in backticks exists in the embpy source or model
+  registry. The annotation and modality tables are compared with the tool's own tables.
+- `tests/test_skill_examples.py` runs the examples of the eleven Python-API skills, block by
+  block, on small generated datasets (MCP calls go to the real tool functions). It downloads
+  small models and calls web services, so it runs only with `EMBPY_RUN_SKILL_EXAMPLES=1`
+  (CI job `skill-examples`, non-blocking). Blocks marked `# Requires:` (a local genome FASTA)
+  are checked statically only.
 - `claude plugin validate .` validates the manifest.
-- The skills were run in headless Claude Code sessions (`claude -p ... --plugin-dir .`) on
-  molecule embedding, gene identifier mapping and single-cell embedding + scIB requests.
+- The skills were run in headless Claude Code sessions (`claude -p ... --plugin-dir .`) to
+  check that the right skill is chosen for a request and its tool calls are correct.
 
 ## Not covered yet
 
-- Workflows needing a GPU or large downloads (scGPT, Geneformer, STATE, ESM-2 650M and larger)
-  were not run through the skills.
+- Workflows needing a GPU or large downloads (scGPT, Geneformer, STATE, ESM-2 650M and larger,
+  Enformer) were not run; the examples use small CPU models.
+- The examples of the first three skills reference user datasets and optional models (scVI)
+  and are checked statically, not executed.
 - There is no automated eval suite measuring how reliably each skill triggers across many
   prompts; the `evals/` folder holds two starter prompts only.

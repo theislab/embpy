@@ -893,3 +893,25 @@ def test_auto_preprocessing_embeds_small_datasets(sample_adata_path, tmp_path):
     assert res["status"] == "success", res
     assert res["embedding_shapes"]["X_pca"][0] == 30
     assert "min_genes" in res["preprocessing_adjustments"]
+
+
+def test_rows_without_identifiers_become_nan_only_when_asked(tmp_path):
+    import anndata
+    import pandas as pd
+
+    adata = AnnData(obs=pd.DataFrame({"smiles": ["CCO", None, "CCN"]}, index=["w0", "w1_dmso", "w2"]))
+    in_path = str(tmp_path / "wells.h5ad")
+    adata.write_h5ad(in_path)
+
+    strict = compute_embeddings(path=in_path, models="morgan_fp", entity_type="molecule", obs_column="smiles")
+    assert strict["status"] == "error"
+    assert "missing='nan'" in strict["error"]
+
+    out = str(tmp_path / "wells_embedded.h5ad")
+    res = compute_embeddings(path=in_path, models="morgan_fp", entity_type="molecule", obs_column="smiles",
+                             missing="nan", output_path=out)
+    assert res["status"] == "success", res
+    (key,) = res["embedding_keys"]
+    matrix = np.asarray(anndata.read_h5ad(out).obsm[key])
+    assert matrix.shape == (3, 2048)
+    assert np.isnan(matrix[1]).all() and not np.isnan(matrix[[0, 2]]).any()
