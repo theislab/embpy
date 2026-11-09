@@ -158,6 +158,28 @@ Resolvers fetch biological sequences and identifiers; annotators add rich metada
 
 ## Tools: `embpy.tl`
 
+### Embedding fusion
+
+```{eval-rst}
+.. autosummary::
+    :toctree: generated
+
+    embpy.tl.fusion.ConcatFusion
+    embpy.tl.fusion.PCAFusion
+    embpy.tl.fusion.align_views
+    embpy.tl.fusion.subset_views
+    embpy.tl.fusion.views_from_anndata
+    embpy.tl.fusion.view_from_store
+    embpy.tl.fusion.fuse_scores
+    embpy.tl.fusion.fuse_ranks
+    embpy.tl.benchmark_fusion
+    embpy.tl.benchmark_fusion_retrieval
+    embpy.tl.FusionBenchmarkResult
+```
+
+See [the fusion guide](fusion.md) for fitted-state handling, grouping, and the
+distinction between feature fusion and score/rank ensembles.
+
 ### Similarity and Distance
 
 ```{eval-rst}

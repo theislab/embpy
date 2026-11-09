@@ -8,7 +8,7 @@ modes:
 
 - ``mode="quick"`` -- single train/test split with default hyper-parameters.
   Fast, suitable for exploration.
-- ``mode="rigorous"`` -- 5-fold cross-validation with randomised
+- ``mode="rigorous"`` -- 5-fold cross-validation with nested randomised
   hyper-parameter search.  Slower, but provides mean +/- std metrics and
   tuned models.  Suitable for papers and final comparisons.
 """
@@ -16,16 +16,21 @@ modes:
 from __future__ import annotations
 
 import logging
+import time
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
 from anndata import AnnData
+from sklearn.base import clone
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression, Ridge
-from sklearn.model_selection import KFold, RandomizedSearchCV, train_test_split
+from sklearn.model_selection import GroupShuffleSplit, KFold, RandomizedSearchCV, train_test_split
 from sklearn.neighbors import KNeighborsRegressor
+from sklearn.pipeline import Pipeline
 
 from embpy.tl.metrics import compute_metrics as _compute_metrics
 
@@ -70,15 +75,10 @@ def _get_target(adata: AnnData, target: str) -> np.ndarray:
         return np.asarray(X)
 
     if target not in adata.obs.columns:
-        raise KeyError(
-            f"Target column '{target}' not found in adata.obs. "
-            f"Available columns: {list(adata.obs.columns)}"
-        )
+        raise KeyError(f"Target column '{target}' not found in adata.obs. Available columns: {list(adata.obs.columns)}")
     vals = adata.obs[target].values
     if not np.issubdtype(vals.dtype, np.number):
-        raise ValueError(
-            f"Target column '{target}' must be numeric, got dtype={vals.dtype}."
-        )
+        raise ValueError(f"Target column '{target}' must be numeric, got dtype={vals.dtype}.")
     return np.asarray(vals, dtype=np.float64)
 
 
@@ -101,12 +101,14 @@ def _build_model(name: str) -> RegressorMixin:
                 "Install it with:  pip install xgboost"
             ) from e
         return XGBRegressor(
-            n_estimators=100, max_depth=6, learning_rate=0.1,
-            random_state=0, n_jobs=-1, verbosity=0,
+            n_estimators=100,
+            max_depth=6,
+            learning_rate=0.1,
+            random_state=0,
+            n_jobs=-1,
+            verbosity=0,
         )
-    raise ValueError(
-        f"Unknown model '{name}'. Choose from: {_DEFAULT_MODELS}"
-    )
+    raise ValueError(f"Unknown model '{name}'. Choose from: {_DEFAULT_MODELS}")
 
 
 def _build_param_grid(name: str) -> dict[str, list[Any]]:
@@ -178,10 +180,7 @@ def _generate_embeddings(
         )
         adata.obsm[obsm_key] = tmp.obsm[list(tmp.obsm.keys())[0]]
     else:
-        raise ValueError(
-            f"Unknown perturbation_type '{perturbation_type}'. "
-            "Choose 'genetic' or 'chemical'."
-        )
+        raise ValueError(f"Unknown perturbation_type '{perturbation_type}'. Choose 'genetic' or 'chemical'.")
 
     logger.info("Generated embeddings with '%s', stored in obsm['%s'].", embedding_model, obsm_key)
     return obsm_key
@@ -192,118 +191,126 @@ def _generate_embeddings(
 # ---------------------------------------------------------------------------
 
 
-def _run_quick(
-    X_emb: np.ndarray,
-    y: np.ndarray,
-    model_names: list[str],
-    mean_control: np.ndarray | None,
-    test_size: float,
-    random_state: int,
-) -> pd.DataFrame:
-    """Run the quick (single-split) benchmark."""
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_emb, y, test_size=test_size, random_state=random_state,
+def _splits(n, *, groups=None, mode="rigorous", cv=5, test_size=0.2, random_state=42):
+    """Generate paired folds, keeping all rows of a group together."""
+    rows = np.arange(n)
+    if groups is not None:
+        groups = np.asarray(groups)
+        if groups.ndim != 1 or len(groups) != n or pd.isna(groups).any():
+            raise ValueError("groups must provide one nonmissing label per entity.")
+        groups = groups.astype(str)
+    if mode == "quick":
+        if groups is None:
+            return [train_test_split(rows, test_size=test_size, random_state=random_state)]
+        return list(
+            GroupShuffleSplit(n_splits=1, test_size=test_size, random_state=random_state).split(rows, groups=groups)
+        )
+    if mode != "rigorous":
+        raise ValueError("mode must be 'quick' or 'rigorous'.")
+    if groups is None:
+        return list(KFold(n_splits=cv, shuffle=True, random_state=random_state).split(rows))
+    unique = np.unique(groups)
+    folds = KFold(n_splits=cv, shuffle=True, random_state=random_state).split(unique)
+    return [
+        (np.flatnonzero(np.isin(groups, unique[tr])), np.flatnonzero(np.isin(groups, unique[te]))) for tr, te in folds
+    ]
+
+
+def _fit_fold(
+    X,
+    y,
+    train,
+    test,
+    *,
+    model_name,
+    transformer=None,
+    groups=None,
+    tune=False,
+    cv=3,
+    n_iter=20,
+    random_state=42,
+    n_jobs=1,
+    param_grid=None,
+):
+    """Fit preprocessing and tune the readout entirely inside an outer training fold."""
+    pipeline = Pipeline(
+        [
+            ("features", "passthrough" if transformer is None else clone(transformer)),
+            ("regressor", _build_model(model_name)),
+        ]
     )
-    logger.info("Quick split: %d train, %d test.", X_train.shape[0], X_test.shape[0])
+    parameters = {}
+    if tune:
+        train_groups = None if groups is None else np.asarray(groups)[train]
+        available = len(train) if train_groups is None else len(np.unique(train_groups))
+        inner_cv = min(cv, available)
+        if inner_cv < 2:
+            raise ValueError("Hyperparameter tuning requires at least two training entities/groups.")
+        inner = _splits(len(train), groups=train_groups, cv=inner_cv, random_state=random_state)
+        grid = _build_param_grid(model_name) if param_grid is None else param_grid
+        grid = {"regressor__" + key: values for key, values in grid.items()}
+        search = RandomizedSearchCV(
+            pipeline,
+            grid,
+            n_iter=min(n_iter, _grid_size(grid)),
+            cv=inner,
+            scoring="neg_mean_squared_error",
+            random_state=random_state,
+            n_jobs=n_jobs,
+            error_score="raise",
+        )
+        search.fit(X[train], y[train])
+        pipeline = search.best_estimator_
+        parameters = {key.removeprefix("regressor__"): value for key, value in search.best_params_.items()}
+    else:
+        pipeline.fit(X[train], y[train])
+    prediction = pipeline.predict(X[test])
+    if prediction.ndim == 1 and y.ndim == 2:
+        prediction = prediction.reshape(-1, 1)
+    return pipeline, prediction, parameters
 
-    rows: list[dict[str, object]] = []
-    for model_name in model_names:
-        reg = _build_model(model_name)
-        reg.fit(X_train, y_train)
-        y_pred = reg.predict(X_test)
-        if y_pred.ndim == 1 and y_test.ndim == 2:
-            y_pred = y_pred.reshape(-1, 1)
 
-        mets = _compute_metrics(y_test, y_pred, mean_control=mean_control)
-        mets["model"] = model_name
-        rows.append(mets)
-        logger.info("  %s → MSE=%.4f  R²=%.4f  Pearson=%.4f", model_name, mets["mse"], mets["r2"], mets["pearson"])
-
+def _run_quick(X_emb, y, model_names, mean_control, test_size, random_state, transformer=None, groups=None, n_jobs=1):
+    """Run a single held-out evaluation with preprocessing fit on training rows."""
+    train, test = _splits(len(y), groups=groups, mode="quick", test_size=test_size, random_state=random_state)[0]
+    rows = []
+    for name in model_names:
+        _, prediction, _ = _fit_fold(X_emb, y, train, test, model_name=name, transformer=transformer, n_jobs=n_jobs)
+        rows.append({"model": name, **_compute_metrics(y[test], prediction, mean_control=mean_control)})
     return pd.DataFrame(rows).set_index("model")
 
 
-# ---------------------------------------------------------------------------
-# Rigorous mode (5-fold CV + randomised grid search)
-# ---------------------------------------------------------------------------
-
-
 def _run_rigorous(
-    X_emb: np.ndarray,
-    y: np.ndarray,
-    model_names: list[str],
-    mean_control: np.ndarray | None,
-    cv: int = 5,
-    n_iter: int = 20,
-    random_state: int = 42,
-) -> pd.DataFrame:
-    """Run the rigorous (CV + hyper-parameter search) benchmark.
-
-    For each model:
-    1. ``RandomizedSearchCV`` finds the best hyper-parameters using
-       ``neg_mean_squared_error`` on *cv* folds.
-    2. A second manual *cv*-fold loop with the best estimator computes
-       all custom metrics per fold (MSE, R², Pearson, Spearman, delta L2).
-    3. Mean +/- std are reported for every metric.
-    """
-    kf = KFold(n_splits=cv, shuffle=True, random_state=random_state)
-
-    rows: list[dict[str, object]] = []
-    for model_name in model_names:
-        logger.info("Rigorous benchmark: %s (%d-fold CV, n_iter=%d)", model_name, cv, n_iter)
-
-        base = _build_model(model_name)
-        param_grid = _build_param_grid(model_name)
-
-        actual_n_iter = min(n_iter, _grid_size(param_grid))
-
-        search = RandomizedSearchCV(
-            base,
-            param_distributions=param_grid,
-            n_iter=actual_n_iter,
-            cv=cv,
-            scoring="neg_mean_squared_error",
-            random_state=random_state,
-            n_jobs=-1,
-            error_score="raise",
-        )
-        search.fit(X_emb, y)
-        best_params = search.best_params_
-        logger.info("  Best params: %s", best_params)
-
-        fold_metrics: list[dict[str, float]] = []
-        for train_idx, test_idx in kf.split(X_emb):
-            X_tr, X_te = X_emb[train_idx], X_emb[test_idx]
-            y_tr, y_te = y[train_idx], y[test_idx]
-
-            estimator = _build_model(model_name)
-            estimator.set_params(**best_params)
-            estimator.fit(X_tr, y_tr)
-            y_pred = estimator.predict(X_te)
-            if y_pred.ndim == 1 and y_te.ndim == 2:
-                y_pred = y_pred.reshape(-1, 1)
-
-            fold_metrics.append(_compute_metrics(y_te, y_pred, mean_control=mean_control))
-
-        fold_df = pd.DataFrame(fold_metrics)
-        row: dict[str, object] = {"model": model_name}
-        for col in fold_df.columns:
-            vals = fold_df[col].dropna()
-            if len(vals) > 0:
-                row[f"{col}_mean"] = float(vals.mean())
-                row[f"{col}_std"] = float(vals.std())
-            else:
-                row[f"{col}_mean"] = float("nan")
-                row[f"{col}_std"] = float("nan")
-        row["best_params"] = best_params
+    X_emb, y, model_names, mean_control, cv=5, n_iter=20, random_state=42, transformer=None, groups=None, n_jobs=1
+):
+    """Run nested CV; both preprocessing and tuning exclude each outer test fold."""
+    splits = _splits(len(y), groups=groups, cv=cv, random_state=random_state)
+    rows = []
+    for name in model_names:
+        metrics, params = [], []
+        for train, test in splits:
+            _, prediction, best = _fit_fold(
+                X_emb,
+                y,
+                train,
+                test,
+                model_name=name,
+                transformer=transformer,
+                groups=groups,
+                tune=True,
+                cv=3,
+                n_iter=n_iter,
+                random_state=random_state,
+                n_jobs=n_jobs,
+            )
+            metrics.append(_compute_metrics(y[test], prediction, mean_control=mean_control))
+            params.append(best)
+        frame = pd.DataFrame(metrics)
+        row = {"model": name, "best_params": params}
+        for col in frame:
+            row[col + "_mean"] = float(frame[col].mean())
+            row[col + "_std"] = float(frame[col].std())
         rows.append(row)
-
-        logger.info(
-            "  %s → R²=%.4f±%.4f  Pearson=%.4f±%.4f",
-            model_name,
-            row.get("r2_mean", 0), row.get("r2_std", 0),
-            row.get("pearson_mean", 0), row.get("pearson_std", 0),
-        )
-
     return pd.DataFrame(rows).set_index("model")
 
 
@@ -336,6 +343,11 @@ def benchmark_embeddings(
     random_state: int = 42,
     id_type: str = "gene_name",
     organism: str = "human",
+    *,
+    obsm_keys: Sequence[str] | None = None,
+    fusion: Any = None,
+    groupby: str | None = None,
+    n_jobs: int = 1,
 ) -> pd.DataFrame:
     """Benchmark how informative an embedding is for a prediction task.
 
@@ -380,7 +392,8 @@ def benchmark_embeddings(
         hyper-parameters, or ``"rigorous"`` for 5-fold cross-validation
         with randomised hyper-parameter search.
     reduce_dim
-        If set, apply PCA to this many components before benchmarking.
+        If set, fit PCA inside each training fold. No globally fitted PCA is
+        written to obsm. Use the fusion operator separately for exploratory plots.
     test_size
         Fraction of observations held out for testing (default 0.2).
         Only used in ``mode="quick"``.
@@ -392,6 +405,17 @@ def benchmark_embeddings(
     organism
         Organism string for the gene resolver.
 
+    obsm_keys
+        Multiple precomputed views; combined with ``fusion`` (plain concatenation
+        by default). Mutually exclusive with obsm_key and embedding_model.
+    fusion
+        Unfitted ConcatFusion or PCAFusion. Cloned inside each training fold.
+    groupby
+        Optional obs column whose groups must stay together in all outer and
+        inner splits. Recommended for repeated drugs, genes, donors or batches.
+    n_jobs
+        Parallelism for inner hyperparameter search; defaults to one.
+
     Returns
     -------
     DataFrame with one row per regressor.
@@ -399,7 +423,7 @@ def benchmark_embeddings(
     - **Quick mode** columns: ``mse``, ``r2``, ``pearson``, ``spearman``,
       ``delta_l2_mae``, ``delta_l2_pearson``.
     - **Rigorous mode** columns: ``<metric>_mean``, ``<metric>_std`` for
-      each metric, plus ``best_params`` (dict of tuned hyper-parameters).
+      each metric, plus ``best_params`` (one parameter dictionary per outer fold).
 
     The DataFrame is also stored in ``adata.uns["benchmark_results"]``.
     """
@@ -414,46 +438,42 @@ def benchmark_embeddings(
     # --- Validate perturbation_column ---
     if perturbation_column != "obs_names" and perturbation_column not in adata.obs.columns:
         raise KeyError(
-            f"perturbation_column '{perturbation_column}' not found in adata.obs. "
-            f"Available: {list(adata.obs.columns)}"
+            f"perturbation_column '{perturbation_column}' not found in adata.obs. Available: {list(adata.obs.columns)}"
         )
 
     # --- Validate target ---
     if target != "X" and target not in adata.obs.columns:
-        raise KeyError(
-            f"Target '{target}' not found in adata.obs. "
-            f"Available columns: {list(adata.obs.columns)}"
-        )
+        raise KeyError(f"Target '{target}' not found in adata.obs. Available columns: {list(adata.obs.columns)}")
 
-    # --- Obtain embeddings ---
-    if obsm_key is not None:
-        if obsm_key not in adata.obsm:
-            raise KeyError(f"obsm_key '{obsm_key}' not found in adata.obsm.")
-        emb_key = obsm_key
+    # Prepare raw views only; all fitted transforms belong inside the pipeline.
+    from embpy.tl.fusion import ConcatFusion, PCAFusion, views_from_anndata
+    from embpy.tl.fusion._benchmark import MatrixFusion
+
+    if obsm_keys is not None:
+        if obsm_key is not None or embedding_model is not None:
+            raise ValueError("Use obsm_keys or a single obsm_key/embedding_model, not both.")
+        keys = list(obsm_keys) if not isinstance(obsm_keys, str) else obsm_keys
+    elif obsm_key is not None:
+        keys = [obsm_key]
     elif embedding_model is not None:
-        emb_key = _generate_embeddings(
-            adata,
-            perturbation_column=perturbation_column,
-            perturbation_type=perturbation_type,
-            embedding_model=embedding_model,
-            id_type=id_type,
-            organism=organism,
-        )
+        keys = [_generate_embeddings(adata, perturbation_column, perturbation_type, embedding_model, id_type, organism)]
     else:
-        raise ValueError("Provide either 'obsm_key' (pre-computed) or 'embedding_model' (generate).")
-
-    # --- Optional dimensionality reduction ---
-    if reduce_dim is not None:
-        from embpy.pp.basic import reduce_embeddings
-
-        reduced_key = f"{emb_key}_pca{reduce_dim}"
-        reduce_embeddings(adata, obsm_key=emb_key, n_components=reduce_dim, output_key=reduced_key)
-        emb_key = reduced_key
-        logger.info("Applied PCA → %d dims, stored in obsm['%s'].", reduce_dim, emb_key)
-
-    # --- Extract features and target ---
-    X_emb = np.asarray(adata.obsm[emb_key], dtype=np.float64)
+        raise ValueError("Provide obsm_key, obsm_keys, or embedding_model.")
+    if fusion is not None and reduce_dim is not None:
+        raise ValueError("Specify a fusion operator or reduce_dim, not both; use PCAFusion for joint PCA.")
+    views = views_from_anndata(adata, keys)
+    if fusion is None and reduce_dim is not None:
+        fusion = PCAFusion(n_components=reduce_dim, normalization="zscore", random_state=random_state)
+    elif fusion is None and len(views) > 1:
+        fusion = ConcatFusion()
+    transformer = (
+        None if fusion is None else MatrixFusion(fusion, tuple(views), tuple(v.n_dims for v in views.values()))
+    )
+    X_emb = np.concatenate([v.matrix for v in views.values()], axis=1)
     y = _get_target(adata, target)
+    groups = None if groupby is None else np.asarray(adata.obs[groupby])
+    if not np.isfinite(y).all():
+        raise ValueError("Benchmark targets must be finite.")
 
     # --- Identify controls ---
     has_controls = control_column is not None and control_value is not None
@@ -466,37 +486,399 @@ def benchmark_embeddings(
         pert_mask = ~ctrl_mask
 
         if ctrl_mask.sum() == 0:
-            raise ValueError(
-                f"No control observations found where "
-                f"obs['{control_column}'] == '{control_value}'."
-            )
+            raise ValueError(f"No control observations found where obs['{control_column}'] == '{control_value}'.")
 
         if target == "X":
             mean_control = np.mean(y[ctrl_mask.values], axis=0)
 
         X_emb = X_emb[pert_mask.values]
         y = y[pert_mask.values]
+        if groups is not None:
+            groups = groups[pert_mask.values]
         logger.info(
             "Separated %d controls and %d perturbations.",
-            ctrl_mask.sum(), pert_mask.sum(),
+            ctrl_mask.sum(),
+            pert_mask.sum(),
         )
 
     # --- Run the selected mode ---
     if mode == "quick":
         results = _run_quick(
-            X_emb, y,
+            X_emb,
+            y,
             model_names=models,
             mean_control=mean_control,
             test_size=test_size,
             random_state=random_state,
+            transformer=transformer,
+            groups=groups,
+            n_jobs=n_jobs,
         )
     else:
         results = _run_rigorous(
-            X_emb, y,
+            X_emb,
+            y,
             model_names=models,
             mean_control=mean_control,
             random_state=random_state,
+            transformer=transformer,
+            groups=groups,
+            n_jobs=n_jobs,
         )
 
     adata.uns["benchmark_results"] = results
+    adata.uns["benchmark_config"] = {
+        "fit_scope": "training_fold",
+        "groupby": groupby,
+        "obsm_keys": list(keys),
+        "nested_cv": mode == "rigorous",
+    }
     return results
+
+
+@dataclass
+class FusionBenchmarkResult:
+    """Fold metrics, entity metrics and explicit splits from a paired benchmark.
+
+    ``scores`` has one row per configuration/seed/fold. ``entity_scores`` keeps
+    out-of-fold metrics for paired downstream comparisons, without retaining
+    large prediction matrices. ``splits`` records every entity's partition.
+    Fold standard deviations are descriptive, not confidence intervals.
+    """
+
+    scores: pd.DataFrame
+    entity_scores: pd.DataFrame
+    splits: pd.DataFrame
+    coverage: dict[str, Any]
+    config: dict[str, Any]
+
+
+def _indexed_values(values, ids, name):
+    if not isinstance(values, (pd.Series, pd.DataFrame)):
+        raise TypeError(f"{name} must be a pandas Series/DataFrame indexed by canonical entity ID.")
+    values = values.copy()
+    values.index = values.index.astype(str)
+    if not values.index.is_unique:
+        raise ValueError(f"{name} has duplicate entity IDs.")
+    if not set(ids).issubset(values.index):
+        raise ValueError(f"{name} is missing values for some aligned entity IDs.")
+    values = values.reindex(ids)
+    if values.isna().to_numpy().any():
+        raise ValueError(f"{name} contains missing values.")
+    return values.to_numpy()
+
+
+def _fusion_inputs(views, labels, groups, join):
+    from embpy.tl.fusion import align_views
+
+    aligned, coverage = align_views(views, join=join)
+    ids = next(iter(aligned.values())).entity_ids
+    values = _indexed_values(labels, ids, "targets")
+    group_values = None if groups is None else _indexed_values(groups, ids, "groups")
+    if group_values is not None and group_values.ndim != 1:
+        raise ValueError("groups must be a Series, not a DataFrame.")
+    return aligned, ids, values, group_values, coverage
+
+
+def _fusion_configs(views, fusions, include_single, single_normalization, single_n_components, random_state):
+    from embpy.tl.fusion import ConcatFusion, PCAFusion
+
+    configs = {}
+    if include_single:
+        for name in views:
+            operator = (
+                ConcatFusion(normalization=single_normalization)
+                if single_n_components is None
+                else PCAFusion(
+                    n_components=single_n_components,
+                    normalization=single_normalization,
+                    random_state=random_state,
+                )
+            )
+            configs["single:" + name] = ({name: views[name]}, operator)
+    if fusions is None:
+        fusions = {"concat_l2": ConcatFusion(normalization="l2")}
+    for name, operator in fusions.items():
+        if not isinstance(name, str) or not name or name in configs:
+            raise ValueError("Fusion configuration names must be nonempty and distinct from single-view baselines.")
+        if not isinstance(operator, ConcatFusion):
+            raise TypeError("Stage-1 feature benchmarks accept ConcatFusion or PCAFusion operators.")
+        configs[name] = (views, operator)
+    if not configs:
+        raise ValueError("At least one benchmark configuration is required.")
+    return configs
+
+
+def _split_records(ids, groups, seed, fold, train, test):
+    return [
+        {
+            "seed": seed,
+            "fold": fold,
+            "entity_id": ids[i],
+            "group": ids[i] if groups is None else str(groups[i]),
+            "partition": partition,
+        }
+        for partition, rows in (("train", train), ("test", test))
+        for i in rows
+    ]
+
+
+def benchmark_fusion(
+    views: Mapping[str, Any],
+    targets: pd.Series | pd.DataFrame,
+    *,
+    fusions: Mapping[str, Any] | None = None,
+    groups: pd.Series | None = None,
+    include_single: bool = True,
+    single_normalization: str = "l2",
+    single_n_components: int | None = None,
+    join: str = "strict",
+    model: str = "ridge",
+    cv: int = 5,
+    seeds: Sequence[int] = (0,),
+    tune: bool = True,
+    param_grid: dict[str, list[Any]] | None = None,
+    n_jobs: int = 1,
+) -> FusionBenchmarkResult:
+    """Compare feature fusions on identical held-out entities using nested CV.
+
+    Inputs are named EmbeddingResult views and targets indexed by canonical ID.
+    Use ``groups`` to keep compound aliases, donors or other related entities
+    together in both outer and inner folds. Every learned preprocessing step
+    is fitted inside the relevant training fold. Targets are never normalized
+    implicitly. ``tune=True`` selects readout parameters by three-fold inner
+    CV on negative MSE; fusion configurations themselves are evaluated, not
+    selected using the test folds. Include a separate final holdout if selecting
+    the best configuration for a downstream claim.
+
+    The single-view baselines use the specified normalization, optionally PCA
+    to the same width as a PCAFusion comparator. Full concatenations retain
+    their larger width, which is reported in ``scores.output_dim``. No fit is
+    performed on the supplied operator instances; all fits use clones.
+    """
+    from embpy.tl.fusion._benchmark import MatrixFusion
+
+    aligned, ids, y, group_values, coverage = _fusion_inputs(views, targets, groups, join)
+    y = np.asarray(y, dtype=float)
+    if not np.isfinite(y).all() or y.ndim not in (1, 2):
+        raise ValueError("Targets must be finite numeric values.")
+    if not seeds or len(set(seeds)) != len(seeds):
+        raise ValueError("seeds must be nonempty and unique.")
+    configs = _fusion_configs(aligned, fusions, include_single, single_normalization, single_n_components, seeds[0])
+    packed = {name: np.concatenate([v.matrix for v in parts.values()], axis=1) for name, (parts, _) in configs.items()}
+    scores, entity_scores, split_rows = [], [], []
+    for seed in seeds:
+        for fold, (train, test) in enumerate(_splits(len(ids), groups=group_values, cv=cv, random_state=seed)):
+            split_rows.extend(_split_records(ids, group_values, seed, fold, train, test))
+            for name, (parts, operator) in configs.items():
+                started = time.perf_counter()
+                adapter = MatrixFusion(operator, tuple(parts), tuple(v.n_dims for v in parts.values()))
+                fitted, prediction, params = _fit_fold(
+                    packed[name],
+                    y,
+                    train,
+                    test,
+                    model_name=model,
+                    transformer=adapter,
+                    groups=group_values,
+                    tune=tune,
+                    cv=3,
+                    random_state=seed,
+                    n_jobs=n_jobs,
+                    param_grid=param_grid,
+                )
+                elapsed = time.perf_counter() - started
+                metrics = _compute_metrics(y[test], prediction)
+                scores.append(
+                    {
+                        "configuration": name,
+                        "seed": seed,
+                        "fold": fold,
+                        "model": model,
+                        "n_train": len(train),
+                        "n_test": len(test),
+                        "fit_predict_seconds": elapsed,
+                        "output_dim": fitted.named_steps["features"].fusion_.n_features_out_,
+                        "best_params": params,
+                        **metrics,
+                    }
+                )
+                error = (y[test] - prediction) ** 2
+                per_row_mse = error if error.ndim == 1 else error.mean(axis=1)
+                for position, i in enumerate(test):
+                    row = {
+                        "configuration": name,
+                        "seed": seed,
+                        "fold": fold,
+                        "entity_id": ids[i],
+                        "mse": float(per_row_mse[position]),
+                    }
+                    if y.ndim == 2:
+                        truth = y[i] - y[i].mean()
+                        pred = prediction[position] - prediction[position].mean()
+                        norm = np.linalg.norm(truth) * np.linalg.norm(pred)
+                        row["pearson"] = float(truth @ pred / norm) if norm else 0.0
+                    entity_scores.append(row)
+                logger.info("Fusion %s seed=%s fold=%s pearson=%.4f", name, seed, fold, metrics["pearson"])
+    return FusionBenchmarkResult(
+        pd.DataFrame(scores),
+        pd.DataFrame(entity_scores),
+        pd.DataFrame(split_rows),
+        coverage,
+        {
+            "task": "regression",
+            "cv": cv,
+            "seeds": list(seeds),
+            "model": model,
+            "tune": tune,
+            "inner_cv": 3 if tune else None,
+            "fit_scope": "training_fold",
+            "grouped": groups is not None,
+            "configurations": {
+                name: {"views": list(parts), "parameters": op.get_params()} for name, (parts, op) in configs.items()
+            },
+        },
+    )
+
+
+def benchmark_fusion_retrieval(
+    views: Mapping[str, Any],
+    labels: pd.Series,
+    *,
+    fusions: Mapping[str, Any] | None = None,
+    groups: pd.Series | None = None,
+    include_single: bool = True,
+    join: str = "strict",
+    cv: int = 5,
+    seeds: Sequence[int] = (0,),
+    k: int = 10,
+    late_weights: Mapping[str, float] | None = None,
+) -> FusionBenchmarkResult:
+    """Compare cosine retrieval, score averaging and rank averaging on paired folds.
+
+    Each test entity queries training entities only. Relevance means exactly
+    equal categorical labels; labels are used for evaluation, not to fit fusion.
+    Precision and hit rate include queries with no relevant training candidate;
+    recall for those queries is undefined and reported as NaN. Coverage is
+    reported explicitly. The effective k is min(k, number of training entities).
+    Ties in the final retrieval order follow the reference entity order.
+
+    This CPU reference benchmark materializes query-by-reference score matrices;
+    use a bounded cohort. It never constructs a full registry-scale similarity
+    matrix. The standalone fusion helpers can also operate on query batches.
+    """
+    from sklearn.metrics.pairwise import cosine_similarity
+
+    from embpy.tl.fusion import fuse_ranks, fuse_scores
+    from embpy.tl.fusion._views import subset_view
+
+    aligned, ids, values, group_values, coverage = _fusion_inputs(views, labels, groups, join)
+    if values.ndim != 1:
+        raise ValueError("Retrieval labels must be a Series of scalar categories.")
+    if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+        raise ValueError("k must be a positive integer.")
+    if not seeds or len(set(seeds)) != len(seeds):
+        raise ValueError("seeds must be nonempty and unique.")
+    configs = _fusion_configs(aligned, fusions, include_single, "l2", None, seeds[0])
+    if set(configs) & {"score_mean", "rank_mean"}:
+        raise ValueError("score_mean and rank_mean are reserved retrieval configuration names.")
+    rows, entity_rows, split_rows = [], [], []
+    for seed in seeds:
+        for fold, (train, test) in enumerate(_splits(len(ids), groups=group_values, cv=cv, random_state=seed)):
+            split_rows.extend(_split_records(ids, group_values, seed, fold, train, test))
+            reference_ids, query_ids = [ids[i] for i in train], [ids[i] for i in test]
+            relevant = values[test, None] == values[train][None, :]
+            total_relevant = relevant.sum(axis=1)
+            effective_k = min(k, len(train))
+
+            def record(
+                name,
+                matrix,
+                elapsed,
+                *,
+                effective_k=effective_k,
+                relevant=relevant,
+                total_relevant=total_relevant,
+                seed=seed,
+                fold=fold,
+                query_ids=query_ids,
+                train=train,
+                test=test,
+            ):
+                order = np.argsort(-matrix, axis=1, kind="stable")[:, :effective_k]
+                hits = np.take_along_axis(relevant, order, axis=1).sum(axis=1)
+                recall = np.divide(hits, total_relevant, out=np.full(len(test), np.nan), where=total_relevant > 0)
+                rows.append(
+                    {
+                        "configuration": name,
+                        "seed": seed,
+                        "fold": fold,
+                        "k": effective_k,
+                        "n_train": len(train),
+                        "n_test": len(test),
+                        "n_queries_with_relevant": int((total_relevant > 0).sum()),
+                        "precision_at_k": float(np.mean(hits / effective_k)),
+                        "hit_rate_at_k": float(np.mean(hits > 0)),
+                        "recall_at_k": float(np.mean(recall[total_relevant > 0]))
+                        if (total_relevant > 0).any()
+                        else np.nan,
+                        "fit_predict_seconds": elapsed,
+                    }
+                )
+                for j, key in enumerate(query_ids):
+                    entity_rows.append(
+                        {
+                            "configuration": name,
+                            "seed": seed,
+                            "fold": fold,
+                            "entity_id": key,
+                            "precision_at_k": float(hits[j] / effective_k),
+                            "recall_at_k": float(recall[j]),
+                            "hit_at_k": int(hits[j] > 0),
+                            "n_relevant": int(total_relevant[j]),
+                        }
+                    )
+
+            for name, (parts, operator) in configs.items():
+                started = time.perf_counter()
+                train_views = {key: subset_view(view, reference_ids) for key, view in parts.items()}
+                test_views = {key: subset_view(view, query_ids) for key, view in parts.items()}
+                fitted = clone(operator).fit(train_views)
+                matrix = cosine_similarity(
+                    fitted.transform(test_views).matrix.astype(np.float64),
+                    fitted.transform(train_views).matrix.astype(np.float64),
+                )
+                record(name, matrix, time.perf_counter() - started)
+            started = time.perf_counter()
+            scores = {
+                key: pd.DataFrame(
+                    cosine_similarity(view.matrix[test].astype(np.float64), view.matrix[train].astype(np.float64)),
+                    index=query_ids,
+                    columns=reference_ids,
+                )
+                for key, view in aligned.items()
+            }
+            base_elapsed = time.perf_counter() - started
+            for name, combine in (("score_mean", fuse_scores), ("rank_mean", fuse_ranks)):
+                started = time.perf_counter()
+                matrix = combine(scores, weights=late_weights).to_numpy()
+                record(name, matrix, base_elapsed + time.perf_counter() - started)
+    return FusionBenchmarkResult(
+        pd.DataFrame(rows),
+        pd.DataFrame(entity_rows),
+        pd.DataFrame(split_rows),
+        coverage,
+        {
+            "task": "retrieval",
+            "cv": cv,
+            "seeds": list(seeds),
+            "k": k,
+            "grouped": groups is not None,
+            "fit_scope": "training_fold",
+            "relevance": "exact_label_match",
+            "late_weights": late_weights,
+            "configurations": {
+                name: {"views": list(parts), "parameters": op.get_params()} for name, (parts, op) in configs.items()
+            },
+        },
+    )

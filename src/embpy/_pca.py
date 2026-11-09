@@ -14,6 +14,28 @@ from __future__ import annotations
 import numpy as np
 
 
+def fit_pca(matrix, n_components, *, random_state=0, strict=False):
+    """Return a fitted PCA so new entities can reuse the training basis.
+
+    Existing projection callers retain clamping; strict fusion callers reject
+    impossible output dimensions instead of silently changing model capacity.
+    """
+    from sklearn.decomposition import PCA
+
+    X = np.asarray(matrix, dtype=np.float64)
+    if X.ndim != 2 or min(X.shape) < 1 or not np.isfinite(X).all():
+        raise ValueError("matrix must be a nonempty, finite 2D array.")
+    limit = min(X.shape)
+    if strict and (
+        isinstance(n_components, bool)
+        or not isinstance(n_components, (int, np.integer))
+        or not 1 <= n_components <= limit
+    ):
+        raise ValueError(f"n_components must be an integer between 1 and {limit} for the training matrix.")
+    count = max(1, min(int(n_components), limit))
+    return PCA(n_components=count, random_state=random_state).fit(X)
+
+
 def pca_project(
     matrix: np.ndarray,
     n_components: int,
@@ -39,15 +61,9 @@ def pca_project(
     explained_variance_ratio : np.ndarray
         ``(n_kept,)`` fraction of variance per kept component.
     """
-    from sklearn.decomposition import PCA
-
-    X = np.asarray(matrix, dtype=np.float64)
-    if X.ndim != 2:
-        raise ValueError(f"matrix must be 2D (n_rows, n_features), got shape {X.shape!r}.")
-    n_comp = max(1, min(int(n_components), X.shape[0], X.shape[1]))
-    pca = PCA(n_components=n_comp, random_state=random_state)
-    coords = pca.fit_transform(X)
+    pca = fit_pca(matrix, n_components, random_state=random_state)
+    coords = pca.transform(np.asarray(matrix, dtype=np.float64))
     return coords, np.asarray(pca.explained_variance_ratio_)
 
 
-__all__ = ["pca_project"]
+__all__ = ["fit_pca", "pca_project"]
