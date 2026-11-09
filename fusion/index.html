@@ -719,6 +719,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fusion_alignment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CCA, GCCA and Procrustes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fusion_alignment_benchmark_lincs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stage 2 LINCS Benchmark
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -860,7 +916,9 @@ Stage 1 provides fitted concatenation, joint PCA, and late fusion of similarity
 scores or ranks. These operators use NumPy/scikit-learn; no neural model is loaded.
 See the <a href="../notebooks/07_fusion.ipynb">executable tutorial</a>.
 The <a href="../fusion_benchmark_lincs/">LINCS cluster validation report</a> records the
-first real-data comparison, input audit, limitations and execution provenance.</p>
+first real-data comparison, input audit, limitations and execution provenance.
+Stage 2 adds <a href="../fusion_alignment/">CCA, MAXVAR GCCA and Procrustes</a>, with
+per-configuration view selection and nested tuning of fusion parameters.</p>
 <h2 id="feature-fusion">Feature fusion<a class="headerlink" href="#feature-fusion" title="Permanent link">&para;</a></h2>
 <p>Pass a mapping from meaningful view names to <code>EmbeddingResult</code> objects. Row IDs,
 entity types and ID schemes are checked. Different row orders are reconciled by
