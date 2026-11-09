@@ -75,6 +75,7 @@ exclude_docs: |
   _templates/*
   extensions/*
   notebooks/*
+  !notebooks/07_fusion.ipynb
   api.md
   references.md
   changelog.md
@@ -85,6 +86,9 @@ nav:
   - Overview: index.md
   - Getting Started: getting-started.md
   - Hands-On Workflows: hands-on.md
+  - Embedding Fusion:
+      - Guide: fusion.md
+      - LINCS Benchmark: fusion_benchmark_lincs.md
   - Cross-Platform & Hardware: cross-platform.md
   - Architecture: technical.md
   - API Reference: api-reference.md

@@ -171,7 +171,7 @@ class TestBenchmarkNoControlsNoDelta:
 
 
 class TestBenchmarkWithDimReduction:
-    """Verify PCA is applied before benchmarking."""
+    """Verify PCA runs inside training folds without a globally fitted embedding."""
 
     def test_pca_applied(self, scalar_adata):
         from embpy.tl.benchmark import benchmark_embeddings
@@ -185,8 +185,8 @@ class TestBenchmarkWithDimReduction:
             reduce_dim=16,
         )
         assert isinstance(results, pd.DataFrame)
-        assert "X_emb_pca16" in scalar_adata.obsm
-        assert scalar_adata.obsm["X_emb_pca16"].shape[1] == 16
+        assert "X_emb_pca16" not in scalar_adata.obsm
+        assert scalar_adata.uns["benchmark_config"]["fit_scope"] == "training_fold"
 
 
 class TestBenchmarkSelectedModels:
