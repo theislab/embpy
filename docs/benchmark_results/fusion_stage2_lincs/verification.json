@@ -1,0 +1,30 @@
+{
+  "regression": {
+    "slurm_job_id": "42995469",
+    "fold_rows": 99,
+    "entity_rows": 39039,
+    "configurations": 11,
+    "reaggregated_metrics": [
+      "mse",
+      "pearson"
+    ],
+    "stage1_splits_identical": true,
+    "source_hashes_match": true
+  },
+  "retrieval": {
+    "slurm_job_id": "42995470",
+    "fold_rows": 117,
+    "entity_rows": 46137,
+    "configurations": 13,
+    "reaggregated_metrics": [
+      "precision_at_k",
+      "recall_at_k"
+    ],
+    "stage1_splits_identical": true,
+    "source_hashes_match": true
+  },
+  "structures": 1183,
+  "compound_groups": 929,
+  "verification_scope": "Saved metric reaggregation and provenance; does not independently refit all models.",
+  "verifier_sha256": "37ae5c72d62fd95df9cec9cfc65d3f9a7ff8bb358108cc4f5f947166bf10886c"
+}

@@ -40,6 +40,7 @@ class PCAFusion(ConcatFusion):
         aligned, _ = self._align_transform(X)
         self.pca_ = fit_pca(self._matrix(aligned), self.n_components, random_state=self.random_state, strict=True)
         self.n_features_out_ = int(self.pca_.n_components_)
+        self.n_projection_coefficients_ = int(self.pca_.components_.size)
         return self
 
     def transform(self, X):

@@ -1,0 +1,226 @@
+{
+  "coverage": {
+    "join": "strict",
+    "n_entities": 1183,
+    "input_counts": {
+      "morgan1024_raw": 1183,
+      "molformer_cls": 1183,
+      "chemberta2MTR_cls": 1183,
+      "chemberta2MLM_mean": 1183
+    },
+    "dropped_counts": {
+      "morgan1024_raw": 0,
+      "molformer_cls": 0,
+      "chemberta2MTR_cls": 0,
+      "chemberta2MLM_mean": 0
+    }
+  },
+  "task": "regression",
+  "cv": 3,
+  "seeds": [
+    0,
+    1,
+    2
+  ],
+  "model": "ridge",
+  "tune": true,
+  "readout_param_grid": {
+    "alpha": [
+      0.1,
+      1.0,
+      10.0,
+      100.0,
+      1000.0,
+      10000.0
+    ]
+  },
+  "selection_metric": "neg_mean_squared_error",
+  "max_search_candidates": 20,
+  "inner_cv": 3,
+  "fit_scope": "training_fold",
+  "grouped": true,
+  "configurations": {
+    "single:morgan1024_raw": {
+      "views": [
+        "morgan1024_raw"
+      ],
+      "parameters": {
+        "balance_blocks": false,
+        "join": "strict",
+        "n_components": 64,
+        "normalization": "l2",
+        "random_state": 0,
+        "weights": null
+      },
+      "param_grid": {}
+    },
+    "single:molformer_cls": {
+      "views": [
+        "molformer_cls"
+      ],
+      "parameters": {
+        "balance_blocks": false,
+        "join": "strict",
+        "n_components": 64,
+        "normalization": "l2",
+        "random_state": 0,
+        "weights": null
+      },
+      "param_grid": {}
+    },
+    "single:chemberta2MTR_cls": {
+      "views": [
+        "chemberta2MTR_cls"
+      ],
+      "parameters": {
+        "balance_blocks": false,
+        "join": "strict",
+        "n_components": 64,
+        "normalization": "l2",
+        "random_state": 0,
+        "weights": null
+      },
+      "param_grid": {}
+    },
+    "single:chemberta2MLM_mean": {
+      "views": [
+        "chemberta2MLM_mean"
+      ],
+      "parameters": {
+        "balance_blocks": false,
+        "join": "strict",
+        "n_components": 64,
+        "normalization": "l2",
+        "random_state": 0,
+        "weights": null
+      },
+      "param_grid": {}
+    },
+    "morgan_l2": {
+      "views": [
+        "morgan1024_raw"
+      ],
+      "parameters": {
+        "balance_blocks": false,
+        "join": "strict",
+        "normalization": "l2",
+        "weights": null
+      },
+      "param_grid": {}
+    },
+    "pair_pca": {
+      "views": [
+        "morgan1024_raw",
+        "molformer_cls"
+      ],
+      "parameters": {
+        "balance_blocks": false,
+        "join": "strict",
+        "n_components": 64,
+        "normalization": "l2",
+        "random_state": 0,
+        "weights": null
+      },
+      "param_grid": {}
+    },
+    "pair_cca": {
+      "views": [
+        "morgan1024_raw",
+        "molformer_cls"
+      ],
+      "parameters": {
+        "join": "strict",
+        "n_components": 64,
+        "normalization": "l2",
+        "pre_components": 128,
+        "random_state": 0,
+        "rank_tol": 1e-07,
+        "regularization": 0.1,
+        "weights": null
+      },
+      "param_grid": {
+        "regularization": [
+          0.01,
+          0.1,
+          1.0
+        ]
+      }
+    },
+    "pair_procrustes": {
+      "views": [
+        "morgan1024_raw",
+        "molformer_cls"
+      ],
+      "parameters": {
+        "join": "strict",
+        "n_components": 64,
+        "normalization": "l2",
+        "random_state": 0,
+        "rank_tol": 1e-07,
+        "reference": "morgan1024_raw",
+        "weights": null
+      },
+      "param_grid": {}
+    },
+    "multi_pca": {
+      "views": [
+        "morgan1024_raw",
+        "molformer_cls",
+        "chemberta2MTR_cls",
+        "chemberta2MLM_mean"
+      ],
+      "parameters": {
+        "balance_blocks": false,
+        "join": "strict",
+        "n_components": 64,
+        "normalization": "l2",
+        "random_state": 0,
+        "weights": null
+      },
+      "param_grid": {}
+    },
+    "multi_gcca": {
+      "views": [
+        "morgan1024_raw",
+        "molformer_cls",
+        "chemberta2MTR_cls",
+        "chemberta2MLM_mean"
+      ],
+      "parameters": {
+        "join": "strict",
+        "n_components": 64,
+        "normalization": "l2",
+        "pre_components": 128,
+        "random_state": 0,
+        "rank_tol": 1e-07,
+        "regularization": 0.1,
+        "weights": null
+      },
+      "param_grid": {
+        "regularization": [
+          0.01,
+          0.1,
+          1.0
+        ]
+      }
+    },
+    "multi_procrustes": {
+      "views": [
+        "morgan1024_raw",
+        "molformer_cls",
+        "chemberta2MTR_cls",
+        "chemberta2MLM_mean"
+      ],
+      "parameters": {
+        "join": "strict",
+        "n_components": 64,
+        "normalization": "l2",
+        "random_state": 0,
+        "rank_tol": 1e-07,
+        "reference": "morgan1024_raw",
+        "weights": null
+      },
+      "param_grid": {}
+    }
+  }
+}

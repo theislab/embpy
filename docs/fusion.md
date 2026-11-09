@@ -6,6 +6,8 @@ scores or ranks. These operators use NumPy/scikit-learn; no neural model is load
 See the [executable tutorial](notebooks/07_fusion.ipynb).
 The [LINCS cluster validation report](fusion_benchmark_lincs.md) records the
 first real-data comparison, input audit, limitations and execution provenance.
+Stage 2 adds [CCA, MAXVAR GCCA and Procrustes](fusion_alignment.md), with
+per-configuration view selection and nested tuning of fusion parameters.
 
 ## Feature fusion
 

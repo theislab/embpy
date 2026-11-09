@@ -76,6 +76,7 @@ exclude_docs: |
   extensions/*
   notebooks/*
   !notebooks/07_fusion.ipynb
+  !notebooks/08_fusion_alignment.ipynb
   api.md
   references.md
   changelog.md
@@ -89,6 +90,8 @@ nav:
   - Embedding Fusion:
       - Guide: fusion.md
       - LINCS Benchmark: fusion_benchmark_lincs.md
+      - CCA, GCCA and Procrustes: fusion_alignment.md
+      - Stage 2 LINCS Benchmark: fusion_alignment_benchmark_lincs.md
   - Cross-Platform & Hardware: cross-platform.md
   - Architecture: technical.md
   - API Reference: api-reference.md

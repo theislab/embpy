@@ -231,13 +231,16 @@ def _fit_fold(
     random_state=42,
     n_jobs=1,
     param_grid=None,
+    fusion_param_grid=None,
+    memory=None,
 ):
     """Fit preprocessing and tune the readout entirely inside an outer training fold."""
     pipeline = Pipeline(
         [
             ("features", "passthrough" if transformer is None else clone(transformer)),
             ("regressor", _build_model(model_name)),
-        ]
+        ],
+        memory=memory,
     )
     parameters = {}
     if tune:
@@ -249,6 +252,7 @@ def _fit_fold(
         inner = _splits(len(train), groups=train_groups, cv=inner_cv, random_state=random_state)
         grid = _build_param_grid(model_name) if param_grid is None else param_grid
         grid = {"regressor__" + key: values for key, values in grid.items()}
+        grid.update({"features__fusion__" + key: values for key, values in (fusion_param_grid or {}).items()})
         search = RandomizedSearchCV(
             pipeline,
             grid,
@@ -261,7 +265,10 @@ def _fit_fold(
         )
         search.fit(X[train], y[train])
         pipeline = search.best_estimator_
-        parameters = {key.removeprefix("regressor__"): value for key, value in search.best_params_.items()}
+        parameters = {
+            key.removeprefix("regressor__").removeprefix("features__"): value
+            for key, value in search.best_params_.items()
+        }
     else:
         pipeline.fit(X[train], y[train])
     prediction = pipeline.predict(X[test])
@@ -409,7 +416,9 @@ def benchmark_embeddings(
         Multiple precomputed views; combined with ``fusion`` (plain concatenation
         by default). Mutually exclusive with obsm_key and embedding_model.
     fusion
-        Unfitted ConcatFusion or PCAFusion. Cloned inside each training fold.
+        Unfitted BaseFusion operator, including CCA, GCCA or Procrustes.
+        Cloned inside each training fold. For fusion-parameter grids or
+        per-configuration view subsets, use benchmark_fusion instead.
     groupby
         Optional obs column whose groups must stay together in all outer and
         inner splits. Recommended for repeated drugs, genes, donors or batches.
@@ -581,7 +590,7 @@ def _fusion_inputs(views, labels, groups, join):
 
 
 def _fusion_configs(views, fusions, include_single, single_normalization, single_n_components, random_state):
-    from embpy.tl.fusion import ConcatFusion, PCAFusion
+    from embpy.tl.fusion import BaseFusion, ConcatFusion, FusionConfig, PCAFusion
 
     configs = {}
     if include_single:
@@ -595,15 +604,23 @@ def _fusion_configs(views, fusions, include_single, single_normalization, single
                     random_state=random_state,
                 )
             )
-            configs["single:" + name] = ({name: views[name]}, operator)
+            configs["single:" + name] = ({name: views[name]}, operator, {})
     if fusions is None:
         fusions = {"concat_l2": ConcatFusion(normalization="l2")}
-    for name, operator in fusions.items():
+    for name, specification in fusions.items():
         if not isinstance(name, str) or not name or name in configs:
             raise ValueError("Fusion configuration names must be nonempty and distinct from single-view baselines.")
-        if not isinstance(operator, ConcatFusion):
-            raise TypeError("Stage-1 feature benchmarks accept ConcatFusion or PCAFusion operators.")
-        configs[name] = (views, operator)
+        specification = specification if isinstance(specification, FusionConfig) else FusionConfig(specification)
+        operator = specification.operator
+        if not isinstance(operator, BaseFusion):
+            raise TypeError("Feature benchmarks require a BaseFusion operator.")
+        names = list(views) if specification.views is None else list(specification.views)
+        if not names or len(set(names)) != len(names) or not set(names).issubset(views):
+            raise ValueError("FusionConfig.views must name a nonempty, unique subset of supplied views.")
+        grid = dict(specification.param_grid or {})
+        if not set(grid).issubset(operator.get_params()):
+            raise ValueError("FusionConfig.param_grid contains unknown operator parameters.")
+        configs[name] = ({key: views[key] for key in names}, operator, grid)
     if not configs:
         raise ValueError("At least one benchmark configuration is required.")
     return configs
@@ -639,6 +656,7 @@ def benchmark_fusion(
     tune: bool = True,
     param_grid: dict[str, list[Any]] | None = None,
     n_jobs: int = 1,
+    cache_dir: str | None = None,
 ) -> FusionBenchmarkResult:
     """Compare feature fusions on identical held-out entities using nested CV.
 
@@ -647,8 +665,11 @@ def benchmark_fusion(
     together in both outer and inner folds. Every learned preprocessing step
     is fitted inside the relevant training fold. Targets are never normalized
     implicitly. ``tune=True`` selects readout parameters by three-fold inner
-    CV on negative MSE; fusion configurations themselves are evaluated, not
-    selected using the test folds. Include a separate final holdout if selecting
+    CV on negative MSE, including operator parameters supplied in FusionConfig.
+    FusionConfig can select a view subset; every configuration still uses the
+    same cohort aligned across all supplied views. ``cache_dir`` optionally
+    caches training transforms across readout candidates (caller manages its
+    lifetime). Include a separate final holdout if selecting
     the best configuration for a downstream claim.
 
     The single-view baselines use the specified normalization, optionally PCA
@@ -665,12 +686,16 @@ def benchmark_fusion(
     if not seeds or len(set(seeds)) != len(seeds):
         raise ValueError("seeds must be nonempty and unique.")
     configs = _fusion_configs(aligned, fusions, include_single, single_normalization, single_n_components, seeds[0])
-    packed = {name: np.concatenate([v.matrix for v in parts.values()], axis=1) for name, (parts, _) in configs.items()}
+    if not tune and any(grid for _, _, grid in configs.values()):
+        raise ValueError("Fusion parameter grids require tune=True.")
+    packed = {
+        name: np.concatenate([v.matrix for v in parts.values()], axis=1) for name, (parts, _, _) in configs.items()
+    }
     scores, entity_scores, split_rows = [], [], []
     for seed in seeds:
         for fold, (train, test) in enumerate(_splits(len(ids), groups=group_values, cv=cv, random_state=seed)):
             split_rows.extend(_split_records(ids, group_values, seed, fold, train, test))
-            for name, (parts, operator) in configs.items():
+            for name, (parts, operator, fusion_grid) in configs.items():
                 started = time.perf_counter()
                 adapter = MatrixFusion(operator, tuple(parts), tuple(v.n_dims for v in parts.values()))
                 fitted, prediction, params = _fit_fold(
@@ -686,6 +711,8 @@ def benchmark_fusion(
                     random_state=seed,
                     n_jobs=n_jobs,
                     param_grid=param_grid,
+                    fusion_param_grid=fusion_grid,
+                    memory=cache_dir,
                 )
                 elapsed = time.perf_counter() - started
                 metrics = _compute_metrics(y[test], prediction)
@@ -699,6 +726,7 @@ def benchmark_fusion(
                         "n_test": len(test),
                         "fit_predict_seconds": elapsed,
                         "output_dim": fitted.named_steps["features"].fusion_.n_features_out_,
+                        "projection_coefficients": fitted.named_steps["features"].fusion_.n_projection_coefficients_,
                         "best_params": params,
                         **metrics,
                     }
@@ -731,14 +759,54 @@ def benchmark_fusion(
             "seeds": list(seeds),
             "model": model,
             "tune": tune,
+            "readout_param_grid": (_build_param_grid(model) if param_grid is None else param_grid) if tune else None,
+            "selection_metric": "neg_mean_squared_error" if tune else None,
+            "max_search_candidates": 20 if tune else None,
             "inner_cv": 3 if tune else None,
             "fit_scope": "training_fold",
             "grouped": groups is not None,
             "configurations": {
-                name: {"views": list(parts), "parameters": op.get_params()} for name, (parts, op) in configs.items()
+                name: {"views": list(parts), "parameters": op.get_params(), "param_grid": grid}
+                for name, (parts, op, grid) in configs.items()
             },
         },
     )
+
+
+def _tune_retrieval(operator, grid, parts, ids, labels, train, groups, seed, k):
+    """Select fusion parameters by grouped inner precision@k, never outer queries."""
+    from sklearn.metrics.pairwise import cosine_similarity
+    from sklearn.model_selection import ParameterGrid
+
+    from embpy.tl.fusion._views import subset_view
+
+    if not grid:
+        return {}, None
+    train_groups = None if groups is None else groups[train]
+    available = len(train) if groups is None else len(np.unique(train_groups))
+    if available < 2:
+        raise ValueError("Retrieval tuning requires at least two training entities/groups.")
+    inner = _splits(len(train), groups=train_groups, cv=min(3, available), random_state=seed)
+    best_params, best_score = {}, -np.inf
+    for params in ParameterGrid(grid):
+        scores = []
+        for reference, query in inner:
+            reference, query = train[reference], train[query]
+            reference_views = {name: subset_view(view, [ids[i] for i in reference]) for name, view in parts.items()}
+            query_views = {name: subset_view(view, [ids[i] for i in query]) for name, view in parts.items()}
+            fitted = clone(operator).set_params(**params).fit(reference_views)
+            similarity = cosine_similarity(
+                fitted.transform(query_views).matrix.astype(float),
+                fitted.transform(reference_views).matrix.astype(float),
+            )
+            width = min(k, len(reference))
+            order = np.argsort(-similarity, axis=1, kind="stable")[:, :width]
+            relevant = labels[query, None] == labels[reference][None, :]
+            scores.append(np.take_along_axis(relevant, order, axis=1).mean())
+        score = float(np.mean(scores))
+        if score > best_score:
+            best_params, best_score = params, score
+    return best_params, best_score
 
 
 def benchmark_fusion_retrieval(
@@ -753,11 +821,15 @@ def benchmark_fusion_retrieval(
     seeds: Sequence[int] = (0,),
     k: int = 10,
     late_weights: Mapping[str, float] | None = None,
+    tune: bool = False,
+    single_n_components: int | None = None,
 ) -> FusionBenchmarkResult:
     """Compare cosine retrieval, score averaging and rank averaging on paired folds.
 
     Each test entity queries training entities only. Relevance means exactly
-    equal categorical labels; labels are used for evaluation, not to fit fusion.
+    equal categorical labels. Operators never use labels. With ``tune=True``,
+    FusionConfig grids are selected by mean precision@k across three grouped
+    inner folds; only outer-training labels participate in selection.
     Precision and hit rate include queries with no relevant training candidate;
     recall for those queries is undefined and reported as NaN. Coverage is
     reported explicitly. The effective k is min(k, number of training entities).
@@ -779,7 +851,9 @@ def benchmark_fusion_retrieval(
         raise ValueError("k must be a positive integer.")
     if not seeds or len(set(seeds)) != len(seeds):
         raise ValueError("seeds must be nonempty and unique.")
-    configs = _fusion_configs(aligned, fusions, include_single, "l2", None, seeds[0])
+    configs = _fusion_configs(aligned, fusions, include_single, "l2", single_n_components, seeds[0])
+    if not tune and any(grid for _, _, grid in configs.values()):
+        raise ValueError("Fusion parameter grids require tune=True.")
     if set(configs) & {"score_mean", "rank_mean"}:
         raise ValueError("score_mean and rank_mean are reserved retrieval configuration names.")
     rows, entity_rows, split_rows = [], [], []
@@ -796,6 +870,9 @@ def benchmark_fusion_retrieval(
                 matrix,
                 elapsed,
                 *,
+                fitted=None,
+                best_params=None,
+                inner_score=None,
                 effective_k=effective_k,
                 relevant=relevant,
                 total_relevant=total_relevant,
@@ -823,6 +900,10 @@ def benchmark_fusion_retrieval(
                         if (total_relevant > 0).any()
                         else np.nan,
                         "fit_predict_seconds": elapsed,
+                        "output_dim": None if fitted is None else fitted.n_features_out_,
+                        "projection_coefficients": 0 if fitted is None else fitted.n_projection_coefficients_,
+                        "best_params": best_params or {},
+                        "inner_precision_at_k": inner_score,
                     }
                 )
                 for j, key in enumerate(query_ids):
@@ -839,16 +920,24 @@ def benchmark_fusion_retrieval(
                         }
                     )
 
-            for name, (parts, operator) in configs.items():
+            for name, (parts, operator, grid) in configs.items():
                 started = time.perf_counter()
                 train_views = {key: subset_view(view, reference_ids) for key, view in parts.items()}
                 test_views = {key: subset_view(view, query_ids) for key, view in parts.items()}
-                fitted = clone(operator).fit(train_views)
+                params, inner_score = _tune_retrieval(operator, grid, parts, ids, values, train, group_values, seed, k)
+                fitted = clone(operator).set_params(**params).fit(train_views)
                 matrix = cosine_similarity(
                     fitted.transform(test_views).matrix.astype(np.float64),
                     fitted.transform(train_views).matrix.astype(np.float64),
                 )
-                record(name, matrix, time.perf_counter() - started)
+                record(
+                    name,
+                    matrix,
+                    time.perf_counter() - started,
+                    fitted=fitted,
+                    best_params=params,
+                    inner_score=inner_score,
+                )
             started = time.perf_counter()
             scores = {
                 key: pd.DataFrame(
@@ -877,8 +966,12 @@ def benchmark_fusion_retrieval(
             "fit_scope": "training_fold",
             "relevance": "exact_label_match",
             "late_weights": late_weights,
+            "tune": tune,
+            "inner_cv": 3 if tune else None,
+            "selection_metric": "precision_at_k" if tune else None,
             "configurations": {
-                name: {"views": list(parts), "parameters": op.get_params()} for name, (parts, op) in configs.items()
+                name: {"views": list(parts), "parameters": op.get_params(), "param_grid": grid}
+                for name, (parts, op, grid) in configs.items()
             },
         },
     )
