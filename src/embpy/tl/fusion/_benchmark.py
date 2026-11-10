@@ -41,7 +41,9 @@ class MatrixFusion(TransformerMixin, BaseEstimator):
 
     def fit(self, X, y=None):
         """Clone and fit the fusion using only rows supplied by sklearn."""
-        self.fusion_ = clone(self.fusion).fit(self._views(X))
+        if hasattr(self, "fusion_"):
+            del self.fusion_
+        self.fusion_ = clone(self.fusion).fit(self._views(X), y)
         return self
 
     def transform(self, X):

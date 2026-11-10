@@ -265,6 +265,7 @@ def _fit_fold(
         )
         search.fit(X[train], y[train])
         pipeline = search.best_estimator_
+        pipeline.inner_selection_score_ = float(search.best_score_)
         parameters = {
             key.removeprefix("regressor__").removeprefix("features__"): value
             for key, value in search.best_params_.items()
@@ -727,6 +728,10 @@ def benchmark_fusion(
                         "fit_predict_seconds": elapsed,
                         "output_dim": fitted.named_steps["features"].fusion_.n_features_out_,
                         "projection_coefficients": fitted.named_steps["features"].fusion_.n_projection_coefficients_,
+                        "trainable_parameters": getattr(
+                            fitted.named_steps["features"].fusion_, "n_trainable_parameters_", 0
+                        ),
+                        "supervised_fusion": getattr(operator, "requires_y", False),
                         "best_params": params,
                         **metrics,
                     }
@@ -852,6 +857,10 @@ def benchmark_fusion_retrieval(
     if not seeds or len(set(seeds)) != len(seeds):
         raise ValueError("seeds must be nonempty and unique.")
     configs = _fusion_configs(aligned, fusions, include_single, "l2", single_n_components, seeds[0])
+    if any(getattr(operator, "requires_y", False) for _, operator, _ in configs.values()):
+        raise ValueError(
+            "Supervised fusion requires regression targets; this label-only retrieval benchmark supports unsupervised operators only."
+        )
     if not tune and any(grid for _, _, grid in configs.values()):
         raise ValueError("Fusion parameter grids require tune=True.")
     if set(configs) & {"score_mean", "rank_mean"}:

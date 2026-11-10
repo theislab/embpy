@@ -8,6 +8,8 @@ The [LINCS cluster validation report](fusion_benchmark_lincs.md) records the
 first real-data comparison, input audit, limitations and execution provenance.
 Stage 2 adds [CCA, MAXVAR GCCA and Procrustes](fusion_alignment.md), with
 per-configuration view selection and nested tuning of fusion parameters.
+Stage 3 adds [kernel, DeepSets and gated fusion](fusion_nonlinear.md), with
+supervised neural controls and a grouped LINCS workflow in the reproducibility repository.
 
 ## Feature fusion
 

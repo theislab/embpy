@@ -77,6 +77,7 @@ exclude_docs: |
   notebooks/*
   !notebooks/07_fusion.ipynb
   !notebooks/08_fusion_alignment.ipynb
+  !notebooks/09_fusion_nonlinear.ipynb
   api.md
   references.md
   changelog.md
@@ -92,6 +93,7 @@ nav:
       - LINCS Benchmark: fusion_benchmark_lincs.md
       - CCA, GCCA and Procrustes: fusion_alignment.md
       - Stage 2 LINCS Benchmark: fusion_alignment_benchmark_lincs.md
+      - Kernel and Neural Fusion: fusion_nonlinear.md
   - Cross-Platform & Hardware: cross-platform.md
   - Architecture: technical.md
   - API Reference: api-reference.md
