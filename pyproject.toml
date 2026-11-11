@@ -69,6 +69,9 @@ scripts.embpy-mcp = "embpy.mcp.server:main"
 optional-dependencies.mcp = [
   "mcp>=1.23,<3",
   "scanpy>=1.10",
+  # umap-learn 0.6.0 (2026-11-10) rejects the non-contiguous kNN distances that
+  # scanpy's neighbors() passes it (numba TypingError); keep <0.6 until fixed upstream.
+  "umap-learn<0.6",
 ]
 
 
@@ -133,6 +136,7 @@ optional-dependencies.cpu = [
   "enformer-pytorch>=0.8.10",
   "biopython",
   "scanpy>=1.10",
+  "umap-learn<0.6",
   "h5py",
   "pillow>=10",
   "xgboost>=2.0",
@@ -160,6 +164,7 @@ optional-dependencies.gpu = [
   "enformer-pytorch>=0.8.10",
   "biopython",
   "scanpy>=1.10",
+  "umap-learn<0.6",
   "h5py",
   "pillow>=10",
   "xgboost>=2.0",
@@ -324,12 +329,14 @@ optional-dependencies.pertpy = [
 ]
 optional-dependencies.scanpy = [
   "scanpy>=1.10",
+  "umap-learn<0.6",
 ]
 # scIB metrics for validating single-cell foundation-model embeddings
 # (embpy.tl.compute_scib_metrics). Pulls scanpy + the scib metric suite.
 optional-dependencies.scib = [
   "scib>=1.1.5",
   "scanpy>=1.10",
+  "umap-learn<0.6",
 ]
 # Optional regressor backend for tl.benchmark_embeddings(models=[..., "xgboost"]).
 optional-dependencies.benchmark = [
@@ -398,6 +405,7 @@ optional-dependencies.test = [
   "pytest",
   "pytest-mock",
   "scanpy>=1.10",
+  "umap-learn<0.6",
   "xgboost",
   "igraph>=0.11",
   "leidenalg>=0.10",
