@@ -821,3 +821,45 @@ class TestPredictVariantEffect:
         top = result.top_tracks(n=2)
         assert top[0][0] == "x"
         assert top[1][0] == "y"
+
+
+class TestSequenceProviderRest:
+    """The Ensembl REST fallback retries transient failures instead of failing on the first."""
+
+    def _ok(self, text="acgt"):
+        from unittest.mock import MagicMock
+
+        return MagicMock(ok=True, status_code=200, text=text)
+
+    def test_retries_a_timeout(self, monkeypatch):
+        import requests
+
+        calls = []
+
+        def fake_get(url, timeout):
+            calls.append(url)
+            if len(calls) == 1:
+                raise requests.Timeout("slow")
+            return self._ok()
+
+        monkeypatch.setattr(requests, "get", fake_get)
+        monkeypatch.setattr("time.sleep", lambda s: None)
+        assert SequenceProvider().get_region("17", 1, 4) == "ACGT"
+        assert len(calls) == 2
+
+    def test_retries_server_errors_but_not_client_errors(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        import requests
+
+        answers = [MagicMock(ok=False, status_code=503, text="busy"), self._ok("ac")]
+        monkeypatch.setattr(requests, "get", lambda url, timeout: answers.pop(0))
+        monkeypatch.setattr("time.sleep", lambda s: None)
+        assert SequenceProvider().get_region("17", 1, 2) == "AC"
+
+        bad = MagicMock(ok=False, status_code=400, text="bad region")
+        calls = []
+        monkeypatch.setattr(requests, "get", lambda url, timeout: calls.append(url) or bad)
+        with pytest.raises(RuntimeError, match="400"):
+            SequenceProvider().get_region("17", 1, 2)
+        assert len(calls) == 1

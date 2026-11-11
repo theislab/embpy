@@ -179,11 +179,15 @@ class TestSymbolToEnsembl:
         mock.status_code = 200
         mock.ok = True
         mock.raise_for_status = MagicMock()
-        mock.json.return_value = {"hits": [{"ensembl": {"gene": "ENSG00000141510"}}]}
+        mock.json.return_value = {
+            "hits": [{"symbol": "TP53", "taxid": 9606, "ensembl": {"gene": "ENSG00000141510"}}]
+        }
 
-        with patch("embpy.resources.gene.resolver.requests.get", return_value=mock):
+        with patch("embpy.resources.gene.resolver.requests.get", return_value=mock) as get:
             result = resolver.symbol_to_ensembl("TP53")
             assert result == "ENSG00000141510"
+            # A fielded query, not free text (free text 'P53' ranks PURPL first).
+            assert get.call_args.kwargs["params"]["q"] == 'symbol:"TP53"'
 
     def test_no_result_returns_none(self, resolver):
         mock = MagicMock()
@@ -203,7 +207,7 @@ class TestEnsemblToSymbol:
         mock.status_code = 200
         mock.ok = True
         mock.raise_for_status = MagicMock()
-        mock.json.return_value = {"hits": [{"symbol": "TP53"}]}
+        mock.json.return_value = {"hits": [{"symbol": "TP53", "taxid": 9606}]}
 
         with patch("embpy.resources.gene.resolver.requests.get", return_value=mock):
             result = resolver.ensembl_to_symbol("ENSG00000141510")
@@ -214,7 +218,7 @@ class TestEnsemblToSymbol:
         mock.status_code = 200
         mock.ok = True
         mock.raise_for_status = MagicMock()
-        mock.json.return_value = {"hits": [{"symbol": "TP53"}]}
+        mock.json.return_value = {"hits": [{"symbol": "TP53", "taxid": 9606}]}
 
         with patch("embpy.resources.gene.resolver.requests.get", return_value=mock):
             result = resolver.ensembl_to_symbol("ENSG00000141510.12")

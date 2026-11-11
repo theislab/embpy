@@ -782,11 +782,13 @@ def phenocopy_score(
     for t in mad_thresholds:
         aurocs: list[float] = []
         for i in range(n_perts):
-            sim_vec = sim_true[i].copy()
-            sim_vec[i] = -np.inf  # exclude self
+            # Leave the perturbation itself out rather than scoring it -inf:
+            # roc_auc_score rejects non-finite scores.
+            others = np.arange(n_perts) != i
+            sim_vec = sim_true[i][others]
 
-            med = np.median(sim_vec[sim_vec > -np.inf])
-            mad = median_abs_deviation(sim_vec[sim_vec > -np.inf])
+            med = np.median(sim_vec)
+            mad = median_abs_deviation(sim_vec)
             if mad == 0:
                 continue
 
@@ -794,10 +796,7 @@ def phenocopy_score(
             if neighbors.sum() == 0 or neighbors.sum() == (n_perts - 1):
                 continue
 
-            pred_vec = sim_pred[i].copy()
-            pred_vec[i] = -np.inf
-
-            aurocs.append(float(roc_auc_score(neighbors, pred_vec)))
+            aurocs.append(float(roc_auc_score(neighbors, sim_pred[i][others])))
 
         metrics[f"phenocopy_auroc_mad_{t}"] = float(np.mean(aurocs)) if aurocs else float("nan")
 

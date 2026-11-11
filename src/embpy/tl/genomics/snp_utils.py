@@ -1027,6 +1027,36 @@ def embed_vcf(
     return results
 
 
+class _TransientEnsemblStatus(Exception):
+    """A 429 / 5xx answer from Ensembl REST, worth retrying."""
+
+
+def _ensembl_rest_get(url: str):
+    """GET an Ensembl REST URL, retrying timeouts, connection errors, 429 and 5xx.
+
+    The ``/sequence/region`` endpoint's latency varies from under a second to
+    tens of seconds for the same request, so a single attempt with a fixed
+    timeout fails intermittently. Other 4xx answers are returned as is.
+    """
+    import requests
+
+    from embpy.retry import retry_with_backoff
+
+    @retry_with_backoff(
+        max_attempts=3,
+        base_delay=2.0,
+        max_delay=10.0,
+        retryable=(requests.Timeout, requests.ConnectionError, _TransientEnsemblStatus),
+    )
+    def _attempt():
+        resp = requests.get(url, timeout=30)
+        if resp.status_code == 429 or resp.status_code >= 500:
+            raise _TransientEnsemblStatus(f"HTTP {resp.status_code} from {url}")
+        return resp
+
+    return _attempt()
+
+
 class SequenceProvider:
     """Fetch genomic sequences for use with :class:`SNPEmbedder`.
 
@@ -1304,8 +1334,6 @@ class SequenceProvider:
         Uses ``/sequence/region/{species}/{chrom}:{start}..{end}``
         which returns only the requested window -- no full chromosome download.
         """
-        import requests
-
         _, without_prefix = self._normalise_chrom(chrom)
 
         if self.genome_build == "GRCh37":
@@ -1319,7 +1347,7 @@ class SequenceProvider:
             f"?content-type=text/plain"
         )
         logging.info(f"SequenceProvider: REST fetch {url} ...")
-        resp = requests.get(url, timeout=30)
+        resp = _ensembl_rest_get(url)
         if not resp.ok:
             raise RuntimeError(
                 f"Ensembl REST returned {resp.status_code} for "

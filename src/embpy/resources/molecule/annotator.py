@@ -31,6 +31,8 @@ from typing import Any, Literal
 
 import requests
 
+from embpy.resources._service_errors import report_service_error
+
 from .chembl import (
     DEFAULT_ACTIVITIES,
     DEFAULT_INDICATIONS,
@@ -59,6 +61,7 @@ def _get_json(url: str, params: dict | None = None, timeout: int = 30) -> dict |
         return resp.json()
     except Exception as e:  # noqa: BLE001
         logger.debug("Request failed for %s: %s", url, e)
+        report_service_error(url, e)
         return None
 
 
@@ -71,6 +74,7 @@ def _get_text(url: str, timeout: int = 30) -> str | None:
         return resp.text
     except Exception as e:  # noqa: BLE001
         logger.debug("Request failed for %s: %s", url, e)
+        report_service_error(url, e)
         return None
 
 

@@ -62,6 +62,18 @@ dependencies = [
 ]
 
 scripts.embpy-static-embeddings = "embpy.scripts.package_static_embeddings:main"
+scripts.embpy-mcp = "embpy.mcp.server:main"
+
+# Model Context Protocol (MCP) server with bioinformatics skills
+# Tested in CI (test.yaml, job test-mcp) against 1.23.0, 1.30.0 and 2.3.0.
+optional-dependencies.mcp = [
+  "mcp>=1.23,<3",
+  "scanpy>=1.10",
+  # umap-learn 0.6.0 (2026-11-10) rejects the non-contiguous kNN distances that
+  # scanpy's neighbors() passes it (numba TypingError); keep <0.6 until fixed upstream.
+  "umap-learn<0.6",
+]
+
 
 optional-dependencies.torch = [
   "torch>=2.5.1",
@@ -124,6 +136,7 @@ optional-dependencies.cpu = [
   "enformer-pytorch>=0.8.10",
   "biopython",
   "scanpy>=1.10",
+  "umap-learn<0.6",
   "h5py",
   "pillow>=10",
   "xgboost>=2.0",
@@ -151,6 +164,7 @@ optional-dependencies.gpu = [
   "enformer-pytorch>=0.8.10",
   "biopython",
   "scanpy>=1.10",
+  "umap-learn<0.6",
   "h5py",
   "pillow>=10",
   "xgboost>=2.0",
@@ -315,12 +329,14 @@ optional-dependencies.pertpy = [
 ]
 optional-dependencies.scanpy = [
   "scanpy>=1.10",
+  "umap-learn<0.6",
 ]
 # scIB metrics for validating single-cell foundation-model embeddings
 # (embpy.tl.compute_scib_metrics). Pulls scanpy + the scib metric suite.
 optional-dependencies.scib = [
   "scib>=1.1.5",
   "scanpy>=1.10",
+  "umap-learn<0.6",
 ]
 # Optional regressor backend for tl.benchmark_embeddings(models=[..., "xgboost"]).
 optional-dependencies.benchmark = [
@@ -348,7 +364,7 @@ optional-dependencies.morphology = [
 #     kept opt-in so "all" doesn't imply an external API account
 # Install those explicitly in a separate env if you need them.
 optional-dependencies.all = [
-  "embpy[models,bio,genome,ppi,lamindb,pertpy,scanpy,scib,benchmark,morphology,seqmodels]",
+  "embpy[models,bio,genome,ppi,lamindb,pertpy,scanpy,scib,benchmark,morphology,seqmodels,mcp]",
 ]
 # Convenience bundles that combine "all" with a specific torch build. These
 # intentionally omit caduceus/evo2 so a plain `pip install embpy[all-cu124]`
@@ -389,6 +405,7 @@ optional-dependencies.test = [
   "pytest",
   "pytest-mock",
   "scanpy>=1.10",
+  "umap-learn<0.6",
   "xgboost",
   "igraph>=0.11",
   "leidenalg>=0.10",
@@ -553,6 +570,11 @@ testpaths = [ "tests" ]
 xfail_strict = true
 addopts = [
   "--import-mode=importlib",
+]
+filterwarnings = [
+  "ignore::DeprecationWarning",
+  "ignore::FutureWarning",
+  "ignore::UserWarning",
 ]
 # Markers for tests that need heavy optional dependencies. The root conftest
 # auto-skips whole files (via collect_ignore_glob) when the dep is absent, so

@@ -28,6 +28,7 @@ from typing import Literal
 
 import requests
 
+from embpy.resources._service_errors import report_service_error
 from embpy.retry import retry_with_backoff
 
 logger = logging.getLogger(__name__)
@@ -53,7 +54,7 @@ class _PermanentHTTPError(Exception):
     retryable=(requests.RequestException,),
     non_retryable=(_PermanentHTTPError,),
 )
-def _http_get(
+def _http_get_with_retry(
     url: str, *, params: dict | None = None, timeout: int = 30
 ) -> requests.Response:
     """GET with retries on transient failures.
@@ -79,6 +80,19 @@ def _http_get(
         raise _PermanentHTTPError(f"HTTP {resp.status_code} for {url}")
     resp.raise_for_status()
     return resp
+
+
+def _http_get(
+    url: str, *, params: dict | None = None, timeout: int = 30
+) -> requests.Response:
+    """:func:`_http_get_with_retry`, reporting a transient failure that survived every attempt."""
+    try:
+        return _http_get_with_retry(url, params=params, timeout=timeout)
+    except _PermanentHTTPError:
+        raise
+    except Exception as e:
+        report_service_error(url, e)
+        raise
 
 
 ORGANISM_TAXON = {

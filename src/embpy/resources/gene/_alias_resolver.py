@@ -288,16 +288,18 @@ def _step_ensembl_retry(
     the audit log shows where the breakdown is.
     """
     try:
-        import requests
+        from .resolver import _ensembl_get
     except ImportError:
-        return None, "no_requests"
+        _ensembl_get = None
+
     url = f"https://rest.ensembl.org/lookup/symbol/{organism}/{symbol}"
     try:
-        resp = requests.get(
-            url,
-            headers={"Content-Type": "application/json"},
-            timeout=10,
-        )
+        if _ensembl_get is not None:
+            resp = _ensembl_get(url, headers={"Content-Type": "application/json"}, timeout=10)
+        else:
+            import requests
+
+            resp = requests.get(url, headers={"Content-Type": "application/json"}, timeout=10)
     except Exception as e:  # noqa: BLE001
         return None, f"error:{type(e).__name__}"
     if resp.status_code != 200:
@@ -313,40 +315,19 @@ def _step_ensembl_retry(
 
 
 def _step_mygene(symbol: str, organism: str) -> tuple[str | None, str]:
-    """MyGene.info is the most tolerant: keyword-style query."""
-    try:
-        import requests
-    except ImportError:
-        return None, "no_requests"
-    url = "https://mygene.info/v3/query"
-    try:
-        resp = requests.get(
-            url,
-            params={
-                "q": symbol,
-                "scopes": "symbol,alias,name",
-                "species": organism,
-                "fields": "symbol,ensembl.gene",
-                "size": 1,
-            },
-            timeout=10,
-        )
-    except Exception as e:  # noqa: BLE001
-        return None, f"error:{type(e).__name__}"
-    if resp.status_code != 200:
-        return None, f"http:{resp.status_code}"
-    try:
-        data = resp.json()
-    except Exception:  # noqa: BLE001
-        return None, "decode_error"
-    hits = data.get("hits", [])
-    if not hits:
-        return None, "miss"
-    approved = hits[0].get("symbol")
-    if approved:
-        return str(approved), "ok"
-    # No symbol but ensembl id -- return None and let the caller decide.
-    return None, "miss"
+    """MyGene.info by exact symbol, then exact alias, for the requested species.
+
+    An alias shared by several genes returns ``(None, "ambiguous:<symbols>")``
+    rather than whichever gene ranks first.
+    """
+    from .resolver import _mygene_exact_symbol_lookup
+
+    hit = _mygene_exact_symbol_lookup(symbol, organism)
+    if hit["status"] == "ok":
+        return str(hit["symbol"]), "ok"
+    if hit["status"] == "ambiguous":
+        return None, "ambiguous:" + ",".join(hit["candidates"])
+    return None, hit["status"]
 
 
 # ----------------------------------------------------------------------

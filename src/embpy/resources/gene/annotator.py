@@ -21,6 +21,8 @@ from typing import Any, Literal
 
 import requests
 
+from embpy.resources._service_errors import report_service_error
+
 logger = logging.getLogger(__name__)
 
 MYGENE = "https://mygene.info/v3"
@@ -68,6 +70,7 @@ def _get_json(url: str, params: dict | None = None, timeout: int = 30) -> dict |
         return resp.json()
     except Exception as e:  # noqa: BLE001
         logger.debug("Request failed for %s: %s", url, e)
+        report_service_error(url, e)
         return None
 
 
@@ -78,6 +81,7 @@ def _post_json(url: str, json_data: dict, timeout: int = 30) -> dict | None:
         return resp.json()
     except Exception as e:  # noqa: BLE001
         logger.debug("POST failed for %s: %s", url, e)
+        report_service_error(url, e)
         return None
 
 
@@ -90,6 +94,7 @@ def _get_text(url: str, params: dict | None = None, timeout: int = 30) -> str | 
         return resp.text
     except Exception as e:  # noqa: BLE001
         logger.debug("Request failed for %s: %s", url, e)
+        report_service_error(url, e)
         return None
 
 
@@ -139,45 +144,27 @@ class GeneAnnotator:
         """Resolve a gene symbol to Ensembl gene ID via MyGene.info."""
         if _is_ensembl_gene_id(gene):
             return gene.split(".")[0]
-        data = _get_json(
-            f"{MYGENE}/query",
-            params={
-                "q": gene,
-                "scopes": "symbol,alias",
-                "species": self.organism,
-                "fields": "ensembl.gene",
-                "size": 1,
-            },
-        )
-        if data:
-            hits = data.get("hits", [])
-            if hits:
-                ens = hits[0].get("ensembl", {})
-                if isinstance(ens, dict):
-                    return ens.get("gene")
-                if isinstance(ens, list) and ens:
-                    return ens[0].get("gene")
-        return None
+        from embpy.resources.gene.resolver import _mygene_exact_symbol_lookup
+
+        # Exact symbol, then exact alias: a free-text query for 'P53' returns PURPL.
+        hit = _mygene_exact_symbol_lookup(gene, self.organism)
+        if hit["status"].startswith("error"):
+            report_service_error(f"{MYGENE}/query", RuntimeError(hit["status"]))
+        if hit["status"] != "ok":
+            return None
+        return hit["ensembl_id"] or next(iter(hit["ensembl_ids"]), None)
 
     def _resolve_symbol(self, gene: str) -> str | None:
         """Resolve an Ensembl ID to gene symbol via MyGene.info."""
         if not _is_ensembl_gene_id(gene):
             return gene
-        data = _get_json(
-            f"{MYGENE}/query",
-            params={
-                "q": gene,
-                "scopes": "ensembl.gene",
-                "species": self.organism,
-                "fields": "symbol",
-                "size": 1,
-            },
-        )
-        if data:
-            hits = data.get("hits", [])
-            if hits:
-                return hits[0].get("symbol")
-        return None
+        from embpy.resources.gene.resolver import _mygene_symbol_for_ensembl
+
+        try:
+            return _mygene_symbol_for_ensembl(gene.split(".")[0], self.organism)
+        except requests.RequestException as e:
+            report_service_error(f"{MYGENE}/query", e)
+            return None
 
     # ==================================================================
     # 1. Pathway Annotations (MyGene.info)
@@ -198,12 +185,16 @@ class GeneAnnotator:
         Dict with keys ``"reactome"``, ``"kegg"``, ``"wikipathways"``,
         each containing a list of ``{id, name}`` dicts.
         """
-        scope = "ensembl.gene" if _is_ensembl_gene_id(gene) else "symbol"
+        # A fielded query: MyGene's GET /query ignores ``scopes`` and would run a
+        # free-text search, returning another gene's pathways (P53 -> PURPL).
+        if _is_ensembl_gene_id(gene):
+            query = f'ensembl.gene:"{gene.split(".")[0]}"'
+        else:
+            query = f'symbol:"{gene}"'
         data = _get_json(
             f"{MYGENE}/query",
             params={
-                "q": gene,
-                "scopes": scope,
+                "q": query,
                 "species": self.organism,
                 "fields": "pathway.reactome,pathway.kegg,pathway.wikipathways",
                 "size": 1,
