@@ -1310,8 +1310,17 @@ class GeneResolver:
         Tries cache -> pyensembl -> MyGene.info -> Ensembl REST API.
         """
         self._ensure_cache()
-        sym = symbol.strip()
+        sym = symbol.strip() if isinstance(symbol, str) else ""
         org = organism.lower()
+        if not sym:
+            if strict:
+                raise GeneResolutionError(
+                    f"Could not resolve Ensembl ID for blank symbol {symbol!r}",
+                    failed_genes=[symbol],
+                    species=organism,
+                    release=getattr(self, "release_version", 110),
+                )
+            return symbol if fallback_to_unmapped else None
 
         # 0) In-memory / disk cache
         if (org, sym) in self._symbol_cache and self._symbol_cache[(org, sym)] is not None:
@@ -1423,8 +1432,17 @@ class GeneResolver:
         Tries cache -> pyensembl -> MyGene.info -> Ensembl REST API.
         """
         self._ensure_cache()
-        ens = ensembl_gene_id.strip().split(".")[0]  # drop version if provided
+        ens = ensembl_gene_id.strip().split(".")[0] if isinstance(ensembl_gene_id, str) else ""  # drop version
         org = organism.lower()
+        if not ens:
+            if strict:
+                raise GeneResolutionError(
+                    f"Could not resolve symbol for blank Ensembl ID {ensembl_gene_id!r}",
+                    failed_genes=[ensembl_gene_id],
+                    species=organism,
+                    release=getattr(self, "release_version", 110),
+                )
+            return ensembl_gene_id if fallback_to_unmapped else None
 
         # 0) Cache
         if (org, ens) in self._ensembl_cache and self._ensembl_cache[(org, ens)] is not None:
@@ -1552,11 +1570,16 @@ class GeneResolver:
         network_failed = False
         network_err_msg = ""
 
+        # Blank or missing entries are unresolved inputs: they count against
+        # strict mode and are listed in the diagnostics.
+        blank_inputs: list[Any] = []
+
         # Step 0: Check in-memory/disk cache
         for s in symbols:
-            sym = s.strip()
+            sym = s.strip() if isinstance(s, str) else ""
             if not sym:
                 result[s] = None
+                blank_inputs.append(s)
                 continue
             alt_org = _SPECIES_SLUG_MAP.get(org, org)
             cached_val = (
@@ -1646,7 +1669,7 @@ class GeneResolver:
                     still_unresolved.extend(chunk)
 
         # Step 3: For small remaining sets, fallback to individual symbol_to_ensembl (MyGene / alias)
-        final_unresolved: list[str] = []
+        final_unresolved: list[str] = list(blank_inputs)
         for orig in still_unresolved:
             sym = orig.strip()
             if not network_failed:
@@ -1693,10 +1716,11 @@ class GeneResolver:
             "unresolved_count": unmapped_count,
             "mapping_rate": rate,
             "unresolved_genes": final_unresolved,
+            "blank_count": len(blank_inputs),
             "ambiguous": {
                 u: self._ambiguous_symbols[(org, u.strip())]
                 for u in final_unresolved
-                if (org, u.strip()) in self._ambiguous_symbols
+                if isinstance(u, str) and (org, u.strip()) in self._ambiguous_symbols
             },
             "warning": warning_text or (f"Could not resolve {unmapped_count} genes." if final_unresolved else None),
             "action_required": (
@@ -1768,11 +1792,16 @@ class GeneResolver:
         network_failed = False
         network_err_msg = ""
 
+        # Blank or missing entries are unresolved inputs: they count against
+        # strict mode and are listed in the diagnostics.
+        blank_inputs: list[Any] = []
+
         # Step 0: Check cache
         for e in ensembl_ids:
-            ens = e.strip().split(".")[0]
+            ens = e.strip().split(".")[0] if isinstance(e, str) else ""
             if not ens:
                 result[e] = None
+                blank_inputs.append(e)
                 continue
             alt_org = _SPECIES_SLUG_MAP.get(org, org)
             cached_val = (
@@ -1850,7 +1879,7 @@ class GeneResolver:
                     still_unresolved.extend(chunk)
 
         # Step 3: Fallback
-        final_unresolved: list[str] = []
+        final_unresolved: list[str] = list(blank_inputs)
         for orig in still_unresolved:
             ens = orig.strip().split(".")[0]
             if not network_failed:
@@ -1897,6 +1926,7 @@ class GeneResolver:
             "unresolved_count": unmapped_count,
             "mapping_rate": rate,
             "unresolved_genes": final_unresolved,
+            "blank_count": len(blank_inputs),
             "warning": warning_text or (f"Could not resolve {unmapped_count} genes." if final_unresolved else None),
             "action_required": (
                 f'Install embpy[genome] for offline resolution: pip install "embpy[genome]" && '

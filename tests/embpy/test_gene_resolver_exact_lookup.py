@@ -226,3 +226,24 @@ def test_reverse_lookup_does_not_change_forward_result(resolver, batch):
     reloaded._load_cache()
     assert reloaded._symbol_cache[("human", "SHARED1")] == ens.FORWARD
     assert reloaded._ensembl_cache[("human", ens.OTHER)] == "SHARED1"
+
+
+@pytest.mark.parametrize("direction", ["forward", "reverse"])
+@pytest.mark.parametrize("blank", ["", " ", "\t\n"])
+def test_blank_inputs_are_unresolved_and_fail_strict_mode(resolver, direction, blank):
+    from embpy.errors import GeneResolutionError
+
+    batch = resolver.symbols_to_ensembl_batch if direction == "forward" else resolver.ensembl_to_symbols_batch
+    single = resolver.symbol_to_ensembl if direction == "forward" else resolver.ensembl_to_symbol
+
+    with pytest.raises(GeneResolutionError):
+        batch([blank], strict=True)
+    with pytest.raises(GeneResolutionError):
+        single(blank, strict=True)
+
+    result, diag = batch([blank], return_diagnostics=True)
+    assert result == {blank: None}
+    assert diag["unresolved_genes"] == [blank]
+    assert diag["unresolved_count"] == 1 and diag["blank_count"] == 1
+    assert diag["status"] == "error"
+    assert single(blank) is None
