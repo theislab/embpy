@@ -1798,10 +1798,22 @@ _UNIPROT_ACCESSION_RE = re.compile(
 )
 
 
+# Fields that describe where or how a result was obtained (e.g. HPA's
+# {"locations": [], "reliability": "Approved", "source": "HPA"}); they are not results.
+_ANNOTATION_METADATA_KEYS = frozenset(
+    {"source", "sources", "database", "reliability", "query", "organism", "taxonomy_id", "version", "url",
+     "last_modified", "retrieved_at"}
+)
+
+
 def _n_annotation_items(value: Any) -> int:
-    """Count annotation records: list entries, summed through nested dicts."""
+    """Count annotation records: list entries, summed through nested dicts.
+
+    Metadata fields (``_ANNOTATION_METADATA_KEYS``) are skipped, so an answer that
+    carries only provenance counts as zero records.
+    """
     if isinstance(value, dict):
-        return sum(_n_annotation_items(v) for v in value.values())
+        return sum(_n_annotation_items(v) for k, v in value.items() if k not in _ANNOTATION_METADATA_KEYS)
     if isinstance(value, (list, tuple)):
         return len(value)
     if value is None or value == "" or (isinstance(value, float) and math.isnan(value)):

@@ -978,3 +978,28 @@ def test_scaling_does_not_change_selected_hvgs(tmp_path):
         assert res["n_hvg"] == 15
         selected[scale] = anndata.read_h5ad(out).var["highly_variable"].to_numpy()
     np.testing.assert_array_equal(selected[False], selected[True])
+
+
+def test_annotation_provenance_fields_alone_are_not_annotations(monkeypatch, gene_pert_path, tmp_path):
+    """HPA's {'locations': [], 'source': 'HPA'} names a source but holds no result."""
+    from embpy.resources.gene.annotator import GeneAnnotator
+
+    _fake_annotators(monkeypatch)
+    hpa = {
+        "TP53": {"locations": [{"location": "Nucleoplasm", "is_main": True}], "reliability": "Enhanced",
+                 "source": "HPA"},
+        "GAPDH": {"locations": [], "reliability": "Approved", "source": "HPA"},
+    }
+    monkeypatch.setattr(GeneAnnotator, "get_subcellular_localization", lambda self, gene: hpa[gene])
+
+    res = annotate_metadata(path=gene_pert_path, entity_type="gene", annotation_types="expression",
+                            sources=["hpa"], column="perturbation", output_path=str(tmp_path / "o.h5ad"))
+    assert res["per_type"]["expression"] == {"annotated": 1, "no_match": 1, "service_error": 0}
+    assert res["status"] == "partial_success"
+    assert res["successful_items"] == ["TP53"]
+
+    hpa["TP53"] = {"locations": [], "reliability": "", "source": "HPA"}
+    empty = annotate_metadata(path=gene_pert_path, entity_type="gene", annotation_types="expression",
+                              sources=["hpa"], column="perturbation", output_path=str(tmp_path / "e.h5ad"))
+    assert empty["status"] == "error"
+    assert empty["error_type"] == "NoAnnotationsFound"
