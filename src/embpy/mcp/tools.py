@@ -1364,6 +1364,73 @@ def list_model_registry(
 list_available_models = list_model_registry
 
 
+# .uns entries that collect one record per embedding key; merged, not replaced.
+_UNS_COLLECTIONS = ("embeddings", "uns_embeddings", "perturbations")
+
+
+def _embedding_workspace(adata: Any, mask: np.ndarray | None, axis: str | None) -> Any:
+    """Return a container with the rows to embed and none of ``adata``'s earlier results.
+
+    Only ``.X``, ``.obs`` and ``.var`` are carried over, so after embedding its
+    ``.obsm``/``.varm``/``.uns`` hold exactly what that call computed.
+    """
+    import anndata
+
+    obs_idx = mask if mask is not None and axis == "obs" else slice(None)
+    var_idx = mask if mask is not None and axis == "var" else slice(None)
+    view = adata[obs_idx, var_idx]
+    return anndata.AnnData(X=view.X, obs=view.obs.copy(), var=view.var.copy())
+
+
+def _merge_embedding_workspace(
+    adata: Any, workspace: Any, mask: np.ndarray | None, axis: str | None
+) -> list[tuple[str, str]]:
+    """Write every result in ``workspace`` into ``adata``, overwriting earlier values.
+
+    Rows excluded by ``mask`` (no identifier) become NaN, also when the key held
+    an earlier result. Returns the ``(slot, key)`` pairs written.
+    """
+    import pandas as pd
+
+    written: list[tuple[str, str]] = []
+    for slot, slot_axis in (("obsm", "obs"), ("varm", "var")):
+        row_mask = mask if mask is not None and axis == slot_axis else None
+        for key, part in getattr(workspace, slot).items():
+            part = np.asarray(part)
+            if row_mask is not None:
+                full = np.full((len(row_mask), part.shape[1]), np.nan, dtype=np.float32)
+                full[row_mask] = part
+                part = full
+            getattr(adata, slot)[key] = part
+            written.append((slot, str(key)))
+
+    for key, value in workspace.uns.items():
+        old = adata.uns.get(key)
+        if key in _UNS_COLLECTIONS and isinstance(value, dict) and isinstance(old, dict):
+            adata.uns[key] = {**old, **value}
+        else:
+            adata.uns[key] = value
+        written.append(("uns", str(key)))
+
+    # Alias columns (e.g. resolved ids) that embedding added to or changed in .obs/.var.
+    for frame_axis in ("obs", "var"):
+        row_mask = mask if mask is not None and axis == frame_axis else None
+        source, target = getattr(workspace, frame_axis), getattr(adata, frame_axis)
+        for col in source.columns:
+            new_vals = source[col].to_numpy()
+            if col in target.columns:
+                old_vals = target[col].to_numpy()
+                if (old_vals if row_mask is None else old_vals[row_mask]).tolist() == new_vals.tolist():
+                    continue
+            if row_mask is None:
+                target[col] = new_vals
+            else:
+                column = np.full(len(row_mask), None, dtype=object)
+                column[row_mask] = new_vals
+                target[col] = pd.array(column, dtype=object)
+    return written
+
+
 def compute_embeddings(
     path: str,
     models: list[str] | str = "pca",
@@ -1575,11 +1642,12 @@ def compute_embeddings(
                     if has_id.all():
                         has_id = None
 
-                subset = adata
-                if has_id is not None:
-                    subset = adata[has_id].copy() if axis == "obs" else adata[:, has_id].copy()
-                adata_out = embedder.embed(
-                    subset,
+                # Embed into a fresh container that holds only the rows to embed and
+                # no earlier embeddings, so every matrix in it afterwards was computed
+                # by this call -- including keys that already existed in the file.
+                workspace = _embedding_workspace(adata, has_id, axis)
+                embedder.embed(
+                    workspace,
                     entity_type=route["backend"],
                     model=resolved_models[0] if len(resolved_models) == 1 else resolved_models,
                     id_type=id_type,
@@ -1594,24 +1662,22 @@ def compute_embeddings(
                     missing=missing,
                     output="anndata",
                 )
-                if has_id is not None:
-                    # Put the embedded rows back into the full dataset; the rest stay NaN.
-                    slot = "obsm" if axis == "obs" else "varm"
-                    for key in [k for k in getattr(adata_out, slot) if k not in getattr(adata, slot)]:
-                        part = np.asarray(getattr(adata_out, slot)[key], dtype=np.float32)
-                        full = np.full((len(has_id), part.shape[1]), np.nan, dtype=np.float32)
-                        full[has_id] = part
-                        getattr(adata, slot)[key] = full
-                    for key in adata_out.uns:
-                        if key not in adata.uns:
-                            adata.uns[key] = adata_out.uns[key]
-                    adata_out = adata
+                # Copy new and recomputed results back; rows without an id become NaN.
+                written = _merge_embedding_workspace(adata, workspace, has_id, axis)
+                adata_out = adata
 
+        if ent_str == "single_cell":
+            # embed_cells records the .obsm key of every model it computed.
+            cell_meta = adata_out.uns.get("embpy_cell_embeddings", {}) or {}
+            written = [("obsm", str(m["obsm_key"])) for m in cell_meta.values()
+                       if isinstance(m, dict) and m.get("obsm_key") in adata_out.obsm]
+            if cell_meta:
+                written.append(("uns", "embpy_cell_embeddings"))
         after = {("obsm", k) for k in adata_out.obsm} | {("varm", k) for k in adata_out.varm} | {("uns", k) for k in adata_out.uns}
-        added = sorted(after - before)
+        added = sorted((after - before) | set(written))
 
         if output_key and ent_str == "single_cell":
-            new_obsm = [k for slot, k in added if slot == "obsm"]
+            new_obsm = [k for slot, k in written if slot == "obsm"]
             if len(new_obsm) == 1 and new_obsm[0] != output_key:
                 adata_out.obsm[output_key] = adata_out.obsm.pop(new_obsm[0])
                 added = sorted((set(added) - {("obsm", new_obsm[0])}) | {("obsm", output_key)})

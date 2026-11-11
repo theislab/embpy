@@ -915,3 +915,44 @@ def test_rows_without_identifiers_become_nan_only_when_asked(tmp_path):
     matrix = np.asarray(anndata.read_h5ad(out).obsm[key])
     assert matrix.shape == (3, 2048)
     assert np.isnan(matrix[1]).all() and not np.isnan(matrix[[0, 2]]).any()
+
+
+def test_recomputing_embeddings_overwrites_earlier_results(tmp_path):
+    """A second run must replace stale vectors, NaN rows that lost their id, and report the key."""
+    import anndata
+    import pandas as pd
+    from rdkit import Chem
+    from rdkit.Chem import AllChem
+
+    def morgan(smiles):
+        fp = AllChem.GetMorganFingerprintAsBitVect(Chem.MolFromSmiles(smiles), 2, nBits=2048)
+        return np.array(list(fp), dtype=np.float32)
+
+    in_path = str(tmp_path / "wells.h5ad")
+    AnnData(obs=pd.DataFrame({"smiles": ["CCO", "CCN", "CCC"]}, index=["w0", "w1", "w2"])).write_h5ad(in_path)
+    first_path = str(tmp_path / "first.h5ad")
+    first = compute_embeddings(path=in_path, models="morgan_fp", entity_type="molecule", obs_column="smiles",
+                               output_path=first_path)
+    assert first["status"] == "success", first
+    (key,) = first["embedding_keys"]
+
+    # Ethanol becomes benzene and the second well loses its SMILES.
+    adata = anndata.read_h5ad(first_path)
+    adata.obs["smiles"] = pd.Series(["c1ccccc1", None, "CCC"], index=adata.obs_names, dtype=object)
+    adata.write_h5ad(first_path)
+
+    second_path = str(tmp_path / "second.h5ad")
+    second = compute_embeddings(path=first_path, models="morgan_fp", entity_type="molecule", obs_column="smiles",
+                                missing="nan", output_path=second_path)
+    assert second["status"] == "success", second
+    assert key in second["embedding_keys"]
+    assert second["embedding_shapes"][key] == [3, 2048]
+
+    result = anndata.read_h5ad(second_path)
+    matrix = np.asarray(result.obsm[key])
+    benzene, ethanol = morgan("c1ccccc1"), morgan("CCO")
+    assert not np.array_equal(benzene, ethanol)
+    np.testing.assert_array_equal(matrix[0], benzene)
+    assert np.isnan(matrix[1]).all()
+    np.testing.assert_array_equal(matrix[2], morgan("CCC"))
+    assert key in result.uns["embeddings"]
