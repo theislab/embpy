@@ -956,3 +956,25 @@ def test_recomputing_embeddings_overwrites_earlier_results(tmp_path):
     assert np.isnan(matrix[1]).all()
     np.testing.assert_array_equal(matrix[2], morgan("CCC"))
     assert key in result.uns["embeddings"]
+
+
+def test_scaling_does_not_change_selected_hvgs(tmp_path):
+    """HVGs are picked from log-normalized expression, before the optional scaling step."""
+    import anndata
+
+    rng = np.random.RandomState(0)
+    # Genes with very different means and dispersions, so scaling would reorder them.
+    lam = rng.gamma(shape=0.5, scale=4.0, size=60)
+    X = rng.negative_binomial(n=2, p=2 / (2 + lam), size=(80, 60)).astype(np.float32)
+    in_path = str(tmp_path / "counts.h5ad")
+    AnnData(X=X).write_h5ad(in_path)
+
+    selected = {}
+    for scale in (False, True):
+        out = str(tmp_path / f"pp_scale_{scale}.h5ad")
+        res = preprocess_counts(path=in_path, output_path=out, min_genes=0, min_cells=0,
+                                n_top_genes=15, scale=scale)
+        assert res["status"] == "success", res
+        assert res["n_hvg"] == 15
+        selected[scale] = anndata.read_h5ad(out).var["highly_variable"].to_numpy()
+    np.testing.assert_array_equal(selected[False], selected[True])

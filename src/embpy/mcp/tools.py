@@ -987,18 +987,21 @@ def preprocess_counts(
             if adata.n_obs > 0 and adata.n_vars > 0:
                 adata.layers["log_normalized"] = adata.X.copy()
 
+            # HVG selection runs before scaling: 'seurat' expects log-normalized
+            # expression (.X here) and 'seurat_v3' expects raw counts.
+            if select_hvg and adata.n_vars > 2 and adata.n_obs > 0:
+                flavor = "seurat" if log_transform else "seurat_v3"
+                sc.pp.highly_variable_genes(
+                    adata,
+                    n_top_genes=min(effective_n_hvg, adata.n_vars),
+                    flavor=flavor,
+                    layer="counts" if flavor == "seurat_v3" else None,
+                )
+
             # Scale if requested
             if scale and adata.n_obs > 0 and adata.n_vars > 0:
                 sc.pp.scale(adata, max_value=10)
                 adata.layers["scaled"] = adata.X.copy()
-
-            # HVG Selection
-            if select_hvg and adata.n_vars > 2 and adata.n_obs > 0:
-                sc.pp.highly_variable_genes(
-                    adata,
-                    n_top_genes=min(effective_n_hvg, adata.n_vars),
-                    flavor="seurat" if log_transform else "seurat_v3",
-                )
 
             # Restore .X to raw counts to honor embpy output contract
             if "counts" in adata.layers and adata.n_obs > 0:
