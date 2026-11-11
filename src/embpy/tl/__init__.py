@@ -3,6 +3,7 @@
 #   tl/genomics/  - SNP/variant embedding utilities
 
 __all__ = [
+    "fusion",
     # attention summaries (2-D, exporter-compatible)
     "attention_entropy",
     "attention_to_gene_set",
@@ -47,6 +48,9 @@ __all__ = [
     "basic_tool",
     # benchmark
     "benchmark_embeddings",
+    "benchmark_fusion",
+    "benchmark_fusion_retrieval",
+    "FusionBenchmarkResult",
     # scib
     "compute_scib_metrics",
     # metadata
@@ -102,6 +106,7 @@ __all__ = [
     "embed_vcf",
 ]
 
+from . import fusion
 from .activity import phenotypic_activity
 from .alignment import (
     alignment_matrix,
@@ -122,7 +127,7 @@ from .attention import (
     summarize_attention,
 )
 from .basic import basic_tool
-from .benchmark import benchmark_embeddings
+from .benchmark import FusionBenchmarkResult, benchmark_embeddings, benchmark_fusion, benchmark_fusion_retrieval
 from .clustering import (
     cluster_annotation_enrichment,
     cluster_embeddings,
