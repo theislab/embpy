@@ -9,6 +9,7 @@ import pytest
 
 from embpy.resources.gene._alias_resolver import _step_mygene
 from embpy.resources.gene.resolver import (
+    _GENE_CACHE_VERSION,
     GeneResolver,
     _mygene_exact_symbol_lookup,
     ensembl_id_matches_species,
@@ -157,7 +158,7 @@ def test_current_cache_cannot_override_seeded_symbols(resolver):
     resolver._cache_file.write_text(
         json.dumps(
             {
-                "version": 2,
+                "version": _GENE_CACHE_VERSION,
                 "symbols": {"human:FOO1": "ENSG00000000003"},
                 "ensembl": {"human:ENSG00000141510": "P53", "human:ENSG00000000003": "TSPAN6"},
             }
@@ -183,3 +184,45 @@ def test_current_cache_cannot_override_seeded_symbols(resolver):
 )
 def test_ensembl_id_species_check(eid, organism, expected):
     assert ensembl_id_matches_species(eid, organism) is expected
+
+
+class _SharedSymbolEnsembl:
+    """Fake pyensembl where two Ensembl ids carry the same symbol."""
+
+    FORWARD, OTHER = "ENSG00000900001", "ENSG00000900002"
+
+    def genes_by_name(self, name):
+        return [MagicMock(gene_id=self.FORWARD, gene_name="SHARED1")] if name == "SHARED1" else []
+
+    def gene_by_id(self, ens):
+        return MagicMock(gene_name="SHARED1") if ens in (self.FORWARD, self.OTHER) else None
+
+
+@pytest.mark.parametrize("batch", [False, True])
+def test_reverse_lookup_does_not_change_forward_result(resolver, batch):
+    """symbol -> id stays the same after id -> symbol finds another id with that symbol."""
+    ens = _SharedSymbolEnsembl()
+    resolver.ensembl = ens
+
+    def forward():
+        if batch:
+            return resolver.symbols_to_ensembl_batch(["SHARED1"])["SHARED1"]
+        return resolver.symbol_to_ensembl("SHARED1")
+
+    assert forward() == ens.FORWARD
+    if batch:
+        assert resolver.ensembl_to_symbols_batch([ens.OTHER])[ens.OTHER] == "SHARED1"
+    else:
+        assert resolver.ensembl_to_symbol(ens.OTHER) == "SHARED1"
+    assert forward() == ens.FORWARD
+
+    # The same answer after saving and reloading the cache, without pyensembl.
+    resolver._save_cache()
+    reloaded = GeneResolver.__new__(GeneResolver)
+    reloaded.ensembl = None
+    reloaded.species = "human"
+    reloaded._cache_file = resolver._cache_file
+    reloaded._ensure_cache()
+    reloaded._load_cache()
+    assert reloaded._symbol_cache[("human", "SHARED1")] == ens.FORWARD
+    assert reloaded._ensembl_cache[("human", ens.OTHER)] == "SHARED1"

@@ -424,7 +424,7 @@ def _get_ensembl_offline_warning(
 # Bumped whenever cached entries written by an older release can be wrong.
 # 2: reverse entries hold only a source's approved symbol, and MyGene lookups
 #    are exact symbol/alias queries instead of a free-text search.
-_GENE_CACHE_VERSION = 2
+_GENE_CACHE_VERSION = 3
 
 
 def default_gene_cache_path() -> Path:
@@ -619,7 +619,8 @@ class GeneResolver:
                     # Older caches stored whatever the user typed as the reverse
                     # (Ensembl -> symbol) entry, so an alias like 'P53' came back
                     # instead of 'TP53', and their MyGene entries came from a
-                    # free-text search. Drop them; ids are re-resolved on demand.
+                    # free-text search; version 2 also let reverse lookups overwrite
+                    # forward (symbol -> id) entries. Drop them; ids are re-resolved on demand.
                     logging.info(
                         "Ignoring gene cache %s written by an older embpy (version %r); it will be rebuilt.",
                         self._cache_file, data.get("version"),
@@ -1382,7 +1383,8 @@ class GeneResolver:
             # the user's input there (e.g. the alias 'P53') would make every later
             # Ensembl -> symbol lookup return the alias instead of 'TP53'.
             if official_sym:
-                self._symbol_cache[(org, official_sym)] = resolved_id
+                if self._symbol_cache.get((org, official_sym)) is None:
+                    self._symbol_cache[(org, official_sym)] = resolved_id
                 self._ensembl_cache[(org, resolved_id)] = official_sym
             self._save_cache()
             return resolved_id
@@ -1469,8 +1471,9 @@ class GeneResolver:
 
         if resolved_sym:
             if _is_ensembl_id(ens):
+                # Reverse cache only: several Ensembl ids can share a symbol, so a
+                # reverse lookup must not decide the forward symbol -> id answer.
                 self._ensembl_cache[(org, ens)] = resolved_sym
-                self._symbol_cache[(org, resolved_sym)] = ens
                 self._save_cache()
             return resolved_sym
 
@@ -1792,8 +1795,7 @@ class GeneResolver:
                     if g and getattr(g, "gene_name", None):
                         sym = g.gene_name
                         result[e] = sym
-                        self._ensembl_cache[(org, ens)] = sym
-                        self._symbol_cache[(org, sym)] = ens
+                        self._ensembl_cache[(org, ens)] = sym  # reverse cache only
                     else:
                         unresolved_after_pyensembl.append(e)
                 except Exception as exc:
@@ -1829,8 +1831,7 @@ class GeneResolver:
                                 if isinstance(val, dict) and "display_name" in val:
                                     sym = val["display_name"]
                                     result[orig] = sym
-                                    self._ensembl_cache[(org, ens)] = sym
-                                    self._symbol_cache[(org, sym)] = ens
+                                    self._ensembl_cache[(org, ens)] = sym  # reverse cache only
                                 else:
                                     still_unresolved.append(orig)
                         else:
