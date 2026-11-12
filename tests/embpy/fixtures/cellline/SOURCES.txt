@@ -1,0 +1,69 @@
+Recorded provider payloads for tests/embpy/test_cellline_annotator.py
+=====================================================================
+
+All files were recorded on 2026-11-11 (15:50-16:00 UTC) from the HPC login node
+with curl, public identifiers only. JSON files keep the provider's exact shape;
+only list lengths were trimmed to keep each file small:
+
+- Cellosaurus "xref-list": at most 2 entries per database, and only for the
+  databases ATCC, BioSample, Cell_Model_Passport, ChEMBL-Cells, Cosmic, DepMap,
+  Evercyte, GEO, IGRhCellID, LINCS_HMS, LINCS_LDP, NCI-DCTD, PharmacoDB, Wikidata.
+- Cellosaurus detail records: dropped reference-list, str-list,
+  sequence-variation-list, omics-list, hla-typing-list, genome-ancestry,
+  registration-list, web-page-list, misspelling-list; comment-list cut to 4,
+  child-list to 3, publication-list to 1.
+- Passports included "cancer_type" resources: relationships.models cut to 5.
+
+Cellosaurus (API v2, release 57.0 of 2026-10-22; CC BY 4.0)
+  FIELDS = ac,id,sy,ox,sx,ca,di,derived-from-site,cell-type,dr,hi,problematic
+  cellosaurus_search_ac_batch4.json
+      GET https://api.cellosaurus.org/search/cell-line
+          ?q=ac:CVCL_0031 OR ac:CVCL_0035 OR ac:CVCL_0320 OR ac:CVCL_U602
+          &fields=FIELDS&format=json&rows=10                      (200, 223,497 B)
+      Entries come back in relevance order (U602, 0320, 0031, 0035), not request order.
+  cellosaurus_search_dr_ACH-000019.json
+      GET .../search/cell-line?q=dr:"DepMap; ACH-000019"&fields=FIELDS&format=json&rows=10
+  cellosaurus_search_ac_CVCL_0372_problematic.json
+      GET .../search/cell-line?q=ac:CVCL_0372
+          &fields=ac,id,sy,ox,sx,ca,di,derived-from-site,cell-type,hi,problematic&format=json&rows=10
+  cellosaurus_detail_CVCL_0031.json   GET https://api.cellosaurus.org/cell-line/CVCL_0031?format=json (722,577 B)
+  cellosaurus_detail_CVCL_0035.json   GET https://api.cellosaurus.org/cell-line/CVCL_0035?format=json (345,749 B)
+  cellosaurus_detail_404.json         GET https://api.cellosaurus.org/cell-line/CVCL_ZZZZZZ?format=json (HTTP 404)
+  cellosaurus_search_name_PC3.json    (untrimmed, 36 rows)
+      GET .../search/cell-line?q=id:"PC3" OR sy:"PC3"&fields=ac,id,sy,ox,ca,hi&format=json&rows=1000
+      5 human entries normalise to "pc3": CVCL_C8XA, CVCL_4055, CVCL_0035, CVCL_S982, CVCL_4011.
+  cellosaurus_search_name_MCF7_trimmed.json
+      GET .../search/cell-line?q=id:"MCF7" OR sy:"MCF7"&fields=ac,id,sy,ox,ca,hi&format=json&rows=1000
+      632 rows returned; kept rows 0-24, 606 (CVCL_0031, the only exact human match) and 630-631.
+  cellosaurus_search_name_HA1E.json   same query shape for "HA1E" (1 row, CVCL_VU89)
+  cellosaurus_search_name_NKDBA_empty.json  same query shape for "NKDBA" (no rows)
+  cellosaurus_release_info.json       GET https://api.cellosaurus.org/release-info?format=json
+
+Cell Model Passports (https://api.cellmodelpassports.sanger.ac.uk, no /v1)
+  INCLUDE = sample.tissue,sample.cancer_type,model_msi_status,identifiers.source
+  passports_models_names_MCF7.json
+      GET /models?filter=[{"name":"names","op":"any","val":"MCF7"}]&include=INCLUDE&page[size]=5
+  passports_models_rrid_CVCL_0035.json
+      GET /models?filter=[{"name":"identifiers","op":"any","val":{"name":"identifier","op":"eq","val":"CVCL_0035"}}]
+          &include=INCLUDE&page[size]=5                            (meta.count 1, SIDM00088 "PC-3")
+  passports_models_names_PC3_empty.json
+      GET /models?filter=[{"name":"names","op":"any","val":"PC3"}]
+          &include=sample.tissue,sample.cancer_type,model_msi_status&page[size]=5   (meta.count 0)
+  passports_models_ignored_filter.json
+      GET /models?filter[names]=MCF7&page[size]=2     (filter silently ignored: meta.count 2292, PK-59 first)
+  passports_v1_models_404.json
+      GET /v1/models?filter[model_name]=MCF7&page[size]=1   (HTTP 404 route error, the old embpy URL)
+  passports_model_list_20240110_rows.csv
+      Header plus 4 rows (SIDM01774 PK-59, SIDM00088 PC-3, SIDM00136 HT-29, SIDM00148 MCF7) of
+      https://cog.sanger.ac.uk/cmp/download/model_list_20240110.csv (902,914 B, 2,155 rows,
+      sha256 9e4d3cd2a59901f8446760c647cfbe85762bed266b825c48ce748a35d4300fcd).
+      "synonyms" is ';'-separated. Re-written with Python's csv writer (values identical).
+
+DepMap (Public 24Q4, figshare article 27993248, doi 10.25452/figshare.plus.27993248.v1; CC BY 4.0)
+  depmap_Model_24Q4_rows.csv
+      Header plus 9 rows of https://ndownloader.figshare.com/files/51065297
+      (Model.csv, 645,696 B, sha256 b7a0c1385e6cef30132b56aff61f1261d11e3f490490b355c430d32ee0dbdcfa):
+      ACH-000001, ACH-000002 (multi-line quoted field), ACH-000019 MCF7, ACH-000090 PC-3,
+      ACH-000552 HT-29, ACH-000833 RH-30 and ACH-001189 SJRH-30 (both RRID CVCL_0041),
+      and the two StrippedCellLineName == "MS1" rows. Rows were re-written with Python's csv
+      writer, so quoting may differ from the original file while cell values are identical.

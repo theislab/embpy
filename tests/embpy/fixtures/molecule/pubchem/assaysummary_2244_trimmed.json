@@ -1,0 +1,380 @@
+{
+ "Table": {
+  "Columns": {
+   "Column": [
+    "AID",
+    "Panel Member ID",
+    "SID",
+    "CID",
+    "Activity Outcome",
+    "Target Accession",
+    "Target GeneID",
+    "Activity Value [uM]",
+    "Activity Name",
+    "Assay Name",
+    "Assay Type",
+    "PubMed ID",
+    "RNAi"
+   ]
+  },
+  "Row": [
+   {
+    "Cell": [
+     "1347090",
+     "",
+     "174007205",
+     "2244",
+     "Active",
+     "",
+     "",
+     "",
+     "",
+     "qHTS of pediatric cancer cell lines to identify multiple opportunities for drug repurposing: Primary screen for DAOY cells",
+     "Confirmatory",
+     "29435139",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1347107",
+     "",
+     "174007205",
+     "2244",
+     "Active",
+     "",
+     "",
+     "",
+     "",
+     "qHTS of pediatric cancer cell lines to identify multiple opportunities for drug repurposing: Primary screen for Rh30 cells",
+     "Confirmatory",
+     "29435139",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1347108",
+     "",
+     "174007205",
+     "2244",
+     "Active",
+     "",
+     "",
+     "",
+     "",
+     "qHTS of pediatric cancer cell lines to identify multiple opportunities for drug repurposing: Primary screen for Rh41 cells",
+     "Confirmatory",
+     "29435139",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1195",
+     "",
+     "48415582",
+     "2244",
+     "Active",
+     "",
+     "",
+     "",
+     "",
+     "DSSTox (FDAMDD) FDA Maximum (Recommended) Daily Dose Database",
+     "Other",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1811",
+     "",
+     "46392828",
+     "2244",
+     "Active",
+     "1OXR_A",
+     "",
+     "",
+     "",
+     "Experimentally measured binding affinity data derived from PDB",
+     "Other",
+     "15823962",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "92967",
+     "",
+     "103164874",
+     "2244",
+     "Active",
+     "P05106",
+     "3690",
+     "5",
+     "IC50",
+     "Inhibition of arachidonic acid-induced platelet aggregation",
+     "Confirmatory",
+     "7837237",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "92967",
+     "",
+     "103164874",
+     "2244",
+     "Active",
+     "P08514",
+     "3674",
+     "5",
+     "IC50",
+     "Inhibition of arachidonic acid-induced platelet aggregation",
+     "Confirmatory",
+     "7837237",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "240795",
+     "",
+     "103164874",
+     "2244",
+     "Active",
+     "P05979",
+     "443551",
+     "0.3",
+     "IC50",
+     "In vitro inhibitory concentration against COX-1 enzyme",
+     "Confirmatory",
+     "15943479",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "240796",
+     "",
+     "103164874",
+     "2244",
+     "Active",
+     "P79208",
+     "443460",
+     "2.4",
+     "IC50",
+     "In vitro inhibitory concentration against COX-2 enzyme",
+     "Confirmatory",
+     "15943479",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "23",
+     "",
+     "87798",
+     "2244",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "NCI human tumor cell line growth inhibition assay. Data for the LOX IMVI Melanoma cell line",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "25",
+     "",
+     "87798",
+     "2244",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "NCI human tumor cell line growth inhibition assay. Data for the M14 Melanoma cell line",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "29",
+     "",
+     "87798",
+     "2244",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "NCI human tumor cell line growth inhibition assay. Data for the MALME-3M Melanoma cell line",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "31",
+     "",
+     "87798",
+     "2244",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "NCI human tumor cell line growth inhibition assay. Data for the UACC-62 Melanoma cell line",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "33",
+     "",
+     "87798",
+     "2244",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "NCI human tumor cell line growth inhibition assay. Data for the UACC-257 Melanoma cell line",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "35",
+     "",
+     "87798",
+     "2244",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "NCI human tumor cell line growth inhibition assay. Data for the SK-MEL-2 Melanoma cell line",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "37",
+     "",
+     "87798",
+     "2244",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "NCI human tumor cell line growth inhibition assay. Data for the SK-MEL-5 Melanoma cell line",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "39",
+     "",
+     "87798",
+     "2244",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "NCI human tumor cell line growth inhibition assay. Data for the SK-MEL-28 Melanoma cell line",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "85",
+     "",
+     "87798",
+     "2244",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "NCI human tumor cell line growth inhibition assay. Data for the MDA-MB-435 Melanoma cell line",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "113",
+     "",
+     "87798",
+     "2244",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "NCI human tumor cell line growth inhibition assay. Data for the RPMI-8226 Leukemia cell line",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "115",
+     "",
+     "87798",
+     "2244",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "NCI human tumor cell line growth inhibition assay. Data for the SR Leukemia cell line",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "119",
+     "",
+     "87798",
+     "2244",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "NCI human tumor cell line growth inhibition assay. Data for the CCRF-CEM Leukemia cell line",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   }
+  ]
+ }
+}

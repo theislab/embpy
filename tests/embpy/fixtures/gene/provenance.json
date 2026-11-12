@@ -1,0 +1,69 @@
+{
+  "recorded_at": "2026-11-11",
+  "recorded_from": "cluster login node with curl; payloads stored unmodified unless marked trimmed",
+  "files": {
+    "mygene_query_post_20.json": {
+      "request": "POST https://mygene.info/v3/query (form) q=EGFR,TP53,CYP2D6,ATP5B,ATP5A1,ATP5C1,GNRHR2,WARS,GSG2,MKL1,GJA10,TCF4,SLC23A1,ATF7,AURKC,NOTAREALGENE1,HTR2A,MTOR,ESR1,ERBB4 scopes=symbol species=human fields=symbol,alias,entrezgene,pathway.kegg,pathway.wikipathways",
+      "http_status": 200,
+      "trimmed": false,
+      "mygene_build": "20261030"
+    },
+    "mygene_query_post_cyp2d6_symbol_alias_name.json": {
+      "request": "POST https://mygene.info/v3/query (form) q=CYP2D6 scopes=symbol,alias,name species=human fields=symbol,alias,entrezgene",
+      "http_status": 200,
+      "trimmed": false,
+      "note": "wider scopes, so the CYP2D6 query also returns the LOC110740340 promoter locus and LOC107987479 (alias 'CYP2D6' as a string)"
+    },
+    "mygene_query_post_cyp2d6_name_scope.json": {
+      "request": "POST https://mygene.info/v3/query (form) q=CYP2D6 scopes=name species=human fields=symbol,alias,entrezgene",
+      "http_status": 200,
+      "trimmed": false,
+      "note": "only the LOC110740340/LOC110740341 promoter loci come back: no hit is CYP2D6 (identity_mismatch case)"
+    },
+    "mygene_query_post_identity.json": {
+      "request": "POST https://mygene.info/v3/query (form) q=TP53,EGFR,ATP5B,NOTAREALGENE1 scopes=symbol species=human fields=symbol,alias,entrezgene,ensembl.gene",
+      "http_status": 200,
+      "trimmed": false
+    },
+    "mygene_query_post_ensembl.json": {
+      "request": "POST https://mygene.info/v3/query (form) q=ENSG00000141510,ENSG00000211451,ENSG00000000000 scopes=ensembl.gene species=human fields=symbol,alias,entrezgene,ensembl.gene,pathway.kegg,pathway.wikipathways",
+      "http_status": 200,
+      "trimmed": false
+    },
+    "reactome98/NCBI2Reactome.txt": {
+      "source": "https://download.reactome.org/98/NCBI2Reactome.txt",
+      "source_sha256": "f5d03a55946b4ecee0b3f13a98892f6f0cc8b3d145a1b94666aa7044e94638c2",
+      "source_bytes": 35250351,
+      "trimmed": "all Homo sapiens rows for NCBI Gene IDs 7157, 1956, 1565, 506, 7453, 1253480 (114814 has none), the 4 Gallus gallus rows of 1253480 and 4 Mus musculus rows; lines unmodified (trailing whitespace kept)"
+    },
+    "reactome98/ReactomePathwaysRelation.txt": {
+      "source": "https://download.reactome.org/98/ReactomePathwaysRelation.txt",
+      "source_sha256": "aa3609ee852442899b400bf4817b36311d820883ecd75259ed77531d93d8f1dc",
+      "source_bytes": 635604,
+      "trimmed": "every parent->child edge whose child is an ancestor-or-self of a pathway in the trimmed NCBI2Reactome.txt, plus 3 R-MMU edges"
+    },
+    "reactome98/ReactomePathways.txt": {
+      "source": "https://download.reactome.org/98/ReactomePathways.txt",
+      "source_sha256": "b8103a50d625ffb6acd18cddffcce0ceb0fdf36b19392d104c32bb1fcc7e2f9f",
+      "source_bytes": 1596703,
+      "trimmed": "rows for the ancestor closure above plus all 29 human top-level pathways, plus 3 Mus musculus rows; lines unmodified"
+    },
+    "reactome98/top_level_9606.json": {
+      "source": "https://reactome.org/ContentService/data/pathways/top/9606 (probe P20, release 98)",
+      "trimmed": "kept stId and displayName only"
+    }
+  },
+  "checks_on_full_release_98": {
+    "human_pathways": 2889,
+    "human_roots_in_ReactomePathwaysRelation": 29,
+    "roots_equal_ContentService_top_level_9606": true,
+    "NCBI2Reactome_rows_by_species_top": {"Homo sapiens": 53207, "Mus musculus": 30343, "Rattus norvegicus": 23659},
+    "NCBI2Reactome_human_ids": 11492,
+    "NCBI2Reactome_human_ids_non_numeric": 22,
+    "NCBI2Reactome_ids_shared_by_human_and_other_species": ["1253480", "1254294"]
+  },
+  "licences": {
+    "reactome": "Reactome data and files derived from it: CC0 1.0 (https://reactome.org/license, read 2026-11-11); illustrations CC BY 4.0",
+    "mygene": "MyGene.info service; pathway.kegg and pathway.wikipathways come from ConsensusPathDB v35 inside MyGene build 20261030"
+  }
+}

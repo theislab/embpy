@@ -1,0 +1,41 @@
+{
+ "molecule_forms": [
+  {
+   "is_parent": true,
+   "molecule_chembl_id": "CHEMBL25",
+   "parent_chembl_id": "CHEMBL25"
+  },
+  {
+   "is_parent": true,
+   "molecule_chembl_id": "CHEMBL941",
+   "parent_chembl_id": "CHEMBL941"
+  },
+  {
+   "is_parent": false,
+   "molecule_chembl_id": "CHEMBL1642",
+   "parent_chembl_id": "CHEMBL941"
+  },
+  {
+   "is_parent": false,
+   "molecule_chembl_id": "CHEMBL1697753",
+   "parent_chembl_id": "CHEMBL25"
+  },
+  {
+   "is_parent": false,
+   "molecule_chembl_id": "CHEMBL2296002",
+   "parent_chembl_id": "CHEMBL25"
+  },
+  {
+   "is_parent": false,
+   "molecule_chembl_id": "CHEMBL2386595",
+   "parent_chembl_id": "CHEMBL941"
+  }
+ ],
+ "page_meta": {
+  "limit": 1000,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total_count": 6
+ }
+}

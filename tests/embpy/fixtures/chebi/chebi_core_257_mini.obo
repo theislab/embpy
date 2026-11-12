@@ -1,0 +1,277 @@
+format-version: 1.2
+data-version: chebi/257
+date: 05:11:2026 18:04
+saved-by: chebi
+subsetdef: 1:STAR "Preliminary entries"
+subsetdef: 2:STAR "Annotated by 3rd party"
+subsetdef: 3:STAR "Manually annotated by ChEBI Team"
+synonymtypedef: BRAND:NAME "BRAND NAME"
+synonymtypedef: http://purl.obolibrary.org/obo/chebi/INN "INN"
+synonymtypedef: IUPAC:NAME "IUPAC NAME"
+default-namespace: chebi_ontology
+idspace: chemrof https://w3id.org/chemrof/ 
+idspace: foaf http://xmlns.com/foaf/0.1/ 
+idspace: oboInOwl http://www.geneontology.org/formats/oboInOwl# 
+idspace: terms http://purl.org/dc/terms/ 
+remark: ChEBI subsumes and replaces the Chemical Ontology first. This ontology was developed by Michael Ashburner and Pankaj Jaiswal. Data was cuarated by The ChEBI Curation Team. For any queries contact chebi-help@ebi.ac.uk
+ontology: chebi_core
+property_value: foaf:homepage "https://www.ebi.ac.uk/chebi" xsd:anyURI
+property_value: owl:versionInfo "257" xsd:string
+property_value: terms:description "Chemical Entities of Biological Interest, also known as ChEBI, is a chemical database and ontology of molecular entities focused on 'small' chemical compounds, that is part of the Open Biomedical Ontologies (OBO) effort at the European Bioinformatics Institute (EBI)." xsd:string
+property_value: terms:license https://creativecommons.org/licenses/by/4.0/
+property_value: terms:title "ChEBI Ontology" xsd:string
+
+[Term]
+id: CHEBI:102167
+name: N-\{4-[2-ethyl-1-(1,2,4-triazol-1-yl)butyl]phenyl\}-1,3-benzothiazol-2-amine
+def: "A member of the class of benzothiazoles that is 2-amino-1,3-benzothiazole in which one of the amino hydrogens is replaced by a 4-[2-ethyl-1-(1<em>H</em>-1,2,4-triazol-1-yl)butyl]phenyl group." []
+subset: 3:STAR
+is_a: CHEBI:33860 ! aromatic amine
+is_a: CHEBI:35727 ! triazoles
+is_a: CHEBI:37947 ! benzothiazoles
+is_a: CHEBI:50995 ! secondary amino compound
+property_value: chemrof:charge "0" xsd:integer
+property_value: chemrof:generalized_empirical_formula "C21H23N5S" xsd:string
+property_value: chemrof:inchi_key_string "SNFYYXUGUBUECJ-UHFFFAOYSA-N" xsd:string
+property_value: chemrof:inchi_string "InChI=1S/C21H23N5S/c1-3-15(4-2)20(26-14-22-13-23-26)16-9-11-17(12-10-16)24-21-25-18-7-5-6-8-19(18)27-21/h5-15,20H,3-4H2,1-2H3,(H,24,25)" xsd:string
+property_value: chemrof:mass "377.517" xsd:decimal
+property_value: chemrof:monoisotopic_mass "377.16742" xsd:decimal
+property_value: chemrof:smiles_string "CCC(CC)C(c1ccc(Nc2nc3ccccc3s2)cc1)n1cncn1" xsd:string
+
+[Term]
+id: CHEBI:13719
+name: acetylsalicylate
+def: "A benzoate that is the conjugate base of acetylsalicylic acid, arising from deprotonation of the carboxy group." []
+subset: 3:STAR
+is_a: CHEBI:22718 ! benzoates
+relationship: RO:0018033 CHEBI:15365 ! is conjugate base of acetylsalicylic acid
+relationship: RO:0018038 CHEBI:30762 ! has functional parent salicylate
+property_value: chemrof:charge "-1" xsd:integer
+property_value: chemrof:generalized_empirical_formula "C9H7O4" xsd:string
+property_value: chemrof:inchi_key_string "BSYNRYMUTXBXSQ-UHFFFAOYSA-M" xsd:string
+property_value: chemrof:inchi_string "InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)/p-1" xsd:string
+property_value: chemrof:mass "179.151" xsd:decimal
+property_value: chemrof:monoisotopic_mass "179.03498" xsd:decimal
+property_value: chemrof:smiles_string "CC(=O)Oc1ccccc1C(=O)[O-]" xsd:string
+
+[Term]
+id: CHEBI:15365
+name: acetylsalicylic acid
+alt_id: CHEBI:22188
+alt_id: CHEBI:22203
+alt_id: CHEBI:2890
+alt_id: CHEBI:40705
+alt_id: CHEBI:71414
+def: "A member of the class of benzoic acids that is salicylic acid in which the hydrogen that is attached to the phenolic hydroxy group has been replaced by an acetoxy group. A non-steroidal anti-inflammatory drug with cyclooxygenase inhibitor activity." []
+subset: 3:STAR
+is_a: CHEBI:140310 ! phenyl acetates
+is_a: CHEBI:22723 ! benzoic acids
+is_a: CHEBI:26596 ! salicylates
+relationship: RO:0000087 CHEBI:145947 ! has role antiatherosclerotic agent
+relationship: RO:0000087 CHEBI:176497 ! has role geroprotector
+relationship: RO:0000087 CHEBI:22587 ! has role antiviral agent
+relationship: RO:0000087 CHEBI:33231 ! has role antitubercular agent
+relationship: RO:0000087 CHEBI:33281 ! has role antimicrobial agent
+relationship: RO:0000087 CHEBI:33282 ! has role antibacterial agent
+relationship: RO:0000087 CHEBI:35469 ! has role antidepressant
+relationship: RO:0000087 CHEBI:35475 ! has role non-steroidal anti-inflammatory drug
+relationship: RO:0000087 CHEBI:35476 ! has role antipsychotic agent
+relationship: RO:0000087 CHEBI:35480 ! has role analgesic
+relationship: RO:0000087 CHEBI:35481 ! has role non-narcotic analgesic
+relationship: RO:0000087 CHEBI:35493 ! has role antipyretic
+relationship: RO:0000087 CHEBI:35526 ! has role hypoglycemic agent
+relationship: RO:0000087 CHEBI:35554 ! has role cardiovascular drug
+relationship: RO:0000087 CHEBI:35610 ! has role antineoplastic agent
+relationship: RO:0000087 CHEBI:35674 ! has role antihypertensive agent
+relationship: RO:0000087 CHEBI:35705 ! has role immunosuppressive agent
+relationship: RO:0000087 CHEBI:38070 ! has role anti-arrhythmia drug
+relationship: RO:0000087 CHEBI:49023 ! has role prostaglandin antagonist
+relationship: RO:0000087 CHEBI:49201 ! has role anti-ulcer drug
+relationship: RO:0000087 CHEBI:50249 ! has role anticoagulant
+relationship: RO:0000087 CHEBI:50427 ! has role platelet aggregation inhibitor
+relationship: RO:0000087 CHEBI:50629 ! has role cyclooxygenase 2 inhibitor
+relationship: RO:0000087 CHEBI:50630 ! has role cyclooxygenase 1 inhibitor
+relationship: RO:0000087 CHEBI:50905 ! has role teratogenic agent
+relationship: RO:0000087 CHEBI:53784 ! has role antispasmodic drug
+relationship: RO:0000087 CHEBI:64946 ! has role anti-HIV agent
+relationship: RO:0000087 CHEBI:65023 ! has role anti-asthmatic agent
+relationship: RO:0000087 CHEBI:66981 ! has role ophthalmology drug
+relationship: RO:0000087 CHEBI:67079 ! has role anti-inflammatory agent
+relationship: RO:0000087 CHEBI:73182 ! has role plant activator
+relationship: RO:0000087 CHEBI:73336 ! has role vulnerary
+relationship: RO:0000087 CHEBI:75835 ! has role anti-anaemic agent
+relationship: RO:0000087 CHEBI:77425 ! has role EC 1.1.1.188 (prostaglandin-F synthase) inhibitor
+relationship: RO:0000087 CHEBI:88188 ! has role drug allergen
+relationship: RO:0018034 CHEBI:13719 ! is conjugate acid of acetylsalicylate
+relationship: RO:0018038 CHEBI:16914 ! has functional parent salicylic acid
+property_value: chemrof:charge "0" xsd:integer
+property_value: chemrof:generalized_empirical_formula "C9H8O4" xsd:string
+property_value: chemrof:inchi_key_string "BSYNRYMUTXBXSQ-UHFFFAOYSA-N" xsd:string
+property_value: chemrof:inchi_string "InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)" xsd:string
+property_value: chemrof:mass "180.159" xsd:decimal
+property_value: chemrof:monoisotopic_mass "180.04226" xsd:decimal
+property_value: chemrof:smiles_string "CC(=O)Oc1ccccc1C(=O)O" xsd:string
+
+[Term]
+id: CHEBI:27189
+is_obsolete: true
+
+[Term]
+id: CHEBI:35475
+name: non-steroidal anti-inflammatory drug
+def: "An anti-inflammatory drug that is not a steroid. In addition to anti-inflammatory actions, non-steroidal anti-inflammatory drugs have analgesic, antipyretic, and platelet-inhibitory actions. They act by blocking the synthesis of prostaglandins by inhibiting cyclooxygenase, which converts arachidonic acid to cyclic endoperoxides, precursors of prostaglandins." []
+subset: 3:STAR
+is_a: CHEBI:35472 ! anti-inflammatory drug
+is_a: CHEBI:35842 ! antirheumatic drug
+
+[Term]
+id: CHEBI:35610
+name: antineoplastic agent
+def: "A substance that inhibits or prevents the proliferation of neoplasms." []
+subset: 3:STAR
+is_a: CHEBI:23888 ! drug
+
+[Term]
+id: CHEBI:41774
+name: tamoxifen
+alt_id: CHEBI:41767
+alt_id: CHEBI:9396
+subset: 3:STAR
+is_a: CHEBI:26776 ! stilbenoid
+is_a: CHEBI:50996 ! tertiary amino compound
+relationship: RO:0000087 CHEBI:22587 ! has role antiviral agent
+relationship: RO:0000087 CHEBI:233423 ! has role antifibrotic agent
+relationship: RO:0000087 CHEBI:35476 ! has role antipsychotic agent
+relationship: RO:0000087 CHEBI:35480 ! has role analgesic
+relationship: RO:0000087 CHEBI:35554 ! has role cardiovascular drug
+relationship: RO:0000087 CHEBI:35610 ! has role antineoplastic agent
+relationship: RO:0000087 CHEBI:35674 ! has role antihypertensive agent
+relationship: RO:0000087 CHEBI:37700 ! has role EC 2.7.11.13 (protein kinase C) inhibitor
+relationship: RO:0000087 CHEBI:48422 ! has role angiogenesis inhibitor
+relationship: RO:0000087 CHEBI:50646 ! has role bone density conservation agent
+relationship: RO:0000087 CHEBI:50739 ! has role estrogen receptor modulator
+relationship: RO:0000087 CHEBI:50792 ! has role estrogen receptor antagonist
+relationship: RO:0000087 CHEBI:50837 ! has role estrogen antagonist
+relationship: RO:0000087 CHEBI:62872 ! has role EC 1.2.3.1 (aldehyde oxidase) inhibitor
+relationship: RO:0000087 CHEBI:64946 ! has role anti-HIV agent
+relationship: RO:0018040 CHEBI:26775 ! has parent hydride stilbene
+property_value: chemrof:charge "0" xsd:integer
+property_value: chemrof:generalized_empirical_formula "C26H29NO" xsd:string
+property_value: chemrof:inchi_key_string "NKANXQFJJICGDU-QPLCGJKRSA-N" xsd:string
+property_value: chemrof:inchi_string "InChI=1S/C26H29NO/c1-4-25(21-11-7-5-8-12-21)26(22-13-9-6-10-14-22)23-15-17-24(18-16-23)28-20-19-27(2)3/h5-18H,4,19-20H2,1-3H3/b26-25-" xsd:string
+property_value: chemrof:mass "371.524" xsd:decimal
+property_value: chemrof:monoisotopic_mass "371.22491" xsd:decimal
+property_value: chemrof:smiles_string "CC/C(=C(c1ccccc1)c1ccc(OCCN(C)C)cc1)c1ccccc1" xsd:string
+
+[Term]
+id: CHEBI:46316
+name: 2-PROPYLPENTANAMIDE
+subset: 1:STAR
+is_a: CHEBI:50860 ! organic molecular entity
+property_value: chemrof:charge "0" xsd:integer
+property_value: chemrof:generalized_empirical_formula "C8H17NO" xsd:string
+property_value: chemrof:inchi_key_string "OMOMUFTZPTXCHP-UHFFFAOYSA-N" xsd:string
+property_value: chemrof:inchi_string "InChI=1S/C8H17NO/c1-3-5-7(6-4-2)8(9)10/h7H,3-6H2,1-2H3,(H2,9,10)" xsd:string
+property_value: chemrof:mass "143.23" xsd:decimal
+property_value: chemrof:monoisotopic_mass "143.13101" xsd:decimal
+property_value: chemrof:smiles_string "CCCC(CCC)C(N)=O" xsd:string
+
+[Term]
+id: CHEBI:480999
+name: vinorelbine
+def: "A vinca alkaloid with a norvinblastine skeleton." []
+subset: 3:STAR
+is_a: CHEBI:25248 ! methyl ester
+is_a: CHEBI:27288 ! vinca alkaloid
+is_a: CHEBI:36820 ! ring assembly
+is_a: CHEBI:38163 ! organic heterotetracyclic compound
+is_a: CHEBI:38164 ! organic heteropentacyclic compound
+is_a: CHEBI:47622 ! acetate ester
+relationship: RO:0000087 CHEBI:35610 ! has role antineoplastic agent
+relationship: RO:0000087 CHEBI:47868 ! has role photosensitizing agent
+property_value: chemrof:charge "0" xsd:integer
+property_value: chemrof:generalized_empirical_formula "C45H54N4O8" xsd:string
+property_value: chemrof:inchi_key_string "GBABOYUKABKIAF-IELIFDKJSA-N" xsd:string
+property_value: chemrof:inchi_string "InChI=1S/C45H54N4O8/c1-8-27-19-28-22-44(40(51)55-6,36-30(25-48(23-27)24-28)29-13-10-11-14-33(29)46-36)32-20-31-34(21-35(32)54-5)47(4)38-43(31)16-18-49-17-12-15-42(9-2,37(43)49)39(57-26(3)50)45(38,53)41(52)56-7/h10-15,19-21,28,37-39,46,53H,8-9,16-18,22-25H2,1-7H3/t28-,37-,38+,39+,42+,43+,44-,45-/m0/s1" xsd:string
+property_value: chemrof:mass "778.947" xsd:decimal
+property_value: chemrof:monoisotopic_mass "778.39416" xsd:decimal
+property_value: chemrof:smiles_string "[H][C@]12C=C(CC)CN(Cc3c(nc4ccccc34)[C@@](C(=O)OC)(c3cc4c(cc3OC)N(C)[C@@]3([H])[C@@](O)(C(=O)OC)[C@]([H])(OC(C)=O)[C@]5(CC)C=CCN6CC[C@]43[C@@]65[H])C1)C2" xsd:string
+
+[Term]
+id: CHEBI:74562
+name: valpromide
+def: "A fatty amide derived from valproic acid." []
+subset: 3:STAR
+is_a: CHEBI:29348 ! fatty amide
+relationship: RO:0000087 CHEBI:176497 ! has role geroprotector
+relationship: RO:0000087 CHEBI:25212 ! has role metabolite
+relationship: RO:0000087 CHEBI:35623 ! has role anticonvulsant
+relationship: RO:0000087 CHEBI:50905 ! has role teratogenic agent
+relationship: RO:0018038 CHEBI:39867 ! has functional parent valproic acid
+property_value: chemrof:charge "0" xsd:integer
+property_value: chemrof:generalized_empirical_formula "C8H17NO" xsd:string
+property_value: chemrof:inchi_key_string "OMOMUFTZPTXCHP-UHFFFAOYSA-N" xsd:string
+property_value: chemrof:inchi_string "InChI=1S/C8H17NO/c1-3-5-7(6-4-2)8(9)10/h7H,3-6H2,1-2H3,(H2,9,10)" xsd:string
+property_value: chemrof:mass "143.23" xsd:decimal
+property_value: chemrof:monoisotopic_mass "143.13101" xsd:decimal
+property_value: chemrof:smiles_string "CCCC(CCC)C(N)=O" xsd:string
+
+[Term]
+id: CHEBI:92766
+name: 2-[4-(1,2-diphenylbut-1-enyl)phenoxy]-N,N-dimethylethanamine
+subset: 2:STAR
+is_a: CHEBI:26776 ! stilbenoid
+property_value: chemrof:charge "0" xsd:integer
+property_value: chemrof:generalized_empirical_formula "C26H29NO" xsd:string
+property_value: chemrof:inchi_key_string "NKANXQFJJICGDU-UHFFFAOYSA-N" xsd:string
+property_value: chemrof:inchi_string "InChI=1S/C26H29NO/c1-4-25(21-11-7-5-8-12-21)26(22-13-9-6-10-14-22)23-15-17-24(18-16-23)28-20-19-27(2)3/h5-18H,4,19-20H2,1-3H3" xsd:string
+property_value: chemrof:mass "371.524" xsd:decimal
+property_value: chemrof:monoisotopic_mass "371.22491" xsd:decimal
+property_value: chemrof:smiles_string "CCC(=C(c1ccccc1)c1ccc(OCCN(C)C)cc1)c1ccccc1" xsd:string
+
+[Term]
+id: CHEBI:93786
+name: LSM-4297
+subset: 2:STAR
+is_a: CHEBI:27288 ! vinca alkaloid
+property_value: chemrof:charge "0" xsd:integer
+property_value: chemrof:generalized_empirical_formula "C45H54N4O8" xsd:string
+property_value: chemrof:inchi_key_string "GBABOYUKABKIAF-UHFFFAOYSA-N" xsd:string
+property_value: chemrof:inchi_string "InChI=1S/C45H54N4O8/c1-8-27-19-28-22-44(40(51)55-6,36-30(25-48(23-27)24-28)29-13-10-11-14-33(29)46-36)32-20-31-34(21-35(32)54-5)47(4)38-43(31)16-18-49-17-12-15-42(9-2,37(43)49)39(57-26(3)50)45(38,53)41(52)56-7/h10-15,19-21,28,37-39,46,53H,8-9,16-18,22-25H2,1-7H3" xsd:string
+property_value: chemrof:mass "778.947" xsd:decimal
+property_value: chemrof:monoisotopic_mass "778.39416" xsd:decimal
+property_value: chemrof:smiles_string "CCC1=CC2CN(C1)Cc1c(nc3ccccc13)C(C(=O)OC)(c1cc3c(cc1OC)N(C)C1C(O)(C(=O)OC)C(OC(C)=O)C4(CC)C=CCN5CCC31C54)C2" xsd:string
+
+[Term]
+id: CHEBI:94502
+name: LSM-5284
+subset: 2:STAR
+is_a: CHEBI:27288 ! vinca alkaloid
+property_value: chemrof:charge "0" xsd:integer
+property_value: chemrof:generalized_empirical_formula "C45H54N4O8" xsd:string
+property_value: chemrof:inchi_key_string "GBABOYUKABKIAF-JEEMQKELSA-N" xsd:string
+property_value: chemrof:inchi_string "InChI=1S/C45H54N4O8/c1-8-27-19-28-22-44(40(51)55-6,36-30(25-48(23-27)24-28)29-13-10-11-14-33(29)46-36)32-20-31-34(21-35(32)54-5)47(4)38-43(31)16-18-49-17-12-15-42(9-2,37(43)49)39(57-26(3)50)45(38,53)41(52)56-7/h10-15,19-21,28,37-39,46,53H,8-9,16-18,22-25H2,1-7H3/t28-,37-,38+,39+,42-,43+,44-,45-/m0/s1" xsd:string
+property_value: chemrof:mass "778.947" xsd:decimal
+property_value: chemrof:monoisotopic_mass "778.39416" xsd:decimal
+property_value: chemrof:smiles_string "CCC1=C[C@@H]2CN(C1)Cc1c(nc3ccccc13)[C@@](C(=O)OC)(c1cc3c(cc1OC)N(C)[C@H]1[C@@](O)(C(=O)OC)[C@H](OC(C)=O)[C@@]4(CC)C=CCN5CC[C@]31[C@@H]54)C2" xsd:string
+
+[Typedef]
+id: RO:0000087
+name: has role
+xref: RO:0000087
+is_cyclic: false
+is_transitive: false
+
+[Typedef]
+id: RO:0018033
+name: is conjugate base of
+is_cyclic: true
+is_transitive: false
+inverse_of: RO:0018034 ! is conjugate acid of
+
+[Typedef]
+id: RO:0018034
+name: is conjugate acid of
+is_cyclic: true
+is_transitive: false
+

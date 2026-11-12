@@ -1,0 +1,118 @@
+[
+{
+"stId": "R-HSA-9612973",
+"displayName": "Autophagy"
+},
+{
+"stId": "R-HSA-1640170",
+"displayName": "Cell Cycle"
+},
+{
+"stId": "R-HSA-1500931",
+"displayName": "Cell-Cell communication"
+},
+{
+"stId": "R-HSA-8953897",
+"displayName": "Cellular responses to stimuli"
+},
+{
+"stId": "R-HSA-4839726",
+"displayName": "Chromatin organization"
+},
+{
+"stId": "R-HSA-9909396",
+"displayName": "Circadian clock"
+},
+{
+"stId": "R-HSA-1266738",
+"displayName": "Developmental Biology"
+},
+{
+"stId": "R-HSA-8963743",
+"displayName": "Digestion and absorption"
+},
+{
+"stId": "R-HSA-1643685",
+"displayName": "Disease"
+},
+{
+"stId": "R-HSA-73894",
+"displayName": "DNA Repair"
+},
+{
+"stId": "R-HSA-69306",
+"displayName": "DNA Replication"
+},
+{
+"stId": "R-HSA-9748784",
+"displayName": "Drug ADME"
+},
+{
+"stId": "R-HSA-1474244",
+"displayName": "Extracellular matrix organization"
+},
+{
+"stId": "R-HSA-74160",
+"displayName": "Gene expression (Transcription)"
+},
+{
+"stId": "R-HSA-109582",
+"displayName": "Hemostasis"
+},
+{
+"stId": "R-HSA-168256",
+"displayName": "Immune System"
+},
+{
+"stId": "R-HSA-1430728",
+"displayName": "Metabolism"
+},
+{
+"stId": "R-HSA-392499",
+"displayName": "Metabolism of proteins"
+},
+{
+"stId": "R-HSA-8953854",
+"displayName": "Metabolism of RNA"
+},
+{
+"stId": "R-HSA-397014",
+"displayName": "Muscle contraction"
+},
+{
+"stId": "R-HSA-112316",
+"displayName": "Neuronal System"
+},
+{
+"stId": "R-HSA-1852241",
+"displayName": "Organelle biogenesis and maintenance"
+},
+{
+"stId": "R-HSA-5357801",
+"displayName": "Programmed Cell Death"
+},
+{
+"stId": "R-HSA-9609507",
+"displayName": "Protein localization"
+},
+{
+"stId": "R-HSA-1474165",
+"displayName": "Reproduction"
+},
+{
+"stId": "R-HSA-9709957",
+"displayName": "Sensory Perception"
+},
+{
+"stId": "R-HSA-162582",
+"displayName": "Signal Transduction"
+},
+{
+"stId": "R-HSA-382551",
+"displayName": "Transport of small molecules"
+},
+{
+"stId": "R-HSA-5653656",
+"displayName": "Vesicle-mediated transport"
+}
+]

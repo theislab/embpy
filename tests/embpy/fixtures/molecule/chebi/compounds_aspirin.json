@@ -1,0 +1,677 @@
+{
+ "CHEBI:15365": {
+  "standardized_chebi_id": "CHEBI:15365",
+  "primary_chebi_id": "CHEBI:15365",
+  "exists": true,
+  "id_type": "PRIMARY_ID",
+  "data": {
+   "id": 15365,
+   "chebi_accession": "CHEBI:15365",
+   "name": "acetylsalicylic acid",
+   "stars": 3,
+   "secondary_ids": [
+    "CHEBI:2890",
+    "CHEBI:22188",
+    "CHEBI:22203",
+    "CHEBI:40705",
+    "CHEBI:71414"
+   ],
+   "default_structure": {
+    "id": 94,
+    "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+    "standard_inchi": "InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)",
+    "standard_inchi_key": "BSYNRYMUTXBXSQ-UHFFFAOYSA-N",
+    "wurcs": null,
+    "is_r_group": false
+   },
+   "ontology_relations": {
+    "incoming_relations": [
+     {
+      "init_id": 141699,
+      "init_name": "aspirin-based probe AP",
+      "relation_type": "has functional parent",
+      "final_id": 15365,
+      "final_name": "acetylsalicylic acid"
+     },
+     {
+      "init_id": 149780,
+      "init_name": "2-acetyloxy-4-pentadecylbenzoic acid",
+      "relation_type": "has functional parent",
+      "final_id": 15365,
+      "final_name": "acetylsalicylic acid"
+     },
+     {
+      "init_id": 233566,
+      "init_name": "NCX-4040",
+      "relation_type": "has functional parent",
+      "final_id": 15365,
+      "final_name": "acetylsalicylic acid"
+     },
+     {
+      "init_id": 134674,
+      "init_name": "Yosprala",
+      "relation_type": "has part",
+      "final_id": 15365,
+      "final_name": "acetylsalicylic acid"
+     },
+     {
+      "init_id": 13719,
+      "init_name": "acetylsalicylate",
+      "relation_type": "is conjugate base of",
+      "final_id": 15365,
+      "final_name": "acetylsalicylic acid"
+     }
+    ],
+    "outgoing_relations": [
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has functional parent",
+      "final_id": 16914,
+      "final_name": "salicylic acid"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 35475,
+      "final_name": "non-steroidal anti-inflammatory drug"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 35481,
+      "final_name": "non-narcotic analgesic"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 145947,
+      "final_name": "antiatherosclerotic agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 33231,
+      "final_name": "antitubercular agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 73336,
+      "final_name": "vulnerary"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 64946,
+      "final_name": "anti-HIV agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 176497,
+      "final_name": "geroprotector"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 73182,
+      "final_name": "plant activator"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 88188,
+      "final_name": "drug allergen"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 50427,
+      "final_name": "platelet aggregation inhibitor"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 35493,
+      "final_name": "antipyretic"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 50629,
+      "final_name": "cyclooxygenase 2 inhibitor"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 50630,
+      "final_name": "cyclooxygenase 1 inhibitor"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 49023,
+      "final_name": "prostaglandin antagonist"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 50905,
+      "final_name": "teratogenic agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 50249,
+      "final_name": "anticoagulant"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 77425,
+      "final_name": "EC 1.1.1.188 (prostaglandin-F synthase) inhibitor"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 35554,
+      "final_name": "cardiovascular drug"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 35610,
+      "final_name": "antineoplastic agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 75835,
+      "final_name": "anti-anaemic agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 65023,
+      "final_name": "anti-asthmatic agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 38070,
+      "final_name": "anti-arrhythmia drug"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 35480,
+      "final_name": "analgesic"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 35476,
+      "final_name": "antipsychotic agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 66981,
+      "final_name": "ophthalmology drug"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 67079,
+      "final_name": "anti-inflammatory agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 35469,
+      "final_name": "antidepressant"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 35526,
+      "final_name": "hypoglycemic agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 49201,
+      "final_name": "anti-ulcer drug"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 35674,
+      "final_name": "antihypertensive agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 22587,
+      "final_name": "antiviral agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 33281,
+      "final_name": "antimicrobial agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 35705,
+      "final_name": "immunosuppressive agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 33282,
+      "final_name": "antibacterial agent"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "has role",
+      "final_id": 53784,
+      "final_name": "antispasmodic drug"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "is a",
+      "final_id": 22723,
+      "final_name": "benzoic acids"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "is a",
+      "final_id": 140310,
+      "final_name": "phenyl acetates"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "is a",
+      "final_id": 26596,
+      "final_name": "salicylates"
+     },
+     {
+      "init_id": 15365,
+      "init_name": "acetylsalicylic acid",
+      "relation_type": "is conjugate acid of",
+      "final_id": 13719,
+      "final_name": "acetylsalicylate"
+     }
+    ]
+   },
+   "roles_classification": [
+    {
+     "application": false,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:33282",
+     "name": "antibacterial agent",
+     "definition": "A substance (or active part thereof) that kills or slows the growth of bacteria.",
+     "id": 33282,
+     "biological_role": true
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:65023",
+     "name": "anti-asthmatic agent",
+     "definition": "Any compound that has anti-asthmatic effects.",
+     "id": 65023,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:35476",
+     "name": "antipsychotic agent",
+     "definition": "Antipsychotic drugs are agents that control agitated psychotic behaviour, alleviate acute psychotic states, reduce psychotic symptoms, and exert a quieting effect.",
+     "id": 35476,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:49201",
+     "name": "anti-ulcer drug",
+     "definition": "One of various classes of drugs with different action mechanisms used to treat or ameliorate peptic ulcer or irritation of the gastrointestinal tract.",
+     "id": 49201,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:35481",
+     "name": "non-narcotic analgesic",
+     "definition": "A drug that has principally analgesic, antipyretic and anti-inflammatory actions. Non-narcotic analgesics do not bind to opioid receptors.",
+     "id": 35481,
+     "biological_role": true
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:50249",
+     "name": "anticoagulant",
+     "definition": "An agent that prevents blood clotting.",
+     "id": 50249,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:53784",
+     "name": "antispasmodic drug",
+     "definition": "A drug that suppresses spasms. These are usually caused by smooth muscle contraction, especially in tubular organs. The effect is to prevent spasms of the stomach, intestine or urinary bladder.",
+     "id": 53784,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:67079",
+     "name": "anti-inflammatory agent",
+     "definition": "Any compound that has anti-inflammatory effects.",
+     "id": 67079,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:73336",
+     "name": "vulnerary",
+     "definition": "A drug used in treating and healing of wounds.",
+     "id": 73336,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:88188",
+     "name": "drug allergen",
+     "definition": "Any drug which causes the onset of an allergic reaction.",
+     "id": 88188,
+     "biological_role": true
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:176497",
+     "name": "geroprotector",
+     "definition": "Any compound that supports healthy aging, slows the biological aging process, or extends lifespan.",
+     "id": 176497,
+     "biological_role": false
+    },
+    {
+     "application": false,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:50905",
+     "name": "teratogenic agent",
+     "definition": "A role played by a chemical compound  in biological systems with adverse consequences in embryo developments, leading to birth defects, embryo death or altered development, growth retardation and functional defect.",
+     "id": 50905,
+     "biological_role": true
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:35526",
+     "name": "hypoglycemic agent",
+     "definition": "A drug which lowers the blood glucose level.",
+     "id": 35526,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:35469",
+     "name": "antidepressant",
+     "definition": "Antidepressants are mood-stimulating drugs used primarily in the treatment of affective disorders and related conditions.",
+     "id": 35469,
+     "biological_role": false
+    },
+    {
+     "application": false,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:33281",
+     "name": "antimicrobial agent",
+     "definition": "A substance that kills or slows the growth of microorganisms, including bacteria, viruses, fungi and protozoans.",
+     "id": 33281,
+     "biological_role": true
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:35480",
+     "name": "analgesic",
+     "definition": "An agent capable of relieving pain without the loss of consciousness or without producing anaesthesia. In addition, analgesic is a role played by a compound which is exhibited by a capability to cause a reduction of pain symptoms.",
+     "id": 35480,
+     "biological_role": true
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:50427",
+     "name": "platelet aggregation inhibitor",
+     "definition": "A drug or agent which antagonizes or impairs any mechanism leading to blood platelet aggregation, whether during the phases of activation and shape change or following the dense-granule release reaction and stimulation of the prostaglandin-thromboxane system.",
+     "id": 50427,
+     "biological_role": false
+    },
+    {
+     "application": false,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:64946",
+     "name": "anti-HIV agent",
+     "definition": "An antiviral agent that destroys or inhibits the replication of the human immunodeficiency virus.",
+     "id": 64946,
+     "biological_role": true
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:35610",
+     "name": "antineoplastic agent",
+     "definition": "A substance that inhibits or prevents the proliferation of neoplasms.",
+     "id": 35610,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:35554",
+     "name": "cardiovascular drug",
+     "definition": "A drug that affects the rate or intensity of cardiac contraction, blood vessel diameter or blood volume.",
+     "id": 35554,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:35674",
+     "name": "antihypertensive agent",
+     "definition": "Any drug used in the treatment of acute or chronic vascular hypertension regardless of pharmacological mechanism.",
+     "id": 35674,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:73182",
+     "name": "plant activator",
+     "definition": "Any compound that protects plants by activating their defence mechanisms.",
+     "id": 73182,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:49023",
+     "name": "prostaglandin antagonist",
+     "definition": "A compound that inhibits the action of prostaglandins.",
+     "id": 49023,
+     "biological_role": true
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:35475",
+     "name": "non-steroidal anti-inflammatory drug",
+     "definition": "An anti-inflammatory drug that is not a steroid. In addition to anti-inflammatory actions, non-steroidal anti-inflammatory drugs have analgesic, antipyretic, and platelet-inhibitory actions. They act by blocking the synthesis of prostaglandins by inhibiting cyclooxygenase, which converts arachidonic acid to cyclic endoperoxides, precursors of prostaglandins.",
+     "id": 35475,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:75835",
+     "name": "anti-anaemic agent",
+     "definition": "A compound which increases either the number of red cells or the amount of haemoglobin in the blood.",
+     "id": 75835,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:35705",
+     "name": "immunosuppressive agent",
+     "definition": "An agent that suppresses immune function by one of several mechanisms of action. Classical cytotoxic immunosuppressants act by inhibiting DNA synthesis. Others may act through activation of T-cells or by inhibiting the activation of helper cells. In addition, an immunosuppressive agent is a role played by a compound which is exhibited by a capability to diminish the extent and/or voracity of an immune response.",
+     "id": 35705,
+     "biological_role": true
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:38070",
+     "name": "anti-arrhythmia drug",
+     "definition": "A drug used for the treatment or prevention of cardiac arrhythmias. Anti-arrhythmia drugs may affect the polarisation-repolarisation phase of the action potential, its excitability or refractoriness, or impulse conduction or membrane responsiveness within cardiac fibres.",
+     "id": 38070,
+     "biological_role": false
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:66981",
+     "name": "ophthalmology drug",
+     "definition": "Any compound used for the treatment of eye conditions or eye diseases.",
+     "id": 66981,
+     "biological_role": false
+    },
+    {
+     "application": false,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:50629",
+     "name": "cyclooxygenase 2 inhibitor",
+     "definition": "A cyclooxygenase inhibitor that interferes with the action of cyclooxygenase 2.",
+     "id": 50629,
+     "biological_role": true
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:33231",
+     "name": "antitubercular agent",
+     "definition": "A substance that kills or slows the growth of <em>Mycobacterium tuberculosis</em> and is used in the treatment of tuberculosis.",
+     "id": 33231,
+     "biological_role": true
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:35493",
+     "name": "antipyretic",
+     "definition": "A drug that prevents or reduces fever by lowering the body temperature from a raised state. An antipyretic will not affect the normal body temperature if one does not have fever. Antipyretics cause the hypothalamus to override an interleukin-induced increase in temperature. The body will then work to lower the temperature and the result is a reduction in fever.",
+     "id": 35493,
+     "biological_role": false
+    },
+    {
+     "application": false,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:50630",
+     "name": "cyclooxygenase 1 inhibitor",
+     "definition": "A cyclooxygenase inhibitor that interferes with the action of cyclooxygenase 1.",
+     "id": 50630,
+     "biological_role": true
+    },
+    {
+     "application": false,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:77425",
+     "name": "EC 1.1.1.188 (prostaglandin-F synthase) inhibitor",
+     "definition": "An EC 1.1.1.* (oxidoreductase acting on donor CH-OH group, NAD<small><sup>+</small></sup> or NADP<small><sup>+</small></sup> acceptor) inhibitor that interferes with the action of prostaglandin-F synthase (EC 1.1.1.188).",
+     "id": 77425,
+     "biological_role": true
+    },
+    {
+     "application": true,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:145947",
+     "name": "antiatherosclerotic agent",
+     "definition": "A cardiovascular drug that prevents atherosclerosis (a disease in which the inside of an artery narrows due to the build up of plaque). Compare with <a href=\"https://www.ebi.ac.uk/chebi/searchId.do?chebiId=CHEBI:50855\" target=\"_blank\">antiatherogenic agent</a>.",
+     "id": 145947,
+     "biological_role": false
+    },
+    {
+     "application": false,
+     "chemical_role": false,
+     "chebi_accession": "CHEBI:22587",
+     "name": "antiviral agent",
+     "definition": "A substance that destroys or inhibits replication of viruses.",
+     "id": 22587,
+     "biological_role": true
+    },
+    {
+     "application": false,
+     "chemical_role": true,
+     "chebi_accession": "CHEBI:39141",
+     "name": "Bronsted acid",
+     "definition": "A molecular entity capable of donating a hydron to an acceptor (Brønsted base).",
+     "id": 39141,
+     "biological_role": false
+    }
+   ],
+   "is_released": true
+  }
+ }
+}

@@ -1,0 +1,210 @@
+{
+ "PropertyTable": {
+  "Properties": [
+   {
+    "CID": 54682505,
+    "InChIKey": "FLVRDMUHUXVRET-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 51358113,
+    "InChIKey": "GUXXEUUYCAYESJ-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 44483339,
+    "InChIKey": "AJVXVYTVAAWZAP-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 25322997,
+    "InChIKey": "GBXSMTUPTTWBMN-UAGQMJEPSA-N"
+   },
+   {
+    "CID": 11957722,
+    "InChIKey": "JOAHPSVPXZTVEP-QGPMSJSTSA-N"
+   },
+   {
+    "CID": 11957615,
+    "InChIKey": "BKRGVLQUQGGVSM-RDTXWAMCSA-N"
+   },
+   {
+    "CID": 10947895,
+    "InChIKey": "MOJZPKOBKCXNKG-YJBOKZPZSA-N"
+   },
+   {
+    "CID": 10398360,
+    "InChIKey": "KOMWRBFEDDEWEP-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 10367662,
+    "InChIKey": "LLIFMNUXGDHTRO-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 10071166,
+    "InChIKey": "KHKGTPJPBOQECW-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 9953599,
+    "InChIKey": "BANYJBHWTOJQDU-GDLZYMKVSA-N"
+   },
+   {
+    "CID": 9892554,
+    "InChIKey": "CQVJTTOZTTVVBK-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 6604928,
+    "InChIKey": "GSGVDKOCBKBMGG-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 6419753,
+    "InChIKey": "DPDZHVCKYBCJHW-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 5702094,
+    "InChIKey": "IMONTRJLAWHYGT-FJMAIUEKSA-N"
+   },
+   {
+    "CID": 5362032,
+    "InChIKey": "GBXSMTUPTTWBMN-UAGQMJEPSA-N"
+   },
+   {
+    "CID": 5360630,
+    "InChIKey": "NETZHAKZCGBWSS-XDWDPSITSA-N"
+   },
+   {
+    "CID": 5353431,
+    "InChIKey": "DOEWDSDBFRHVAP-KRXBUXKQSA-N"
+   },
+   {
+    "CID": 5320346,
+    "InChIKey": "JYGXADMDTFJGBT-YDAVOWJHSA-N"
+   },
+   {
+    "CID": 5311403,
+    "InChIKey": "CBQGYUDMJHNJBX-MOPGFXCFSA-N"
+   },
+   {
+    "CID": 5081913,
+    "InChIKey": "CHILCFMQWMQVAL-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 4673492,
+    "InChIKey": "BFVNEYDCFJNLGN-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 3467177,
+    "InChIKey": "HDOIPCLEKCEANF-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 3248571,
+    "InChIKey": "BDHMSYNBSBZCAF-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 3085416,
+    "InChIKey": "AZSNMRSAGSSBNP-VRFQAOMKSA-N"
+   },
+   {
+    "CID": 3009355,
+    "InChIKey": "CNPVJJQCETWNEU-CYFREDJKSA-N"
+   },
+   {
+    "CID": 3006531,
+    "InChIKey": "DVEXZJFMOKTQEZ-JYFOCSDGSA-N"
+   },
+   {
+    "CID": 2777391,
+    "InChIKey": "FRPJSHKMZHWJBE-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 1548918,
+    "InChIKey": "KJQFBVYMGADDTQ-CVSPRKDYSA-N"
+   },
+   {
+    "CID": 667477,
+    "InChIKey": "ODQWQRRAPPTVAG-GZTJUZNOSA-N"
+   },
+   {
+    "CID": 446916,
+    "InChIKey": "KNBSYZNKEAWABY-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 439501,
+    "InChIKey": "LPMXVESGRSUGHW-HBYQJFLCSA-N"
+   },
+   {
+    "CID": 275196,
+    "InChIKey": "AKNNEGZIBPJZJG-MSOLQXFVSA-N"
+   },
+   {
+    "CID": 127861,
+    "InChIKey": "DSRSEEYZGWTODH-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 121926,
+    "InChIKey": "ALBKMJDFBZVHAK-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 119565,
+    "InChIKey": "KJQFBVYMGADDTQ-CVSPRKDYSA-N"
+   },
+   {
+    "CID": 119376,
+    "InChIKey": "MOZPSIXKYJUTKI-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 107950,
+    "InChIKey": "GUOQUXNJZHGPQF-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 65889,
+    "InChIKey": "JGPJQFOROWSRRS-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 65856,
+    "InChIKey": "CBQGYUDMJHNJBX-OALUTQOASA-N"
+   },
+   {
+    "CID": 60703,
+    "InChIKey": "GGUSQTSTQSHJAH-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 60663,
+    "InChIKey": "HBNPJJILLOYFJU-VMPREFPWSA-N"
+   },
+   {
+    "CID": 57267,
+    "InChIKey": "AADCDMQTJNYOSS-LBPRGKRZSA-N"
+   },
+   {
+    "CID": 36811,
+    "InChIKey": "JRWZLRBJNMZMFE-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 32875,
+    "InChIKey": "AOJJSUZBOXZQNB-SNFLSGHGSA-N"
+   },
+   {
+    "CID": 5745,
+    "InChIKey": "ITRJWOMZKQRYTA-RFZYENFJSA-N"
+   },
+   {
+    "CID": 5602,
+    "InChIKey": "FOIVPCKZDPCJJY-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 4826,
+    "InChIKey": "IVVNZDGDKPTYHK-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 3065,
+    "InChIKey": "DEQITUUQPICUMR-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 2176,
+    "InChIKey": "LSNWBKACGXCGAJ-UHFFFAOYSA-N"
+   },
+   {
+    "CID": 2143,
+    "InChIKey": "KZFDKINRISJFCO-UHFFFAOYSA-N"
+   }
+  ]
+ }
+}

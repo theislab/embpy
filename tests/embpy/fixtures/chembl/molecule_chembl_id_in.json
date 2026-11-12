@@ -1,0 +1,909 @@
+{
+ "molecules": [
+  {
+   "atc_classifications": [
+    "B01AC06",
+    "N02BA01",
+    "N02BA51",
+    "A01AD05",
+    "N02BA71"
+   ],
+   "availability_type": 2,
+   "biotherapeutic": null,
+   "black_box_warning": 0,
+   "chemical_probe": 0,
+   "chirality": 2,
+   "cross_references": [
+    {
+     "xref_id": "aspirin",
+     "xref_name": "aspirin",
+     "xref_src": "DailyMed"
+    }
+   ],
+   "dosed_ingredient": true,
+   "first_approval": 1950,
+   "first_in_class": 0,
+   "helm_notation": null,
+   "inorganic_flag": 0,
+   "max_phase": "4.0",
+   "molecule_chembl_id": "CHEMBL25",
+   "molecule_hierarchy": {
+    "active_chembl_id": "CHEMBL25",
+    "molecule_chembl_id": "CHEMBL25",
+    "parent_chembl_id": "CHEMBL25"
+   },
+   "molecule_properties": {
+    "alogp": "1.31",
+    "aromatic_rings": 1,
+    "full_molformula": "C9H8O4",
+    "full_mwt": "180.16",
+    "hba": 3,
+    "hbd": 1,
+    "heavy_atoms": 13,
+    "mw_freebase": "180.16",
+    "np_likeness_score": "0.12",
+    "num_ro5_violations": 0,
+    "psa": "63.60",
+    "qed_weighted": "0.55",
+    "ro3_pass": "N",
+    "rtb": 2
+   },
+   "molecule_structures": {
+    "canonical_smiles": "CC(=O)Oc1ccccc1C(=O)O",
+    "standard_inchi": "InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)",
+    "standard_inchi_key": "BSYNRYMUTXBXSQ-UHFFFAOYSA-N"
+   },
+   "molecule_synonyms": [
+    {
+     "molecule_synonym": "8-hour bayer",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "8-HOUR BAYER"
+    },
+    {
+     "molecule_synonym": "Acetosalic acid",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "Acetosalic Acid"
+    },
+    {
+     "molecule_synonym": "Acetylsalic acid",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ACETYLSALIC ACID"
+    },
+    {
+     "molecule_synonym": "Acetyl salicylate",
+     "syn_type": "OTHER",
+     "synonyms": "ACETYL SALICYLATE"
+    },
+    {
+     "molecule_synonym": "Acetylsalicylic acid",
+     "syn_type": "ATC",
+     "synonyms": "ACETYLSALICYLIC ACID"
+    },
+    {
+     "molecule_synonym": "Acetylsalicylic acid",
+     "syn_type": "OTHER",
+     "synonyms": "ACETYLSALICYLIC ACID"
+    },
+    {
+     "molecule_synonym": "Acetylsalicylic acid (who-ip)",
+     "syn_type": "OTHER",
+     "synonyms": "ACETYLSALICYLIC ACID (WHO-IP)"
+    },
+    {
+     "molecule_synonym": "Acetylsalicylicum acidum",
+     "syn_type": "OTHER",
+     "synonyms": "ACETYLSALICYLICUM ACIDUM"
+    },
+    {
+     "molecule_synonym": "Acidum acetylsalicylicum",
+     "syn_type": "OTHER",
+     "synonyms": "ACIDUM ACETYLSALICYLICUM"
+    },
+    {
+     "molecule_synonym": "Acidum acetylsalicylicum (who-ip)",
+     "syn_type": "OTHER",
+     "synonyms": "ACIDUM ACETYLSALICYLICUM (WHO-IP)"
+    },
+    {
+     "molecule_synonym": "Alka rapid",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ALKA RAPID"
+    },
+    {
+     "molecule_synonym": "Anadin all night",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ANADIN ALL NIGHT"
+    },
+    {
+     "molecule_synonym": "Angettes 75",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ANGETTES 75"
+    },
+    {
+     "molecule_synonym": "Aspirin",
+     "syn_type": "BNF",
+     "synonyms": "ASPIRIN"
+    },
+    {
+     "molecule_synonym": "Aspirin",
+     "syn_type": "FDA",
+     "synonyms": "ASPIRIN"
+    },
+    {
+     "molecule_synonym": "Aspirin",
+     "syn_type": "MERCK_INDEX",
+     "synonyms": "ASPIRIN"
+    },
+    {
+     "molecule_synonym": "Aspirin",
+     "syn_type": "OTHER",
+     "synonyms": "ASPIRIN"
+    },
+    {
+     "molecule_synonym": "Aspirin",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN"
+    },
+    {
+     "molecule_synonym": "Aspirin component of aggrenox",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF AGGRENOX"
+    },
+    {
+     "molecule_synonym": "Aspirin component of axotal",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF AXOTAL"
+    },
+    {
+     "molecule_synonym": "Aspirin component of azdone",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF AZDONE"
+    },
+    {
+     "molecule_synonym": "Aspirin component of carisoprodol compound",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF CARISOPRODOL COMPOUND"
+    },
+    {
+     "molecule_synonym": "Aspirin component of clopidogrel/acetylsalicylic acid",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF CLOPIDOGREL/ACETYLSALICYLIC ACID"
+    },
+    {
+     "molecule_synonym": "Aspirin component of codoxy",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF CODOXY"
+    },
+    {
+     "molecule_synonym": "Aspirin component of darvon compound",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF DARVON COMPOUND"
+    },
+    {
+     "molecule_synonym": "Aspirin component of duocover",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF DUOCOVER"
+    },
+    {
+     "molecule_synonym": "Aspirin component of duoplavin",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF DUOPLAVIN"
+    },
+    {
+     "molecule_synonym": "Aspirin component of equagesic",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF EQUAGESIC"
+    },
+    {
+     "molecule_synonym": "Aspirin component of excedrin",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF EXCEDRIN"
+    },
+    {
+     "molecule_synonym": "Aspirin component of fiorinal",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF FIORINAL"
+    },
+    {
+     "molecule_synonym": "Aspirin component of invagesic",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF INVAGESIC"
+    },
+    {
+     "molecule_synonym": "Aspirin component of invagesic forte",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF INVAGESIC FORTE"
+    },
+    {
+     "molecule_synonym": "Aspirin component of lanorinal",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF LANORINAL"
+    },
+    {
+     "molecule_synonym": "Aspirin component of mepro-",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF MEPRO-"
+    },
+    {
+     "molecule_synonym": "Aspirin component of micrainin",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF MICRAININ"
+    },
+    {
+     "molecule_synonym": "Aspirin component of norgesic",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF NORGESIC"
+    },
+    {
+     "molecule_synonym": "Aspirin component of orphengesic",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF ORPHENGESIC"
+    },
+    {
+     "molecule_synonym": "Aspirin component of orphengesic forte",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF ORPHENGESIC FORTE"
+    },
+    {
+     "molecule_synonym": "Aspirin component of pa-32540",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF PA-32540"
+    },
+    {
+     "molecule_synonym": "Aspirin component of -pc",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF -PC"
+    },
+    {
+     "molecule_synonym": "Aspirin component of percodan",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF PERCODAN"
+    },
+    {
+     "molecule_synonym": "Aspirin component of percodan-demi",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF PERCODAN-DEMI"
+    },
+    {
+     "molecule_synonym": "Aspirin component of pl2200",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF PL2200"
+    },
+    {
+     "molecule_synonym": "Aspirin component of pravigard pac",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF PRAVIGARD PAC"
+    },
+    {
+     "molecule_synonym": "Aspirin component of q-gesic",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF Q-GESIC"
+    },
+    {
+     "molecule_synonym": "Aspirin component of robaxisal",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF ROBAXISAL"
+    },
+    {
+     "molecule_synonym": "Aspirin component of roxiprin",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF ROXIPRIN"
+    },
+    {
+     "molecule_synonym": "Aspirin component of soma compound",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF SOMA COMPOUND"
+    },
+    {
+     "molecule_synonym": "Aspirin component of synalgos-dc",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF SYNALGOS-DC"
+    },
+    {
+     "molecule_synonym": "Aspirin component of talwin compound",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF TALWIN COMPOUND"
+    },
+    {
+     "molecule_synonym": "Aspirin component of vicoprin",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF VICOPRIN"
+    },
+    {
+     "molecule_synonym": "Aspirin component of yosprala",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPIRIN COMPONENT OF YOSPRALA"
+    },
+    {
+     "molecule_synonym": "Aspro clr",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ASPRO CLR"
+    },
+    {
+     "molecule_synonym": "BAY1019036",
+     "syn_type": "RESEARCH_CODE",
+     "synonyms": "BAY1019036"
+    },
+    {
+     "molecule_synonym": "Bayer extra strength aspirin for migraine pain",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "BAYER EXTRA STRENGTH ASPIRIN FOR MIGRAINE PAIN"
+    },
+    {
+     "molecule_synonym": "Benzoic acid, 2-(acetyloxy)-",
+     "syn_type": "OTHER",
+     "synonyms": "BENZOIC ACID, 2-(ACETYLOXY)-"
+    },
+    {
+     "molecule_synonym": "Danamep",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "DANAMEP"
+    },
+    {
+     "molecule_synonym": "Disprin cv",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "DISPRIN CV"
+    },
+    {
+     "molecule_synonym": "Disprin direct",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "DISPRIN DIRECT"
+    },
+    {
+     "molecule_synonym": "Durlaza",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "DURLAZA"
+    },
+    {
+     "molecule_synonym": "Enprin",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "ENPRIN"
+    },
+    {
+     "molecule_synonym": "Equi-prin",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "Equi-Prin"
+    },
+    {
+     "molecule_synonym": "Gencardia",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "GENCARDIA"
+    },
+    {
+     "molecule_synonym": "Levius",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "LEVIUS"
+    },
+    {
+     "molecule_synonym": "Max strgh aspro clr",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "MAX STRGH ASPRO CLR"
+    },
+    {
+     "molecule_synonym": "Measurin",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "MEASURIN"
+    },
+    {
+     "molecule_synonym": "Micropirin ec",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "MICROPIRIN EC"
+    },
+    {
+     "molecule_synonym": "NSC-27223",
+     "syn_type": "RESEARCH_CODE",
+     "synonyms": "NSC-27223"
+    },
+    {
+     "molecule_synonym": "NSC-406186",
+     "syn_type": "RESEARCH_CODE",
+     "synonyms": "NSC-406186"
+    },
+    {
+     "molecule_synonym": "Nu-seals 300",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "NU-SEALS 300"
+    },
+    {
+     "molecule_synonym": "Nu-seals 600",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "NU-SEALS 600"
+    },
+    {
+     "molecule_synonym": "Nu-seals 75",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "NU-SEALS 75"
+    },
+    {
+     "molecule_synonym": "Nu-seals cardio 75",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "NU-SEALS CARDIO 75"
+    },
+    {
+     "molecule_synonym": "Paynocil",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "PAYNOCIL"
+    },
+    {
+     "molecule_synonym": "Platet",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "PLATET"
+    },
+    {
+     "molecule_synonym": "Platet 300",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "PLATET 300"
+    },
+    {
+     "molecule_synonym": "Postmi 300",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "POSTMI 300"
+    },
+    {
+     "molecule_synonym": "Postmi 75",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "POSTMI 75"
+    },
+    {
+     "molecule_synonym": "Salicylic acid acetate",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "Salicylic Acid Acetate"
+    },
+    {
+     "molecule_synonym": "Vazalore",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "VAZALORE"
+    }
+   ],
+   "molecule_type": "Small molecule",
+   "natural_product": 1,
+   "oral": true,
+   "orphan": 0,
+   "parenteral": false,
+   "polymer_flag": 0,
+   "pref_name": "ASPIRIN",
+   "prodrug": 0,
+   "structure_type": "MOL",
+   "therapeutic_flag": true,
+   "topical": false,
+   "usan_stem": null,
+   "usan_stem_definition": null,
+   "usan_substem": null,
+   "usan_year": null,
+   "veterinary": 0,
+   "withdrawn_flag": false
+  },
+  {
+   "atc_classifications": [
+    "L01EA01"
+   ],
+   "availability_type": 1,
+   "biotherapeutic": null,
+   "black_box_warning": 0,
+   "chemical_probe": 1,
+   "chirality": 2,
+   "cross_references": [],
+   "dosed_ingredient": false,
+   "first_approval": 2001,
+   "first_in_class": 0,
+   "helm_notation": null,
+   "inorganic_flag": 0,
+   "max_phase": "4.0",
+   "molecule_chembl_id": "CHEMBL941",
+   "molecule_hierarchy": {
+    "active_chembl_id": "CHEMBL941",
+    "molecule_chembl_id": "CHEMBL941",
+    "parent_chembl_id": "CHEMBL941"
+   },
+   "molecule_properties": {
+    "alogp": "4.59",
+    "aromatic_rings": 4,
+    "full_molformula": "C29H31N7O",
+    "full_mwt": "493.62",
+    "hba": 7,
+    "hbd": 2,
+    "heavy_atoms": 37,
+    "mw_freebase": "493.62",
+    "np_likeness_score": "-1.80",
+    "num_ro5_violations": 0,
+    "psa": "86.28",
+    "qed_weighted": "0.39",
+    "ro3_pass": "N",
+    "rtb": 7
+   },
+   "molecule_structures": {
+    "canonical_smiles": "Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1",
+    "standard_inchi": "InChI=1S/C29H31N7O/c1-21-5-10-25(18-27(21)34-29-31-13-11-26(33-29)24-4-3-12-30-19-24)32-28(37)23-8-6-22(7-9-23)20-36-16-14-35(2)15-17-36/h3-13,18-19H,14-17,20H2,1-2H3,(H,32,37)(H,31,33,34)",
+    "standard_inchi_key": "KTUFNOKKBVMGRW-UHFFFAOYSA-N"
+   },
+   "molecule_synonyms": [
+    {
+     "molecule_synonym": "CGP057148B",
+     "syn_type": "PND",
+     "synonyms": "CGP057148B"
+    },
+    {
+     "molecule_synonym": "CGP-57148B",
+     "syn_type": "PND",
+     "synonyms": "CGP-57148B"
+    },
+    {
+     "molecule_synonym": "Glamox",
+     "syn_type": "OTHER",
+     "synonyms": "GLAMOX"
+    },
+    {
+     "molecule_synonym": "GLAMOX",
+     "syn_type": "PND",
+     "synonyms": "GLAMOX"
+    },
+    {
+     "molecule_synonym": "GLEEVEC",
+     "syn_type": "PND",
+     "synonyms": "Gleevec"
+    },
+    {
+     "molecule_synonym": "GLEEVEC,STI-571",
+     "syn_type": "PND",
+     "synonyms": "Gleevec,STI-571"
+    },
+    {
+     "molecule_synonym": "GLIVEC",
+     "syn_type": "PND",
+     "synonyms": "Glivec"
+    },
+    {
+     "molecule_synonym": "Imatinib",
+     "syn_type": "ATC",
+     "synonyms": "IMATINIB"
+    },
+    {
+     "molecule_synonym": "Imatinib",
+     "syn_type": "BAN",
+     "synonyms": "IMATINIB"
+    },
+    {
+     "molecule_synonym": "Imatinib",
+     "syn_type": "INN",
+     "synonyms": "IMATINIB"
+    },
+    {
+     "molecule_synonym": "Imatinib",
+     "syn_type": "MERCK_INDEX",
+     "synonyms": "IMATINIB"
+    },
+    {
+     "molecule_synonym": "Imatinib",
+     "syn_type": "OTHER",
+     "synonyms": "IMATINIB"
+    },
+    {
+     "molecule_synonym": "IMATINIB",
+     "syn_type": "PND",
+     "synonyms": "IMATINIB"
+    },
+    {
+     "molecule_synonym": "IMATINIB MESYLATE",
+     "syn_type": "PND",
+     "synonyms": "Imatinib mesylate"
+    },
+    {
+     "molecule_synonym": "IMATINIB MESYLATEGLEEVECGLIVECIMATINIBSTI571CGP 571484-[(4-METHYL-1-PIPERAZINYL)METHYL]-N-[4-METHYL-3-[[4-(3-PYRIDINYL)-2-PYRIMIDINYL]AMINO]-PHENYL]BENZAMIDE",
+     "syn_type": "PND",
+     "synonyms": "Imatinib mesylateGleevecGlivecImatinibSTI571CGP 571484-[(4-Methyl-1-piperazinyl)methyl]-N-[4-methyl-3-[[4-(3-pyridinyl)-2-pyrimidinyl]amino]-phenyl]benzamide"
+    },
+    {
+     "molecule_synonym": "IMATINIB (STI571)",
+     "syn_type": "PND",
+     "synonyms": "Imatinib (STI571)"
+    },
+    {
+     "molecule_synonym": "NSC-743414",
+     "syn_type": "PND",
+     "synonyms": "NSC-743414"
+    },
+    {
+     "molecule_synonym": "NSC-743414",
+     "syn_type": "RESEARCH_CODE",
+     "synonyms": "NSC-743414"
+    },
+    {
+     "molecule_synonym": "NSC-759854",
+     "syn_type": "PND",
+     "synonyms": "NSC-759854"
+    },
+    {
+     "molecule_synonym": "NSC-759854",
+     "syn_type": "RESEARCH_CODE",
+     "synonyms": "NSC-759854"
+    },
+    {
+     "molecule_synonym": "ST-1571",
+     "syn_type": "PND",
+     "synonyms": "ST-1571"
+    },
+    {
+     "molecule_synonym": "STI-571",
+     "syn_type": "PND",
+     "synonyms": "STI-571"
+    },
+    {
+     "molecule_synonym": "STI571",
+     "syn_type": "PND",
+     "synonyms": "STI571"
+    },
+    {
+     "molecule_synonym": "STI571,GLEEVEC",
+     "syn_type": "PND",
+     "synonyms": "STI571,Gleevec"
+    }
+   ],
+   "molecule_type": "Small molecule",
+   "natural_product": 1,
+   "oral": true,
+   "orphan": 0,
+   "parenteral": false,
+   "polymer_flag": 0,
+   "pref_name": "IMATINIB",
+   "prodrug": 0,
+   "structure_type": "MOL",
+   "therapeutic_flag": true,
+   "topical": false,
+   "usan_stem": "-tinib",
+   "usan_stem_definition": "tyrosine kinase inhibitors",
+   "usan_substem": "-tinib",
+   "usan_year": null,
+   "veterinary": 0,
+   "withdrawn_flag": false
+  },
+  {
+   "atc_classifications": [],
+   "availability_type": 1,
+   "biotherapeutic": null,
+   "black_box_warning": 0,
+   "chemical_probe": 0,
+   "chirality": 2,
+   "cross_references": [
+    {
+     "xref_id": "human/EPAR/imatinib-teva-bv",
+     "xref_name": "imatinib-teva-bv",
+     "xref_src": "EMA"
+    },
+    {
+     "xref_id": "human/EPAR/imatinib-actavis",
+     "xref_name": "imatinib-actavis",
+     "xref_src": "EMA"
+    },
+    {
+     "xref_id": "human/EPAR/imatinib-teva",
+     "xref_name": "imatinib-teva",
+     "xref_src": "EMA"
+    },
+    {
+     "xref_id": "human/EPAR/glivec",
+     "xref_name": "glivec",
+     "xref_src": "EMA"
+    },
+    {
+     "xref_id": "imatinib%20mesylate",
+     "xref_name": "imatinib mesylate",
+     "xref_src": "DailyMed"
+    },
+    {
+     "xref_id": "human/EPAR/imatinib-medac",
+     "xref_name": "imatinib-medac",
+     "xref_src": "EMA"
+    },
+    {
+     "xref_id": "human/EPAR/imatinib-koanaa",
+     "xref_name": "imatinib-koanaa",
+     "xref_src": "EMA"
+    },
+    {
+     "xref_id": "human/EPAR/imatinib-accord",
+     "xref_name": "imatinib-accord",
+     "xref_src": "EMA"
+    }
+   ],
+   "dosed_ingredient": true,
+   "first_approval": 2001,
+   "first_in_class": 0,
+   "helm_notation": null,
+   "inorganic_flag": 0,
+   "max_phase": "4.0",
+   "molecule_chembl_id": "CHEMBL1642",
+   "molecule_hierarchy": {
+    "active_chembl_id": "CHEMBL941",
+    "molecule_chembl_id": "CHEMBL1642",
+    "parent_chembl_id": "CHEMBL941"
+   },
+   "molecule_properties": {
+    "alogp": "4.59",
+    "aromatic_rings": 4,
+    "full_molformula": "C30H35N7O4S",
+    "full_mwt": "589.72",
+    "hba": 7,
+    "hbd": 2,
+    "heavy_atoms": 37,
+    "mw_freebase": "493.62",
+    "np_likeness_score": "-1.80",
+    "num_ro5_violations": 0,
+    "psa": "86.28",
+    "qed_weighted": "0.39",
+    "ro3_pass": "N",
+    "rtb": 7
+   },
+   "molecule_structures": {
+    "canonical_smiles": "CS(=O)(=O)O.Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1",
+    "standard_inchi": "InChI=1S/C29H31N7O.CH4O3S/c1-21-5-10-25(18-27(21)34-29-31-13-11-26(33-29)24-4-3-12-30-19-24)32-28(37)23-8-6-22(7-9-23)20-36-16-14-35(2)15-17-36;1-5(2,3)4/h3-13,18-19H,14-17,20H2,1-2H3,(H,32,37)(H,31,33,34);1H3,(H,2,3,4)",
+    "standard_inchi_key": "YLMAHDNUQAMNNX-UHFFFAOYSA-N"
+   },
+   "molecule_synonyms": [
+    {
+     "molecule_synonym": "Gleevec",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "GLEEVEC"
+    },
+    {
+     "molecule_synonym": "Glivec",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "GLIVEC"
+    },
+    {
+     "molecule_synonym": "Imatinib accord",
+     "syn_type": "OTHER",
+     "synonyms": "IMATINIB ACCORD"
+    },
+    {
+     "molecule_synonym": "Imatinib accord",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "IMATINIB ACCORD"
+    },
+    {
+     "molecule_synonym": "Imatinib actavis",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "IMATINIB ACTAVIS"
+    },
+    {
+     "molecule_synonym": "Imatinib (as mesilate)",
+     "syn_type": "OTHER",
+     "synonyms": "IMATINIB (AS MESILATE)"
+    },
+    {
+     "molecule_synonym": "Imatinib koanaa",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "IMATINIB KOANAA"
+    },
+    {
+     "molecule_synonym": "Imatinib medac",
+     "syn_type": "OTHER",
+     "synonyms": "IMATINIB MEDAC"
+    },
+    {
+     "molecule_synonym": "Imatinib medac",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "IMATINIB MEDAC"
+    },
+    {
+     "molecule_synonym": "Imatinib mesilate",
+     "syn_type": "BNF",
+     "synonyms": "IMATINIB MESILATE"
+    },
+    {
+     "molecule_synonym": "Imatinib mesilate",
+     "syn_type": "JAN",
+     "synonyms": "IMATINIB MESILATE"
+    },
+    {
+     "molecule_synonym": "Imatinib mesilate",
+     "syn_type": "OTHER",
+     "synonyms": "IMATINIB MESILATE"
+    },
+    {
+     "molecule_synonym": "Imatinib mesylate",
+     "syn_type": "EMA",
+     "synonyms": "IMATINIB MESYLATE"
+    },
+    {
+     "molecule_synonym": "Imatinib mesylate",
+     "syn_type": "FDA",
+     "synonyms": "IMATINIB MESYLATE"
+    },
+    {
+     "molecule_synonym": "Imatinib mesylate",
+     "syn_type": "OTHER",
+     "synonyms": "IMATINIB MESYLATE"
+    },
+    {
+     "molecule_synonym": "Imatinib mesylate",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "IMATINIB MESYLATE"
+    },
+    {
+     "molecule_synonym": "Imatinib mesylate",
+     "syn_type": "USAN",
+     "synonyms": "IMATINIB MESYLATE"
+    },
+    {
+     "molecule_synonym": "Imatinib methane sulfonate",
+     "syn_type": "OTHER",
+     "synonyms": "IMATINIB METHANE SULFONATE"
+    },
+    {
+     "molecule_synonym": "Imatinib methanesulfonate",
+     "syn_type": "MERCK_INDEX",
+     "synonyms": "IMATINIB METHANESULFONATE"
+    },
+    {
+     "molecule_synonym": "Imatinib teva",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "IMATINIB TEVA"
+    },
+    {
+     "molecule_synonym": "Imatinib teva b.v.",
+     "syn_type": "TRADE_NAME",
+     "synonyms": "IMATINIB TEVA B.V."
+    },
+    {
+     "molecule_synonym": "NSC-716051",
+     "syn_type": "RESEARCH_CODE",
+     "synonyms": "NSC-716051"
+    },
+    {
+     "molecule_synonym": "QTI-571",
+     "syn_type": "RESEARCH_CODE",
+     "synonyms": "QTI-571"
+    },
+    {
+     "molecule_synonym": "Qti571",
+     "syn_type": "OTHER",
+     "synonyms": "QTI571"
+    },
+    {
+     "molecule_synonym": "QTI571",
+     "syn_type": "RESEARCH_CODE",
+     "synonyms": "QTI571"
+    },
+    {
+     "molecule_synonym": "STI 571",
+     "syn_type": "RESEARCH_CODE",
+     "synonyms": "STI 571"
+    },
+    {
+     "molecule_synonym": "STI-571",
+     "syn_type": "RESEARCH_CODE",
+     "synonyms": "STI-571"
+    },
+    {
+     "molecule_synonym": "STI571",
+     "syn_type": "RESEARCH_CODE",
+     "synonyms": "STI571"
+    }
+   ],
+   "molecule_type": "Small molecule",
+   "natural_product": 0,
+   "oral": true,
+   "orphan": 0,
+   "parenteral": false,
+   "polymer_flag": 0,
+   "pref_name": "IMATINIB MESYLATE",
+   "prodrug": 0,
+   "structure_type": "MOL",
+   "therapeutic_flag": true,
+   "topical": false,
+   "usan_stem": "-tinib",
+   "usan_stem_definition": "tyrosine kinase inhibitors",
+   "usan_substem": "-tinib",
+   "usan_year": null,
+   "veterinary": 0,
+   "withdrawn_flag": false
+  }
+ ],
+ "page_meta": {
+  "limit": 1000,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total_count": 3
+ }
+}

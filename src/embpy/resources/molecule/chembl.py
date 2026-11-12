@@ -21,7 +21,7 @@ more that a perturbation screen wants to know about its compounds:
   family for each target, rather than an opaque ``CHEMBL`` accession.
 * **Analogs** -- structurally similar compounds by Tanimoto similarity.
 
-Two ChEMBL behaviours shape this module.
+Four ChEMBL behaviours shape this module.
 
 First, drug-level annotation hangs off the **parent** molecule, not the salt
 that was dosed.  ``mechanism?molecule_chembl_id=CHEMBL941`` -- imatinib --
@@ -32,25 +32,45 @@ drug-level query here resolves the molecule hierarchy first and filters on
 0 and 4 mechanisms, and between 52 and 134 indications.
 
 Second, ChEMBL silently ignores filter parameters it does not recognise and
-returns the unfiltered collection -- a misspelled field name yields a
-plausible-looking response covering the whole database.  Field names here
-follow the ChEMBL_37 schema exactly.
+returns the unfiltered collection -- ``mechanism.json?parent_chembl_id__in=``
+(a misspelling) answers with all 7,561 mechanism rows.  Field names here
+follow the ChEMBL_37 schema exactly, and every filtered response is checked
+row by row against the keys that were asked for
+(:class:`ChEMBLFilterIgnoredError`).
+
+Third, the REST API fails intermittently: it answered 500 to roughly half
+of all requests for about a day in November 2026.  :func:`_get_json` raises
+:class:`ChEMBLServiceError` on 5xx, 429, timeouts and connection errors so
+that an outage is never mistaken for "no data"; only a 404 means absent.
+
+Fourth, per-compound requests do not scale -- a full annotation costs about
+15 requests per parent.  Identity is therefore resolved by exact standard
+InChIKey in batches (:meth:`ChEMBLAnnotator.resolve_many`), the per-source
+getters have ``*_many`` batch forms using validated ``__in`` filters, and an
+offline backend (``backend="sqlite"``) answers every getter from a local
+ChEMBL SQLite release with the same return shapes and no network at all.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import sqlite3
 import statistics
+import threading
 import time
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urljoin
 
 import requests
 
 logger = logging.getLogger(__name__)
 
-CHEMBL = "https://www.ebi.ac.uk/chembl/api/data"
+CHEMBL_HOST = "https://www.ebi.ac.uk"
+CHEMBL = f"{CHEMBL_HOST}/chembl/api/data"
 
 # Fetch caps. Counts derived from a capped fetch are flagged ``*_at_limit``
 # in :meth:`ChEMBLAnnotator.annotate_adata` so a saturated column is not
@@ -64,6 +84,15 @@ DEFAULT_FORMS = 50
 DEFAULT_ANALOGS = 25
 DEFAULT_ANALOG_SIMILARITY = 70
 DEFAULT_TARGETS = 50
+
+#: Keys per batched ``__in`` request.  50 InChIKeys make a URL of about
+#: 1.5 KB; the 2026-11 baseline used 25 and saw at most 21 rows per batch.
+DEFAULT_BATCH = 50
+#: Page size for filtered collection queries (the API maximum).
+PAGE_LIMIT = 1000
+#: Safety stop for pagination.  A filtered query never needs this many
+#: pages; reaching it means the filter was not applied.
+MAX_PAGES = 50
 
 #: ``max_phase`` in ``molecule_dictionary``.  ``None`` means a preclinical
 #: compound with bioactivity data but no clinical record.
@@ -129,21 +158,108 @@ ALL_SOURCES: tuple[str, ...] = (
 )
 
 _CHEMBL_ID_RE = re.compile(r"^CHEMBL\d+$", re.IGNORECASE)
+_INCHIKEY_RE = re.compile(r"^[A-Z]{14}-[A-Z]{10}-[A-Z]$")
 # Characters that can legally appear in a SMILES string. Used only to guess
 # whether an identifier is a structure or a name when RDKit is unavailable.
 _SMILES_CHARS_RE = re.compile(r"^[A-Za-z0-9@+\-\[\]()=#$:/\\.%*]+$")
 
 
+# =====================================================================
+# Errors and HTTP
+# =====================================================================
+
+
+class ChEMBLServiceError(RuntimeError):
+    """The ChEMBL web service failed to answer: 5xx, 429, timeout, no connection.
+
+    Distinct from "no data": a 404 is reported as ``None`` by
+    :func:`_get_json`, an empty collection as ``[]``.
+
+    Attributes
+    ----------
+    status_code
+        HTTP status, or ``None`` for timeouts and connection errors.
+    url
+        The request URL.
+    kind
+        ``"http_5xx"``, ``"rate_limited"``, ``"timeout"``, ``"connection"``,
+        ``"invalid_json"``, ``"no_response"`` or ``"too_many_pages"``.
+    """
+
+    status = "service_error"
+
+    def __init__(
+        self,
+        status_code: int | None = None,
+        url: str = "",
+        message: str = "",
+        *,
+        kind: str = "http_5xx",
+    ) -> None:
+        self.status_code = status_code
+        self.url = url
+        self.kind = kind
+        detail = message or (f"HTTP {status_code}" if status_code else kind)
+        super().__init__(f"ChEMBL {kind}: {detail} ({url})" if url else f"ChEMBL {kind}: {detail}")
+
+
+class ChEMBLFilterIgnoredError(RuntimeError):
+    """A filtered response contained rows that do not match the filter.
+
+    ChEMBL answers an unsupported filter with the unfiltered collection, so
+    one foreign row means none of the rows can be trusted.
+    """
+
+    status = "filter_ignored"
+
+    def __init__(self, endpoint: str, field_name: str, foreign: list[Any]) -> None:
+        self.endpoint = endpoint
+        self.field_name = field_name
+        self.foreign = foreign
+        super().__init__(
+            f"ChEMBL {endpoint}: {len(foreign)} row(s) outside the requested "
+            f"{field_name} values (e.g. {foreign[:3]}); filter not applied"
+        )
+
+
 def _get_json(url: str, params: dict | None = None, timeout: int = 30) -> dict | None:
+    """GET a ChEMBL JSON resource.
+
+    Returns ``None`` for 404 (absent) and for other 4xx client errors, which
+    the API also uses for malformed filter paths.  Raises
+    :class:`ChEMBLServiceError` on 5xx, 429, timeouts, connection errors and
+    non-JSON bodies, so callers can tell an outage from missing data.
+
+    The name and signature are fixed: ``embpy_repro``'s ``Transport``
+    replaces this function to add caching, pacing and circuit breaking.
+    """
     try:
         resp = requests.get(url, params=params, timeout=timeout)
-        if resp.status_code == 404:
-            return None
-        resp.raise_for_status()
-        return resp.json()
-    except Exception as e:  # noqa: BLE001
-        logger.debug("Request failed for %s: %s", url, e)
+    except requests.Timeout as exc:
+        raise ChEMBLServiceError(None, url, str(exc), kind="timeout") from exc
+    except requests.ConnectionError as exc:
+        raise ChEMBLServiceError(None, url, str(exc), kind="connection") from exc
+    except requests.RequestException as exc:
+        raise ChEMBLServiceError(None, url, str(exc), kind="connection") from exc
+    code = resp.status_code
+    if code == 404:
         return None
+    if code == 429:
+        raise ChEMBLServiceError(code, url, kind="rate_limited")
+    if code >= 500:
+        raise ChEMBLServiceError(code, url, kind="http_5xx")
+    if code >= 400:
+        logger.warning("ChEMBL client error %s for %s: %s", code, url, resp.text[:200])
+        return None
+    try:
+        return resp.json()
+    except ValueError as exc:
+        raise ChEMBLServiceError(code, url, "response is not JSON", kind="invalid_json") from exc
+
+
+# =====================================================================
+# Decoding helpers
+# =====================================================================
 
 
 def _as_float(value: Any) -> float | None:
@@ -195,6 +311,88 @@ def _protein_class_path(class_desc: str | None) -> list[str]:
     return [part.strip() for part in class_desc.split("  ") if part.strip()]
 
 
+def _chunks(items: list[Any], size: int) -> Iterable[list[Any]]:
+    size = max(1, int(size))
+    for i in range(0, len(items), size):
+        yield items[i : i + size]
+
+
+def _synonym_sort_key(syn: Mapping[str, Any]) -> tuple[str, str, str, str]:
+    """Order synonyms as the REST API does (a locale-style collation).
+
+    Letters and digits first, ignoring case and punctuation; then
+    punctuation and spaces; then lower case before upper case; then type.
+    Checked against all 132 synonyms of CHEMBL25, CHEMBL941 and CHEMBL1642.
+    """
+    name = str(syn.get("molecule_synonym") or syn.get("synonyms") or "")
+    return (re.sub(r"[\W_]+", "", name).upper(), name.upper(), name.swapcase(), str(syn.get("syn_type") or ""))
+
+
+def _record_inchikey(record: Mapping[str, Any]) -> str | None:
+    key = (record.get("molecule_structures") or {}).get("standard_inchi_key")
+    return key.upper() if isinstance(key, str) else None
+
+
+def smiles_to_inchikey(smiles: str) -> str | None:
+    """Standard InChIKey of a SMILES with RDKit, or ``None`` if it does not parse.
+
+    Raises
+    ------
+    ImportError
+        If RDKit is not installed.
+    """
+    from rdkit import Chem, rdBase
+
+    with rdBase.BlockLogs():
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return None
+        key = Chem.MolToInchiKey(mol)
+    return key or None
+
+
+def _rdkit_available() -> bool:
+    try:
+        import rdkit  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+# =====================================================================
+# Result containers
+# =====================================================================
+
+
+class BatchResult(dict):
+    """Result of a ``*_many`` batch getter.
+
+    A ``dict`` keyed by requested identifier for every identifier whose batch
+    succeeded -- an identifier with no rows maps to ``[]`` (or ``None`` for a
+    record that does not exist).  Identifiers whose batch failed are absent
+    from the mapping and listed in :attr:`failed` instead, so a provider
+    failure can never be read as "no data".  Use :meth:`status` rather than
+    ``.get`` to tell the cases apart.
+
+    Attributes
+    ----------
+    failed
+        ``{identifier: {"status": "batch_failed" | "filter_ignored", "error": str}}``.
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.failed: dict[str, dict[str, str]] = {}
+
+    def status(self, key: str) -> str:
+        """``"success"``, ``"not_found"``, ``"batch_failed"``, ``"filter_ignored"`` or ``"not_requested"``."""
+        if key in self:
+            return "not_found" if self[key] is None else "success"
+        if key in self.failed:
+            return self.failed[key]["status"]
+        return "not_requested"
+
+
 @dataclass(frozen=True)
 class ChEMBLResolution:
     """Outcome of mapping a user identifier onto ChEMBL.
@@ -212,8 +410,22 @@ class ChEMBLResolution:
     pref_name
         ChEMBL preferred name, when the compound has one.
     matched_by
-        How the match was made: ``"chembl_id"``, ``"smiles"``,
-        ``"pref_name"``, ``"synonym"`` or ``"search"``.
+        How the match was made: ``"chembl_id"``, ``"standard_inchi_key"``,
+        ``"smiles_flexmatch"`` (opt-in, InChIKey-verified), ``"pref_name"``,
+        ``"synonym"`` or ``"search"``.
+    status
+        ``"matched"``, ``"no_match"``, ``"ambiguous"``,
+        ``"invalid_structure"``, ``"batch_failed"`` or ``"filter_ignored"``.
+        The last two come only from :meth:`ChEMBLAnnotator.resolve_many`,
+        where a failed batch must not read as "not in ChEMBL".
+    inchikey
+        The query's standard InChIKey, for structure inputs.
+    matched_inchikey
+        ``standard_inchi_key`` of the matched ChEMBL record.
+    candidates
+        ``(molecule_chembl_id, parent_chembl_id)`` pairs when ambiguous.
+    error
+        Failure detail for ``batch_failed`` / ``filter_ignored``.
     """
 
     identifier: str
@@ -221,11 +433,684 @@ class ChEMBLResolution:
     parent_chembl_id: str | None = None
     pref_name: str | None = None
     matched_by: str | None = None
+    status: str = "no_match"
+    inchikey: str | None = None
+    matched_inchikey: str | None = None
+    candidates: tuple[tuple[str | None, str | None], ...] = field(default_factory=tuple)
+    error: str | None = None
 
     @property
     def found(self) -> bool:
         """Whether the identifier matched a ChEMBL molecule."""
         return self.molecule_chembl_id is not None
+
+
+# =====================================================================
+# Offline backend: ChEMBL SQLite release
+# =====================================================================
+
+_SQLITE_BACKENDS: dict[str, ChEMBLSqlite] = {}
+_SQLITE_LOCK = threading.Lock()
+# SQLite's default limit on host parameters is 999 on old builds.
+_SQL_CHUNK = 500
+
+
+class ChEMBLSqlite:
+    """Read-only access to a ChEMBL SQLite release, shaped like the REST API.
+
+    Every method returns rows with the field names of the corresponding
+    REST resource, so :class:`ChEMBLAnnotator` parses both backends with the
+    same code.  Drug-level rows (mechanisms, indications, warnings,
+    metabolism) are aggregated over every molecule whose
+    ``molecule_hierarchy.parent_molregno`` is the requested parent, which is
+    what the REST ``parent_molecule_chembl_id`` filter does.
+
+    The database is opened as ``file:<path>?mode=ro&immutable=1``: no write
+    can happen and no lock traffic reaches a network filesystem.  Each thread
+    gets its own connection.
+
+    Parameters
+    ----------
+    db_path
+        Path to ``chembl_<release>.db``.
+    """
+
+    def __init__(self, db_path: str | Path) -> None:
+        self.path = Path(db_path).expanduser().resolve()
+        if not self.path.is_file():
+            raise FileNotFoundError(f"ChEMBL SQLite database not found: {self.path}")
+        self.uri = f"{self.path.as_uri()}?mode=ro&immutable=1"
+        self._local = threading.local()
+        self.tables = {
+            r["name"] for r in self.query("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+        self.release = self._read_release()
+
+    @classmethod
+    def shared(cls, db_path: str | Path) -> ChEMBLSqlite:
+        """One backend per database file, shared by every annotator instance."""
+        key = str(Path(db_path).expanduser().resolve())
+        with _SQLITE_LOCK:
+            backend = _SQLITE_BACKENDS.get(key)
+            if backend is None:
+                backend = _SQLITE_BACKENDS[key] = cls(key)
+            return backend
+
+    # -- plumbing ---------------------------------------------------------
+
+    def _conn(self) -> sqlite3.Connection:
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self.uri, uri=True, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            self._local.conn = conn
+        return conn
+
+    def query(self, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
+        """Run one read-only query on this thread's connection."""
+        return self._conn().execute(sql, tuple(params)).fetchall()
+
+    def query_in(self, sql: str, values: Iterable[Any], extra: Iterable[Any] = ()) -> list[sqlite3.Row]:
+        """Run ``sql`` with ``{in}`` replaced by a placeholder list, in chunks."""
+        values = list(dict.fromkeys(values))
+        extra = tuple(extra)
+        rows: list[sqlite3.Row] = []
+        for chunk in _chunks(values, _SQL_CHUNK):
+            marks = ",".join("?" * len(chunk))
+            rows.extend(self.query(sql.replace("{in}", marks), (*chunk, *extra)))
+        return rows
+
+    def _read_release(self) -> str:
+        # ``version`` lists every bundled resource (BAO, EFO, RDKit, ...);
+        # the release itself is the ``ChEMBL_<n>`` row.
+        if "version" in self.tables:
+            for row in self.query("SELECT name FROM version"):
+                if re.fullmatch(r"ChEMBL_\d+", str(row["name"] or "")):
+                    return str(row["name"])
+        match = re.search(r"chembl_(\d+)", self.path.name, re.IGNORECASE)
+        return f"ChEMBL_{match.group(1)}" if match else "ChEMBL_unknown"
+
+    def _columns(self, table: str) -> list[str]:
+        return [r["name"] for r in self.query(f"PRAGMA table_info({table})")]
+
+    # -- molecules --------------------------------------------------------
+
+    _MOLECULE_SQL = """
+        SELECT md.*, cs.canonical_smiles AS _canonical_smiles,
+               cs.standard_inchi AS _standard_inchi,
+               cs.standard_inchi_key AS _standard_inchi_key,
+               COALESCE(pmd.chembl_id, md.chembl_id) AS _parent_chembl_id,
+               COALESCE(amd.chembl_id, md.chembl_id) AS _active_chembl_id,
+               COALESCE(mh.parent_molregno, md.molregno) AS _parent_molregno
+        FROM molecule_dictionary md
+        LEFT JOIN compound_structures cs ON cs.molregno = md.molregno
+        LEFT JOIN molecule_hierarchy mh ON mh.molregno = md.molregno
+        LEFT JOIN molecule_dictionary pmd ON pmd.molregno = mh.parent_molregno
+        LEFT JOIN molecule_dictionary amd ON amd.molregno = mh.active_molregno
+    """
+    _SKIP = {"molregno", "chembl_id", "chebi_par_id", "indication_class"}
+
+    def _records(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
+        if not rows:
+            return []
+        molregnos = [r["molregno"] for r in rows]
+        parents = {r["molregno"] for r in rows if r["molregno"] == r["_parent_molregno"]}
+        synonyms: dict[int, list[dict[str, Any]]] = {}
+        for r in self.query_in(
+            "SELECT molregno, synonyms, syn_type FROM molecule_synonyms "
+            "WHERE molregno IN ({in}) ORDER BY molsyn_id",
+            molregnos,
+        ):
+            synonyms.setdefault(r["molregno"], []).append(
+                {"molecule_synonym": r["synonyms"], "syn_type": r["syn_type"], "synonyms": r["synonyms"]}
+            )
+        # The API lists synonyms in a locale collation; reproduce it so the
+        # priority-stable ordering in get_synonyms is the same offline.
+        for rows_ in synonyms.values():
+            rows_.sort(key=_synonym_sort_key)
+        atc = self._atc_codes(molregnos, parents)
+        out = []
+        for r in rows:
+            record = {k: r[k] for k in r.keys() if not k.startswith("_") and k not in self._SKIP}
+            record.update(
+                molecule_chembl_id=r["chembl_id"],
+                molecule_hierarchy={
+                    "molecule_chembl_id": r["chembl_id"],
+                    "parent_chembl_id": r["_parent_chembl_id"],
+                    "active_chembl_id": r["_active_chembl_id"],
+                },
+                molecule_structures=(
+                    {
+                        "canonical_smiles": r["_canonical_smiles"],
+                        "standard_inchi": r["_standard_inchi"],
+                        "standard_inchi_key": r["_standard_inchi_key"],
+                    }
+                    if r["_standard_inchi_key"] or r["_canonical_smiles"]
+                    else None
+                ),
+                atc_classifications=atc.get(r["molregno"], []),
+                molecule_synonyms=synonyms.get(r["molregno"], []),
+                # The REST record's cross_references (DailyMed, EMA EPAR,
+                # Wikipedia) have no table in the SQLite release.
+                cross_references=[],
+            )
+            out.append(record)
+        return out
+
+    def _atc_codes(self, molregnos: list[int], parents: set[int]) -> dict[int, list[str]]:
+        """ATC codes per molecule; a parent also collects its salts' codes."""
+        own: dict[int, list[str]] = {}
+        for r in self.query_in(
+            "SELECT molregno, level5 FROM molecule_atc_classification "
+            "WHERE molregno IN ({in}) ORDER BY mol_atc_id",
+            molregnos,
+        ):
+            own.setdefault(r["molregno"], []).append(r["level5"])
+        if parents:
+            for r in self.query_in(
+                "SELECT mh.parent_molregno AS parent, mac.level5 FROM molecule_hierarchy mh "
+                "JOIN molecule_atc_classification mac ON mac.molregno = mh.molregno "
+                "WHERE mh.parent_molregno IN ({in}) AND mh.molregno != mh.parent_molregno "
+                "ORDER BY mac.mol_atc_id",
+                parents,
+            ):
+                codes = own.setdefault(r["parent"], [])
+                if r["level5"] not in codes:
+                    codes.append(r["level5"])
+        return own
+
+    def molecules_by_chembl_id(self, chembl_ids: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """REST-shaped ``molecule`` records keyed by ChEMBL ID (absent IDs are missing)."""
+        ids = [c.upper() for c in chembl_ids]
+        rows = self.query_in(self._MOLECULE_SQL + " WHERE md.chembl_id IN ({in})", ids)
+        return {rec["molecule_chembl_id"]: rec for rec in self._records(rows)}
+
+    def molecules_by_inchikey(self, inchikeys: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
+        """Records whose ``standard_inchi_key`` equals each key (``[]`` when none)."""
+        keys = [k.upper() for k in inchikeys]
+        rows = self.query_in(self._MOLECULE_SQL + " WHERE cs.standard_inchi_key IN ({in})", keys)
+        out: dict[str, list[dict[str, Any]]] = {k: [] for k in keys}
+        for rec in self._records(rows):
+            out.setdefault(_record_inchikey(rec) or "", []).append(rec)
+        return out
+
+    def molecules_by_name(self, name: str) -> list[dict[str, Any]]:
+        """Records whose ``pref_name`` equals ``name`` (ChEMBL names are upper case)."""
+        rows = self.query(self._MOLECULE_SQL + " WHERE md.pref_name = ? LIMIT 5", (name.upper(),))
+        return self._records(rows)
+
+    def molecules_by_synonym(self, name: str) -> list[dict[str, Any]]:
+        """Records with a synonym equal to ``name``, ignoring case."""
+        regs = [
+            r["molregno"]
+            for r in self.query(
+                "SELECT DISTINCT molregno FROM molecule_synonyms WHERE UPPER(synonyms) = ? LIMIT 5",
+                (name.upper(),),
+            )
+        ]
+        if not regs:
+            return []
+        return self._records(self.query_in(self._MOLECULE_SQL + " WHERE md.molregno IN ({in})", regs))
+
+    # -- the parent family --------------------------------------------------
+
+    def _family(self, parents: Iterable[str]) -> tuple[dict[int, str], dict[str, Any]]:
+        """``{molregno: parent_chembl_id}`` for every molecule under each parent.
+
+        A molecule belongs to parent ``P`` when its ``parent_molregno`` is
+        ``P`` (or it has no hierarchy row and is ``P`` itself), which is the
+        REST ``parent_molecule_chembl_id`` semantics: a salt passed as the
+        "parent" has no family.  Also returns ``{parent_chembl_id: row}``.
+        """
+        ids = [p.upper() for p in parents]
+        prow = {
+            r["chembl_id"]: r
+            for r in self.query_in(
+                "SELECT md.molregno, md.chembl_id, md.max_phase, mh.parent_molregno "
+                "FROM molecule_dictionary md LEFT JOIN molecule_hierarchy mh ON mh.molregno = md.molregno "
+                "WHERE md.chembl_id IN ({in})",
+                ids,
+            )
+        }
+        by_regno = {r["molregno"]: cid for cid, r in prow.items()}
+        family: dict[int, str] = {}
+        for cid, r in prow.items():
+            if r["parent_molregno"] is None or r["parent_molregno"] == r["molregno"]:
+                family[r["molregno"]] = cid
+        if by_regno:
+            for r in self.query_in(
+                "SELECT molregno, parent_molregno FROM molecule_hierarchy WHERE parent_molregno IN ({in})",
+                list(by_regno),
+            ):
+                family[r["molregno"]] = by_regno[r["parent_molregno"]]
+        return family, dict(prow)
+
+    def _chembl_ids(self, molregnos: Iterable[int]) -> dict[int, str]:
+        return {
+            r["molregno"]: r["chembl_id"]
+            for r in self.query_in(
+                "SELECT molregno, chembl_id FROM molecule_dictionary WHERE molregno IN ({in})",
+                [m for m in molregnos if m is not None],
+            )
+        }
+
+    def _refs(self, table: str, key: str, ids: list[Any]) -> dict[Any, list[dict[str, Any]]]:
+        out: dict[Any, list[dict[str, Any]]] = {}
+        if table not in self.tables or not ids:
+            return out
+        for r in self.query_in(
+            f"SELECT {key} AS k, ref_type, ref_id, ref_url FROM {table} WHERE {key} IN ({{in}})", ids
+        ):
+            out.setdefault(r["k"], []).append(
+                {"ref_id": r["ref_id"], "ref_type": r["ref_type"], "ref_url": r["ref_url"]}
+            )
+        return out
+
+    # -- drug-level resources ---------------------------------------------
+
+    def mechanisms(self, parents: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
+        """``mechanism`` rows of every form of each parent, with references."""
+        parents = [p.upper() for p in parents]
+        family, prow = self._family(parents)
+        out: dict[str, list[dict[str, Any]]] = {p: [] for p in parents}
+        if not family:
+            return out
+        rows = self.query_in(
+            "SELECT dm.*, md.chembl_id AS molecule_chembl_id, td.chembl_id AS target_chembl_id "
+            "FROM drug_mechanism dm JOIN molecule_dictionary md ON md.molregno = dm.molregno "
+            "LEFT JOIN target_dictionary td ON td.tid = dm.tid "
+            "WHERE dm.molregno IN ({in}) ORDER BY dm.mec_id",
+            list(family),
+        )
+        refs = self._refs("mechanism_refs", "mec_id", [r["mec_id"] for r in rows])
+        for r in rows:
+            parent = family[r["molregno"]]
+            out[parent].append(
+                {
+                    "action_type": r["action_type"],
+                    "binding_site_comment": r["binding_site_comment"],
+                    "direct_interaction": r["direct_interaction"],
+                    "disease_efficacy": r["disease_efficacy"],
+                    "max_phase": prow[parent]["max_phase"],
+                    "mec_id": r["mec_id"],
+                    "mechanism_comment": r["mechanism_comment"],
+                    "mechanism_of_action": r["mechanism_of_action"],
+                    "molecular_mechanism": r["molecular_mechanism"],
+                    "molecule_chembl_id": r["molecule_chembl_id"],
+                    "parent_molecule_chembl_id": parent,
+                    "record_id": r["record_id"],
+                    "selectivity_comment": r["selectivity_comment"],
+                    "site_id": r["site_id"],
+                    "target_chembl_id": r["target_chembl_id"],
+                    "mechanism_refs": refs.get(r["mec_id"], []),
+                }
+            )
+        return out
+
+    def indications(self, parents: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
+        """``drug_indication`` rows of every form of each parent, with references."""
+        parents = [p.upper() for p in parents]
+        family, _ = self._family(parents)
+        out: dict[str, list[dict[str, Any]]] = {p: [] for p in parents}
+        if not family:
+            return out
+        rows = self.query_in(
+            "SELECT di.*, md.chembl_id AS molecule_chembl_id FROM drug_indication di "
+            "JOIN molecule_dictionary md ON md.molregno = di.molregno "
+            "WHERE di.molregno IN ({in}) ORDER BY di.drugind_id",
+            list(family),
+        )
+        refs = self._refs("indication_refs", "drugind_id", [r["drugind_id"] for r in rows])
+        for r in rows:
+            parent = family[r["molregno"]]
+            out[parent].append(
+                {
+                    "drugind_id": r["drugind_id"],
+                    "efo_id": r["efo_id"],
+                    "efo_term": r["efo_term"],
+                    "indication_refs": refs.get(r["drugind_id"], []),
+                    "max_phase_for_ind": r["max_phase_for_ind"],
+                    "mesh_heading": r["mesh_heading"],
+                    "mesh_id": r["mesh_id"],
+                    "molecule_chembl_id": r["molecule_chembl_id"],
+                    "parent_molecule_chembl_id": parent,
+                }
+            )
+        return out
+
+    def warnings(self, parents: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
+        """``drug_warning`` rows of every form of each parent, with references."""
+        parents = [p.upper() for p in parents]
+        family, _ = self._family(parents)
+        out: dict[str, list[dict[str, Any]]] = {p: [] for p in parents}
+        if not family:
+            return out
+        rows = self.query_in(
+            "SELECT dw.*, md.chembl_id AS molecule_chembl_id FROM drug_warning dw "
+            "JOIN molecule_dictionary md ON md.molregno = dw.molregno "
+            "WHERE dw.molregno IN ({in}) ORDER BY dw.warning_id",
+            list(family),
+        )
+        refs = self._refs("warning_refs", "warning_id", [r["warning_id"] for r in rows])
+        for r in rows:
+            parent = family[r["molregno"]]
+            keys = r.keys()
+            out[parent].append(
+                {
+                    "efo_id": r["efo_id"],
+                    "efo_id_for_warning_class": r["efo_id_for_warning_class"]
+                    if "efo_id_for_warning_class" in keys
+                    else None,
+                    "efo_term": r["efo_term"],
+                    "molecule_chembl_id": r["molecule_chembl_id"],
+                    "parent_molecule_chembl_id": parent,
+                    "warning_class": r["warning_class"],
+                    "warning_country": r["warning_country"],
+                    "warning_description": r["warning_description"],
+                    "warning_id": r["warning_id"],
+                    "warning_refs": refs.get(r["warning_id"], []),
+                    "warning_type": r["warning_type"],
+                    "warning_year": r["warning_year"],
+                }
+            )
+        return out
+
+    def metabolism(self, parents: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
+        """Metabolism rows whose drug record is any form of the parent."""
+        parents = [p.upper() for p in parents]
+        family, _ = self._family(parents)
+        out: dict[str, list[dict[str, Any]]] = {p: [] for p in parents}
+        if not family:
+            return out
+        rows = self.query_in(
+            "SELECT m.*, dr.molregno AS drug_molregno, sr.molregno AS substrate_molregno, "
+            "mr.molregno AS metabolite_molregno, sr.compound_name AS substrate_record_name, "
+            "mr.compound_name AS metabolite_record_name, td.chembl_id AS enzyme_chembl_id "
+            "FROM metabolism m JOIN compound_records dr ON dr.record_id = m.drug_record_id "
+            "LEFT JOIN compound_records sr ON sr.record_id = m.substrate_record_id "
+            "LEFT JOIN compound_records mr ON mr.record_id = m.metabolite_record_id "
+            "LEFT JOIN target_dictionary td ON td.tid = m.enzyme_tid "
+            "WHERE dr.molregno IN ({in}) ORDER BY m.met_id",
+            list(family),
+        )
+        regnos = {r[k] for r in rows for k in ("drug_molregno", "substrate_molregno", "metabolite_molregno")}
+        names = {
+            r["molregno"]: (r["chembl_id"], r["pref_name"])
+            for r in self.query_in(
+                "SELECT molregno, chembl_id, pref_name FROM molecule_dictionary WHERE molregno IN ({in})",
+                [m for m in regnos if m is not None],
+            )
+        }
+        refs = self._refs("metabolism_refs", "met_id", [r["met_id"] for r in rows])
+        for r in rows:
+            parent = family[r["drug_molregno"]]
+            sub = names.get(r["substrate_molregno"], (None, None))
+            met = names.get(r["metabolite_molregno"], (None, None))
+            out[parent].append(
+                {
+                    "drug_chembl_id": names.get(r["drug_molregno"], (None,))[0],
+                    "enzyme_name": r["enzyme_name"],
+                    "met_comment": r["met_comment"],
+                    "met_conversion": r["met_conversion"],
+                    "met_id": r["met_id"],
+                    "metabolism_refs": refs.get(r["met_id"], []),
+                    "metabolite_chembl_id": met[0],
+                    "metabolite_name": met[1] or r["metabolite_record_name"],
+                    "organism": r["organism"],
+                    "pathway_id": r["pathway_id"],
+                    "pathway_key": r["pathway_key"],
+                    "substrate_chembl_id": sub[0],
+                    "substrate_name": sub[1] or r["substrate_record_name"],
+                    "target_chembl_id": r["enzyme_chembl_id"],
+                    "tax_id": r["tax_id"],
+                }
+            )
+        return out
+
+    def molecule_forms(self, parents: Iterable[str]) -> dict[str, list[dict[str, Any]]]:
+        """``molecule_form`` rows: each parent and the molecules under it."""
+        parents = [p.upper() for p in parents]
+        family, _ = self._family(parents)
+        out: dict[str, list[dict[str, Any]]] = {p: [] for p in parents}
+        ids = self._chembl_ids(family)
+        for regno in sorted(family):
+            parent = family[regno]
+            out[parent].append(
+                {
+                    "is_parent": ids.get(regno) == parent,
+                    "molecule_chembl_id": ids.get(regno),
+                    "parent_chembl_id": parent,
+                }
+            )
+        return out
+
+    def drug(self, parent: str) -> dict[str, Any] | None:
+        """An approximation of the REST ``drug`` resource.
+
+        ``drug.json`` is a derived API view, not a table.  This rebuilds
+        ``first_approval``, the ATC codes (with the four level descriptions
+        joined as the API does) and the applicants (``products`` via
+        ``formulations``) for every form of the parent.  ``drug_type``,
+        ``helm_notation`` and ``biotherapeutic`` are not derived and are
+        ``None``.  Returns ``None`` for molecules without a clinical phase.
+        """
+        family, prow = self._family([parent])
+        row = prow.get(parent.upper())
+        if row is None or row["max_phase"] is None:
+            return None
+        record = self.molecules_by_chembl_id([parent]).get(parent.upper()) or {}
+        codes = record.get("atc_classifications") or []
+        atc = self.atc_classes(codes)
+        applicants: list[str] = []
+        if {"formulations", "products"} <= self.tables and family:
+            for r in self.query_in(
+                "SELECT DISTINCT p.applicant_full_name AS name FROM formulations f "
+                "JOIN products p ON p.product_id = f.product_id "
+                "WHERE f.molregno IN ({in}) AND p.applicant_full_name IS NOT NULL ORDER BY 1",
+                list(family),
+            ):
+                applicants.append(r["name"])
+        return {
+            "molecule_chembl_id": parent.upper(),
+            "first_approval": record.get("first_approval"),
+            "drug_type": None,
+            "applicants": applicants,
+            "atc_classification": [
+                {
+                    "code": code,
+                    "description": ": ".join(
+                        str(atc[code].get(f"level{i}_description") or "") for i in range(1, 5)
+                    )
+                    if code in atc
+                    else None,
+                }
+                for code in codes
+            ],
+            "helm_notation": None,
+            "biotherapeutic": None,
+        }
+
+    def atc_classes(self, codes: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """``atc_classification`` rows keyed by level-5 code."""
+        return {
+            r["level5"]: dict(r)
+            for r in self.query_in("SELECT * FROM atc_classification WHERE level5 IN ({in})", codes)
+        }
+
+    # -- targets ----------------------------------------------------------
+
+    def targets(self, target_chembl_ids: Iterable[str]) -> list[dict[str, Any]]:
+        """Target rows with components, gene-symbol synonyms and class IDs."""
+        rows = self.query_in(
+            "SELECT tid, chembl_id, pref_name, target_type, organism, tax_id "
+            "FROM target_dictionary WHERE chembl_id IN ({in})",
+            target_chembl_ids,
+        )
+        tids = [r["tid"] for r in rows]
+        comps: dict[int, list[dict[str, Any]]] = {}
+        comp_ids: list[int] = []
+        for r in self.query_in(
+            "SELECT tc.tid, tc.component_id, cs.accession, cs.component_type, cs.description "
+            "FROM target_components tc JOIN component_sequences cs ON cs.component_id = tc.component_id "
+            "WHERE tc.tid IN ({in}) ORDER BY tc.component_id",
+            tids,
+        ):
+            comp_ids.append(r["component_id"])
+            comps.setdefault(r["tid"], []).append(
+                {
+                    "accession": r["accession"],
+                    "component_id": r["component_id"],
+                    "component_type": r["component_type"],
+                    "component_description": r["description"],
+                    "target_component_synonyms": [],
+                    "protein_classifications": [],
+                }
+            )
+        synonyms: dict[int, list[dict[str, Any]]] = {}
+        for r in self.query_in(
+            "SELECT component_id, component_synonym, syn_type FROM component_synonyms "
+            "WHERE component_id IN ({in}) ORDER BY compsyn_id",
+            comp_ids,
+        ):
+            synonyms.setdefault(r["component_id"], []).append(
+                {"component_synonym": r["component_synonym"], "syn_type": r["syn_type"]}
+            )
+        classes: dict[int, list[dict[str, Any]]] = {}
+        for r in self.query_in(
+            "SELECT component_id, protein_class_id FROM component_class "
+            "WHERE component_id IN ({in}) ORDER BY comp_class_id",
+            comp_ids,
+        ):
+            classes.setdefault(r["component_id"], []).append(
+                {"protein_classification_id": r["protein_class_id"]}
+            )
+        out = []
+        for r in rows:
+            components = comps.get(r["tid"], [])
+            for comp in components:
+                comp["target_component_synonyms"] = synonyms.get(comp["component_id"], [])
+                comp["protein_classifications"] = classes.get(comp["component_id"], [])
+            out.append(
+                {
+                    "target_chembl_id": r["chembl_id"],
+                    "pref_name": r["pref_name"],
+                    "target_type": r["target_type"],
+                    "organism": r["organism"],
+                    "tax_id": r["tax_id"],
+                    "target_components": components,
+                }
+            )
+        return out
+
+    def protein_classes(self, class_ids: Iterable[int]) -> list[dict[str, Any]]:
+        """``protein_classification`` rows for the given class IDs."""
+        return [
+            dict(r)
+            for r in self.query_in(
+                "SELECT * FROM protein_classification WHERE protein_class_id IN ({in})",
+                [int(c) for c in class_ids],
+            )
+        ]
+
+    # -- activities ---------------------------------------------------------
+
+    def activities(
+        self, parent: str, limit: int, only_with_pchembl: bool = True
+    ) -> list[dict[str, Any]]:
+        """Top-``limit`` activities of every form of the parent, by pChEMBL."""
+        family, _ = self._family([parent])
+        if not family:
+            return []
+        has_action = "action_type" in self._columns("activities")
+        has_le = "ligand_eff" in self.tables
+        has_bao = "bioassay_ontology" in self.tables
+        select = [
+            "a.activity_id, a.molregno, a.standard_type, a.standard_value, a.standard_units,",
+            "a.standard_relation, a.pchembl_value, a.activity_comment, a.data_validity_comment,",
+            "a.potential_duplicate, s.chembl_id AS assay_chembl_id, s.assay_type,",
+            "s.description AS assay_description, td.chembl_id AS target_chembl_id,",
+            "td.pref_name AS target_pref_name, td.organism AS target_organism,",
+            "td.tax_id AS target_tax_id, d.chembl_id AS document_chembl_id,",
+            "d.year AS document_year, d.journal AS document_journal",
+        ]
+        joins = [
+            "FROM activities a JOIN assays s ON s.assay_id = a.assay_id",
+            "LEFT JOIN target_dictionary td ON td.tid = s.tid",
+            "LEFT JOIN docs d ON d.doc_id = a.doc_id",
+        ]
+        if has_action:
+            select.append(", a.action_type AS act_action_type")
+            if "action_type" in self.tables:
+                select.append(", act.description AS act_action_description, act.parent_type AS act_parent_type")
+                joins.append("LEFT JOIN action_type act ON act.action_type = a.action_type")
+        if has_bao:
+            select.append(", b.label AS bao_label")
+            joins.append("LEFT JOIN bioassay_ontology b ON b.bao_id = s.bao_format")
+        if has_le:
+            select.append(", le.bei, le.le, le.lle, le.sei")
+            joins.append("LEFT JOIN ligand_eff le ON le.activity_id = a.activity_id")
+        # The unary ``+`` keeps the planner on the molregno index: with
+        # ``ORDER BY pchembl_value ... LIMIT`` it may otherwise walk the
+        # 24M-row pchembl index looking for this compound's rows.
+        where = "WHERE a.molregno IN ({in})"
+        order = "ORDER BY a.activity_id"
+        if only_with_pchembl:
+            where += " AND +a.pchembl_value IS NOT NULL"
+            order = "ORDER BY +a.pchembl_value DESC, a.activity_id"
+        sql = f"SELECT {' '.join(select)} {' '.join(joins)} {where} {order} LIMIT ?"
+        regnos = list(family)
+        if len(regnos) > _SQL_CHUNK:  # pragma: no cover - families are small
+            regnos = regnos[:_SQL_CHUNK]
+        marks = ",".join("?" * len(regnos))
+        rows = self.query(sql.replace("{in}", marks), (*regnos, int(limit)))
+        ids = self._chembl_ids({r["molregno"] for r in rows})
+        out = []
+        for r in rows:
+            keys = r.keys()
+            action = None
+            if "act_action_type" in keys and r["act_action_type"]:
+                action = {
+                    "action_type": r["act_action_type"],
+                    "description": r["act_action_description"] if "act_action_description" in keys else None,
+                    "parent_type": r["act_parent_type"] if "act_parent_type" in keys else None,
+                }
+            le = None
+            if "bei" in keys and any(r[k] is not None for k in ("bei", "le", "lle", "sei")):
+                le = {k: (None if r[k] is None else str(r[k])) for k in ("bei", "le", "lle", "sei")}
+            out.append(
+                {
+                    "activity_id": r["activity_id"],
+                    "molecule_chembl_id": ids.get(r["molregno"]),
+                    "parent_molecule_chembl_id": parent.upper(),
+                    "target_chembl_id": r["target_chembl_id"],
+                    "target_pref_name": r["target_pref_name"],
+                    "target_organism": r["target_organism"],
+                    "target_tax_id": r["target_tax_id"],
+                    "standard_type": r["standard_type"],
+                    "standard_value": r["standard_value"],
+                    "standard_units": r["standard_units"],
+                    "standard_relation": r["standard_relation"],
+                    "pchembl_value": r["pchembl_value"],
+                    "action_type": action,
+                    "assay_chembl_id": r["assay_chembl_id"],
+                    "assay_type": r["assay_type"],
+                    "assay_description": r["assay_description"],
+                    "bao_label": r["bao_label"] if "bao_label" in keys else None,
+                    "ligand_efficiency": le,
+                    "document_chembl_id": r["document_chembl_id"],
+                    "document_year": r["document_year"],
+                    "document_journal": r["document_journal"],
+                    "data_validity_comment": r["data_validity_comment"],
+                    "potential_duplicate": r["potential_duplicate"],
+                    "activity_comment": r["activity_comment"],
+                }
+            )
+        return out
+
+
+# =====================================================================
+# Annotator
+# =====================================================================
 
 
 class ChEMBLAnnotator:
@@ -234,19 +1119,42 @@ class ChEMBLAnnotator:
     Parameters
     ----------
     rate_limit_delay
-        Seconds to wait between API calls (default 0.2).
+        Seconds to wait between API calls (default 0.2).  Ignored by the
+        SQLite backend.
     cache
         Cache identifier resolutions, molecule records and protein-class
         lookups on the instance.  A full annotation touches the molecule
         record from several methods, and a screen's compounds share target
         classes, so caching cuts the request count substantially.  Set to
         ``False`` to always hit the API.
+    backend
+        ``"rest"`` (default) queries the ChEMBL web services.  ``"sqlite"``
+        answers every method from a local ChEMBL SQLite release given by
+        ``db_path``, with the same return shapes and no network access.
+    db_path
+        ``chembl_<release>.db`` for ``backend="sqlite"``.
+    flexmatch
+        Allow a ``canonical_smiles__flexmatch`` structure search when the
+        exact InChIKey lookup of a SMILES finds nothing.  Off by default:
+        it is a slow structure search, and its hits are accepted only when
+        their ``standard_inchi_key`` equals the query's.
+    batch_errors
+        Extra exception types that mark one batch of a ``*_many`` call as
+        failed (and trigger bisection) instead of propagating.
+        :class:`ChEMBLServiceError` is always included.  Anything else a
+        replaced :func:`_get_json` raises propagates unchanged.
+
+    Attributes
+    ----------
+    release
+        ``"ChEMBL_37"`` etc. for the SQLite backend; ``None`` for REST.
 
     Notes
     -----
     A full :meth:`annotate` call issues roughly a dozen requests per
-    compound.  For a large screen, narrow ``sources`` to what the analysis
-    actually uses.
+    compound.  For a screen, resolve identity with :meth:`resolve_many`,
+    fetch parents with :meth:`get_molecule_records_many` (which also primes
+    the per-compound methods), and use the ``*_many`` getters.
 
     Examples
     --------
@@ -258,17 +1166,161 @@ class ChEMBLAnnotator:
     ['Tyrosine-protein kinase ABL inhibitor']
     """
 
-    def __init__(self, rate_limit_delay: float = 0.2, cache: bool = True) -> None:
-        self.delay = rate_limit_delay
+    def __init__(
+        self,
+        rate_limit_delay: float = 0.2,
+        cache: bool = True,
+        *,
+        backend: Literal["rest", "sqlite"] = "rest",
+        db_path: str | Path | None = None,
+        flexmatch: bool = False,
+        batch_errors: tuple[type[BaseException], ...] = (),
+    ) -> None:
+        if backend not in ("rest", "sqlite"):
+            raise ValueError(f"backend must be 'rest' or 'sqlite', not {backend!r}")
+        self.backend = backend
+        self._sql: ChEMBLSqlite | None = None
+        if backend == "sqlite":
+            if db_path is None:
+                raise ValueError("backend='sqlite' needs db_path")
+            self._sql = ChEMBLSqlite.shared(db_path)
+        self.release: str | None = self._sql.release if self._sql else None
+        self.delay = 0.0 if self._sql else rate_limit_delay
         self.cache = cache
+        self.flexmatch = flexmatch
+        self._batch_errors: tuple[type[BaseException], ...] = (ChEMBLServiceError, *batch_errors)
         self._resolutions: dict[str, ChEMBLResolution] = {}
         self._records: dict[str, dict[str, Any]] = {}
+        self._primed: set[str] = set()
         self._protein_classes: dict[int, dict[str, Any]] = {}
         self._target_details: dict[str, dict[str, Any]] = {}
+        self._component_classes: dict[int, list[int]] = {}
 
     def _sleep(self) -> None:
         if self.delay > 0:
             time.sleep(self.delay)
+
+    # ==================================================================
+    # REST plumbing
+    # ==================================================================
+
+    def _paged(
+        self,
+        endpoint: str,
+        params: dict[str, Any],
+        key: str,
+        *,
+        check: tuple[str | Callable[[dict[str, Any]], Any], set[str]] | None = None,
+        max_rows: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch a filtered collection, following ``page_meta.next``.
+
+        ``check=(field, allowed)`` validates every row as it arrives: a row
+        whose ``field`` is not in ``allowed`` means the filter was ignored,
+        and raises :class:`ChEMBLFilterIgnoredError` before a second page is
+        requested.  A ``None`` response (legacy error convention of a
+        replaced helper, or a 404 on a collection) raises
+        :class:`ChEMBLServiceError` -- a collection query never legitimately
+        returns nothing.
+        """
+        url: str = f"{CHEMBL}/{endpoint}.json"
+        query: dict[str, Any] | None = {**params, "format": "json"}
+        rows: list[dict[str, Any]] = []
+        for _ in range(MAX_PAGES):
+            self._sleep()
+            data = _get_json(url, params=query)
+            if data is None:
+                raise ChEMBLServiceError(None, url, "no response for a collection query", kind="no_response")
+            page = data.get(key) or []
+            if check is not None:
+                self._check_rows(endpoint, page, *check)
+            rows.extend(page)
+            if max_rows is not None and len(rows) >= max_rows:
+                return rows[:max_rows]
+            nxt = (data.get("page_meta") or {}).get("next")
+            if not nxt:
+                return rows
+            url, query = urljoin(CHEMBL_HOST, nxt), None
+        raise ChEMBLServiceError(None, url, f"more than {MAX_PAGES} pages", kind="too_many_pages")
+
+    @staticmethod
+    def _check_rows(
+        endpoint: str,
+        rows: list[dict[str, Any]],
+        field_name: str | Callable[[dict[str, Any]], Any],
+        allowed: set[str],
+    ) -> None:
+        def value(row: dict[str, Any]) -> Any:
+            v = field_name(row) if callable(field_name) else row.get(field_name)
+            return v.upper() if isinstance(v, str) else v
+
+        foreign = [value(r) for r in rows if value(r) not in allowed]
+        if foreign:
+            name = field_name if isinstance(field_name, str) else getattr(field_name, "__name__", "key")
+            raise ChEMBLFilterIgnoredError(endpoint, name, foreign)
+
+    def _batched(
+        self,
+        keys: Iterable[str],
+        fetch_chunk: Callable[[list[str]], dict[str, Any]],
+        chunk_size: int,
+    ) -> BatchResult:
+        """Run ``fetch_chunk`` over chunks; bisect failed chunks down to one key."""
+        result = BatchResult()
+        for chunk in _chunks(list(dict.fromkeys(keys)), chunk_size):
+            self._run_chunk(chunk, fetch_chunk, result)
+        return result
+
+    def _run_chunk(
+        self,
+        chunk: list[str],
+        fetch_chunk: Callable[[list[str]], dict[str, Any]],
+        result: BatchResult,
+    ) -> None:
+        try:
+            values = fetch_chunk(chunk)
+        except ChEMBLFilterIgnoredError as exc:
+            for k in chunk:
+                result.failed[k] = {"status": "filter_ignored", "error": str(exc)}
+            return
+        except self._batch_errors as exc:
+            if len(chunk) > 1:
+                mid = (len(chunk) + 1) // 2
+                logger.info("ChEMBL batch of %d failed (%s); bisecting", len(chunk), exc)
+                self._run_chunk(chunk[:mid], fetch_chunk, result)
+                self._run_chunk(chunk[mid:], fetch_chunk, result)
+                return
+            result.failed[chunk[0]] = {"status": "batch_failed", "error": f"{type(exc).__name__}: {exc}"}
+            return
+        for k in chunk:
+            result[k] = values.get(k)
+
+    def _rows_many(
+        self,
+        keys: Iterable[str],
+        endpoint: str,
+        filter_field: str,
+        row_field: str,
+        collection: str,
+        chunk_size: int,
+    ) -> BatchResult:
+        """``{key: [rows]}`` from ``<endpoint>.json?<filter_field>__in=...``."""
+
+        def fetch(chunk: list[str]) -> dict[str, list[dict[str, Any]]]:
+            allowed = {k.upper() for k in chunk}
+            rows = self._paged(
+                endpoint,
+                {f"{filter_field}__in": ",".join(chunk), "limit": PAGE_LIMIT},
+                collection,
+                check=(row_field, allowed),
+            )
+            grouped: dict[str, list[dict[str, Any]]] = {k: [] for k in chunk}
+            upper = {k.upper(): k for k in chunk}
+            for row in rows:
+                grouped[upper[str(row.get(row_field)).upper()]].append(row)
+            return grouped
+
+        return self._batched([k.upper() for k in keys if k], fetch, chunk_size)
 
     # ==================================================================
     # Identifier resolution
@@ -276,10 +1328,12 @@ class ChEMBLAnnotator:
 
     @staticmethod
     def _classify(identifier: str) -> str:
-        """Guess whether an identifier is a ChEMBL ID, a SMILES or a name."""
+        """Guess whether an identifier is a ChEMBL ID, an InChIKey, a SMILES or a name."""
         s = identifier.strip()
         if _CHEMBL_ID_RE.match(s):
             return "chembl_id"
+        if _INCHIKEY_RE.match(s):
+            return "inchikey"
         try:
             from rdkit import Chem, rdBase
 
@@ -293,84 +1347,206 @@ class ChEMBLAnnotator:
         except ImportError:
             pass
         # Without RDKit a token like "CCO" is ambiguous -- it is both a valid
-        # SMILES and a plausible code -- so try it as a structure and let
-        # resolve() fall through to the name lookups if that misses.
+        # SMILES and a plausible code -- and no InChIKey can be computed, so
+        # resolve() treats it as a name.
         return "smiles" if _SMILES_CHARS_RE.match(s) else "name"
 
+    def prime_records(self, records: Iterable[Mapping[str, Any]] | Mapping[str, Mapping[str, Any]]) -> None:
+        """Seed the molecule-record cache with records fetched elsewhere.
+
+        Per-compound methods then reuse them instead of requesting
+        ``molecule/{id}.json`` once per source.  Accepts an iterable of
+        records or ``{chembl_id: record}`` (``None`` values are skipped).
+        """
+        values = records.values() if isinstance(records, Mapping) else records
+        for record in values:
+            cid = (record or {}).get("molecule_chembl_id")
+            if cid:
+                self._records[str(cid).upper()] = dict(record)  # type: ignore[arg-type]
+                self._primed.add(str(cid).upper())
+
     def get_molecule_record(self, chembl_id: str) -> dict[str, Any] | None:
-        """Fetch the full ``molecule`` record for a ChEMBL ID."""
-        key = chembl_id.upper()
-        if self.cache and key in self._records:
+        """Fetch the full ``molecule`` record for a ChEMBL ID (``None`` if absent)."""
+        key = chembl_id.strip().upper()
+        if key in self._records and (self.cache or key in self._primed):
             return self._records[key]
-        self._sleep()
-        record = _get_json(f"{CHEMBL}/molecule/{key}.json")
+        if self._sql is not None:
+            record = self._sql.molecules_by_chembl_id([key]).get(key)
+        else:
+            self._sleep()
+            record = _get_json(f"{CHEMBL}/molecule/{key}.json")
         if record and self.cache:
             self._records[key] = record
         return record
 
+    def get_molecule_records_many(
+        self, chembl_ids: Iterable[str], chunk_size: int = DEFAULT_BATCH
+    ) -> BatchResult:
+        """Molecule records for many ChEMBL IDs in batched requests.
+
+        Returns
+        -------
+        BatchResult
+            ``{chembl_id: record}`` (``None`` when the ID does not exist);
+            failed batches in ``.failed``.  Records are added to the cache,
+            so later per-compound calls do not re-fetch them.
+        """
+        ids = [c.strip().upper() for c in chembl_ids if c and c.strip()]
+        result = BatchResult()
+        todo = []
+        for cid in dict.fromkeys(ids):
+            if self.cache and cid in self._records:
+                result[cid] = self._records[cid]
+            else:
+                todo.append(cid)
+        if not todo:
+            return result
+
+        def fetch(chunk: list[str]) -> dict[str, dict[str, Any] | None]:
+            if self._sql is not None:
+                found = self._sql.molecules_by_chembl_id(chunk)
+            else:
+                rows = self._paged(
+                    "molecule",
+                    {"molecule_chembl_id__in": ",".join(chunk), "limit": PAGE_LIMIT},
+                    "molecules",
+                    check=("molecule_chembl_id", set(chunk)),
+                )
+                found = {str(r["molecule_chembl_id"]).upper(): r for r in rows}
+            return {k: found.get(k) for k in chunk}
+
+        fetched = self._batched(todo, fetch, chunk_size)
+        for cid, record in fetched.items():
+            if record and self.cache:
+                self._records[cid] = record
+        result.update(fetched)
+        result.failed.update(fetched.failed)
+        return result
+
     def _molecules_where(self, params: dict[str, Any]) -> list[dict[str, Any]]:
         self._sleep()
-        data = _get_json(f"{CHEMBL}/molecule.json", params={**params, "format": "json"})
-        return (data or {}).get("molecules", []) or []
+        url = f"{CHEMBL}/molecule.json"
+        data = _get_json(url, params={**params, "format": "json"})
+        if data is None:
+            raise ChEMBLServiceError(None, url, "no response for a collection query", kind="no_response")
+        return data.get("molecules", []) or []
 
-    def resolve(self, identifier: str) -> ChEMBLResolution:
+    def _identity_chunk(self, keys: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """``{inchikey: [records]}`` by exact ``standard_inchi_key``."""
+        if self._sql is not None:
+            found = self._sql.molecules_by_inchikey(keys)
+        else:
+            rows = self._paged(
+                "molecule",
+                {"molecule_structures__standard_inchi_key__in": ",".join(keys), "limit": PAGE_LIMIT},
+                "molecules",
+                check=(_record_inchikey, set(keys)),
+            )
+            found = {}
+            for row in rows:
+                found.setdefault(_record_inchikey(row) or "", []).append(row)
+        if self.cache:
+            for recs in found.values():
+                for rec in recs:
+                    if rec.get("molecule_chembl_id"):
+                        self._records.setdefault(str(rec["molecule_chembl_id"]).upper(), rec)
+        return {k: found.get(k, []) for k in keys}
+
+    def resolve(self, identifier: str, *, flexmatch: bool | None = None) -> ChEMBLResolution:
         """Map any identifier onto a ChEMBL molecule and its parent.
 
-        Accepts a ChEMBL ID, a SMILES string, a preferred name, a trade
-        name or a research code.  The parent is resolved from the molecule
-        hierarchy because that is what drug-level ChEMBL annotation is
-        keyed on -- see the module docstring.
+        * ChEMBL ID: the record itself.
+        * SMILES: the standard InChIKey is computed with RDKit and matched
+          exactly against ``molecule_structures.standard_inchi_key``.  A miss
+          is final unless ``flexmatch`` is enabled, in which case a flexmatch
+          structure search is tried and only hits with the identical
+          InChIKey are accepted.  A SMILES is never sent to the name,
+          synonym or free-text lookups.
+        * InChIKey: exact ``standard_inchi_key`` match.
+        * Anything else is a name: ``pref_name``, then synonyms, then the
+          free-text search (REST only).
 
-        Parameters
-        ----------
-        identifier
-            ChEMBL ID, SMILES, or compound name.
+        The parent is resolved from the molecule hierarchy because that is
+        what drug-level ChEMBL annotation is keyed on.  Provider failures
+        raise (:class:`ChEMBLServiceError`, or whatever a replaced
+        :func:`_get_json` raises); they are never reported as "not found".
 
         Returns
         -------
         ChEMBLResolution
-            With ``found`` ``False`` if nothing matched.
+            With ``found`` ``False`` and ``status`` explaining why if nothing
+            matched.
         """
         s = identifier.strip()
-        if self.cache and s in self._resolutions:
+        use_flex = self.flexmatch if flexmatch is None else flexmatch
+        if self.cache and s in self._resolutions and flexmatch is None:
             return self._resolutions[s]
 
-        resolution = self._resolve_uncached(s)
-        if self.cache:
+        resolution = self._resolve_uncached(s, use_flex)
+        if self.cache and flexmatch is None:
             self._resolutions[s] = resolution
         if not resolution.found:
-            logger.debug("No ChEMBL match for '%s'", s[:60])
+            logger.debug("No ChEMBL match for '%s' (%s)", s[:60], resolution.status)
         return resolution
 
-    def _resolve_uncached(self, s: str) -> ChEMBLResolution:
+    def _resolve_uncached(self, s: str, use_flex: bool) -> ChEMBLResolution:
         kind = self._classify(s)
 
         if kind == "chembl_id":
             record = self.get_molecule_record(s)
             if record:
                 return self._resolution_from_record(s, record, "chembl_id")
-            return ChEMBLResolution(identifier=s)
+            return ChEMBLResolution(identifier=s, status="no_match")
 
-        # Ordered cheapest/most-specific first. A SMILES-looking string still
-        # falls through to the name lookups, because without RDKit the guess
-        # is only a guess.
-        attempts: list[tuple[str, dict[str, Any]]] = []
-        if kind == "smiles":
-            attempts.append(
-                (
-                    "smiles",
-                    {"molecule_structures__canonical_smiles__flexmatch": s, "limit": 1},
-                )
+        if kind == "inchikey":
+            key = s.upper()
+            return self._resolution_from_candidates(s, key, self._identity_chunk([key])[key])
+
+        if kind == "smiles" and _rdkit_available():
+            key = smiles_to_inchikey(s)
+            if not key:
+                return ChEMBLResolution(identifier=s, status="invalid_structure")
+            resolution = self._resolution_from_candidates(s, key, self._identity_chunk([key])[key])
+            if resolution.status == "no_match" and use_flex:
+                resolution = self._flexmatch(s, key)
+            return resolution
+
+        return self._resolve_name(s)
+
+    def _flexmatch(self, s: str, key: str) -> ChEMBLResolution:
+        """Opt-in structure search, accepting only identical InChIKeys."""
+        if self._sql is not None:
+            return ChEMBLResolution(identifier=s, status="no_match", inchikey=key)
+        molecules = self._molecules_where(
+            {"molecule_structures__canonical_smiles__flexmatch": s, "limit": 25}
+        )
+        exact = [m for m in molecules if _record_inchikey(m) == key]
+        resolution = self._resolution_from_candidates(s, key, exact, matched_by="smiles_flexmatch")
+        if not exact and molecules:
+            resolution = replace(
+                resolution,
+                candidates=tuple(
+                    (m.get("molecule_chembl_id"), (m.get("molecule_hierarchy") or {}).get("parent_chembl_id"))
+                    for m in molecules
+                ),
             )
-        attempts += [
-            ("pref_name", {"pref_name__iexact": s, "limit": 1}),
-            (
-                "synonym",
-                {"molecule_synonyms__molecule_synonym__iexact": s, "limit": 1},
-            ),
-        ]
+        return resolution
 
-        for matched_by, params in attempts:
+    def _resolve_name(self, s: str) -> ChEMBLResolution:
+        if self._sql is not None:
+            for matched_by, lookup in (
+                ("pref_name", self._sql.molecules_by_name),
+                ("synonym", self._sql.molecules_by_synonym),
+            ):
+                molecules = lookup(s)
+                if molecules:
+                    return self._resolution_from_record(s, molecules[0], matched_by)
+            return ChEMBLResolution(identifier=s, status="no_match")
+
+        for matched_by, params in (
+            ("pref_name", {"pref_name__iexact": s, "limit": 1}),
+            ("synonym", {"molecule_synonyms__molecule_synonym__iexact": s, "limit": 1}),
+        ):
             molecules = self._molecules_where(params)
             if molecules:
                 return self._resolution_from_record(s, molecules[0], matched_by)
@@ -378,19 +1554,21 @@ class ChEMBLAnnotator:
         # Last resort: ChEMBL's own free-text search, which tolerates
         # spelling and formatting differences the exact filters do not.
         self._sleep()
-        data = _get_json(f"{CHEMBL}/molecule/search.json", params={"q": s, "limit": 1})
-        molecules = (data or {}).get("molecules", []) or []
+        url = f"{CHEMBL}/molecule/search.json"
+        data = _get_json(url, params={"q": s, "limit": 1})
+        if data is None:
+            raise ChEMBLServiceError(None, url, "no response for a search query", kind="no_response")
+        molecules = data.get("molecules", []) or []
         if molecules:
             return self._resolution_from_record(s, molecules[0], "search")
-
-        return ChEMBLResolution(identifier=s)
+        return ChEMBLResolution(identifier=s, status="no_match")
 
     def _resolution_from_record(
-        self, identifier: str, record: dict[str, Any], matched_by: str
+        self, identifier: str, record: dict[str, Any], matched_by: str, inchikey: str | None = None
     ) -> ChEMBLResolution:
         chembl_id = record.get("molecule_chembl_id")
         if chembl_id and self.cache:
-            self._records.setdefault(chembl_id.upper(), record)
+            self._records.setdefault(str(chembl_id).upper(), record)
         hierarchy = record.get("molecule_hierarchy") or {}
         parent = hierarchy.get("parent_chembl_id") or chembl_id
         return ChEMBLResolution(
@@ -399,7 +1577,139 @@ class ChEMBLAnnotator:
             parent_chembl_id=parent,
             pref_name=record.get("pref_name"),
             matched_by=matched_by,
+            status="matched",
+            inchikey=inchikey,
+            matched_inchikey=_record_inchikey(record),
         )
+
+    def _resolution_from_candidates(
+        self,
+        identifier: str,
+        key: str,
+        records: list[dict[str, Any]],
+        matched_by: str = "standard_inchi_key",
+    ) -> ChEMBLResolution:
+        if not records:
+            return ChEMBLResolution(identifier=identifier, status="no_match", inchikey=key)
+        pairs = []
+        for rec in records:
+            cid = rec.get("molecule_chembl_id")
+            pairs.append((cid, (rec.get("molecule_hierarchy") or {}).get("parent_chembl_id") or cid))
+        parents = {p for _, p in pairs}
+        if len(parents) > 1:
+            return ChEMBLResolution(
+                identifier=identifier,
+                status="ambiguous",
+                inchikey=key,
+                candidates=tuple(sorted(pairs, key=lambda p: (str(p[1]), str(p[0])))),
+            )
+        # One parent: prefer the record that is the parent itself, then the
+        # lowest ChEMBL number, so the choice is deterministic.
+        parent = next(iter(parents))
+
+        def rank(rec: dict[str, Any]) -> tuple[int, int]:
+            cid = str(rec.get("molecule_chembl_id") or "")
+            digits = re.sub(r"\D", "", cid)
+            return (0 if cid == parent else 1, int(digits) if digits else 0)
+
+        best = min(records, key=rank)
+        return self._resolution_from_record(identifier, best, matched_by, inchikey=key)
+
+    def resolve_many(
+        self, identifiers: Iterable[str], chunk_size: int = DEFAULT_BATCH
+    ) -> dict[str, ChEMBLResolution]:
+        """Resolve many identifiers, batching InChIKey and ChEMBL-ID lookups.
+
+        SMILES are converted to standard InChIKeys with RDKit and looked up
+        ``chunk_size`` at a time with
+        ``molecule_structures__standard_inchi_key__in``; ChEMBL IDs with
+        ``molecule_chembl_id__in``.  Every returned row is checked against
+        the chunk it was asked for: a foreign row (ignored filter) marks the
+        whole chunk ``filter_ignored``.  A chunk that fails with
+        :class:`ChEMBLServiceError` (or a type in ``batch_errors``) is
+        bisected down to single keys; keys that still fail are
+        ``batch_failed``.  Names are resolved one at a time with
+        :meth:`resolve` (a typed failure there is also ``batch_failed``).
+        Opt-in flexmatch runs per structure after the exact batch misses.
+        Exceptions other than :class:`ChEMBLServiceError` and the
+        ``batch_errors`` types propagate.
+
+        Returns
+        -------
+        dict
+            ``{identifier: ChEMBLResolution}`` for every input, keyed by the
+            identifier exactly as given.
+        """
+        identifiers = list(identifiers)
+        out: dict[str, ChEMBLResolution] = {}
+        by_key: dict[str, list[str]] = {}
+        by_id: dict[str, list[str]] = {}
+        names: list[str] = []
+        rdkit_ok = _rdkit_available()
+        for ident in dict.fromkeys(identifiers):
+            s = str(ident).strip()
+            if self.cache and s in self._resolutions:
+                out[ident] = replace(self._resolutions[s], identifier=ident)
+                continue
+            kind = self._classify(s)
+            if kind == "chembl_id":
+                by_id.setdefault(s.upper(), []).append(ident)
+            elif kind == "inchikey":
+                by_key.setdefault(s.upper(), []).append(ident)
+            elif kind == "smiles" and rdkit_ok:
+                key = smiles_to_inchikey(s)
+                if key:
+                    by_key.setdefault(key, []).append(ident)
+                else:
+                    out[ident] = ChEMBLResolution(identifier=ident, status="invalid_structure")
+            else:
+                names.append(ident)
+
+        if by_key:
+            found = self._batched(list(by_key), self._identity_chunk, chunk_size)
+            for key, idents in by_key.items():
+                for ident in idents:
+                    if key in found:
+                        res = self._resolution_from_candidates(ident, key, found[key] or [])
+                        if res.status == "no_match" and self.flexmatch and self._classify(ident) == "smiles":
+                            res = replace(self._flexmatch(str(ident).strip(), key), identifier=ident)
+                    else:
+                        failure = found.failed.get(key, {"status": "batch_failed", "error": ""})
+                        res = ChEMBLResolution(
+                            identifier=ident, status=failure["status"], inchikey=key, error=failure["error"]
+                        )
+                    out[ident] = res
+
+        if by_id:
+            records = self.get_molecule_records_many(list(by_id), chunk_size=chunk_size)
+            for cid, idents in by_id.items():
+                for ident in idents:
+                    if cid in records:
+                        record = records[cid]
+                        out[ident] = (
+                            self._resolution_from_record(ident, record, "chembl_id")
+                            if record
+                            else ChEMBLResolution(identifier=ident, status="no_match")
+                        )
+                    else:
+                        failure = records.failed.get(cid, {"status": "batch_failed", "error": ""})
+                        out[ident] = ChEMBLResolution(
+                            identifier=ident, status=failure["status"], error=failure["error"]
+                        )
+
+        for ident in names:
+            try:
+                out[ident] = replace(self.resolve(str(ident)), identifier=ident)
+            except self._batch_errors as exc:
+                out[ident] = ChEMBLResolution(
+                    identifier=ident, status="batch_failed", error=f"{type(exc).__name__}: {exc}"
+                )
+
+        if self.cache:
+            for ident, res in out.items():
+                if res.status in {"matched", "no_match", "ambiguous", "invalid_structure"}:
+                    self._resolutions.setdefault(str(ident).strip(), replace(res, identifier=str(ident).strip()))
+        return {ident: out[ident] for ident in dict.fromkeys(identifiers)}
 
     def _parent_id(self, identifier: str) -> str | None:
         return self.resolve(identifier).parent_chembl_id
@@ -407,11 +1717,33 @@ class ChEMBLAnnotator:
     def _collection(
         self, endpoint: str, params: dict[str, Any], key: str
     ) -> list[dict[str, Any]]:
+        """One page of a collection; ``None`` (no response) raises."""
         self._sleep()
-        data = _get_json(
-            f"{CHEMBL}/{endpoint}.json", params={**params, "format": "json"}
+        url = f"{CHEMBL}/{endpoint}.json"
+        data = _get_json(url, params={**params, "format": "json"})
+        if data is None:
+            raise ChEMBLServiceError(None, url, "no response for a collection query", kind="no_response")
+        return data.get(key, []) or []
+
+    def _single_parent_rows(
+        self,
+        endpoint: str,
+        filter_field: str,
+        parent: str,
+        collection: str,
+        limit: int | None,
+        *,
+        row_field: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Rows for one parent; validated, paginated when ``limit`` is ``None``."""
+        params: dict[str, Any] = {filter_field: parent, "limit": PAGE_LIMIT if limit is None else limit}
+        return self._paged(
+            endpoint,
+            params,
+            collection,
+            check=(row_field or filter_field, {parent.upper()}),
+            max_rows=limit,
         )
-        return (data or {}).get(key, []) or []
 
     # ==================================================================
     # 1. Development status and regulatory record
@@ -428,7 +1760,7 @@ class ChEMBLAnnotator:
         Parameters
         ----------
         identifier
-            ChEMBL ID, SMILES, or compound name.
+            ChEMBL ID, SMILES, InChIKey or compound name.
 
         Returns
         -------
@@ -447,7 +1779,10 @@ class ChEMBLAnnotator:
         )
         if not record:
             return {}
+        return self._development_from_record(record)
 
+    @staticmethod
+    def _development_from_record(record: dict[str, Any]) -> dict[str, Any]:
         max_phase = _as_float(record.get("max_phase"))
         availability = _as_int(record.get("availability_type"))
         chirality = _as_int(record.get("chirality"))
@@ -495,16 +1830,23 @@ class ChEMBLAnnotator:
         Complements :meth:`get_development_status` with the applicants that
         hold approvals and the ATC codes attached to the drug record.
         Returns ``{}`` for compounds that are not approved drugs.
+
+        With ``backend="sqlite"`` the record is rebuilt from tables (see
+        :meth:`ChEMBLSqlite.drug`): ``drug_type`` is ``None`` and the
+        applicant names come from ``products``.
         """
         parent = self._parent_id(identifier)
         if not parent:
             return {}
-        drugs = self._collection(
-            "drug", {"molecule_chembl_id": parent, "limit": 1}, "drugs"
-        )
-        if not drugs:
+        if self._sql is not None:
+            drug = self._sql.drug(parent)
+        else:
+            drugs = self._single_parent_rows(
+                "drug", "molecule_chembl_id", parent, "drugs", 1
+            )
+            drug = drugs[0] if drugs else None
+        if not drug:
             return {}
-        drug = drugs[0]
         return {
             "molecule_chembl_id": drug.get("molecule_chembl_id"),
             "first_approval": _as_int(drug.get("first_approval")),
@@ -522,7 +1864,7 @@ class ChEMBLAnnotator:
     # ==================================================================
 
     def get_indications(
-        self, identifier: str, limit: int = DEFAULT_INDICATIONS
+        self, identifier: str, limit: int | None = DEFAULT_INDICATIONS
     ) -> list[dict[str, Any]]:
         """Therapeutic indications with the phase reached for each.
 
@@ -534,10 +1876,10 @@ class ChEMBLAnnotator:
         Parameters
         ----------
         identifier
-            ChEMBL ID, SMILES, or compound name.
+            ChEMBL ID, SMILES, InChIKey or compound name.
         limit
             Maximum indication rows to fetch (default
-            :data:`DEFAULT_INDICATIONS`).
+            :data:`DEFAULT_INDICATIONS`); ``None`` fetches all pages.
 
         Returns
         -------
@@ -547,12 +1889,30 @@ class ChEMBLAnnotator:
         parent = self._parent_id(identifier)
         if not parent:
             return []
-        rows = self._collection(
-            "drug_indication",
-            {"parent_molecule_chembl_id": parent, "limit": limit},
-            "drug_indications",
+        if self._sql is not None:
+            rows = self._sql.indications([parent])[parent.upper()]
+            rows = rows if limit is None else rows[:limit]
+        else:
+            rows = self._single_parent_rows(
+                "drug_indication", "parent_molecule_chembl_id", parent, "drug_indications", limit
+            )
+        return self._merge_indications(rows)
+
+    def get_indications_many(
+        self, parents: Iterable[str], chunk_size: int = 20
+    ) -> BatchResult:
+        """All indications for many parents (``parent_molecule_chembl_id__in``).
+
+        Every page is fetched, so unlike :meth:`get_indications` there is no
+        row cap.  Values have the shape :meth:`get_indications` returns.
+        """
+        return self._parents_many(
+            parents, "drug_indication", "parent_molecule_chembl_id", "drug_indications",
+            chunk_size, self._merge_indications, "indications",
         )
 
+    @staticmethod
+    def _merge_indications(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         merged: dict[str, dict[str, Any]] = {}
         for row in rows:
             key = row.get("efo_id") or row.get("mesh_id") or row.get("mesh_heading") or ""
@@ -582,22 +1942,49 @@ class ChEMBLAnnotator:
             reverse=True,
         )
 
+    def _parents_many(
+        self,
+        parents: Iterable[str],
+        endpoint: str,
+        filter_field: str,
+        collection: str,
+        chunk_size: int,
+        convert: Callable[[list[dict[str, Any]]], Any],
+        sql_method: str,
+        *,
+        row_field: str | None = None,
+    ) -> BatchResult:
+        keys = [p.strip().upper() for p in parents if p and p.strip()]
+        if self._sql is not None:
+            getter = getattr(self._sql, sql_method)
+            result = BatchResult()
+            for chunk in _chunks(list(dict.fromkeys(keys)), 500):
+                for parent, rows in getter(chunk).items():
+                    result[parent] = convert(rows)
+            return result
+        raw = self._rows_many(
+            keys, endpoint, filter_field, row_field or filter_field, collection, chunk_size
+        )
+        result = BatchResult({k: convert(v or []) for k, v in raw.items()})
+        result.failed.update(raw.failed)
+        return result
+
     # ==================================================================
     # 3. Safety: black box warnings and withdrawals
     # ==================================================================
 
     def get_warnings(
-        self, identifier: str, limit: int = DEFAULT_WARNINGS
+        self, identifier: str, limit: int | None = DEFAULT_WARNINGS
     ) -> list[dict[str, Any]]:
         """Black box warnings and withdrawal records.
 
         Parameters
         ----------
         identifier
-            ChEMBL ID, SMILES, or compound name.
+            ChEMBL ID, SMILES, InChIKey or compound name.
         limit
             Maximum warning rows to fetch (default
-            :data:`DEFAULT_WARNINGS`).
+            :data:`DEFAULT_WARNINGS`); ``None`` fetches all pages.
 
         Returns
         -------
@@ -609,11 +1996,24 @@ class ChEMBLAnnotator:
         parent = self._parent_id(identifier)
         if not parent:
             return []
-        rows = self._collection(
-            "drug_warning",
-            {"parent_molecule_chembl_id": parent, "limit": limit},
-            "drug_warnings",
+        if self._sql is not None:
+            rows = self._sql.warnings([parent])[parent.upper()]
+            rows = rows if limit is None else rows[:limit]
+        else:
+            rows = self._single_parent_rows(
+                "drug_warning", "parent_molecule_chembl_id", parent, "drug_warnings", limit
+            )
+        return self._warning_entries(rows)
+
+    def get_warnings_many(self, parents: Iterable[str], chunk_size: int = DEFAULT_BATCH) -> BatchResult:
+        """Warnings for many parents (``parent_molecule_chembl_id__in``)."""
+        return self._parents_many(
+            parents, "drug_warning", "parent_molecule_chembl_id", "drug_warnings",
+            chunk_size, self._warning_entries, "warnings",
         )
+
+    @staticmethod
+    def _warning_entries(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
             {
                 "warning_type": row.get("warning_type"),
@@ -641,7 +2041,7 @@ class ChEMBLAnnotator:
         Parameters
         ----------
         identifier
-            ChEMBL ID, SMILES, or compound name.
+            ChEMBL ID, SMILES, InChIKey or compound name.
 
         Returns
         -------
@@ -659,28 +2059,34 @@ class ChEMBLAnnotator:
         if not codes:
             return []
 
+        if self._sql is not None:
+            rows = self._sql.atc_classes(codes)
+            return [self._atc_entry(code, rows[code]) for code in codes if code in rows]
+
         classes: list[dict[str, Any]] = []
         for code in codes:
             self._sleep()
             data = _get_json(f"{CHEMBL}/atc_class/{code}.json")
             if not data:
                 continue
-            classes.append(
-                {
-                    "code": code,
-                    "who_name": data.get("who_name"),
-                    "level1": data.get("level1"),
-                    "level1_description": data.get("level1_description"),
-                    "level2": data.get("level2"),
-                    "level2_description": data.get("level2_description"),
-                    "level3": data.get("level3"),
-                    "level3_description": data.get("level3_description"),
-                    "level4": data.get("level4"),
-                    "level4_description": data.get("level4_description"),
-                    "level5": data.get("level5"),
-                }
-            )
+            classes.append(self._atc_entry(code, data))
         return classes
+
+    @staticmethod
+    def _atc_entry(code: str, data: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "code": code,
+            "who_name": data.get("who_name"),
+            "level1": data.get("level1"),
+            "level1_description": data.get("level1_description"),
+            "level2": data.get("level2"),
+            "level2_description": data.get("level2_description"),
+            "level3": data.get("level3"),
+            "level3_description": data.get("level3_description"),
+            "level4": data.get("level4"),
+            "level4_description": data.get("level4_description"),
+            "level5": data.get("level5"),
+        }
 
     # ==================================================================
     # 5. Synonyms: trade names, INN, USAN, research codes
@@ -698,7 +2104,7 @@ class ChEMBLAnnotator:
         Parameters
         ----------
         identifier
-            ChEMBL ID, SMILES, or compound name.
+            ChEMBL ID, SMILES, InChIKey or compound name.
         limit
             Maximum synonyms to return (default :data:`DEFAULT_SYNONYMS`).
 
@@ -743,12 +2149,13 @@ class ChEMBLAnnotator:
 
         This is the query that motivated the module: filtering ``mechanism``
         on ``molecule_chembl_id`` misses every drug whose mechanism is
-        registered against a salt form, imatinib included.
+        registered against a salt form, imatinib included.  Every page is
+        fetched (``limit=1000`` and ``page_meta.next``).
 
         Parameters
         ----------
         identifier
-            ChEMBL ID, SMILES, or compound name.
+            ChEMBL ID, SMILES, InChIKey or compound name.
 
         Returns
         -------
@@ -760,9 +2167,25 @@ class ChEMBLAnnotator:
         parent = self._parent_id(identifier)
         if not parent:
             return []
-        rows = self._collection(
-            "mechanism", {"parent_molecule_chembl_id": parent}, "mechanisms"
+        if self._sql is not None:
+            rows = self._sql.mechanisms([parent])[parent.upper()]
+        else:
+            rows = self._single_parent_rows(
+                "mechanism", "parent_molecule_chembl_id", parent, "mechanisms", None
+            )
+        return self._mechanism_entries(rows)
+
+    def get_mechanisms_many(
+        self, parents: Iterable[str], chunk_size: int = DEFAULT_BATCH
+    ) -> BatchResult:
+        """Mechanisms for many parents (``parent_molecule_chembl_id__in``)."""
+        return self._parents_many(
+            parents, "mechanism", "parent_molecule_chembl_id", "mechanisms",
+            chunk_size, self._mechanism_entries, "mechanisms",
         )
+
+    @staticmethod
+    def _mechanism_entries(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
             {
                 "mechanism": row.get("mechanism_of_action"),
@@ -807,7 +2230,7 @@ class ChEMBLAnnotator:
         Parameters
         ----------
         identifier
-            ChEMBL ID, SMILES, or compound name.
+            ChEMBL ID, SMILES, InChIKey or compound name.
         limit
             Maximum activity rows to fetch (default
             :data:`DEFAULT_ACTIVITIES`).
@@ -820,20 +2243,29 @@ class ChEMBLAnnotator:
         -------
         list of dict
             Ordered by pChEMBL, most potent first, when
-            ``only_with_pchembl`` is set.
+            ``only_with_pchembl`` is set.  With the SQLite backend these are
+            the top ``limit`` rows over every form of the parent.
         """
         parent = self._parent_id(identifier)
         if not parent:
             return []
-        params: dict[str, Any] = {
-            "parent_molecule_chembl_id": parent,
-            "limit": limit,
-        }
-        if only_with_pchembl:
-            params["pchembl_value__isnull"] = "false"
-            params["order_by"] = "-pchembl_value"
-
-        rows = self._collection("activity", params, "activities")
+        if self._sql is not None:
+            rows = self._sql.activities(parent, limit, only_with_pchembl)
+        else:
+            params: dict[str, Any] = {
+                "parent_molecule_chembl_id": parent,
+                "limit": limit,
+            }
+            if only_with_pchembl:
+                params["pchembl_value__isnull"] = "false"
+                params["order_by"] = "-pchembl_value"
+            rows = self._paged(
+                "activity",
+                params,
+                "activities",
+                check=("parent_molecule_chembl_id", {parent.upper()}),
+                max_rows=limit,
+            )
         return [
             {
                 "target_chembl_id": row.get("target_chembl_id"),
@@ -868,9 +2300,13 @@ class ChEMBLAnnotator:
         """Resolve target identity for a list of ChEMBL target IDs.
 
         Turns ``CHEMBL1862`` into ``ABL1`` / ``P00519`` /
-        ``"tyrosine protein kinase"``.  Targets are fetched in one batched
-        request and cached, and protein classes are shared across a
-        screen's targets, so this stays cheap for a whole dataset.
+        ``"tyrosine protein kinase"``.  Targets are fetched in batched,
+        validated requests and cached, and protein classes are shared across
+        a screen's targets, so this stays cheap for a whole dataset.
+
+        The REST ``target`` resource does not carry protein classifications
+        on its components (ChEMBL_37), so they are read from
+        ``target_component.json`` in one further batched request.
 
         Parameters
         ----------
@@ -878,7 +2314,7 @@ class ChEMBLAnnotator:
             Target ChEMBL IDs.
         include_protein_classes
             Resolve the ChEMBL protein family hierarchy for each target.
-            Costs one extra batched request.
+            Costs up to two extra batched requests.
 
         Returns
         -------
@@ -892,12 +2328,16 @@ class ChEMBLAnnotator:
         missing = [
             t for t in wanted if not (self.cache and t in self._target_details)
         ]
-        for chunk in (missing[i : i + 20] for i in range(0, len(missing), 20)):
-            targets = self._collection(
-                "target",
-                {"target_chembl_id__in": ",".join(chunk), "limit": len(chunk)},
-                "targets",
-            )
+        for chunk in _chunks(missing, DEFAULT_BATCH):
+            if self._sql is not None:
+                targets = self._sql.targets(chunk)
+            else:
+                targets = self._paged(
+                    "target",
+                    {"target_chembl_id__in": ",".join(chunk), "limit": len(chunk)},
+                    "targets",
+                    check=("target_chembl_id", {t.upper() for t in chunk}),
+                )
             for target in targets:
                 detail = self._target_detail(target)
                 # Always stored, because the return value is assembled from
@@ -908,6 +2348,7 @@ class ChEMBLAnnotator:
         details = {t: self._target_details[t] for t in wanted if t in self._target_details}
 
         if include_protein_classes:
+            self._fill_component_classes(details.values())
             class_ids = {
                 cid
                 for detail in details.values()
@@ -931,6 +2372,35 @@ class ChEMBLAnnotator:
         return {t: {k: v for k, v in d.items() if not k.startswith("_")}
                 for t, d in details.items()}
 
+    def _fill_component_classes(self, details: Iterable[dict[str, Any]]) -> None:
+        """Look up class IDs for components the ``target`` payload left bare."""
+        pending = [d for d in details if d.get("_unclassified_components")]
+        wanted = sorted(
+            {c for d in pending for c in d["_unclassified_components"]}
+            - set(self._component_classes)
+        )
+        for chunk in _chunks(wanted, DEFAULT_BATCH):
+            rows = self._paged(
+                "target_component",
+                {"component_id__in": ",".join(str(c) for c in chunk), "limit": PAGE_LIMIT},
+                "target_components",
+                check=(lambda r: str(r.get("component_id")), {str(c) for c in chunk}),
+            )
+            for row in rows:
+                self._component_classes[int(row["component_id"])] = [
+                    int(pc["protein_classification_id"])
+                    for pc in (row.get("protein_classifications") or [])
+                    if pc.get("protein_classification_id") is not None
+                ]
+        for d in pending:
+            ids = list(d.get("_protein_class_ids", []))
+            for comp in d["_unclassified_components"]:
+                for cid in self._component_classes.get(comp, []):
+                    if cid not in ids:
+                        ids.append(cid)
+            d["_protein_class_ids"] = ids
+            d["_unclassified_components"] = []
+
     @staticmethod
     def _target_detail(target: dict[str, Any]) -> dict[str, Any]:
         components = target.get("target_components") or []
@@ -947,6 +2417,11 @@ class ChEMBLAnnotator:
             for pc in (comp.get("protein_classifications") or [])
             if pc.get("protein_classification_id") is not None
         ]
+        unclassified = [
+            int(comp["component_id"])
+            for comp in components
+            if "protein_classifications" not in comp and comp.get("component_id") is not None
+        ]
         return {
             "target_chembl_id": target.get("target_chembl_id"),
             "target_name": target.get("pref_name"),
@@ -959,28 +2434,33 @@ class ChEMBLAnnotator:
             "gene_symbol": gene_symbols[0] if gene_symbols else None,
             "n_components": len(components),
             "_protein_class_ids": class_ids,
+            "_unclassified_components": unclassified,
         }
 
     def _resolve_protein_classes(
         self, class_ids: set[int]
     ) -> dict[int, dict[str, Any]]:
-        missing = [
+        missing = sorted(
             cid
             for cid in class_ids
             if not (self.cache and cid in self._protein_classes)
-        ]
-        for chunk in (missing[i : i + 20] for i in range(0, len(missing), 20)):
-            # The filter field is `protein_class_id`; `protein_classification_id`
-            # is the name in the response payload and is silently ignored as a
-            # filter, which would return the whole 900-row class table.
-            rows = self._collection(
-                "protein_classification",
-                {
-                    "protein_class_id__in": ",".join(str(c) for c in chunk),
-                    "limit": len(chunk),
-                },
-                "protein_classifications",
-            )
+        )
+        for chunk in _chunks(missing, DEFAULT_BATCH):
+            if self._sql is not None:
+                rows = self._sql.protein_classes(chunk)
+            else:
+                # The filter field is `protein_class_id`; `protein_classification_id`
+                # is the name in the response payload and is silently ignored as a
+                # filter, which would return the whole 900-row class table.
+                rows = self._paged(
+                    "protein_classification",
+                    {
+                        "protein_class_id__in": ",".join(str(c) for c in chunk),
+                        "limit": len(chunk),
+                    },
+                    "protein_classifications",
+                    check=(lambda r: str(r.get("protein_class_id")), {str(c) for c in chunk}),
+                )
             for row in rows:
                 cid = row.get("protein_class_id")
                 if cid is not None:
@@ -1007,7 +2487,7 @@ class ChEMBLAnnotator:
         Parameters
         ----------
         identifier
-            ChEMBL ID, SMILES, or compound name.
+            ChEMBL ID, SMILES, InChIKey or compound name.
         limit
             Activity rows to summarise (default
             :data:`DEFAULT_ACTIVITIES`).
@@ -1212,32 +2692,47 @@ class ChEMBLAnnotator:
     # ==================================================================
 
     def get_metabolism(
-        self, identifier: str, limit: int = DEFAULT_METABOLITES
+        self, identifier: str, limit: int | None = DEFAULT_METABOLITES
     ) -> list[dict[str, Any]]:
         """Metabolic conversions, the enzymes involved, and the metabolites.
 
         Parameters
         ----------
         identifier
-            ChEMBL ID, SMILES, or compound name.
+            ChEMBL ID, SMILES, InChIKey or compound name.
         limit
             Maximum metabolism rows to fetch (default
-            :data:`DEFAULT_METABOLITES`).
+            :data:`DEFAULT_METABOLITES`); ``None`` fetches all pages.
 
         Returns
         -------
         list of dict
             One entry per curated conversion.  A prodrug's active form and
-            a compound's toxic metabolite both show up here.
+            a compound's toxic metabolite both show up here.  The REST
+            filter is ``drug_chembl_id`` (the parent itself); the SQLite
+            backend also includes conversions recorded against its salts.
         """
         parent = self._parent_id(identifier)
         if not parent:
             return []
-        rows = self._collection(
-            "metabolism",
-            {"drug_chembl_id": parent, "limit": limit},
-            "metabolisms",
+        if self._sql is not None:
+            rows = self._sql.metabolism([parent])[parent.upper()]
+            rows = rows if limit is None else rows[:limit]
+        else:
+            rows = self._single_parent_rows(
+                "metabolism", "drug_chembl_id", parent, "metabolisms", limit
+            )
+        return self._metabolism_entries(rows)
+
+    def get_metabolism_many(self, parents: Iterable[str], chunk_size: int = DEFAULT_BATCH) -> BatchResult:
+        """Metabolism for many parents (``drug_chembl_id__in``)."""
+        return self._parents_many(
+            parents, "metabolism", "drug_chembl_id", "metabolisms",
+            chunk_size, self._metabolism_entries, "metabolism",
         )
+
+    @staticmethod
+    def _metabolism_entries(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
             {
                 "substrate_name": row.get("substrate_name"),
@@ -1260,7 +2755,7 @@ class ChEMBLAnnotator:
     # ==================================================================
 
     def get_molecule_forms(
-        self, identifier: str, limit: int = DEFAULT_FORMS
+        self, identifier: str, limit: int | None = DEFAULT_FORMS
     ) -> list[dict[str, Any]]:
         """Parent compound and its salt forms.
 
@@ -1270,11 +2765,24 @@ class ChEMBLAnnotator:
         parent = self._parent_id(identifier)
         if not parent:
             return []
-        rows = self._collection(
-            "molecule_form",
-            {"parent_chembl_id": parent, "limit": limit},
-            "molecule_forms",
+        if self._sql is not None:
+            rows = self._sql.molecule_forms([parent])[parent.upper()]
+            rows = rows if limit is None else rows[:limit]
+        else:
+            rows = self._single_parent_rows(
+                "molecule_form", "parent_chembl_id", parent, "molecule_forms", limit
+            )
+        return self._form_entries(rows)
+
+    def get_molecule_forms_many(self, parents: Iterable[str], chunk_size: int = DEFAULT_BATCH) -> BatchResult:
+        """Forms for many parents (``parent_chembl_id__in``)."""
+        return self._parents_many(
+            parents, "molecule_form", "parent_chembl_id", "molecule_forms",
+            chunk_size, self._form_entries, "molecule_forms",
         )
+
+    @staticmethod
+    def _form_entries(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [
             {
                 "molecule_chembl_id": row.get("molecule_chembl_id"),
@@ -1293,13 +2801,13 @@ class ChEMBLAnnotator:
         identifier: str,
         similarity: int = DEFAULT_ANALOG_SIMILARITY,
         limit: int = DEFAULT_ANALOGS,
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, Any]] | dict[str, str]:
         """Structurally similar ChEMBL compounds by Tanimoto similarity.
 
         Parameters
         ----------
         identifier
-            ChEMBL ID, SMILES, or compound name.
+            ChEMBL ID, SMILES, InChIKey or compound name.
         similarity
             Minimum similarity percentage, 40--100 (default
             :data:`DEFAULT_ANALOG_SIMILARITY`).
@@ -1310,8 +2818,11 @@ class ChEMBLAnnotator:
         -------
         list of dict
             Excludes the query compound itself.  Sorted by similarity,
-            most similar first.
+            most similar first.  The SQLite backend has no similarity index
+            and returns ``{"status": "not_available_offline"}``.
         """
+        if self._sql is not None:
+            return {"status": "not_available_offline"}
         resolution = self.resolve(identifier)
         if not resolution.found:
             return []
@@ -1322,15 +2833,12 @@ class ChEMBLAnnotator:
         if not smiles:
             return []
 
-        self._sleep()
         # The query structure is a path segment, not a parameter, so it has
         # to be quoted -- SMILES routinely contain '/', '\' and '#'.
         quoted = requests.utils.quote(smiles, safe="")
-        data = _get_json(
-            f"{CHEMBL}/similarity/{quoted}/{int(similarity)}.json",
-            params={"limit": limit, "format": "json"},
+        molecules = self._collection(
+            f"similarity/{quoted}/{int(similarity)}", {"limit": limit}, "molecules"
         )
-        molecules = (data or {}).get("molecules", []) or []
 
         analogs = [
             {
@@ -1382,7 +2890,7 @@ class ChEMBLAnnotator:
         Parameters
         ----------
         identifier
-            ChEMBL ID, SMILES, or compound name.
+            ChEMBL ID, SMILES, InChIKey or compound name.
         sources
             ``"all"`` queries everything in :data:`ALL_SOURCES`.  Pass a
             list to select from ``"identity"``, ``"development"``,
@@ -1415,6 +2923,7 @@ class ChEMBLAnnotator:
             "parent_chembl_id": resolution.parent_chembl_id,
             "pref_name": resolution.pref_name,
             "matched_by": resolution.matched_by,
+            "match_status": resolution.status,
         }
         if not resolution.found:
             return result
@@ -1470,11 +2979,15 @@ class ChEMBLAnnotator:
     ) -> dict[str, dict[str, Any]]:
         """Annotate a list of compounds.
 
+        Identity is resolved up front with :meth:`resolve_many`, so
+        structures cost one batched lookup per :data:`DEFAULT_BATCH`.
+
         Returns
         -------
         dict
             Mapping identifier to annotation dict.
         """
+        self.resolve_many(identifiers)
         results: dict[str, dict[str, Any]] = {}
         total = len(identifiers)
         n_found = 0

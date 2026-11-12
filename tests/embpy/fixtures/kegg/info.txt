@@ -1,0 +1,6 @@
+kegg             KEGG (synthetic test fixture; format of GET /info/kegg)
+	pathway         14  2026/11/09
+	compound         5  2026/11/10
+	drug             6  2026/11/10
+	genes            6  2026/11/10
+	Synthetic fixture rows

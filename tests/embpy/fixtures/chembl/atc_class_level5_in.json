@@ -1,0 +1,47 @@
+{
+ "atc": [
+  {
+   "level1": "B",
+   "level1_description": "BLOOD AND BLOOD FORMING ORGANS",
+   "level2": "B01",
+   "level2_description": "ANTITHROMBOTIC AGENTS",
+   "level3": "B01A",
+   "level3_description": "ANTITHROMBOTIC AGENTS",
+   "level4": "B01AC",
+   "level4_description": "Platelet aggregation inhibitors excl. heparin",
+   "level5": "B01AC06",
+   "who_name": "acetylsalicylic acid"
+  },
+  {
+   "level1": "L",
+   "level1_description": "ANTINEOPLASTIC AND IMMUNOMODULATING AGENTS",
+   "level2": "L01",
+   "level2_description": "ANTINEOPLASTIC AGENTS",
+   "level3": "L01E",
+   "level3_description": "PROTEIN KINASE INHIBITORS",
+   "level4": "L01EA",
+   "level4_description": "BCR-ABL tyrosine kinase inhibitors",
+   "level5": "L01EA01",
+   "who_name": "imatinib"
+  },
+  {
+   "level1": "N",
+   "level1_description": "NERVOUS SYSTEM",
+   "level2": "N02",
+   "level2_description": "ANALGESICS",
+   "level3": "N02B",
+   "level3_description": "OTHER ANALGESICS AND ANTIPYRETICS",
+   "level4": "N02BA",
+   "level4_description": "Salicylic acid and derivatives",
+   "level5": "N02BA01",
+   "who_name": "acetylsalicylic acid"
+  }
+ ],
+ "page_meta": {
+  "limit": 1000,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total_count": 3
+ }
+}

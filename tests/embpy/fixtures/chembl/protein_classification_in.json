@@ -1,0 +1,66 @@
+{
+ "page_meta": {
+  "limit": 1000,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total_count": 5
+ },
+ "protein_classifications": [
+  {
+   "class_level": 1,
+   "definition": null,
+   "parent_id": 0,
+   "pref_name": "Other cytosolic protein",
+   "protein_class_desc": "cytosolic other",
+   "protein_class_id": 8,
+   "replaced_by": null,
+   "short_name": "Cytosolic other",
+   "sort_order": 12
+  },
+  {
+   "class_level": 2,
+   "definition": "The class of all enzymes catalyzing oxidoreduction reactions. The substrate that is oxidized is regarded as a hydrogen donor. The systematic name is based on donor:acceptor oxidoreductase. The recommended name will be dehydrogenase, wherever this is possible; as an alternative, reductase can be used. Oxidase is only used in cases where O2 is the acceptor. (Enzyme Nomenclature, 1992, p9) [MESH:D010088]",
+   "parent_id": 1,
+   "pref_name": "Oxidoreductase",
+   "protein_class_desc": "enzyme  reductase",
+   "protein_class_id": 10,
+   "replaced_by": null,
+   "short_name": "Reductase",
+   "sort_order": null
+  },
+  {
+   "class_level": 5,
+   "definition": null,
+   "parent_id": 1285,
+   "pref_name": "Tyrosine protein kinase Abl family",
+   "protein_class_desc": "enzyme  kinase  protein kinase  tk  abl",
+   "protein_class_id": 130,
+   "replaced_by": null,
+   "short_name": "Abl",
+   "sort_order": null
+  },
+  {
+   "class_level": 5,
+   "definition": "Specific receptors on cell membranes that react with PLATELET-DERIVED GROWTH FACTOR, its analogs, or antagonists. The alpha PDGF receptor (RECEPTOR, PLATELET-DERIVED GROWTH FACTOR ALPHA) and the beta PDGF receptor (RECEPTOR, PLATELET-DERIVED GROWTH FACTOR BETA) are the two principle types of PDGF receptors. Activation of the protein-tyrosine kinase activity of the receptors occurs by ligand-induced dimerization or heterodimerization of PDGF receptor types. [MESH:D017479]",
+   "parent_id": 1285,
+   "pref_name": "Tyrosine protein kinase PDGFR family",
+   "protein_class_desc": "enzyme  kinase  protein kinase  tk  pdgfr",
+   "protein_class_id": 159,
+   "replaced_by": null,
+   "short_name": "Pdgfr",
+   "sort_order": null
+  },
+  {
+   "class_level": 5,
+   "definition": "Proto-oncogene protein bcr is a serine-threonine kinase that functions as a negative regulator of CELL PROLIFERATION and NEOPLASTIC CELL TRANSFORMATION. It is commonly fused with cellular abl protein to form BCR-ABL FUSION PROTEINS in PHILADELPHIA CHROMOSOME positive LEUKEMIA patients. [MESH:D051562]",
+   "parent_id": 1452,
+   "pref_name": "Atypical protein kinase BCR family",
+   "protein_class_desc": "enzyme  kinase  protein kinase  atypical  bcr",
+   "protein_class_id": 291,
+   "replaced_by": null,
+   "short_name": "Bcr",
+   "sort_order": null
+  }
+ ]
+}

@@ -14,23 +14,34 @@ because two of ChEMBL's behaviours fail silently:
   unfiltered collection, so a misspelled field name yields a plausible
   response covering the whole database.
 
-Neither shows up as an error, so the field names are pinned by test.
+Neither shows up as an error, so the field names are pinned by test, and
+every filtered response is validated row by row against the requested keys.
+
+The regression tests at the bottom use payloads recorded from the live API
+on 2026-11-11 (``fixtures/chembl/``, see ``PROVENANCE.json`` there).
 """
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
 import pytest
+import requests
 from anndata import AnnData
 
+from embpy.resources.molecule import chembl as chembl_mod
 from embpy.resources.molecule.chembl import (
     ALL_SOURCES,
     AVAILABILITY_LABELS,
     DEFAULT_INDICATIONS,
+    BatchResult,
     ChEMBLAnnotator,
+    ChEMBLFilterIgnoredError,
     ChEMBLResolution,
+    ChEMBLServiceError,
     _as_float,
     _as_int,
     _flag,
@@ -60,7 +71,9 @@ class FakeAPI:
         self.calls.append((url, dict(params or {})))
         for matcher, payload in self.routes:
             if self._matches(matcher, url, params or {}):
-                return payload
+                # A callable payload answers from the request params, the way
+                # a filtered endpoint does.
+                return payload(dict(params or {})) if callable(payload) else payload
         return None
 
     @staticmethod
@@ -179,6 +192,46 @@ def no_cache_annotator():
 def with_api(routes):
     """Patch the module's ``_get_json`` with a :class:`FakeAPI`."""
     api = FakeAPI(routes)
+    return patch("embpy.resources.molecule.chembl._get_json", api), api
+
+
+#: The API's answer for a name nobody has: empty collections, not ``None``.
+#: ``None`` from a collection is a missing response and raises.
+NO_MATCH_ROUTES = [
+    (route("molecule.json"), {"molecules": []}),
+    ("molecule/search.json", {"molecules": []}),
+]
+
+
+def record_batch_route(*records):
+    """Answer ``molecule.json?molecule_chembl_id__in=`` with the given records."""
+
+    def matcher(url, params):
+        return "molecule.json" in url and "molecule_chembl_id__in" in params
+
+    def payload_for(params):
+        wanted = set(params["molecule_chembl_id__in"].split(","))
+        return {
+            "molecules": [r for r in records if r["molecule_chembl_id"] in wanted],
+            "page_meta": {"next": None},
+        }
+
+    return matcher, payload_for
+
+
+class RoutingAPI(FakeAPI):
+    """FakeAPI whose payloads may be callables of the request params."""
+
+    def __call__(self, url, params=None, timeout=30):
+        self.calls.append((url, dict(params or {})))
+        for matcher, payload in self.routes:
+            if self._matches(matcher, url, params or {}):
+                return payload(dict(params or {})) if callable(payload) else payload
+        return None
+
+
+def with_routing_api(routes):
+    api = RoutingAPI(routes)
     return patch("embpy.resources.molecule.chembl._get_json", api), api
 
 
@@ -319,19 +372,56 @@ class TestResolve:
         assert res.matched_by == "search"
         assert res.molecule_chembl_id == "CHEMBL25"
 
-    def test_smiles_identifier_tries_flexmatch_first(self, annotator):
+    def test_smiles_resolves_by_exact_inchikey(self, annotator):
+        pytest.importorskip("rdkit")
+        record = {
+            **ASPIRIN_RECORD,
+            "molecule_structures": {
+                "canonical_smiles": "CC(=O)Oc1ccccc1C(=O)O",
+                "standard_inchi_key": "BSYNRYMUTXBXSQ-UHFFFAOYSA-N",
+            },
+        }
         patcher, api = with_api(
             [
                 (
-                    route("molecule.json", "molecule_structures__canonical_smiles__flexmatch"),
-                    {"molecules": [ASPIRIN_RECORD]},
+                    route("molecule.json", "molecule_structures__standard_inchi_key__in"),
+                    {"molecules": [record], "page_meta": {"next": None}},
                 )
             ]
         )
         with patcher:
             res = annotator.resolve("CC(=O)Oc1ccccc1C(=O)O")
-        assert res.matched_by == "smiles"
-        assert api.requests_to("molecule.json")
+        assert res.status == "matched"
+        assert res.matched_by == "standard_inchi_key"
+        assert res.inchikey == res.matched_inchikey == "BSYNRYMUTXBXSQ-UHFFFAOYSA-N"
+        params = api.params_for("molecule.json")
+        assert params["molecule_structures__standard_inchi_key__in"] == "BSYNRYMUTXBXSQ-UHFFFAOYSA-N"
+        assert len(api.calls) == 1
+
+    def test_smiles_miss_never_falls_back_to_names_or_search(self, annotator):
+        """A SMILES cannot match a name; those three requests were pure cost."""
+        pytest.importorskip("rdkit")
+        patcher, api = with_api(NO_MATCH_ROUTES)
+        with patcher:
+            res = annotator.resolve("CC(=O)Oc1ccccc1C(=O)O")
+        assert res.status == "no_match"
+        assert not res.found
+        assert len(api.calls) == 1
+        params = api.calls[0][1]
+        assert "molecule_structures__standard_inchi_key__in" in params
+        assert not api.requests_to("search.json")
+        assert not any("flexmatch" in k for _, p in api.calls for k in p)
+
+    def test_inchikey_identifier_is_exact(self, annotator):
+        patcher, api = with_api(NO_MATCH_ROUTES)
+        with patcher:
+            res = annotator.resolve("BSYNRYMUTXBXSQ-UHFFFAOYSA-N")
+        assert res.status == "no_match"
+        assert api.params_for("molecule.json") == {
+            "molecule_structures__standard_inchi_key__in": "BSYNRYMUTXBXSQ-UHFFFAOYSA-N",
+            "limit": 1000,
+            "format": "json",
+        }
 
     def test_salt_resolves_to_its_parent(self, annotator):
         patcher, api = with_api([("molecule/CHEMBL1642", MESYLATE_RECORD)])
@@ -341,11 +431,18 @@ class TestResolve:
         assert res.parent_chembl_id == "CHEMBL941"
 
     def test_not_found(self, annotator):
-        patcher, api = with_api([])
+        patcher, api = with_api(NO_MATCH_ROUTES)
         with patcher:
             res = annotator.resolve("not-a-real-compound")
         assert not res.found
+        assert res.status == "no_match"
         assert res.molecule_chembl_id is None
+
+    def test_missing_response_is_not_a_miss(self, annotator):
+        """``None`` from a collection query is an outage, never "not in ChEMBL"."""
+        patcher, api = with_api([])
+        with patcher, pytest.raises(ChEMBLServiceError):
+            annotator.resolve("not-a-real-compound")
 
     def test_resolution_is_cached(self, annotator):
         patcher, api = with_api(
@@ -406,7 +503,7 @@ class TestDevelopmentStatus:
         assert self._status(annotator)["orphan"] is None
 
     def test_unknown_compound_returns_empty(self, annotator):
-        patcher, api = with_api([])
+        patcher, api = with_api(NO_MATCH_ROUTES)
         with patcher:
             assert annotator.get_development_status("nope") == {}
 
@@ -476,6 +573,7 @@ INDICATION_ROWS = {
             "mesh_heading": "Atrial Fibrillation",
             "max_phase_for_ind": "3.0",
             "indication_refs": [{"ref_type": "ClinicalTrials"}],
+            "parent_molecule_chembl_id": "CHEMBL25",
         },
         # Same indication, higher phase, from another reference.
         {
@@ -485,6 +583,7 @@ INDICATION_ROWS = {
             "mesh_heading": "Atrial Fibrillation",
             "max_phase_for_ind": "4.0",
             "indication_refs": [{"ref_type": "FDA"}, {"ref_type": "ATC"}],
+            "parent_molecule_chembl_id": "CHEMBL25",
         },
         {
             "efo_id": "EFO:0003843",
@@ -493,6 +592,7 @@ INDICATION_ROWS = {
             "mesh_heading": "Pain",
             "max_phase_for_ind": "2.0",
             "indication_refs": [],
+            "parent_molecule_chembl_id": "CHEMBL25",
         },
     ]
 }
@@ -546,6 +646,7 @@ class TestIndications:
                                 "efo_term": "some disease",
                                 "mesh_heading": None,
                                 "max_phase_for_ind": "4.0",
+                                "parent_molecule_chembl_id": "CHEMBL25",
                             }
                         ]
                     },
@@ -557,9 +658,19 @@ class TestIndications:
         assert indications[0]["indication"] == "some disease"
 
     def test_unknown_compound_returns_empty(self, annotator):
-        patcher, api = with_api([])
+        patcher, api = with_api(NO_MATCH_ROUTES)
         with patcher:
             assert annotator.get_indications("nope") == []
+
+    def test_foreign_rows_are_rejected(self, annotator):
+        """An ignored filter returns other drugs' rows; none may be kept."""
+        rows = {"drug_indications": [{**INDICATION_ROWS["drug_indications"][0],
+                                      "parent_molecule_chembl_id": "CHEMBL1"}]}
+        patcher, api = with_api(
+            [("molecule/CHEMBL25", ASPIRIN_RECORD), ("drug_indication.json", rows)]
+        )
+        with patcher, pytest.raises(ChEMBLFilterIgnoredError):
+            annotator.get_indications("CHEMBL25")
 
 
 # =====================================================================
@@ -593,10 +704,21 @@ WARNING_ROWS = {
 }
 
 
+ROFECOXIB_RECORD = {
+    "molecule_chembl_id": "CHEMBL122",
+    "pref_name": "ROFECOXIB",
+    "max_phase": "4.0",
+    "withdrawn_flag": True,
+    "molecule_hierarchy": {"molecule_chembl_id": "CHEMBL122", "parent_chembl_id": "CHEMBL122"},
+}
+for _row in WARNING_ROWS["drug_warnings"]:
+    _row["parent_molecule_chembl_id"] = "CHEMBL122"
+
+
 class TestWarnings:
     def test_keyed_on_parent_molecule(self, annotator):
         patcher, api = with_api(
-            [("molecule/CHEMBL122", ASPIRIN_RECORD), ("drug_warning.json", WARNING_ROWS)]
+            [("molecule/CHEMBL122", ROFECOXIB_RECORD), ("drug_warning.json", WARNING_ROWS)]
         )
         with patcher:
             annotator.get_warnings("CHEMBL122")
@@ -604,7 +726,7 @@ class TestWarnings:
 
     def test_parses_withdrawal(self, annotator):
         patcher, api = with_api(
-            [("molecule/CHEMBL122", ASPIRIN_RECORD), ("drug_warning.json", WARNING_ROWS)]
+            [("molecule/CHEMBL122", ROFECOXIB_RECORD), ("drug_warning.json", WARNING_ROWS)]
         )
         with patcher:
             warnings = annotator.get_warnings("CHEMBL122")
@@ -763,6 +885,7 @@ class TestMechanisms:
 ACTIVITY_ROWS = {
     "activities": [
         {
+            "parent_molecule_chembl_id": "CHEMBL941",
             "target_chembl_id": "CHEMBL1862",
             "target_pref_name": "Tyrosine-protein kinase ABL1",
             "target_organism": "Homo sapiens",
@@ -785,6 +908,7 @@ ACTIVITY_ROWS = {
             "ligand_efficiency": {"bei": "20"},
         },
         {
+            "parent_molecule_chembl_id": "CHEMBL941",
             "target_chembl_id": "CHEMBL1862",
             "target_pref_name": "Tyrosine-protein kinase ABL1",
             "target_organism": "Homo sapiens",
@@ -795,6 +919,7 @@ ACTIVITY_ROWS = {
             "assay_type": "B",
         },
         {
+            "parent_molecule_chembl_id": "CHEMBL941",
             "target_chembl_id": "CHEMBL2331053",
             "target_pref_name": "K562",
             "target_organism": "Homo sapiens",
@@ -805,6 +930,7 @@ ACTIVITY_ROWS = {
             "assay_type": "F",
         },
         {
+            "parent_molecule_chembl_id": "CHEMBL941",
             "target_chembl_id": "CHEMBL1913",
             "target_pref_name": "PDGFR beta",
             "target_organism": "Homo sapiens",
@@ -873,11 +999,20 @@ PROTEIN_CLASS_ROWS = {
 }
 
 
+def _targets_for(params):
+    """``target.json?target_chembl_id__in=`` answered like the API: filtered."""
+    wanted = set(params["target_chembl_id__in"].split(","))
+    return {"targets": [t for t in TARGET_ROWS["targets"] if t["target_chembl_id"] in wanted]}
+
+
+DRUG_NONE = ("drug.json", {"drugs": []})
+
+
 def _activity_routes():
     return [
         ("molecule/CHEMBL941", IMATINIB_RECORD),
         ("activity.json", ACTIVITY_ROWS),
-        ("target.json", TARGET_ROWS),
+        ("target.json", _targets_for),
         ("protein_classification.json", PROTEIN_CLASS_ROWS),
     ]
 
@@ -1025,12 +1160,16 @@ class TestTargetProfile:
                         "pchembl_value": 7.0,
                     }
                 ],
+                max_targets=0,
                 include_protein_classes=False,
             )
         assert profile[0]["best_pchembl"] == 7.0
+        assert not api.calls
 
     def test_empty_activities(self, annotator):
-        patcher, api = with_api([("molecule/CHEMBL941", IMATINIB_RECORD)])
+        patcher, api = with_api(
+            [("molecule/CHEMBL941", IMATINIB_RECORD), ("activity.json", {"activities": []})]
+        )
         with patcher:
             assert annotator.get_target_profile("CHEMBL941") == []
 
@@ -1100,6 +1239,7 @@ class TestMetabolism:
                     {
                         "metabolisms": [
                             {
+                                "drug_chembl_id": "CHEMBL25",
                                 "substrate_name": "ASPIRIN",
                                 "substrate_chembl_id": "CHEMBL25",
                                 "metabolite_name": "SALICYLIC ACID",
@@ -1251,14 +1391,14 @@ class TestAnnotate:
         assert "development" in ALL_SOURCES
 
     def test_unknown_compound_short_circuits(self, annotator):
-        patcher, api = with_api([])
+        patcher, api = with_api(NO_MATCH_ROUTES)
         with patcher:
             result = annotator.annotate("not-a-compound")
         assert result["found"] is False
         assert "development" not in result
 
     def test_selected_sources_only(self, annotator):
-        patcher, api = with_api([("molecule/CHEMBL25", ASPIRIN_RECORD)])
+        patcher, api = with_api([("molecule/CHEMBL25", ASPIRIN_RECORD), DRUG_NONE])
         with patcher:
             result = annotator.annotate("CHEMBL25", sources=["development"])
         assert "development" in result
@@ -1278,7 +1418,7 @@ class TestAnnotate:
         assert "selectivity" in result
 
     def test_identity_always_present(self, annotator):
-        patcher, api = with_api([("molecule/CHEMBL25", ASPIRIN_RECORD)])
+        patcher, api = with_api([("molecule/CHEMBL25", ASPIRIN_RECORD), DRUG_NONE])
         with patcher:
             result = annotator.annotate("CHEMBL25", sources=["development"])
         assert result["chembl_id"] == "CHEMBL25"
@@ -1286,15 +1426,27 @@ class TestAnnotate:
         assert result["pref_name"] == "ASPIRIN"
 
 
+def _screen_routes():
+    return [record_batch_route(ASPIRIN_RECORD), ("molecule/CHEMBL25", ASPIRIN_RECORD), DRUG_NONE, *NO_MATCH_ROUTES]
+
+
 class TestAnnotateBatch:
     def test_maps_identifier_to_annotation(self, annotator):
-        patcher, api = with_api([("molecule/CHEMBL25", ASPIRIN_RECORD)])
+        patcher, api = with_routing_api(_screen_routes())
         with patcher:
             results = annotator.annotate_batch(
                 ["CHEMBL25", "nope"], sources=["development"]
             )
         assert results["CHEMBL25"]["found"] is True
         assert results["nope"]["found"] is False
+
+    def test_identity_is_batched_up_front(self, annotator):
+        patcher, api = with_routing_api(_screen_routes())
+        with patcher:
+            annotator.annotate_batch(["CHEMBL25"], sources=["development"])
+        # One batched record request, reused by the per-source methods.
+        molecule_calls = [p for u, p in api.calls if "molecule.json" in u or "/molecule/" in u]
+        assert [p.get("molecule_chembl_id__in") for p in molecule_calls] == ["CHEMBL25"]
 
 
 # =====================================================================
@@ -1376,7 +1528,7 @@ class TestAnnotateAdata:
         return adata
 
     def test_adds_drug_columns_and_uns(self, annotator):
-        patcher, api = with_api([("molecule/CHEMBL25", ASPIRIN_RECORD)])
+        patcher, api = with_routing_api(_screen_routes())
         with patcher:
             out = annotator.annotate_adata(
                 self._adata(), column="compound", sources=["development"],
@@ -1387,22 +1539,26 @@ class TestAnnotateAdata:
         assert "chembl_annotation_limits" in out.uns
 
     def test_unique_compounds_are_fetched_once(self, annotator):
-        patcher, api = with_api([("molecule/CHEMBL25", ASPIRIN_RECORD)])
+        patcher, api = with_routing_api(_screen_routes())
         with patcher:
             annotator.annotate_adata(
                 self._adata(), column="compound", sources=["development"],
             )
-        assert len(api.requests_to("molecule/CHEMBL25")) == 1
+        record_requests = api.requests_to("molecule/CHEMBL25") + [
+            c for c in api.calls if "CHEMBL25" in c[1].get("molecule_chembl_id__in", "")
+        ]
+        assert len(record_requests) == 1
 
     def test_flags_saturated_indication_counts(self, annotator):
         rows = {
             "drug_indications": [
-                {"efo_id": f"EFO:{i}", "mesh_heading": f"d{i}", "max_phase_for_ind": "4.0"}
+                {"efo_id": f"EFO:{i}", "mesh_heading": f"d{i}", "max_phase_for_ind": "4.0",
+                 "parent_molecule_chembl_id": "CHEMBL25"}
                 for i in range(DEFAULT_INDICATIONS)
             ]
         }
-        patcher, api = with_api(
-            [("molecule/CHEMBL25", ASPIRIN_RECORD), ("drug_indication.json", rows)]
+        patcher, api = with_routing_api(
+            [*_screen_routes()[:3], ("drug_indication.json", rows), *NO_MATCH_ROUTES]
         )
         with patcher:
             out = annotator.annotate_adata(
@@ -1412,7 +1568,7 @@ class TestAnnotateAdata:
 
     def test_copy_is_respected(self, annotator):
         adata = self._adata()
-        patcher, api = with_api([("molecule/CHEMBL25", ASPIRIN_RECORD)])
+        patcher, api = with_routing_api(_screen_routes())
         with patcher:
             out = annotator.annotate_adata(
                 adata, column="compound", sources=["development"], copy=True,
@@ -1491,7 +1647,7 @@ class TestMoleculeAnnotatorIntegration:
             [
                 ("molecule/CHEMBL941", IMATINIB_RECORD),
                 ("mechanism.json", MECHANISM_ROWS),
-                ("target.json", TARGET_ROWS),
+                ("target.json", _targets_for),
             ]
         )
         with patcher:
@@ -1534,3 +1690,458 @@ class TestMoleculeAnnotatorIntegration:
 
         annotator = MoleculeAnnotator(rate_limit_delay=0)
         assert annotator.chembl is annotator.chembl
+
+
+# =====================================================================
+# Typed errors from the HTTP helper
+# =====================================================================
+
+
+class _Response:
+    def __init__(self, status_code, payload=None, text=""):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = text
+
+    def json(self):
+        if self._payload is None:
+            raise ValueError("not json")
+        return self._payload
+
+
+class TestGetJson:
+    @pytest.mark.parametrize(("code", "kind"), [(500, "http_5xx"), (503, "http_5xx"), (429, "rate_limited")])
+    def test_outages_raise_typed_errors(self, code, kind):
+        with patch.object(chembl_mod.requests, "get", return_value=_Response(code)):
+            with pytest.raises(ChEMBLServiceError) as err:
+                chembl_mod._get_json(f"{chembl_mod.CHEMBL}/status.json")
+        assert err.value.status_code == code
+        assert err.value.kind == kind
+
+    def test_timeout_raises(self):
+        with patch.object(chembl_mod.requests, "get", side_effect=requests.Timeout("slow")):
+            with pytest.raises(ChEMBLServiceError) as err:
+                chembl_mod._get_json(f"{chembl_mod.CHEMBL}/molecule/CHEMBL25.json")
+        assert err.value.kind == "timeout"
+        assert err.value.status_code is None
+
+    def test_connection_error_raises(self):
+        with patch.object(chembl_mod.requests, "get", side_effect=requests.ConnectionError("down")):
+            with pytest.raises(ChEMBLServiceError) as err:
+                chembl_mod._get_json(f"{chembl_mod.CHEMBL}/molecule/CHEMBL25.json")
+        assert err.value.kind == "connection"
+
+    def test_404_is_absent_not_an_error(self):
+        with patch.object(chembl_mod.requests, "get", return_value=_Response(404)):
+            assert chembl_mod._get_json(f"{chembl_mod.CHEMBL}/molecule/CHEMBL0.json") is None
+
+    def test_html_error_page_with_200_raises(self):
+        with patch.object(chembl_mod.requests, "get", return_value=_Response(200, None, "<html>")):
+            with pytest.raises(ChEMBLServiceError) as err:
+                chembl_mod._get_json(f"{chembl_mod.CHEMBL}/status.json")
+        assert err.value.kind == "invalid_json"
+
+    def test_success_returns_payload(self):
+        with patch.object(chembl_mod.requests, "get", return_value=_Response(200, {"a": 1})):
+            assert chembl_mod._get_json(f"{chembl_mod.CHEMBL}/status.json") == {"a": 1}
+
+    def test_outage_propagates_out_of_getters(self, annotator):
+        """An outage must not read as "no mechanisms"."""
+
+        def boom(url, params=None, timeout=30):
+            raise ChEMBLServiceError(500, url)
+
+        with patch.object(chembl_mod, "_get_json", boom), pytest.raises(ChEMBLServiceError):
+            annotator.get_mechanisms("CHEMBL941")
+
+
+# =====================================================================
+# Recorded payloads (fixtures/chembl, 2026-11-11, ChEMBL_37)
+# =====================================================================
+
+FIXTURES = Path(__file__).parent / "fixtures" / "chembl"
+
+
+def fixture(name):
+    return json.loads((FIXTURES / f"{name}.json").read_text())
+
+
+ASPIRIN_KEY = "BSYNRYMUTXBXSQ-UHFFFAOYSA-N"
+IMATINIB_KEY = "KTUFNOKKBVMGRW-UHFFFAOYSA-N"
+MESYLATE_KEY = "YLMAHDNUQAMNNX-UHFFFAOYSA-N"
+ABSENT_KEY = "AAAAAAAAAAAAAA-UHFFFAOYSA-N"
+IMATINIB_SMILES = "Cc1ccc(NC(=O)c2ccc(CN3CCN(C)CC3)cc2)cc1Nc1nccc(-c2cccnc2)n1"
+
+
+def _keys_in(params):
+    return params["molecule_structures__standard_inchi_key__in"].split(",")
+
+
+def identity_api(fail=None):
+    """Serve the recorded InChIKey batch, filtered to each request's keys.
+
+    ``fail(keys)`` may raise to simulate a failed batch.
+    """
+    recorded = fixture("molecule_inchikey_in")["molecules"]
+
+    def payload(params):
+        keys = _keys_in(params)
+        if fail is not None:
+            fail(keys)
+        return {
+            "molecules": [m for m in recorded if m["molecule_structures"]["standard_inchi_key"] in keys],
+            "page_meta": {"next": None, "total_count": None},
+        }
+
+    return with_routing_api([(route("molecule.json", "molecule_structures__standard_inchi_key__in"), payload)])
+
+
+class TestResolveMany:
+    def test_one_batched_request_maps_every_key(self, annotator):
+        patcher, api = identity_api()
+        with patcher:
+            res = annotator.resolve_many([ASPIRIN_KEY, IMATINIB_KEY, MESYLATE_KEY, ABSENT_KEY])
+        assert len(api.calls) == 1
+        assert sorted(_keys_in(api.calls[0][1])) == sorted([ASPIRIN_KEY, IMATINIB_KEY, MESYLATE_KEY, ABSENT_KEY])
+        assert res[ASPIRIN_KEY].molecule_chembl_id == "CHEMBL25"
+        assert res[IMATINIB_KEY].parent_chembl_id == "CHEMBL941"
+        # The mesylate is matched as itself, and its parent is imatinib.
+        assert res[MESYLATE_KEY].molecule_chembl_id == "CHEMBL1642"
+        assert res[MESYLATE_KEY].parent_chembl_id == "CHEMBL941"
+        assert res[ABSENT_KEY].status == "no_match"
+        assert all(r.matched_inchikey == k for k, r in res.items() if r.found)
+
+    def test_smiles_inputs_are_converted_to_inchikeys(self, annotator):
+        pytest.importorskip("rdkit")
+        patcher, api = identity_api()
+        with patcher:
+            res = annotator.resolve_many([IMATINIB_SMILES, "CC(=O)Oc1ccccc1C(=O)O"])
+        assert len(api.calls) == 1
+        assert res[IMATINIB_SMILES].molecule_chembl_id == "CHEMBL941"
+        assert res[IMATINIB_SMILES].inchikey == IMATINIB_KEY
+        assert res["CC(=O)Oc1ccccc1C(=O)O"].molecule_chembl_id == "CHEMBL25"
+
+    def test_invalid_structure(self, annotator):
+        pytest.importorskip("rdkit")
+        patcher, api = identity_api()
+        with patcher, patch.object(chembl_mod, "smiles_to_inchikey", return_value=None):
+            res = annotator.resolve_many(["CCO"])
+        assert res["CCO"].status == "invalid_structure"
+        assert not api.calls
+
+    def test_foreign_row_marks_the_chunk_filter_ignored(self, annotator):
+        """ChEMBL ignores an unsupported filter and returns the whole table.
+
+        The recorded payload is the live answer to a misspelled InChIKey
+        filter: 2,921,148 molecules, none of them the one asked for.
+        """
+        ignored = fixture("molecule_ignored_toplevel_filter")
+        patcher, api = with_api([(route("molecule.json"), ignored)])
+        with patcher:
+            res = annotator.resolve_many([ASPIRIN_KEY, IMATINIB_KEY])
+        assert {r.status for r in res.values()} == {"filter_ignored"}
+        assert not any(r.found for r in res.values())
+        # Rejected on the first page: the next page of the full table is never requested.
+        assert len(api.calls) == 1
+
+    def test_failed_batch_of_50_bisects_into_25_and_25(self, annotator):
+        keys = [f"{'A' * 13}{chr(65 + i // 26)}-{chr(65 + i % 26) * 10}-N" for i in range(50)]
+
+        def fail(chunk):
+            if len(chunk) > 25:
+                raise ChEMBLServiceError(500, "molecule.json")
+
+        patcher, api = identity_api(fail)
+        with patcher:
+            res = annotator.resolve_many(keys, chunk_size=50)
+        assert [len(_keys_in(p)) for _, p in api.calls] == [50, 25, 25]
+        assert {r.status for r in res.values()} == {"no_match"}
+
+    def test_persistent_failure_isolates_one_key(self, annotator):
+        def fail(chunk):
+            if IMATINIB_KEY in chunk:
+                raise ChEMBLServiceError(500, "molecule.json")
+
+        patcher, api = identity_api(fail)
+        with patcher:
+            res = annotator.resolve_many([ASPIRIN_KEY, IMATINIB_KEY, MESYLATE_KEY, ABSENT_KEY])
+        assert res[IMATINIB_KEY].status == "batch_failed"
+        assert "500" in res[IMATINIB_KEY].error
+        assert res[ASPIRIN_KEY].status == "matched"
+        assert res[MESYLATE_KEY].status == "matched"
+        assert res[ABSENT_KEY].status == "no_match"
+
+    def test_failed_keys_are_not_cached(self, annotator):
+        state = {"fail": True}
+
+        def fail(chunk):
+            if state["fail"]:
+                raise ChEMBLServiceError(500, "molecule.json")
+
+        patcher, api = identity_api(fail)
+        with patcher:
+            assert annotator.resolve_many([IMATINIB_KEY])[IMATINIB_KEY].status == "batch_failed"
+            state["fail"] = False
+            assert annotator.resolve_many([IMATINIB_KEY])[IMATINIB_KEY].status == "matched"
+
+    def test_foreign_exceptions_propagate(self, annotator):
+        """A replaced helper's own errors (e.g. a circuit breaker) are not swallowed."""
+
+        class FetchError(RuntimeError):
+            pass
+
+        def fail(chunk):
+            raise FetchError("circuit_open")
+
+        patcher, api = identity_api(fail)
+        with patcher, pytest.raises(FetchError):
+            annotator.resolve_many([ASPIRIN_KEY, IMATINIB_KEY])
+        assert len(api.calls) == 1
+
+    def test_batch_errors_opt_in_bisects_foreign_exceptions(self):
+        class FetchError(RuntimeError):
+            pass
+
+        def fail(chunk):
+            if IMATINIB_KEY in chunk:
+                raise FetchError("service_error")
+
+        annotator = ChEMBLAnnotator(rate_limit_delay=0, batch_errors=(FetchError,))
+        patcher, api = identity_api(fail)
+        with patcher:
+            res = annotator.resolve_many([ASPIRIN_KEY, IMATINIB_KEY])
+        assert res[IMATINIB_KEY].status == "batch_failed"
+        assert res[ASPIRIN_KEY].status == "matched"
+
+    def test_missing_response_is_batch_failed_not_no_match(self, annotator):
+        patcher, api = with_api([])
+        with patcher:
+            res = annotator.resolve_many([ASPIRIN_KEY])
+        assert res[ASPIRIN_KEY].status == "batch_failed"
+
+    def test_ambiguous_when_one_key_has_two_parents(self, annotator):
+        rows = [
+            {"molecule_chembl_id": "CHEMBL1", "molecule_hierarchy": {"parent_chembl_id": "CHEMBL1"},
+             "molecule_structures": {"standard_inchi_key": ASPIRIN_KEY}},
+            {"molecule_chembl_id": "CHEMBL2", "molecule_hierarchy": {"parent_chembl_id": "CHEMBL2"},
+             "molecule_structures": {"standard_inchi_key": ASPIRIN_KEY}},
+        ]
+        patcher, api = with_api([(route("molecule.json"), {"molecules": rows})])
+        with patcher:
+            res = annotator.resolve(ASPIRIN_KEY)
+        assert res.status == "ambiguous"
+        assert not res.found
+        assert {c[0] for c in res.candidates} == {"CHEMBL1", "CHEMBL2"}
+
+
+class TestFlexmatch:
+    def test_off_by_default(self, annotator):
+        assert annotator.flexmatch is False
+
+    def test_opt_in_accepts_only_identical_inchikeys(self):
+        """The recorded imatinib flexmatch returns 3 molecules (total_count 3).
+
+        Only CHEMBL941 has the query's InChIKey; the mesylate and a
+        deuterated/stereo variant must not be accepted.
+        """
+        pytest.importorskip("rdkit")
+        flex = fixture("molecule_flexmatch_imatinib")
+        annotator = ChEMBLAnnotator(rate_limit_delay=0, flexmatch=True)
+        patcher, api = with_api(
+            [
+                (route("molecule.json", "molecule_structures__standard_inchi_key__in"), {"molecules": []}),
+                (route("molecule.json", "molecule_structures__canonical_smiles__flexmatch"), flex),
+            ]
+        )
+        with patcher:
+            res = annotator.resolve(IMATINIB_SMILES)
+        assert res.molecule_chembl_id == "CHEMBL941"
+        assert res.matched_by == "smiles_flexmatch"
+        assert res.matched_inchikey == IMATINIB_KEY
+        assert int(api.params_for("molecule.json")["limit"]) == 1000  # exact lookup went first
+
+    def test_opt_in_rejects_non_identical_hits(self):
+        pytest.importorskip("rdkit")
+        flex = fixture("molecule_flexmatch_imatinib")
+        flex = {**flex, "molecules": [m for m in flex["molecules"] if m["molecule_chembl_id"] != "CHEMBL941"]}
+        annotator = ChEMBLAnnotator(rate_limit_delay=0, flexmatch=True)
+        patcher, api = with_api(
+            [
+                (route("molecule.json", "molecule_structures__standard_inchi_key__in"), {"molecules": []}),
+                (route("molecule.json", "molecule_structures__canonical_smiles__flexmatch"), flex),
+            ]
+        )
+        with patcher:
+            res = annotator.resolve(IMATINIB_SMILES)
+        assert res.status == "no_match"
+        assert {c[0] for c in res.candidates} == {"CHEMBL1642", "CHEMBL2386595"}
+
+
+class TestBatchGetters:
+    def _records_api(self):
+        recorded = fixture("molecule_chembl_id_in")["molecules"]
+        return with_routing_api([record_batch_route(*recorded)])
+
+    def test_records_many_primes_per_source_methods(self, annotator):
+        """Parent records are fetched once; sources never re-fetch molecule/{P}.json."""
+        patcher, api = self._records_api()
+        with patcher:
+            records = annotator.get_molecule_records_many(["CHEMBL941", "CHEMBL25", "CHEMBL1642", "CHEMBL0"])
+            assert records.status("CHEMBL0") == "not_found"
+            assert records["CHEMBL941"]["pref_name"] == "IMATINIB"
+            dev = annotator.get_development_status("CHEMBL941")
+            syn = annotator.get_synonyms("CHEMBL25")
+            salt = annotator.resolve("CHEMBL1642")
+        assert len(api.calls) == 1
+        assert not api.requests_to("molecule/")
+        assert dev["first_approval"] == 2001
+        assert syn[0]["type"] == "FDA"  # aspirin has no INN row in ChEMBL_37
+        assert salt.parent_chembl_id == "CHEMBL941"
+
+    def test_prime_records(self, annotator):
+        recorded = fixture("molecule_chembl_id_in")["molecules"]
+        annotator.prime_records(recorded)
+        patcher, api = with_api([])
+        with patcher:
+            assert annotator.get_development_status("CHEMBL25")["pref_name"] == "ASPIRIN"
+        assert not api.calls
+
+    def test_records_many_validates_rows(self, annotator):
+        recorded = fixture("molecule_chembl_id_in")["molecules"]
+        patcher, api = with_api([(route("molecule.json"), {"molecules": recorded})])
+        with patcher:
+            records = annotator.get_molecule_records_many(["CHEMBL25"])
+        assert records.status("CHEMBL25") == "filter_ignored"
+        assert "CHEMBL25" not in records
+
+    def test_mechanisms_many(self, annotator):
+        patcher, api = with_api([("mechanism.json", fixture("mechanism_parent_in"))])
+        with patcher:
+            mechs = annotator.get_mechanisms_many(["CHEMBL941", "CHEMBL25", "CHEMBL3"])
+        assert api.params_for("mechanism.json")["parent_molecule_chembl_id__in"] == "CHEMBL941,CHEMBL25,CHEMBL3"
+        assert len(mechs["CHEMBL941"]) == 4
+        assert {m["target_chembl_id"] for m in mechs["CHEMBL941"]} == {
+            "CHEMBL1862", "CHEMBL1913", "CHEMBL1936", "CHEMBL2096618"
+        }
+        assert [m["mechanism"] for m in mechs["CHEMBL25"]] == ["Cyclooxygenase inhibitor"]
+        assert mechs["CHEMBL3"] == []
+        assert mechs.status("CHEMBL3") == "success"
+
+    def test_mechanisms_many_rejects_an_ignored_filter(self, annotator):
+        """Recorded: ``parent_chembl_id__in`` is not a mechanism filter (7,561 rows)."""
+        patcher, api = with_api([("mechanism.json", fixture("mechanism_ignored_filter"))])
+        with patcher:
+            mechs = annotator.get_mechanisms_many(["CHEMBL941"])
+        assert mechs.status("CHEMBL941") == "filter_ignored"
+        assert len(api.calls) == 1
+
+    def test_mechanisms_many_bisects_failures(self, annotator):
+        def payload(params):
+            parents = params["parent_molecule_chembl_id__in"].split(",")
+            if len(parents) > 1:
+                raise ChEMBLServiceError(500, "mechanism.json")
+            rows = fixture("mechanism_parent_in")["mechanisms"]
+            return {"mechanisms": [r for r in rows if r["parent_molecule_chembl_id"] in parents]}
+
+        patcher, api = with_routing_api([("mechanism.json", payload)])
+        with patcher:
+            mechs = annotator.get_mechanisms_many(["CHEMBL941", "CHEMBL25"])
+        assert len(mechs["CHEMBL941"]) == 4 and len(mechs["CHEMBL25"]) == 1
+        assert len(api.calls) == 3
+
+    def test_get_mechanisms_follows_pagination(self, annotator):
+        page1, page2 = fixture("mechanism_page1"), fixture("mechanism_page2")
+        patcher, api = with_api(
+            [
+                ("molecule/CHEMBL941", IMATINIB_RECORD),
+                (lambda url, params: "offset=2" in url, page2),
+                ("mechanism.json", page1),
+            ]
+        )
+        with patcher:
+            mechs = annotator.get_mechanisms("CHEMBL941")
+        assert len(mechs) == 4
+        assert len(api.requests_to("mechanism.json")) == 2
+        assert api.params_for("mechanism.json")["limit"] == 1000
+
+    def test_indications_many(self, annotator):
+        patcher, api = with_api([("drug_indication.json", fixture("drug_indication_parent_in_trimmed"))])
+        with patcher:
+            ind = annotator.get_indications_many(["CHEMBL941", "CHEMBL25"])
+        assert ind["CHEMBL941"] and ind["CHEMBL25"]
+        assert all("max_phase_for_indication" in e for e in ind["CHEMBL941"])
+
+    def test_warnings_many(self, annotator):
+        patcher, api = with_api([("drug_warning.json", fixture("drug_warning_parent_in"))])
+        with patcher:
+            warn = annotator.get_warnings_many(["CHEMBL941", "CHEMBL25", "CHEMBL122"])
+        assert warn["CHEMBL941"] == [] and warn["CHEMBL25"] == []
+        assert {w["warning_type"] for w in warn["CHEMBL122"]} == {"Black Box Warning", "Withdrawn"}
+
+    def test_metabolism_and_forms_many(self, annotator):
+        patcher, api = with_api(
+            [
+                ("metabolism.json", fixture("metabolism_drug_in")),
+                ("molecule_form.json", fixture("molecule_form_parent_in")),
+            ]
+        )
+        with patcher:
+            met = annotator.get_metabolism_many(["CHEMBL941", "CHEMBL25"])
+            forms = annotator.get_molecule_forms_many(["CHEMBL941", "CHEMBL25"])
+        assert "drug_chembl_id__in" in api.params_for("metabolism.json")
+        assert "parent_chembl_id__in" in api.params_for("molecule_form.json")
+        assert met["CHEMBL941"] == []
+        assert {m["metabolite_name"] for m in met["CHEMBL25"]} >= {"SALICYLIC ACID"}
+        assert {f["molecule_chembl_id"] for f in forms["CHEMBL941"]} == {"CHEMBL941", "CHEMBL1642", "CHEMBL2386595"}
+
+    def test_batch_result_status(self):
+        result = BatchResult({"A": [], "B": None})
+        result.failed["C"] = {"status": "batch_failed", "error": "x"}
+        assert [result.status(k) for k in "ABCD"] == ["success", "not_found", "batch_failed", "not_requested"]
+
+
+class TestRecordedTargets:
+    def test_protein_classes_come_from_target_component(self, annotator):
+        """ChEMBL_37 ``target`` components carry no protein classification.
+
+        Reading it off the target payload left ``target_class`` ``None`` for
+        every target; the classes are on ``target_component``.
+        """
+        def filtered(name, collection, param, field):
+            rows = fixture(name)[collection]
+
+            def payload(params):
+                wanted = set(params[param].split(","))
+                return {collection: [r for r in rows if str(r[field]) in wanted]}
+
+            return payload
+
+        patcher, api = with_routing_api(
+            [
+                ("target_component.json",
+                 filtered("target_component_in", "target_components", "component_id__in", "component_id")),
+                ("protein_classification.json",
+                 filtered("protein_classification_in", "protein_classifications",
+                          "protein_class_id__in", "protein_class_id")),
+                ("target.json", filtered("target_in", "targets", "target_chembl_id__in", "target_chembl_id")),
+            ]
+        )
+        with patcher:
+            details = annotator.get_target_details(["CHEMBL1862", "CHEMBL2094253", "CHEMBL2096618"])
+        abl = details["CHEMBL1862"]
+        assert abl["gene_symbol"] == "ABL1"
+        assert abl["target_class"] == "enzyme"
+        assert abl["protein_class_path"] == ["enzyme", "kinase", "protein kinase", "tk", "abl"]
+        assert details["CHEMBL2094253"]["target_type"] == "PROTEIN FAMILY"
+        assert details["CHEMBL2094253"]["gene_symbols"] == ["PTGS2", "PTGS1"]
+        assert len(api.requests_to("target_component.json")) == 1
+        assert len(api.requests_to("protein_classification.json")) == 1
+
+    def test_activities_are_validated(self, annotator):
+        patcher, api = with_api(
+            [("molecule/CHEMBL941", IMATINIB_RECORD), ("activity.json", fixture("activity_imatinib_top5"))]
+        )
+        with patcher:
+            acts = annotator.get_activities("CHEMBL941", limit=5)
+        assert [a["pchembl_value"] for a in acts] == [10.22, 9.96, 9.82, 9.7, 9.7]
+        assert len(api.calls) == 2  # the page_meta.next of a capped query is not followed

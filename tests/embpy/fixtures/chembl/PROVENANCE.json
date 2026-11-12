@@ -1,0 +1,29 @@
+{
+ "source": "ChEMBL web services, https://www.ebi.ac.uk/chembl/api/data (release ChEMBL_37)",
+ "licence": "CC BY-SA 3.0",
+ "recorded_at": "2026-11-11T15:47:24Z/2026-11-11T15:53:00Z",
+ "recorded_from": "cluster login node with curl, >= 1 s between requests",
+ "trimming": "molfile removed from molecule_structures; drug records lose molecule_structures/molecule_synonyms/research_codes/synonyms; target_component sequence removed and go_slims/xrefs cut to 2; drug_indication_parent_in_trimmed keeps the first 6 rows per (parent, molecule) group of 302. Everything else is byte-for-byte the API JSON re-serialised.",
+ "requests": {
+  "molecule_inchikey_in": "molecule.json?molecule_structures__standard_inchi_key__in=KTUFNOKKBVMGRW-UHFFFAOYSA-N,BSYNRYMUTXBXSQ-UHFFFAOYSA-N,YLMAHDNUQAMNNX-UHFFFAOYSA-N,AAAAAAAAAAAAAA-UHFFFAOYSA-N&only=molecule_chembl_id,molecule_hierarchy,molecule_structures,pref_name,max_phase&limit=1000",
+  "molecule_chembl_id_in": "molecule.json?molecule_chembl_id__in=CHEMBL941,CHEMBL25,CHEMBL1642&limit=1000",
+  "molecule_flexmatch_imatinib": "molecule.json?molecule_structures__canonical_smiles__flexmatch=<imatinib>&only=molecule_chembl_id,molecule_structures,molecule_hierarchy&limit=10",
+  "molecule_ignored_toplevel_filter": "molecule.json?standard_inchi_key__in=KTUFNOKKBVMGRW-UHFFFAOYSA-N&only=molecule_chembl_id,molecule_structures&limit=3 (unsupported filter silently ignored: total_count 2921148)",
+  "molecule_bad_filter_path_400": "molecule.json?molecule_structures__standard_inchikey__in=... (HTTP 400)",
+  "mechanism_ignored_filter": "mechanism.json?parent_chembl_id__in=CHEMBL941&limit=3 (unsupported filter silently ignored: total_count 7561)",
+  "mechanism_parent_in": "mechanism.json?parent_molecule_chembl_id__in=CHEMBL941,CHEMBL25&limit=1000",
+  "mechanism_page1": "mechanism.json?parent_molecule_chembl_id=CHEMBL941&limit=2",
+  "mechanism_page2": "mechanism.json?limit=2&offset=2&parent_molecule_chembl_id=CHEMBL941",
+  "drug_indication_parent_in_trimmed": "drug_indication.json?parent_molecule_chembl_id__in=CHEMBL941,CHEMBL25&limit=1000",
+  "drug_warning_parent_in": "drug_warning.json?parent_molecule_chembl_id__in=CHEMBL941,CHEMBL25,CHEMBL122&limit=1000",
+  "metabolism_drug_in": "metabolism.json?drug_chembl_id__in=CHEMBL941,CHEMBL25&limit=1000",
+  "molecule_form_parent_in": "molecule_form.json?parent_chembl_id__in=CHEMBL941,CHEMBL25&limit=1000",
+  "drug_aspirin": "drug.json?molecule_chembl_id=CHEMBL25&limit=1",
+  "drug_imatinib": "drug.json?molecule_chembl_id=CHEMBL941&limit=1",
+  "activity_imatinib_top5": "activity.json?parent_molecule_chembl_id=CHEMBL941&pchembl_value__isnull=false&order_by=-pchembl_value&limit=5",
+  "target_in": "target.json?target_chembl_id__in=CHEMBL1862,CHEMBL1913,CHEMBL1936,CHEMBL2094253,CHEMBL2096618&limit=1000",
+  "target_component_in": "target_component.json?component_id__in=148,162,173,227,255,3450&limit=1000",
+  "protein_classification_in": "protein_classification.json?protein_class_id__in=8,10,130,159,291&limit=1000",
+  "atc_class_level5_in": "atc_class.json?level5__in=L01EA01,B01AC06,N02BA01&limit=1000"
+ }
+}

@@ -1,0 +1,70 @@
+{
+ "drugs": [
+  {
+   "applicants": [
+    "Novartis Pharmaceuticals Corp",
+    "Teva Pharmaceuticals Usa",
+    "Natco Pharma Ltd",
+    "Sun Pharmaceutical Industries Ltd",
+    "Mylan Pharmaceuticals Inc",
+    "Dr Reddys Laboratories Ltd",
+    "Amneal Pharmaceuticals Of New York Llc",
+    "Apotex Inc",
+    "Zydus Pharmaceuticals Usa Inc",
+    "Eugia Pharma Specialities Ltd"
+   ],
+   "atc_classification": [
+    {
+     "code": "L01EA01",
+     "description": "ANTINEOPLASTIC AND IMMUNOMODULATING AGENTS: ANTINEOPLASTIC AGENTS: PROTEIN KINASE INHIBITORS: BCR-ABL tyrosine kinase inhibitors"
+    }
+   ],
+   "availability_type": 1,
+   "biotherapeutic": null,
+   "black_box": null,
+   "black_box_warning": "0",
+   "chirality": 2,
+   "drug_type": 1,
+   "first_approval": 2001,
+   "first_in_class": 0,
+   "helm_notation": null,
+   "max_phase": "4.0",
+   "molecule_chembl_id": "CHEMBL941",
+   "molecule_properties": {
+    "alogp": "4.59",
+    "aromatic_rings": 4,
+    "full_molformula": "C29H31N7O",
+    "full_mwt": "493.62",
+    "hba": 7,
+    "hbd": 2,
+    "heavy_atoms": 37,
+    "mw_freebase": "493.62",
+    "np_likeness_score": "-1.80",
+    "num_ro5_violations": 0,
+    "psa": "86.28",
+    "qed_weighted": "0.39",
+    "ro3_pass": "N",
+    "rtb": 7
+   },
+   "ob_patent": null,
+   "oral": 1,
+   "parenteral": 0,
+   "prodrug": 0,
+   "rule_of_five": 1,
+   "sc_patent": null,
+   "topical": 0,
+   "usan_stem": "-tinib",
+   "usan_stem_definition": "tyrosine kinase inhibitors",
+   "usan_stem_substem": "-tinib(-tinib)",
+   "usan_year": null,
+   "withdrawn_flag": "0"
+  }
+ ],
+ "page_meta": {
+  "limit": 1,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total_count": 1
+ }
+}

@@ -43,6 +43,14 @@ _TORCH_ONLY_FILES = [
 collect_ignore: list[str] = [] if _HAVE_TORCH else list(_TORCH_ONLY_FILES)
 
 
+def pytest_configure(config):
+    # Also declared in pyproject.toml; repeated here so the marker is known when
+    # pytest runs from another rootdir (e.g. a staged copy without the config).
+    config.addinivalue_line(
+        "markers", "network: live provider check; skipped unless EMBPY_NETWORK_TESTS=1"
+    )
+
+
 def pytest_collection_modifyitems(config, items):
     """Skip individual ``@pytest.mark.requires_torch`` tests when torch is absent.
 
