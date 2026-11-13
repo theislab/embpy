@@ -39,6 +39,7 @@
 - Work through practical tutorials in the [Hands-On Workflows & Recipes Guide](hands-on.md).
 - Combine representations with the [Embedding Fusion Guide](fusion.md) and its [executable notebook](notebooks/07_fusion.ipynb).
 - Read the [LINCS Fusion Benchmark](fusion_benchmark_lincs.md) for results, data exclusions and limitations.
+- Check [Annotation Evidence and Missing Values](annotation_semantics.md) for identity matching, unknown flags and provider-specific interpretation.
 - Understand OS and hardware specifics in the [Cross-Platform & Hardware Guide](cross-platform.md).
 - Dive into the [Architecture Overview](technical.md) for architectural details.
 - Review the [API Reference](api-reference.md) for automated module documentation.
