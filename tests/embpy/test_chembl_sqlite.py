@@ -508,6 +508,17 @@ class TestParentAggregation:
 
 
 class TestActivitiesAndTargets:
+    def test_complete_retrieval_and_explicit_truncation(self, offline):
+        limited = offline.get_activities("CHEMBL941", limit=1)
+        assert len(limited) == 1
+        assert offline.activity_fetch_metadata["CHEMBL941"]["truncated"] is True
+        assert offline.activity_fetch_metadata["CHEMBL941"]["total_rows"] is None
+        complete = offline.get_activities("CHEMBL941", limit=None)
+        assert len(complete) > len(limited)
+        assert complete[-1]["pchembl_value"] < limited[0]["pchembl_value"]
+        assert offline.activity_fetch_metadata["CHEMBL941"]["total_rows"] == len(complete)
+        assert offline.activity_fetch_metadata["CHEMBL941"]["truncated"] is False
+
     def test_top_n_by_pchembl_over_all_forms(self, offline):
         acts = offline.get_activities("CHEMBL941", limit=3)
         assert [a["pchembl_value"] for a in acts] == [10.22, 9.0, 8.0]

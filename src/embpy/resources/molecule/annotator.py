@@ -525,7 +525,26 @@ class MoleculeAnnotator:
                 )
                 if outcome == "ok":
                     cids = _positive_cids((data.get("IdentifierList") or {}).get("CID"))
-                    return {**_cid_status(cids), "method": "pubchem_smiles"}
+                    result = {**_cid_status(cids), "method": "pubchem_smiles",
+                              "query_inchikey": Chem.MolToInchiKey(mol),
+                              "matched_inchikey": None, "match_tier": "unverified",
+                              "primary_annotation_eligible": False}
+                    if len(cids) == 1:
+                        props, prop_outcome, prop_error, _ = _call(
+                            _get_json, f"{PUBCHEM}/compound/cid/{cids[0]}/property/InChIKey/JSON")
+                        rows = ((props or {}).get("PropertyTable") or {}).get("Properties") or []
+                        rows = [r for r in rows if r.get("CID") == cids[0]]
+                        if prop_outcome == "ok" and len(rows) == 1:
+                            actual = str(rows[0].get("InChIKey") or "").upper()
+                            expected = result["query_inchikey"]
+                            if _INCHIKEY_RE.fullmatch(actual):
+                                result["matched_inchikey"] = actual
+                                result["match_tier"] = ("exact" if actual == expected else
+                                    "connectivity_only" if actual[:14] == expected[:14] else "standardized_structure_differs")
+                                result["primary_annotation_eligible"] = actual == expected
+                        if prop_outcome != "ok":
+                            result["identity_verification_error"] = prop_error or prop_outcome
+                    return result
                 if outcome == "not_found":
                     return {"status": "no_match", "cid": None, "cids": [], "method": "pubchem_smiles"}
                 status = "invalid_structure" if http_status == 400 else "service_error"

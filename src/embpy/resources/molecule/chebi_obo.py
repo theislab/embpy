@@ -643,6 +643,9 @@ class ChebiOboIndex:
         candidates = [self._candidate(number, key, tier) for key in keys for number in self._ids_by_key[key]]
         result = self._empty("no_chebi_entity", query)
         result["match_tier"] = tier
+        result["primary_annotation_eligible"] = tier == "exact"
+        result["identity_evidence"] = "exact_standard_inchikey" if tier == "exact" else "connectivity_only_stereochemistry_unverified"
+        result["role_interpretation"] = "Database-asserted has_role, including investigational and repurposing uses; not necessarily an established mechanism or approved indication"
         result["candidates"] = candidates
         if len(keys) > 1:
             result["status"] = "ambiguous_connectivity"

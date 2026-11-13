@@ -283,7 +283,7 @@ class TestDecodeHelpers:
             (3, "phase 3"),
             ("0.5", "early phase 1"),
             (-1, "clinical phase unknown"),
-            (None, "preclinical"),
+            (None, None),
         ],
     )
     def test_phase_label(self, value, expected):
@@ -493,10 +493,11 @@ class TestDevelopmentStatus:
     def test_decodes_routes_and_flags(self, annotator):
         status = self._status(annotator)
         assert status["oral"] is True
-        assert status["parenteral"] is False
+        assert status["parenteral"] is None
         assert status["natural_product"] is True
-        assert status["withdrawn_flag"] is False
-        assert status["black_box_warning"] is False
+        assert status["withdrawn_flag"] is None
+        assert status["black_box_warning"] is None
+        assert status["raw_flags"]["black_box_warning"] == ASPIRIN_RECORD["black_box_warning"]
 
     def test_not_applicable_flag_is_none(self, annotator):
         # aspirin's `orphan` is -1 in ChEMBL
@@ -1340,7 +1341,7 @@ class TestAnalogs:
         patcher, api = with_api(self._routes())
         with patcher:
             analogs = annotator.get_analogs("CHEMBL25")
-        assert analogs[0]["development_phase"] == "preclinical"
+        assert analogs[0]["development_phase"] is None
 
     def test_smiles_is_url_quoted(self, annotator):
         """A raw SMILES in a path segment breaks on ``/``, ``\\`` and ``#``.
@@ -2144,4 +2145,5 @@ class TestRecordedTargets:
         with patcher:
             acts = annotator.get_activities("CHEMBL941", limit=5)
         assert [a["pchembl_value"] for a in acts] == [10.22, 9.96, 9.82, 9.7, 9.7]
-        assert len(api.calls) == 2  # the page_meta.next of a capped query is not followed
+        assert len(api.calls) == 3  # one extra row establishes truncation
+        assert annotator.activity_fetch_metadata["CHEMBL941"]["truncated"] is True

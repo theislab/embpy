@@ -213,10 +213,15 @@ class TestPubChemSmilesResolution:
         from rdkit import Chem
 
         fake = FakeHelpers().add(_smiles_route, load(fixture))
+        expected_key = Chem.MolToInchiKey(Chem.MolFromSmiles(smiles))
+        fake.add(lambda url, params: "/property/InChIKey/" in url,
+                 {"PropertyTable": {"Properties": [{"CID": cid, "InChIKey": expected_key}]}})
         with patch.object(mod, "_get_json", fake):
             res = annotator.resolve_pubchem_cid(smiles)
-        assert res == {"status": "matched", "cid": cid, "cids": [cid], "method": "pubchem_smiles"}
-        assert len(fake.calls) == 1
+        assert {k: res[k] for k in ("status", "cid", "cids", "method")} == {"status": "matched", "cid": cid, "cids": [cid], "method": "pubchem_smiles"}
+        assert res["matched_inchikey"] == expected_key
+        assert res["primary_annotation_eligible"] is True
+        assert len(fake.calls) == 2
         url, params = fake.calls[0]
         canon = Chem.MolToSmiles(Chem.MolFromSmiles(smiles))
         assert "/" in canon  # RDKit rewrites '\' bonds with '/', the 400 trigger
@@ -238,6 +243,7 @@ class TestPubChemSmilesResolution:
 
     def test_legacy_int_wrapper(self, annotator):
         fake = FakeHelpers().add(_smiles_route, load("pubchem/smiles_cids_449459.json"))
+        fake.add(lambda url, params: "/property/InChIKey/" in url, {"PropertyTable": {"Properties": []}})
         with patch.object(mod, "_get_json", fake):
             assert annotator._resolve_pubchem_cid(HYDROXYTAMOXIFEN) == 449459
 

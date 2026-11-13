@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning][].
 
 ### Fixed
 
+- Annotation uncertainty is preserved: unrecorded ChEMBL flags are `None`, missing phase is not preclinical, and Cellosaurus sampling site no longer fills tissue of origin. Target profiles fetch complete activity evidence by default, retain every target component and expose truncation when a limit is requested. Exact-match eligibility and a parent-family identity audit make stereochemical/isotope differences explicit so callers can gate annotation transfer. The default AnnData field `drug_coconut_member` replaces the misleading `drug_is_natural_product`; see `docs/annotation_semantics.md` for the changed contracts.
+
 - PubChem CID resolution no longer puts SMILES in the URL path (every SMILES with `/` or `\` got HTTP 400); it sends `smiles` as a query parameter. KEGG lookups no longer treat a PubChem CID as a KEGG `pubchem:` SID (CID 5291, imatinib, used to map to C02226, citraconic acid). MyGene is no longer used as a Reactome source.
 
 - `tl.cell_eval` / `tl.run_cell_eval` now take `metric_configs` and `skip_metrics`, routed to `MetricsEvaluator.compute` rather than the constructor. All `**kwargs` previously went to `__init__`, so passing `metric_configs` raised `MetricsEvaluator.__init__() got an unexpected keyword argument 'metric_configs'` -- and since `metric_configs` is the only route to `embed_key`, the ten `ANNDATA_PAIR` metrics could not be pointed at an `.obsm` embedding at all. They silently scored `.X` instead, which for an embedding comparison is the wrong matrix rather than a missing feature.

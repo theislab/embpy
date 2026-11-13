@@ -122,7 +122,8 @@ class TestCellosaurusParsing:
         assert mcf7["species"] == "Homo sapiens"
         assert mcf7["species_label"] == "Homo sapiens (Human)"
         assert mcf7["species_taxids"] == ["9606"]
-        assert mcf7["site"] == mcf7["tissue"] == "Pleural effusion"
+        assert mcf7["site"] == mcf7["sampling_site"] == "Pleural effusion"
+        assert mcf7["tissue"] == ""
         assert mcf7["site_type"] == "Metastatic"
         assert mcf7["sites"][0]["uberon"] == ["UBERON_0000175"]
         assert mcf7["disease"] == "Invasive breast carcinoma of no special type"
@@ -545,7 +546,8 @@ class TestAnnotateCombined:
         assert ann["depmap_id"] == "ACH-000090"
         assert ann["passports_id"] == "SIDM00088"
         assert ann["species"] == "Homo sapiens"
-        assert ann["tissue"] == "Bone"
+        assert ann["tissue"] == "Prostate"
+        assert ann["sampling_site"] == "Bone"
         assert ann["disease"] == "Prostate carcinoma"
         assert ann["lineage"] == "Prostate"
         assert ann["model_type"] == "Cell Line"
@@ -572,7 +574,7 @@ class TestAnnotateCombined:
         obs = pd.DataFrame({"cell_line": ["CVCL_0031", "CVCL_0031", "CVCL_0035"]},
                            index=pd.Index(["c1", "c2", "c3"]))
         result = offline_annotator.annotate_adata(AnnData(obs=obs), column="cell_line")
-        assert list(result.obs["cellline_tissue"]) == ["Pleural effusion", "Pleural effusion", "Bone"]
+        assert list(result.obs["cellline_tissue"]) == ["Breast", "Breast", "Prostate"]
         assert list(result.obs["cellline_lineage"]) == ["Breast", "Breast", "Prostate"]
         assert list(result.obs["cellline_msi_status"]) == ["MSS", "MSS", ""]
         assert set(result.uns["cellline_annotations"]) == {"CVCL_0031", "CVCL_0035"}
@@ -604,7 +606,7 @@ class TestTextDescription:
         text = offline_annotator.get_text_description("CVCL_0035")
         assert "CVCL_0035 is a cell line." in text
         assert "Species: Homo sapiens." in text
-        assert "Derived from Bone tissue." in text
+        assert "Derived from Prostate tissue." in text
         assert "Disease: Prostate carcinoma." in text
         assert "Lineage: Prostate (Prostate Adenocarcinoma)." in text
         assert "prostate cancer cell line" in text

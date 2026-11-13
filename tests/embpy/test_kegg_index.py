@@ -394,7 +394,7 @@ class TestLookup:
         assert c01405["inchikey"] == ASPIRIN and c01405["chebi_ids"] == ["CHEBI:15365"]
         assert r["compound_pathways"] == [{
             "id": "map94976", "name": "Synthetic reference map 94976", "match_tier": "exact",
-            "kegg_ids": ["C91405"], "namespaces": ["cpd"],
+            "kegg_ids": ["C91405"], "namespaces": ["cpd"], "primary_annotation_eligible": True,
         }]
         assert _ids(r["drug_maps"]) == ["map07748", "map07749", "map07810", "map07919"]
         assert r["drug_maps"][3]["name"] == "Synthetic drug map - class 919"
@@ -424,7 +424,7 @@ class TestLookup:
         # D98066's own non-map07 link stays a compound-pathway item, marked as coming from KEGG DRUG.
         assert r["compound_pathways"] == [{
             "id": "map94976", "name": "Synthetic reference map 94976", "match_tier": "exact",
-            "kegg_ids": ["D98066"], "namespaces": ["dr"],
+            "kegg_ids": ["D98066"], "namespaces": ["dr"], "primary_annotation_eligible": True,
         }]
 
     def test_cid_used_as_sid_never_maps(self, index):

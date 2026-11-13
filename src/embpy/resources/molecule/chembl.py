@@ -94,8 +94,8 @@ PAGE_LIMIT = 1000
 #: pages; reaching it means the filter was not applied.
 MAX_PAGES = 50
 
-#: ``max_phase`` in ``molecule_dictionary``.  ``None`` means a preclinical
-#: compound with bioactivity data but no clinical record.
+#: ``max_phase`` in ``molecule_dictionary``. Missing does not establish a
+#: preclinical development programme; keep it unknown.
 MAX_PHASE_LABELS: dict[float, str] = {
     4.0: "approved",
     3.0: "phase 3",
@@ -296,7 +296,7 @@ def _flag(value: Any) -> bool | None:
 def _phase_label(max_phase: Any) -> str | None:
     f = _as_float(max_phase)
     if f is None:
-        return "preclinical"
+        return None
     return MAX_PHASE_LABELS.get(f)
 
 
@@ -1015,9 +1015,13 @@ class ChEMBLSqlite:
     # -- activities ---------------------------------------------------------
 
     def activities(
-        self, parent: str, limit: int, only_with_pchembl: bool = True
+        self, parent: str, limit: int | None, only_with_pchembl: bool = True
     ) -> list[dict[str, Any]]:
-        """Top-``limit`` activities of every form of the parent, by pChEMBL."""
+        """Top-``limit`` activities, or all rows when ``limit=None``.
+
+        Use the complete table before quality/species/assay filtering for
+        target inference. A potency-ordered row cap biases target coverage.
+        """
         family, _ = self._family([parent])
         if not family:
             return []
@@ -1057,12 +1061,17 @@ class ChEMBLSqlite:
         if only_with_pchembl:
             where += " AND +a.pchembl_value IS NOT NULL"
             order = "ORDER BY +a.pchembl_value DESC, a.activity_id"
-        sql = f"SELECT {' '.join(select)} {' '.join(joins)} {where} {order} LIMIT ?"
+        sql = f"SELECT {' '.join(select)} {' '.join(joins)} {where} {order}"
         regnos = list(family)
         if len(regnos) > _SQL_CHUNK:  # pragma: no cover - families are small
             regnos = regnos[:_SQL_CHUNK]
         marks = ",".join("?" * len(regnos))
-        rows = self.query(sql.replace("{in}", marks), (*regnos, int(limit)))
+        if limit is not None:
+            if limit < 1:
+                raise ValueError("Activity limit must be positive or None")
+            sql += " LIMIT ?"
+        rows = self.query(sql.replace("{in}", marks),
+                          (*regnos, int(limit)) if limit is not None else tuple(regnos))
         ids = self._chembl_ids({r["molregno"] for r in rows})
         out = []
         for r in rows:
@@ -1195,6 +1204,7 @@ class ChEMBLAnnotator:
         self._protein_classes: dict[int, dict[str, Any]] = {}
         self._target_details: dict[str, dict[str, Any]] = {}
         self._component_classes: dict[int, list[int]] = {}
+        self.activity_fetch_metadata: dict[str, dict[str, Any]] = {}
 
     def _sleep(self) -> None:
         if self.delay > 0:
@@ -1767,8 +1777,11 @@ class ChEMBLAnnotator:
         dict
             Empty if the compound is not in ChEMBL.  ``max_phase`` is the
             raw ChEMBL value and ``development_phase`` its label; a
-            preclinical compound has ``max_phase`` ``None`` and
-            ``development_phase`` ``"preclinical"``.
+            missing clinical record has ``max_phase`` and
+            ``development_phase`` ``None``. Curated flags are positive-only:
+            zero is unrecorded, not evidence of absence. Original values
+            remain in ``raw_flags``. ``natural_product`` records ChEMBL's
+            COCONUT membership flag, not demonstrated natural provenance.
         """
         resolution = self.resolve(identifier)
         if not resolution.found:
@@ -1786,6 +1799,12 @@ class ChEMBLAnnotator:
         max_phase = _as_float(record.get("max_phase"))
         availability = _as_int(record.get("availability_type"))
         chirality = _as_int(record.get("chirality"))
+        curated_flags = ("oral", "parenteral", "topical", "therapeutic_flag",
+                         "dosed_ingredient", "black_box_warning", "withdrawn_flag",
+                         "first_in_class", "prodrug", "orphan", "natural_product",
+                         "chemical_probe", "veterinary")
+        positive = {name: True if _flag(record.get(name)) is True else None
+                    for name in curated_flags}
 
         return {
             "molecule_chembl_id": record.get("molecule_chembl_id"),
@@ -1794,27 +1813,18 @@ class ChEMBLAnnotator:
             "structure_type": record.get("structure_type"),
             "max_phase": max_phase,
             "development_phase": _phase_label(record.get("max_phase")),
-            "is_approved": max_phase == 4.0,
+            "is_approved": None if max_phase is None or max_phase < 0 else max_phase == 4.0,
+            "raw_flags": {name: record.get(name) for name in curated_flags},
+            "flag_policy": "positive_only; zero/missing does not establish absence",
+            "natural_product_evidence": "ChEMBL COCONUT membership flag; not a natural-versus-synthetic classification",
             "first_approval": _as_int(record.get("first_approval")),
             "availability_type": availability,
             "availability": AVAILABILITY_LABELS.get(availability)
             if availability is not None
             else None,
-            "oral": _flag(record.get("oral")),
-            "parenteral": _flag(record.get("parenteral")),
-            "topical": _flag(record.get("topical")),
-            "therapeutic_flag": _flag(record.get("therapeutic_flag")),
-            "dosed_ingredient": _flag(record.get("dosed_ingredient")),
-            "black_box_warning": _flag(record.get("black_box_warning")),
-            "withdrawn_flag": _flag(record.get("withdrawn_flag")),
-            "first_in_class": _flag(record.get("first_in_class")),
-            "prodrug": _flag(record.get("prodrug")),
-            "orphan": _flag(record.get("orphan")),
-            "natural_product": _flag(record.get("natural_product")),
-            "chemical_probe": _flag(record.get("chemical_probe")),
+            **positive,
             "inorganic_flag": _flag(record.get("inorganic_flag")),
             "polymer_flag": _flag(record.get("polymer_flag")),
-            "veterinary": _flag(record.get("veterinary")),
             "chirality": chirality,
             "chirality_label": CHIRALITY_LABELS.get(chirality)
             if chirality is not None
@@ -2217,7 +2227,7 @@ class ChEMBLAnnotator:
     def get_activities(
         self,
         identifier: str,
-        limit: int = DEFAULT_ACTIVITIES,
+        limit: int | None = DEFAULT_ACTIVITIES,
         only_with_pchembl: bool = True,
     ) -> list[dict[str, Any]]:
         """Bioactivity measurements, richest-first.
@@ -2233,7 +2243,9 @@ class ChEMBLAnnotator:
             ChEMBL ID, SMILES, InChIKey or compound name.
         limit
             Maximum activity rows to fetch (default
-            :data:`DEFAULT_ACTIVITIES`).
+            :data:`DEFAULT_ACTIVITIES`). ``None`` fetches all matching rows
+            before downstream filtering. ``activity_fetch_metadata[parent]``
+            records returned rows, truncation and whether the total is known.
         only_with_pchembl
             Restrict to rows with a pChEMBL value, i.e. comparable
             concentration-response measurements.  Set ``False`` to include
@@ -2249,12 +2261,15 @@ class ChEMBLAnnotator:
         parent = self._parent_id(identifier)
         if not parent:
             return []
+        if limit is not None and limit < 1:
+            raise ValueError("Activity limit must be positive or None")
+        fetch_limit = None if limit is None else limit + 1
         if self._sql is not None:
-            rows = self._sql.activities(parent, limit, only_with_pchembl)
+            rows = self._sql.activities(parent, fetch_limit, only_with_pchembl)
         else:
             params: dict[str, Any] = {
                 "parent_molecule_chembl_id": parent,
-                "limit": limit,
+                "limit": PAGE_LIMIT if fetch_limit is None else min(fetch_limit, PAGE_LIMIT),
             }
             if only_with_pchembl:
                 params["pchembl_value__isnull"] = "false"
@@ -2264,10 +2279,22 @@ class ChEMBLAnnotator:
                 params,
                 "activities",
                 check=("parent_molecule_chembl_id", {parent.upper()}),
-                max_rows=limit,
+                max_rows=fetch_limit,
             )
+        truncated = limit is not None and len(rows) > limit
+        self.activity_fetch_metadata[parent] = {
+            "parent_chembl_id": parent, "limit": limit, "truncated": truncated,
+            "returned_rows": min(len(rows), limit) if limit is not None else len(rows),
+            "total_rows": None if truncated else len(rows),
+            "total_rows_lower_bound": len(rows),
+            "scope": "parent family; pchembl present" if only_with_pchembl else "parent family",
+        }
+        if truncated:
+            rows = rows[:limit]
         return [
             {
+                "activity_id": row.get("activity_id"),
+                "molecule_chembl_id": row.get("molecule_chembl_id"),
                 "target_chembl_id": row.get("target_chembl_id"),
                 "target_pref_name": row.get("target_pref_name"),
                 "target_organism": row.get("target_organism"),
@@ -2431,7 +2458,7 @@ class ChEMBLAnnotator:
             "uniprot_accessions": accessions,
             "uniprot_accession": accessions[0] if accessions else None,
             "gene_symbols": gene_symbols,
-            "gene_symbol": gene_symbols[0] if gene_symbols else None,
+            "gene_symbol": gene_symbols[0] if len(gene_symbols) == 1 else None,
             "n_components": len(components),
             "_protein_class_ids": class_ids,
             "_unclassified_components": unclassified,
@@ -2474,8 +2501,8 @@ class ChEMBLAnnotator:
     def get_target_profile(
         self,
         identifier: str,
-        limit: int = DEFAULT_ACTIVITIES,
-        max_targets: int = DEFAULT_TARGETS,
+        limit: int | None = None,
+        max_targets: int | None = None,
         include_protein_classes: bool = True,
     ) -> list[dict[str, Any]]:
         """Per-target potency summary with target identity resolved.
@@ -2489,11 +2516,10 @@ class ChEMBLAnnotator:
         identifier
             ChEMBL ID, SMILES, InChIKey or compound name.
         limit
-            Activity rows to summarise (default
-            :data:`DEFAULT_ACTIVITIES`).
+            Activity rows to summarise; ``None`` (default) retrieves all.
         max_targets
             Resolve identity for at most this many targets, taking the most
-            potent first (default :data:`DEFAULT_TARGETS`).
+            potent first. ``None`` (default) resolves every target.
         include_protein_classes
             Resolve the ChEMBL protein family hierarchy per target.
 
@@ -2515,7 +2541,7 @@ class ChEMBLAnnotator:
     def build_target_profile(
         self,
         activities: list[dict[str, Any]],
-        max_targets: int = DEFAULT_TARGETS,
+        max_targets: int | None = None,
         include_protein_classes: bool = True,
     ) -> list[dict[str, Any]]:
         """Summarise already-fetched activities per target.
@@ -2531,7 +2557,7 @@ class ChEMBLAnnotator:
             Rows as returned by :meth:`get_activities`.
         max_targets
             Resolve identity for at most this many targets, taking the most
-            potent first (default :data:`DEFAULT_TARGETS`).
+            potent first. ``None`` (default) resolves every target.
         include_protein_classes
             Resolve the ChEMBL protein family hierarchy per target.
 
@@ -2558,6 +2584,7 @@ class ChEMBLAnnotator:
                     "target_name": acts[0].get("target_pref_name"),
                     "organism": acts[0].get("target_organism"),
                     "n_measurements": len(acts),
+                    "n_assays": len({a.get("assay_chembl_id") for a in acts if a.get("assay_chembl_id")}),
                     "activity_types": sorted(
                         {a["activity_type"] for a in acts if a["activity_type"]}
                     ),
@@ -2580,6 +2607,8 @@ class ChEMBLAnnotator:
                         "target_type": detail.get("target_type"),
                         "uniprot_accession": detail.get("uniprot_accession"),
                         "gene_symbol": detail.get("gene_symbol"),
+                        "gene_symbols": detail.get("gene_symbols", []),
+                        "uniprot_accessions": detail.get("uniprot_accessions", []),
                         "target_class": detail.get("target_class"),
                         "target_subclass": detail.get("target_subclass"),
                         "protein_class_path": detail.get("protein_class_path"),
@@ -2616,9 +2645,8 @@ class ChEMBLAnnotator:
             ``selectivity_window`` is the pChEMBL gap between the best and
             second-best *protein* target, i.e. how many orders of magnitude
             separate the primary target from the next one.  Cell-line and
-            tissue readouts are excluded from that comparison, but only when
-            target types were resolved -- a target whose type is unknown is
-            kept rather than silently dropped.
+            tissue readouts and unresolved target types are excluded from
+            that comparison. Unknown identity is not protein evidence.
 
         Warning
         -------
@@ -2649,13 +2677,12 @@ class ChEMBLAnnotator:
         if not target_profile:
             return empty
 
-        # A target whose type could not be resolved is kept: `max_targets`
-        # caps identity resolution, so an unresolved type means "not looked
-        # up", not "not a protein".
+        # Protein selectivity requires resolved protein identity. Unresolved
+        # entries remain in the full profile, but cannot win this ranking.
         proteins = [
             e
             for e in target_profile
-            if e.get("target_type") in (None, "SINGLE PROTEIN", "PROTEIN COMPLEX")
+            if e.get("target_type") in ("SINGLE PROTEIN", "PROTEIN COMPLEX")
             and e.get(rank_by) is not None
             # A row exists because at least one measurement produced it, so an
             # absent count means 1 rather than 0 -- treating it as 0 would drop
@@ -2678,6 +2705,7 @@ class ChEMBLAnnotator:
             "primary_target": best.get("target_name"),
             "primary_target_chembl_id": best.get("target_chembl_id"),
             "primary_target_gene": best.get("gene_symbol"),
+            "primary_target_genes": best.get("gene_symbols", []),
             "primary_target_class": best.get("target_class"),
             "primary_target_n_measurements": best.get("n_measurements"),
             "best_pchembl": best.get("best_pchembl"),
@@ -2780,6 +2808,42 @@ class ChEMBLAnnotator:
             parents, "molecule_form", "parent_chembl_id", "molecule_forms",
             chunk_size, self._form_entries, "molecule_forms",
         )
+
+    def get_parent_family_audit(self, identifier: str) -> dict[str, Any]:
+        """Check whether parent-family annotations cross chemical identities.
+
+        ChEMBL families can include isotopologues as well as salts. This audit
+        compares charge-neutralized fragment InChIKeys, preserving isotope and
+        stereo information. An unresolved member makes transfer unverified;
+        callers may retain the raw family evidence but must not call it exact.
+        """
+        from rdkit import Chem
+        from rdkit.Chem.MolStandardize import rdMolStandardize
+
+        parent = self._parent_id(identifier)
+        if not parent:
+            return {"status": "no_match", "primary_annotation_eligible": False, "members": []}
+        forms = self.get_molecule_forms(parent, limit=None)
+        ids = list(dict.fromkeys([parent, *[f["molecule_chembl_id"] for f in forms]]))
+        records = self.get_molecule_records_many(ids)
+
+        def parent_key(record):
+            smiles = ((record or {}).get("molecule_structures") or {}).get("canonical_smiles")
+            molecule = Chem.MolFromSmiles(smiles) if smiles else None
+            if molecule is None:
+                return None
+            molecule = rdMolStandardize.Uncharger().uncharge(rdMolStandardize.FragmentParent(molecule))
+            return Chem.MolToInchiKey(molecule)
+
+        expected = parent_key(records.get(parent))
+        members = [{"molecule_chembl_id": cid, "fragment_inchikey": parent_key(records.get(cid))}
+                   for cid in ids]
+        for row in members:
+            row["identity_compatible"] = bool(expected and row["fragment_inchikey"] == expected)
+        safe = bool(expected) and all(row["identity_compatible"] for row in members)
+        return {"parent_chembl_id": parent, "status": "compatible" if safe else "family_identity_unresolved",
+                "primary_annotation_eligible": safe, "parent_fragment_inchikey": expected,
+                "policy": "neutralized fragment standard InChIKey; retain isotope and stereo", "members": members}
 
     @staticmethod
     def _form_entries(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -2950,7 +3014,9 @@ class ChEMBLAnnotator:
         # The target profile is derived from the activity table, so fetch it
         # once and serve both sources from it.
         if "targets" in sources_list or "activities" in sources_list:
-            activities = self.get_activities(identifier)
+            activities = self.get_activities(identifier, limit=None if "targets" in sources_list else DEFAULT_ACTIVITIES)
+            parent = resolution.parent_chembl_id or resolution.molecule_chembl_id
+            result["activity_fetch"] = dict(self.activity_fetch_metadata.get(parent, {}))
             if "activities" in sources_list:
                 result["activities"] = activities
             if "targets" in sources_list:
@@ -3066,8 +3132,8 @@ class ChEMBLAnnotator:
         ]
         adata.uns["chembl_annotation_limits"] = {
             "drug_n_indications": DEFAULT_INDICATIONS,
-            "drug_n_activities": DEFAULT_ACTIVITIES,
-            "drug_n_targets": DEFAULT_TARGETS,
+            "drug_n_activities": None if any("target_profile" in r for r in rows) else DEFAULT_ACTIVITIES,
+            "drug_n_targets": None,
             "drug_n_metabolites": DEFAULT_METABOLITES,
         }
 
@@ -3101,7 +3167,7 @@ def chembl_summary_columns(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
 
     add("max_phase", lambda r: dev(r, "max_phase"))
     add("development_phase", lambda r: dev(r, "development_phase") or "")
-    add("is_approved", lambda r: bool(dev(r, "is_approved")))
+    add("is_approved", lambda r: dev(r, "is_approved"))
     add("first_approval", lambda r: dev(r, "first_approval"))
     add("availability", lambda r: dev(r, "availability") or "")
     add("molecule_type", lambda r: dev(r, "molecule_type") or "")
@@ -3110,10 +3176,10 @@ def chembl_summary_columns(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
     add("topical", lambda r: dev(r, "topical"))
     add("is_prodrug", lambda r: dev(r, "prodrug"))
     add("first_in_class", lambda r: dev(r, "first_in_class"))
-    add("is_natural_product", lambda r: dev(r, "natural_product"))
+    add("coconut_member", lambda r: dev(r, "natural_product"))
     add("is_orphan", lambda r: dev(r, "orphan"))
-    add("is_withdrawn", lambda r: bool(dev(r, "withdrawn_flag")))
-    add("has_black_box_warning", lambda r: bool(dev(r, "black_box_warning")))
+    add("is_withdrawn", lambda r: dev(r, "withdrawn_flag"))
+    add("has_black_box_warning", lambda r: dev(r, "black_box_warning"))
 
     add("n_indications", lambda r: len(r.get("indications") or []))
     add("top_indication", _top_indication)

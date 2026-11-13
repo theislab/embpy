@@ -765,6 +765,8 @@ class KeggIndex:
                 "kegg_id": ent[1],
                 "namespace": ent[0],
                 "match_tier": matched[ent],
+                "primary_annotation_eligible": matched[ent] == "exact",
+                "identity_evidence": "exact_standard_inchikey" if matched[ent] == "exact" else "connectivity_only_stereochemistry_unverified",
                 "inchikey": hit[0] if hit else None,
                 "sids": list(rec["sids"]),
                 "cids": list(rec["cids"]),
@@ -874,6 +876,7 @@ class KeggIndex:
             if named:
                 item["name"] = self._names.get(item_id, item_id)
             item.update({"match_tier": tier, "kegg_ids": []})
+            item["primary_annotation_eligible"] = tier == "exact"
             item.update({field: [] for field in lists})
             bucket[item_id] = item
         elif _TIER_ORDER[tier] > _TIER_ORDER[item["match_tier"]]:

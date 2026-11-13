@@ -295,7 +295,9 @@ def parse_cellosaurus_entry(entry: Any) -> dict[str, Any] | None:
         "category": _str(entry.get("category")),
         "site": sites[0]["value"] if sites else "",
         "site_type": sites[0]["site_type"] if sites else "",
-        "tissue": sites[0]["value"] if sites else "",
+        "sampling_site": sites[0]["value"] if sites else "",
+        "sampling_site_type": sites[0]["site_type"] if sites else "",
+        "tissue": "",  # Cellosaurus sampled site does not establish tissue of origin.
         "sites": sites,
         "cell_type": cell_type,
         "disease": diseases[0]["label"] if diseases else "",
@@ -1275,7 +1277,8 @@ class CellLineAnnotator:
                 rrid = cello.get("accession", "") or rrid
                 result["cellosaurus_id"] = cello.get("accession", "")
                 result["species"] = cello.get("species", "")
-                result["tissue"] = cello.get("tissue", "")
+                result["sampling_site"] = cello.get("sampling_site", cello.get("site", ""))
+                result["sampling_site_type"] = cello.get("sampling_site_type", cello.get("site_type", ""))
                 result["disease"] = cello.get("disease", "")
                 result["is_problematic"] = bool(cello.get("is_problematic", False))
                 result["cross_references"].update(cello.get("cross_references", {}))
@@ -1287,6 +1290,7 @@ class CellLineAnnotator:
                 result["depmap_id"] = depmap.get("depmap_id", "")
                 result["lineage"] = depmap.get("lineage", "")
                 result["lineage_subtype"] = depmap.get("lineage_subtype", "")
+                result["tissue"] = depmap.get("lineage", "")
                 result["disease"] = result["disease"] or depmap.get("primary_disease", "")
                 result["growth_pattern"] = depmap.get("growth_pattern", "")
 
