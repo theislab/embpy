@@ -12,14 +12,21 @@ __all__ = [
     "summarize_attention",
     # alignment (representation-similarity metrics)
     "alignment_matrix",
+    "alignment_profile",
     "block_to_attention_index",
     "block_to_hidden_state_index",
+    "cca_sharing",
+    "cknna",
     "linear_cka",
     "mutual_knn",
+    "procrustes_similarity",
     "qsi",
     "rank_layers",
     "sample_size_for",
     "tsi",
+    # fusion-gain decomposition (redundant / unique / synergy)
+    "fusion_decomposition",
+    "fusion_decomposition_curve",
     # clustering
     "cluster_annotation_enrichment",
     "cluster_embeddings",
@@ -110,10 +117,14 @@ from . import fusion
 from .activity import phenotypic_activity
 from .alignment import (
     alignment_matrix,
+    alignment_profile,
     block_to_attention_index,
     block_to_hidden_state_index,
+    cca_sharing,
+    cknna,
     linear_cka,
     mutual_knn,
+    procrustes_similarity,
     qsi,
     rank_layers,
     sample_size_for,
@@ -134,6 +145,7 @@ from .clustering import (
     find_nearest_neighbors,
     leiden,
 )
+from .decomposition import fusion_decomposition, fusion_decomposition_curve
 from .dimred import compute_pca, compute_tsne, compute_umap
 from .genomics.snp_utils import (
     SequenceProvider,

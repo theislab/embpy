@@ -20,10 +20,14 @@ from scipy.spatial.distance import pdist, squareform
 
 from embpy.tl import (
     alignment_matrix,
+    alignment_profile,
     block_to_attention_index,
     block_to_hidden_state_index,
+    cca_sharing,
+    cknna,
     linear_cka,
     mutual_knn,
+    procrustes_similarity,
     qsi,
     rank_layers,
     sample_size_for,
@@ -271,7 +275,7 @@ class TestAlignmentMatrix:
         df = alignment_matrix({"a": X, "b": X + 1.0})
         assert df.loc["a", "b"] == pytest.approx(1.0, abs=1e-9)
 
-    @pytest.mark.parametrize("metric", ["tsi", "qsi", "cka", "linear_cka", "mutual_knn"])
+    @pytest.mark.parametrize("metric", ["tsi", "qsi", "cka", "linear_cka", "mutual_knn", "procrustes", "cca", "cknna"])
     def test_all_metrics_supported(self, metric, rng):
         embs = {"a": rng.normal(size=(40, 5)), "b": rng.normal(size=(40, 5))}
         df = alignment_matrix(embs, metric=metric)
@@ -304,7 +308,7 @@ class TestAlignmentMatrix:
     def test_unknown_metric_raises(self, rng):
         embs = {"a": rng.normal(size=(20, 4)), "b": rng.normal(size=(20, 4))}
         with pytest.raises(ValueError, match="Unknown metric"):
-            alignment_matrix(embs, metric="cca")
+            alignment_matrix(embs, metric="svcca")
 
 
 class TestInputValidation:
@@ -442,3 +446,360 @@ class TestRankLayers:
 
         df = rank_layers(FakeWrapper(), inputs="TOKENS")
         assert list(df.index) == [0, 1, 2]
+
+
+# ---------------------------------------------------------------------------
+# scales: TSI / QSI / Procrustes at neighbourhood size k
+# ---------------------------------------------------------------------------
+
+
+def _naive_neighbours(D: np.ndarray, i: int, k: int) -> list[int]:
+    """The k nearest of i, ties broken by index -- the documented convention."""
+    others = [x for x in range(D.shape[0]) if x != i]
+    return sorted(others, key=lambda x: (D[i, x], x))[:k]
+
+
+def naive_tsi_k(DX: np.ndarray, DY: np.ndarray, k: int, source: str) -> float:
+    D = DX if source == "x" else DY
+    per_anchor = []
+    for i in range(D.shape[0]):
+        agree = total = 0
+        for j, m in combinations(_naive_neighbours(D, i, k), 2):
+            agree += np.sign(DX[i, j] - DX[i, m]) == np.sign(DY[i, j] - DY[i, m])
+            total += 1
+        per_anchor.append(agree / total)
+    return float(np.mean(per_anchor))
+
+
+def naive_qsi_k(DX: np.ndarray, DY: np.ndarray, k: int, source: str) -> float:
+    D = DX if source == "x" else DY
+    pairs = sorted({tuple(sorted((i, j))) for i in range(D.shape[0]) for j in _naive_neighbours(D, i, k)})
+    agree = total = 0
+    for (i, j), (a, b) in combinations(pairs, 2):
+        agree += np.sign(DX[i, j] - DX[a, b]) == np.sign(DY[i, j] - DY[a, b])
+        total += 1
+    return agree / total
+
+
+class TestScales:
+    """``k`` restricts every comparison to close neighbourhoods; ``k = n - 1`` is global."""
+
+    @pytest.mark.parametrize("source", ["x", "y"])
+    def test_tsi_at_k_matches_naive(self, source, rng):
+        X, Y = rng.normal(size=(20, 4)), rng.normal(size=(20, 4))
+        got = tsi(X, Y, k=6, neighbors=source, method="exact")
+        assert got == pytest.approx(naive_tsi_k(dmat(X), dmat(Y), 6, source), abs=1e-12)
+
+    @pytest.mark.parametrize("source", ["x", "y"])
+    def test_qsi_at_k_matches_naive(self, source, rng):
+        X, Y = rng.normal(size=(16, 3)), rng.normal(size=(16, 3))
+        got = qsi(X, Y, k=4, neighbors=source, method="exact")
+        assert got == pytest.approx(naive_qsi_k(dmat(X), dmat(Y), 4, source), abs=1e-12)
+
+    @pytest.mark.parametrize("fn", [tsi, qsi])
+    def test_both_is_the_mean_of_the_two_sources(self, fn, rng):
+        X, Y = rng.normal(size=(40, 5)), rng.normal(size=(40, 5))
+        x, y = fn(X, Y, k=8, neighbors="x"), fn(X, Y, k=8, neighbors="y")
+        assert fn(X, Y, k=8, neighbors="both") == pytest.approx((x + y) / 2)
+
+    @pytest.mark.parametrize("fn", [tsi, qsi])
+    @pytest.mark.parametrize("source", ["x", "y", "both"])
+    def test_k_all_is_the_global_value(self, fn, source, rng):
+        X, Y = rng.normal(size=(30, 5)), rng.normal(size=(30, 5))
+        assert fn(X, Y, k=29, neighbors=source, method="exact") == pytest.approx(fn(X, Y, method="exact"), abs=1e-12)
+
+    @pytest.mark.parametrize("fn", [tsi, qsi, procrustes_similarity])
+    def test_rotation_invariant_at_small_k(self, fn, rng):
+        X = rng.normal(size=(60, 6))
+        Q, _ = np.linalg.qr(rng.normal(size=(6, 6)))
+        assert fn(X, 2.0 * X @ Q + 1.0, k=7) == pytest.approx(1.0, abs=1e-9)
+
+    def test_unrelated_sits_at_the_null_at_small_k(self, rng):
+        X, Y = rng.normal(size=(300, 5)), rng.normal(size=(300, 5))
+        assert abs(tsi(X, Y, k=10) - 0.5) < 0.03
+        assert abs(qsi(X, Y, k=10) - 0.5) < 0.03
+
+    def test_sampled_local_tsi_lands_near_exact(self, rng):
+        X = rng.normal(size=(200, 5))
+        Y = X + rng.normal(scale=0.7, size=(200, 5))
+        exact = tsi(X, Y, k=20, method="exact")
+        approx = tsi(X, Y, k=20, method="approx", n_samples=40_000, random_state=1)
+        assert abs(exact - approx) < 0.015
+
+    def test_sampled_local_qsi_lands_near_exact(self, rng):
+        X = rng.normal(size=(150, 5))
+        Y = X + rng.normal(scale=0.7, size=(150, 5))
+        exact = qsi(X, Y, k=15, method="exact")
+        approx = qsi(X, Y, k=15, method="approx", n_samples=40_000, random_state=1)
+        assert abs(exact - approx) < 0.015
+
+    def test_local_structure_survives_a_warp_that_breaks_global_order(self, rng):
+        """A fold keeps close neighbourhoods but flips which far pairs are farther."""
+        t = np.sort(rng.uniform(0, 1, size=200))
+        X = np.c_[t, np.zeros_like(t)]
+        Y = np.c_[np.cos(1.8 * np.pi * t), np.sin(1.8 * np.pi * t)]  # 1-D line bent into an arc
+        assert tsi(X, Y, k=5) > tsi(X, Y) + 0.05
+
+    @pytest.mark.parametrize("fn", [tsi, procrustes_similarity])
+    def test_k_below_two_raises(self, fn, rng):
+        X, Y = rng.normal(size=(20, 3)), rng.normal(size=(20, 3))
+        with pytest.raises(ValueError, match="k must be in"):
+            fn(X, Y, k=1)
+
+    @pytest.mark.parametrize("fn", [tsi, qsi, procrustes_similarity])
+    def test_k_above_n_minus_one_raises(self, fn, rng):
+        X, Y = rng.normal(size=(20, 3)), rng.normal(size=(20, 3))
+        with pytest.raises(ValueError, match="k must be in"):
+            fn(X, Y, k=20)
+
+    def test_invalid_neighbors_raises(self, rng):
+        X, Y = rng.normal(size=(20, 3)), rng.normal(size=(20, 3))
+        with pytest.raises(ValueError, match="neighbors must be"):
+            tsi(X, Y, k=5, neighbors="z")
+
+
+class TestProcrustes:
+    def test_rotation_scale_and_translation_give_one(self, rng):
+        X = rng.normal(size=(80, 7))
+        Q, _ = np.linalg.qr(rng.normal(size=(7, 7)))
+        assert procrustes_similarity(X, 0.3 * X @ Q - 2.0) == pytest.approx(1.0, abs=1e-12)
+
+    def test_unrelated_is_low(self, rng):
+        X, Y = rng.normal(size=(400, 5)), rng.normal(size=(400, 5))
+        assert procrustes_similarity(X, Y) < 0.2
+
+    def test_bounded_with_different_dimensions(self, rng):
+        X, Y = rng.normal(size=(50, 3)), rng.normal(size=(50, 11))
+        assert 0.0 <= procrustes_similarity(X, Y) <= 1.0
+
+    def test_a_shared_subspace_scores_its_variance_share(self, rng):
+        """Shared coordinates carry half the variance, so the similarity is about 0.5."""
+        z = rng.normal(size=(4000, 4))
+        X = np.hstack([z, rng.normal(size=(4000, 4))])
+        Y = np.hstack([z, rng.normal(size=(4000, 4))])
+        assert procrustes_similarity(X, Y) == pytest.approx(0.5, abs=0.03)
+
+    def test_row_space_path_matches_the_direct_svd(self, rng):
+        from embpy.tl.alignment import _nuclear_cross
+
+        A, B = rng.normal(size=(12, 40)), rng.normal(size=(12, 30))  # features >> rows
+        direct = np.linalg.svd(A.T @ B, compute_uv=False).sum()
+        assert _nuclear_cross(A, B) == pytest.approx(direct, rel=1e-10)
+
+    def test_local_at_k_all_is_global(self, rng):
+        X, Y = rng.normal(size=(30, 4)), rng.normal(size=(30, 4))
+        assert procrustes_similarity(X, Y, k=29) == pytest.approx(procrustes_similarity(X, Y))
+
+    def test_anchor_sampling_is_reproducible(self, rng):
+        X, Y = rng.normal(size=(100, 4)), rng.normal(size=(100, 4))
+        a = procrustes_similarity(X, Y, k=10, n_anchors=20, random_state=3)
+        b = procrustes_similarity(X, Y, k=10, n_anchors=20, random_state=3)
+        assert a == b
+
+
+class TestCCASharing:
+    @pytest.fixture
+    def planted(self, rng):
+        """Three shared directions, five private ones per view, each view rotated."""
+        n = 400
+        z = rng.normal(size=(n, 3))
+        X = np.hstack([z, rng.normal(size=(n, 5))]) @ np.linalg.qr(rng.normal(size=(8, 8)))[0]
+        Y = np.hstack([z, rng.normal(size=(n, 5))]) @ np.linalg.qr(rng.normal(size=(8, 8)))[0]
+        return X + 0.05 * rng.normal(size=X.shape), Y + 0.05 * rng.normal(size=Y.shape)
+
+    def test_recovers_the_planted_shared_directions(self, planted):
+        df = cca_sharing(*planted, pre_components=8, n_permutations=19)
+        assert (df["r"].iloc[:3] > 0.9).all()
+        assert (df["r"].iloc[3:] < 0.3).all()
+        assert df.attrs["n_significant"] == 3
+        assert df.attrs["sum_r2"] == pytest.approx(3.0, abs=0.3)
+
+    def test_unrelated_views_share_nothing(self, rng):
+        X, Y = rng.normal(size=(300, 6)), rng.normal(size=(300, 6))
+        df = cca_sharing(X, Y, pre_components=6)
+        assert df.attrs["sum_r2"] < 0.3
+
+    def test_held_out_is_below_in_sample_when_overfitting(self, rng):
+        """With many dimensions per row, training correlations inflate; held-out ones do not."""
+        X, Y = rng.normal(size=(80, 30)), rng.normal(size=(80, 30))
+        df = cca_sharing(X, Y, pre_components=30, regularization=0.0)
+        assert df["r_train"].iloc[0] > 0.8
+        assert df["r"].iloc[0] < 0.4
+
+    def test_groups_keep_each_group_in_one_fold(self, planted):
+        groups = np.repeat(np.arange(40), 10)
+        df = cca_sharing(*planted, pre_components=8, groups=groups)
+        assert df.attrs["n_folds"] == 5
+        assert (df["r"].iloc[:3] > 0.9).all()
+
+    def test_n_components_truncates(self, planted):
+        assert len(cca_sharing(*planted, pre_components=8, n_components=4)) == 4
+
+    def test_no_permutations_leaves_significance_unset(self, planted):
+        df = cca_sharing(*planted, pre_components=8)
+        assert df.attrs["n_significant"] is None
+        assert "significant" not in df.columns
+
+    def test_invalid_arguments_raise(self, planted):
+        with pytest.raises(ValueError, match="cv must be"):
+            cca_sharing(*planted, cv=1)
+        with pytest.raises(ValueError, match="groups has"):
+            cca_sharing(*planted, groups=np.zeros(3))
+
+
+class TestAlignmentProfile:
+    @pytest.fixture
+    def pair(self, rng):
+        X = rng.normal(size=(120, 6))
+        return X, X + rng.normal(scale=0.8, size=X.shape)
+
+    def test_default_grid_ends_at_global(self, pair):
+        df = alignment_profile(*pair, cca=False, cka=False)
+        ks = sorted(df["k"].dropna().unique())
+        assert ks == [5, 10, 20, 50, 100, 119]
+        assert set(df.columns) == {"metric", "k", "k_frac", "neighbors", "value"}
+        assert set(df["metric"]) == {"tsi", "qsi", "mutual_knn", "cknna", "procrustes"}
+
+    def test_rows_match_the_single_calls(self, pair):
+        X, Y = pair
+        df = alignment_profile(X, Y, ks=[10, 119], cca=False, cka=False, method="exact").set_index(
+            ["metric", "k", "neighbors"]
+        )["value"]
+        assert df[("tsi", 119, "all")] == pytest.approx(tsi(X, Y, method="exact"))
+        assert df[("qsi", 119, "all")] == pytest.approx(qsi(X, Y, method="exact"))
+        assert df[("tsi", 10, "x")] == pytest.approx(tsi(X, Y, k=10, neighbors="x", method="exact"))
+        assert df[("tsi", 10, "mean")] == pytest.approx(tsi(X, Y, k=10, method="exact"))
+        assert df[("mutual_knn", 10, "x,y")] == pytest.approx(mutual_knn(X, Y, k=10))
+        assert df[("procrustes", 119, "all")] == pytest.approx(procrustes_similarity(X, Y))
+
+    def test_global_rows_for_cka_and_cca(self, pair):
+        df = alignment_profile(*pair, ks=[10], cca_kwargs={"pre_components": 6})
+        metrics = set(df["metric"])
+        assert {"linear_cka", "cca_sum_r2", "cca_mean_r2", "cca_r1"} <= metrics
+        assert df.loc[df["metric"] == "linear_cka", "k"].isna().all()
+
+    def test_null_column_reads_near_chance_for_tsi(self, pair):
+        df = alignment_profile(*pair, ks=[10], cca=False, null=True)
+        tsi_null = df.loc[(df["metric"] == "tsi") & (df["neighbors"] == "mean"), "null"].iloc[0]
+        assert abs(tsi_null - 0.5) < 0.05
+        assert (df["value"] > df["null"]).all()
+
+    def test_single_source_has_no_mean_rows(self, pair):
+        df = alignment_profile(*pair, ks=[10], neighbors="x", cca=False, cka=False)
+        assert set(df["neighbors"]) == {"x", "x,y"}
+
+    def test_unknown_metric_raises(self, pair):
+        with pytest.raises(ValueError, match="Unknown scaled metrics"):
+            alignment_profile(*pair, metrics=["tsi", "cka"])
+
+    def test_invalid_k_raises(self, pair):
+        with pytest.raises(ValueError, match="k must be in"):
+            alignment_profile(*pair, ks=[1])
+
+
+# ---------------------------------------------------------------------------
+# CKNNA (Huh et al. 2024)
+# ---------------------------------------------------------------------------
+
+
+def reference_cknna(A: np.ndarray, B: np.ndarray, topk: int) -> float:
+    """Line-by-line numpy port of ``AlignmentMetrics.cknna`` from platonic-rep ``metrics.py``.
+
+    The only change is the ``+ 1e-6`` in the final denominator, dropped here as in embpy.
+    """
+    n = A.shape[0]
+    K, L = A @ A.T, B @ B.T
+
+    def hsic_unbiased(K, L):
+        m = K.shape[0]
+        Kt, Lt = K.copy(), L.copy()
+        np.fill_diagonal(Kt, 0)
+        np.fill_diagonal(Lt, 0)
+        v = np.sum(Kt * Lt.T) + np.sum(Kt) * np.sum(Lt) / ((m - 1) * (m - 2)) - 2 * np.sum(Kt @ Lt) / (m - 2)
+        return v / (m * (m - 3))
+
+    def similarity(K, L):
+        K_hat, L_hat = K.copy(), L.copy()
+        np.fill_diagonal(K_hat, -np.inf)
+        np.fill_diagonal(L_hat, -np.inf)
+        iK = np.argsort(-K_hat, axis=1, kind="stable")[:, :topk]
+        iL = np.argsort(-L_hat, axis=1, kind="stable")[:, :topk]
+        mK, mL = np.zeros((n, n)), np.zeros((n, n))
+        mK[np.arange(n)[:, None], iK] = 1
+        mL[np.arange(n)[:, None], iL] = 1
+        mask = mK * mL
+        return hsic_unbiased(mask * K, mask * L)
+
+    return similarity(K, L) / np.sqrt(similarity(K, K) * similarity(L, L))
+
+
+def brute_force_hsic_unbiased(K: np.ndarray, L: np.ndarray) -> float:
+    """The U-statistic definition: average of h over all ordered 4-tuples of distinct indices."""
+    from itertools import permutations
+
+    total, count = 0.0, 0
+    for t, u, v, w in permutations(range(K.shape[0]), 4):
+        total += K[t, u] * L[t, u] + K[t, u] * L[v, w] - 2 * K[t, u] * L[t, v]
+        count += 1
+    return total / count
+
+
+class TestCKNNA:
+    def _unit(self, M):
+        return M / np.linalg.norm(M, axis=1, keepdims=True)
+
+    @pytest.mark.parametrize("k", [3, 8, 29])
+    def test_matches_the_reference_implementation(self, k, rng):
+        A, B = self._unit(rng.normal(size=(30, 5))), self._unit(rng.normal(size=(30, 7)))
+        B = 0.6 * self._unit(A @ rng.normal(size=(5, 7))) + 0.4 * B  # partly related
+        assert cknna(A, B, k=k, normalize=False) == pytest.approx(reference_cknna(A, B, k), abs=1e-10)
+
+    def test_unbiased_hsic_matches_the_u_statistic(self, rng):
+        from embpy.tl.alignment import _hsic_unbiased
+
+        X, Y = rng.normal(size=(8, 3)), rng.normal(size=(8, 3))
+        K, L = X @ X.T, Y @ Y.T
+        assert _hsic_unbiased(K, L) == pytest.approx(brute_force_hsic_unbiased(K, L), rel=1e-10)
+
+    def test_rotation_and_row_scale_give_one(self, rng):
+        X = rng.normal(size=(80, 6))
+        Q, _ = np.linalg.qr(rng.normal(size=(6, 6)))
+        Y = (X @ Q) * rng.uniform(0.5, 2.0, size=(80, 1))  # normalize=True removes row scale
+        assert cknna(X, Y, k=10) == pytest.approx(1.0, abs=1e-9)
+
+    def test_unrelated_is_near_zero(self, rng):
+        X, Y = rng.normal(size=(300, 8)), rng.normal(size=(300, 8))
+        assert abs(cknna(X, Y, k=10)) < 0.2
+        assert abs(cknna(X, Y)) < 0.05
+
+    def test_close_to_symmetric(self, rng):
+        """Row-wise kNN masks are asymmetric, so the unbiased HSIC term 1'KL1 makes the
+        reference definition only approximately symmetric; k = n - 1 is exact."""
+        X, Y = rng.normal(size=(60, 5)), rng.normal(size=(60, 4))
+        assert cknna(X, Y, k=7) == pytest.approx(cknna(Y, X, k=7), abs=0.05)
+        assert cknna(X, Y) == pytest.approx(cknna(Y, X), abs=1e-12)
+
+    def test_shared_signal_scores_above_unrelated(self, rng):
+        z = rng.normal(size=(300, 4))
+        X = np.hstack([z, rng.normal(size=(300, 4))])
+        Y = np.hstack([z, rng.normal(size=(300, 4))])
+        assert cknna(X, Y, k=20) > cknna(X, rng.normal(size=(300, 8)), k=20) + 0.1
+
+    def test_profile_rows_match_the_single_call(self, rng):
+        X = rng.normal(size=(60, 5))
+        Y = X + rng.normal(scale=0.8, size=X.shape)
+        df = alignment_profile(X, Y, ks=[8, 59], metrics=["cknna"], cca=False, cka=False)
+        df = df.set_index(["k", "neighbors"])["value"]
+        assert df[(8, "x,y")] == pytest.approx(cknna(X, Y, k=8))
+        assert df[(59, "all")] == pytest.approx(cknna(X, Y))
+
+    def test_invalid_inputs_raise(self, rng):
+        X = rng.normal(size=(20, 3))
+        with pytest.raises(ValueError, match="k must be in"):
+            cknna(X, X, k=1)
+        with pytest.raises(ValueError, match="at least 4"):
+            cknna(X[:3], X[:3])
+        Z = X.copy()
+        Z[0] = 0.0
+        with pytest.raises(ValueError, match="zero norm"):
+            cknna(Z, X)
