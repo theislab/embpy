@@ -173,3 +173,94 @@ def test_live_release_files_exist():
             assert resp.status == 200
     with urllib.request.urlopen(REACTOME_VERSION_URL, timeout=30) as resp:  # noqa: S310
         assert resp.read().decode().strip().isdigit()
+
+
+class _Download:
+    """Stands in for ``requests.get``: serves the fixture files, optionally broken."""
+
+    def __init__(self, *, short=False, fail=False):
+        self.short, self.fail = short, fail
+        self.urls: list[str] = []
+
+    def __call__(self, url, stream=False, timeout=None):
+        import requests
+
+        self.urls.append(url)
+        if self.fail:
+            raise requests.ConnectionError("connection refused")
+        body = (FIXTURE_DIR / url.rsplit("/", 1)[1]).read_bytes()
+        return _Response(body, length=len(body) + (100 if self.short else 0))
+
+
+class _Response:
+    def __init__(self, body: bytes, length: int):
+        self.body = body
+        self.status_code = 200
+        self.headers = {"Content-Length": str(length)}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def raise_for_status(self):
+        return None
+
+    def iter_content(self, chunk_size=1):
+        for start in range(0, len(self.body), chunk_size):
+            yield self.body[start:start + chunk_size]
+
+
+class TestDownload:
+    @pytest.fixture(autouse=True)
+    def _fresh_index_cache(self, monkeypatch):
+        from embpy.resources.gene import reactome
+
+        monkeypatch.setattr(reactome, "_INDEXES", {})
+
+    def test_cache_dir_follows_embpy_cache(self, monkeypatch, tmp_path):
+        from embpy.resources.gene.reactome import reactome_cache_dir
+
+        monkeypatch.setenv("EMBPY_CACHE", str(tmp_path))
+        assert reactome_cache_dir() == tmp_path / "reactome" / REACTOME_RELEASE
+
+    def test_first_use_downloads_then_reuses_the_files(self, monkeypatch, tmp_path):
+        import requests
+
+        from embpy.resources.gene import reactome
+
+        fake = _Download()
+        monkeypatch.setattr(requests, "get", fake)
+        folder = tmp_path / "cache"
+        index = reactome.load_reactome_index(folder)
+        assert sorted(fake.urls) == sorted(REACTOME_FILES.values())
+        assert {p.name for p in folder.iterdir()} == {*REACTOME_FILES, "version.json"}
+        assert index.release == REACTOME_RELEASE
+        hit = index.lookup(7157)
+        assert {"id": "R-HSA-111448", "name": "Activation of NOXA and translocation to mitochondria"} in hit["pathways"]
+
+        assert reactome.load_reactome_index(folder) is index  # parsed once per process
+        monkeypatch.setattr(reactome, "_INDEXES", {})
+        reactome.load_reactome_index(folder)  # a new process: read from disk, no download
+        assert len(fake.urls) == len(REACTOME_FILES)
+
+    def test_short_download_is_not_kept(self, monkeypatch, tmp_path):
+        import requests
+
+        from embpy.resources.gene.reactome import ReactomeUnavailableError, download_reactome_files
+
+        monkeypatch.setattr(requests, "get", _Download(short=True))
+        with pytest.raises(ReactomeUnavailableError, match="incomplete download"):
+            download_reactome_files(tmp_path)
+        assert not list(tmp_path.iterdir())
+
+    def test_no_network_raises_reactome_unavailable(self, monkeypatch, tmp_path):
+        import requests
+
+        from embpy.resources.gene.reactome import ReactomeUnavailableError, load_reactome_index
+
+        monkeypatch.setattr(requests, "get", _Download(fail=True))
+        with pytest.raises(ReactomeUnavailableError, match="^Couldn't reach Reactome"):
+            load_reactome_index(tmp_path)
+        assert not list(tmp_path.iterdir())

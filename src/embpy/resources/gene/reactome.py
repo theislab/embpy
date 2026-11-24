@@ -32,11 +32,13 @@ Entrez ID (an Ensembl-only document) has no key here and is never joined.
 
 from __future__ import annotations
 
+import contextlib
 import gzip
 import io
 import json
 import logging
 import os
+import threading
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
 from pathlib import Path
@@ -359,3 +361,128 @@ class ReactomeIndex:
         result = frozenset(found)
         self._top_cache[st_id] = result
         return result
+
+
+# ----------------------------------------------------------------------
+# Automatic download and caching of the release files
+# ----------------------------------------------------------------------
+
+
+class ReactomeUnavailableError(RuntimeError):
+    """The Reactome release files are not cached and could not be downloaded."""
+
+
+def reactome_cache_dir(release: str = REACTOME_RELEASE) -> Path:
+    """Folder the release files are cached in: ``$EMBPY_CACHE/reactome/<release>``.
+
+    ``EMBPY_CACHE`` defaults to ``~/.cache/embpy``, as for embpy's other caches.
+    """
+    base = os.environ.get("EMBPY_CACHE")
+    root = Path(base) if base else Path.home() / ".cache" / "embpy"
+    return root / "reactome" / str(release)
+
+
+def download_reactome_files(
+    directory: str | os.PathLike[str] | None = None,
+    *,
+    timeout: float = 60.0,
+) -> Path:
+    """Download the pinned :data:`REACTOME_FILES` into ``directory`` unless they are there already.
+
+    The files come from Reactome's archive for :data:`REACTOME_RELEASE` (about
+    37 MB in all for release 98) and are kept, so later calls and later
+    sessions read them from disk. Each file is written to ``<name>.part`` and
+    renamed only once it is complete; a short read is an error, never a cached
+    file. A ``version.json`` records the release for :meth:`ReactomeIndex.from_dir`.
+
+    Parameters
+    ----------
+    directory
+        Target folder; :func:`reactome_cache_dir` by default.
+    timeout
+        Seconds to wait for the server to respond (per request).
+
+    Returns
+    -------
+    The folder holding the files.
+
+    Raises
+    ------
+    ReactomeUnavailableError
+        A file could not be downloaded (no network, server error, short read).
+    """
+    import requests
+
+    folder = Path(directory) if directory is not None else reactome_cache_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    for name, url in REACTOME_FILES.items():
+        if _find(folder, name, required=False) is not None:
+            continue
+        part = folder / f"{name}.part"
+        size = 0
+        try:
+            with requests.get(url, stream=True, timeout=timeout) as resp:
+                resp.raise_for_status()
+                expected = resp.headers.get("Content-Length")
+                encoded = resp.headers.get("Content-Encoding") not in (None, "", "identity")
+                with open(part, "wb") as fh:
+                    for chunk in resp.iter_content(chunk_size=1 << 20):
+                        fh.write(chunk)
+                        size += len(chunk)
+            if expected is not None and not encoded and size != int(expected):
+                raise OSError(f"incomplete download: {size} of {expected} bytes")
+        except (requests.RequestException, OSError, ValueError) as exc:
+            with contextlib.suppress(OSError):
+                part.unlink()
+            raise ReactomeUnavailableError(
+                f"Couldn't reach Reactome: {name} could not be downloaded from {url} ({type(exc).__name__}: {exc})"
+            ) from exc
+        os.replace(part, folder / name)
+        logger.info("Downloaded Reactome %s (%d bytes) to %s", name, size, folder)
+    version = folder / "version.json"
+    if not version.exists():
+        version.write_text(json.dumps({"release": REACTOME_RELEASE}), encoding="utf-8")
+    return folder
+
+
+_INDEX_LOCK = threading.Lock()
+_INDEXES: dict[tuple[str, str], ReactomeIndex] = {}
+
+
+def load_reactome_index(
+    directory: str | os.PathLike[str] | None = None,
+    *,
+    species: str = "Homo sapiens",
+    download: bool = True,
+) -> ReactomeIndex:
+    """The Reactome index for ``species``, downloading the release files on first use.
+
+    The files are cached on disk (:func:`reactome_cache_dir`) and the parsed
+    index in memory, so only the first call in a fresh environment downloads
+    anything and only the first call in a process parses the files.
+
+    Parameters
+    ----------
+    directory
+        Folder holding (or receiving) the files; :func:`reactome_cache_dir` by default.
+    species
+        Reactome species name, e.g. ``"Homo sapiens"`` or ``"Mus musculus"``.
+    download
+        Download missing files. With ``False`` a missing file raises
+        :class:`FileNotFoundError`.
+
+    Raises
+    ------
+    ReactomeUnavailableError
+        The files are not cached and could not be downloaded.
+    """
+    folder = Path(directory) if directory is not None else reactome_cache_dir()
+    key = (str(folder.resolve()), species)
+    with _INDEX_LOCK:
+        index = _INDEXES.get(key)
+        if index is None:
+            if download:
+                download_reactome_files(folder)
+            index = ReactomeIndex.from_dir(folder, species=species)
+            _INDEXES[key] = index
+    return index
