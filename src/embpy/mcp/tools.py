@@ -1061,7 +1061,7 @@ def preprocess_counts(
             "path": str(path),
         }
         if isinstance(exc, (ImportError, ModuleNotFoundError)):
-            resp["suggestion"] = "Install scanpy using 'pip install scanpy' or 'pip install embpy[mcp]'."
+            resp["suggestion"] = _install_hint(str(exc)) or 'Install scanpy: pip install "embpy[mcp]".'
         return resp
 
 

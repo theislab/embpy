@@ -69,6 +69,9 @@ scripts.embpy-mcp = "embpy.mcp.server:main"
 optional-dependencies.mcp = [
   "mcp>=1.23,<3",
   "scanpy>=1.10",
+  # preprocess_counts(log_transform=False) selects HVGs with scanpy's 'seurat_v3'
+  # flavor on raw counts, which needs scikit-misc.
+  "scikit-misc",
   # umap-learn 0.6.0 (2026-11-10) rejects the non-contiguous kNN distances that
   # scanpy's neighbors() passes it (numba TypingError); keep <0.6 until fixed upstream.
   "umap-learn<0.6",

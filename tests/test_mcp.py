@@ -1292,3 +1292,29 @@ def test_reactome_outage_is_reported_when_other_sources_answer(recorded_gene_ser
 def test_annotation_needs_a_path_or_identifiers():
     res = annotate_metadata(entity_type="gene")
     assert res["status"] == "error" and "identifiers" in res["error"]
+
+
+def test_missing_scikit_misc_names_the_package(monkeypatch, sample_adata_path, tmp_path):
+    """seurat_v3 (log_transform=False) needs scikit-misc; the hint must say so, not 'install scanpy'."""
+    import scanpy as sc
+
+    real_hvg = sc.pp.highly_variable_genes
+
+    def hvg(adata, *args, flavor="seurat", **kwargs):
+        if flavor == "seurat_v3":
+            raise ModuleNotFoundError("No module named 'skmisc'")
+        return real_hvg(adata, *args, flavor=flavor, **kwargs)
+
+    monkeypatch.setattr(sc.pp, "highly_variable_genes", hvg)
+    res = preprocess_counts(path=sample_adata_path, output_path=str(tmp_path / "pre.h5ad"), log_transform=False,
+                            min_genes=1, min_cells=1, n_top_genes=10)
+    assert res["status"] == "error"
+    assert "pip install scikit-misc" in res["suggestion"]
+
+
+def test_scikit_misc_is_part_of_the_mcp_extra():
+    import tomllib
+    from pathlib import Path
+
+    pyproject = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "scikit-misc" in pyproject["project"]["optional-dependencies"]["mcp"]
