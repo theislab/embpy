@@ -1342,3 +1342,51 @@ def test_server_cli_answers_help_and_version():
                               text=True, timeout=120, stdin=subprocess.DEVNULL)
         assert done.returncode == 0, done.stderr
         assert expected in done.stdout
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_saving_keeps_the_destination_permissions(tmp_path):
+    from embpy.mcp.tools import _save_anndata_safely
+
+    out = tmp_path / "shared.h5ad"
+    AnnData(obs={"a": [1, 2]}).write_h5ad(out)
+    os.chmod(out, 0o664)
+    _save_anndata_safely(AnnData(obs={"a": [3, 4]}), str(out))
+    assert out.stat().st_mode & 0o777 == 0o664
+    new = tmp_path / "new.h5ad"
+    _save_anndata_safely(AnnData(obs={"a": [5]}), str(new))
+    umask = os.umask(0)
+    os.umask(umask)
+    assert new.stat().st_mode & 0o777 == 0o666 & ~umask
+
+
+def test_earlier_keys_are_found_for_every_key_style():
+    from embpy.mcp.tools import _keys_for_model
+
+    adata = AnnData(obs={"g": ["a", "b"]})
+    for key in ("X_emb__gene__genept", "X_emb__text__llama3_2_1b__pool_mean", "X_emb__gene__genept_v2", "X_scvi"):
+        adata.obsm[key] = np.zeros((2, 2))
+    assert _keys_for_model(adata, "genept") == ["X_emb__gene__genept"]
+    assert _keys_for_model(adata, "llama3.2_1b") == ["X_emb__text__llama3_2_1b__pool_mean"]
+    assert _keys_for_model(adata, "scvi") == ["X_scvi"]
+
+
+def test_a_model_named_twice_runs_once(sample_adata_path, tmp_path):
+    res = compute_embeddings(path=sample_adata_path, models=["pca", "pca"], output_path=str(tmp_path / "o.h5ad"))
+    assert res["status"] == "success", res
+    assert res["models_computed"] == ["pca"] and "models_failed" not in res and "not_updated" not in res
+
+
+def test_cell_line_identifiers_return_their_annotations(monkeypatch):
+    import embpy.tl as tl
+
+    def annotate_cell_lines(adata, query_id):
+        adata = adata.copy()
+        adata.obs["cell_line_tissue"] = ["lung" if v == "A549" else None for v in adata.obs[query_id]]
+        return adata
+
+    monkeypatch.setattr(tl, "annotate_cell_lines", annotate_cell_lines)
+    res = annotate_metadata(identifiers=["A549", "NOT_A_LINE"], entity_type="cell_line")
+    assert res["status"] == "partial_success", res
+    assert res["records_preview"]["A549"]["cell_line"] == {"cell_line_tissue": "lung"}
+    assert res["records_preview"]["NOT_A_LINE"] == {}

@@ -89,6 +89,15 @@ def _save_anndata_safely(adata: Any, path: str) -> None:
     os.close(fd)
     try:
         adata.write_h5ad(tmp_path)
+        # mkstemp creates the file owner-only (0600); give it the permissions the
+        # destination has, or the ones a newly created file would get.
+        if os.path.exists(target):
+            mode = os.stat(target).st_mode & 0o777
+        else:
+            umask = os.umask(0)
+            os.umask(umask)
+            mode = 0o666 & ~umask
+        os.chmod(tmp_path, mode)
         os.replace(tmp_path, target)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -1485,9 +1494,18 @@ def _settle_cell_embeddings(
 
 
 def _keys_for_model(adata: Any, model: str) -> list[str]:
-    """Embedding keys in ``adata`` that an earlier run of ``model`` wrote (e.g. X_emb__molecule__morgan_fp__...)."""
-    keys = [*adata.obsm.keys(), *adata.varm.keys()]
-    return [str(k) for k in keys if f"__{model}__" in str(k) or str(k) == f"X_{model}"]
+    """Embedding keys in ``adata`` that an earlier run of ``model`` wrote.
+
+    Keys look like ``X_emb__molecule__morgan_fp__pool_mean`` or, for tables without
+    pooling, ``X_emb__gene__genept``; dots in model names become underscores
+    (``llama3.2_1b`` -> ``llama3_2_1b``).
+    """
+    names = {model, re.sub(r"[^A-Za-z0-9_]", "_", model)}
+    keys = [str(k) for k in (*adata.obsm.keys(), *adata.varm.keys())]
+    return [
+        k for k in keys
+        if any(f"__{n}__" in k or k.endswith(f"__{n}") or k == f"X_{n}" for n in names)
+    ]
 
 
 def _no_model_succeeded(path: str, models: list[str], failed: dict[str, str], not_updated: list[str]) -> dict[str, Any]:
@@ -1769,8 +1787,11 @@ def compute_embeddings(
             }
         route = _EMBED_ROUTES[ent_str]
 
-        resolved_models = [_canonical_model_name(m) for m in model_list]
-        aliases_applied = {str(m): r for m, r in zip(model_list, resolved_models, strict=True) if str(m).strip() != r}
+        # Each model once, also when two requested names are aliases of one model.
+        resolved_models = list(dict.fromkeys(_canonical_model_name(m) for m in model_list))
+        aliases_applied = {
+            str(m): _canonical_model_name(m) for m in model_list if str(m).strip() != _canonical_model_name(m)
+        }
         problems = [msg for m in resolved_models if (msg := _validate_embedding_model(ent_str, m))]
         if problems:
             return {
@@ -2532,6 +2553,11 @@ def annotate_metadata(
                     n = int(rows.notna().any(axis=0).sum()) if rows is not None and len(rows) else 0
                     counts["cell_line"][e] = n
                     outcome["cell_line"][e] = "annotated" if n else "no_match"
+                    if n:  # the annotated fields, for records_preview (and identifiers mode)
+                        first = rows.iloc[0]
+                        results[e]["cell_line"] = {
+                            str(c): first[c] for c in added if not _is_missing(first[c])
+                        }
                 new_cols.extend(str(c) for c in added)
             else:
                 fetchers = _annotation_fetchers(resolved_entity, org, id_type)
