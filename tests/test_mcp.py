@@ -1330,3 +1330,15 @@ def test_model_registry_without_torch_says_what_to_install(monkeypatch):
     assert "PyTorch is not installed" in res["error"]
     assert 'embpy[models]' in res["suggestion"]
     assert res["optional_extras_status"]["models"] == {"installed": False}
+
+
+def test_server_cli_answers_help_and_version():
+    """`embpy-mcp --help` used to start the server silently; it now prints usage and exits."""
+    import subprocess
+    import sys
+
+    for flag, expected in (("--help", "embpy-mcp"), ("--version", "embpy ")):
+        done = subprocess.run([sys.executable, "-m", "embpy.mcp.server", flag], capture_output=True,
+                              text=True, timeout=120, stdin=subprocess.DEVNULL)
+        assert done.returncode == 0, done.stderr
+        assert expected in done.stdout

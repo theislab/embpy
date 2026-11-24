@@ -166,8 +166,38 @@ def _preload_native_modules() -> None:
             logger.debug("Preloading %s skipped: %s", name, exc)
 
 
+def _parse_args(argv: list[str] | None = None) -> None:
+    """Answer --help and --version; MCP clients start the server without arguments.
+
+    Unknown arguments are ignored, as before, so a client that passes extra ones
+    still gets a server.
+    """
+    import argparse
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        embpy_version = version("embpy")
+    except PackageNotFoundError:
+        embpy_version = "unknown"
+    parser = argparse.ArgumentParser(
+        prog="embpy-mcp",
+        description=(
+            "Run the embpy MCP server on stdio. MCP clients (Claude Code, Claude Desktop, Cursor) "
+            "start it themselves. Started by hand it prints nothing and waits for JSON-RPC "
+            "messages on stdin; stop it with Ctrl+C."
+        ),
+        epilog=(
+            "Connect it to Claude Code with: claude mcp add embpy -- <python> -m embpy.mcp.server, "
+            "where <python> is the interpreter of the environment embpy is installed in."
+        ),
+    )
+    parser.add_argument("--version", action="version", version=f"embpy {embpy_version}")
+    parser.parse_known_args(argv)
+
+
 def main() -> None:
     """CLI entrypoint for embpy-mcp command."""
+    _parse_args()
     _setup_stderr_logging()
     if _needs_native_preload():
         _preload_native_modules()
