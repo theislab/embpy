@@ -370,6 +370,10 @@ class GeneAnnotator:
                     logger.warning(
                         "MyGene batch of %d %s queries failed (%s)", len(chunk), scope, reason,
                     )
+                    if payload is not None:  # a failed request was reported by _post_json already
+                        report_service_error(
+                            f"{MYGENE}/query", RuntimeError(f"unexpected MyGene reply: {type(payload).__name__}")
+                        )
                     for term in chunk:
                         resolved[(scope, term)] = self._identity_record(term, scope, "batch_failed", reason=reason)
                     continue

@@ -578,3 +578,13 @@ def test_live_mygene_batch_keeps_recorded_keys():
     by_query = {r["query"]: r for r in rows}
     assert {"query", "_id", "symbol", "entrezgene", "alias"} <= set(by_query["ATP5B"])
     assert by_query["NOTAREALGENE1"].get("notfound") is True
+
+
+def test_malformed_mygene_reply_is_reported_as_a_service_error(annotator):
+    """A reply that is not a list fails the batch and is recorded, so callers do not read it as 'no match'."""
+    from embpy.resources._service_errors import record_service_errors
+
+    with _patch_post(lambda *a, **k: {"error": "upstream timeout"}), record_service_errors() as errors:
+        record = annotator.get_pathways_batch(["TP53"])["TP53"]
+    assert record["status"] == "batch_failed"
+    assert [e["url"] for e in errors] == [f"{MYGENE}/query"]
