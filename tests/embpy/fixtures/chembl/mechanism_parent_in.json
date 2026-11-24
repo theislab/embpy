@@ -1,0 +1,161 @@
+{
+ "mechanisms": [
+  {
+   "action_type": "INHIBITOR",
+   "binding_site_comment": null,
+   "direct_interaction": 1,
+   "disease_efficacy": 1,
+   "max_phase": 4,
+   "mec_id": 304,
+   "mechanism_comment": "Mechanism_for_indication: Precursor Cell Lymphoblastic Leukemia-Lymphoma, Leukemia, Myelogenous, Chronic, BCR-ABL Positive",
+   "mechanism_of_action": "Tyrosine-protein kinase ABL inhibitor",
+   "mechanism_refs": [
+    {
+     "ref_id": "setid=211ef2da-2868-4a77-8055-1cb2cd78e24b#section-13",
+     "ref_type": "DailyMed",
+     "ref_url": "http://dailymed.nlm.nih.gov/dailymed/lookup.cfm?setid=211ef2da-2868-4a77-8055-1cb2cd78e24b#section-13"
+    },
+    {
+     "ref_id": "Bcr-Abl_tyrosine-kinase_inhibitor",
+     "ref_type": "Wikipedia",
+     "ref_url": "http://en.wikipedia.org/wiki/Bcr-Abl_tyrosine-kinase_inhibitor"
+    }
+   ],
+   "molecular_mechanism": 1,
+   "molecule_chembl_id": "CHEMBL1642",
+   "parent_molecule_chembl_id": "CHEMBL941",
+   "record_id": 1343743,
+   "selectivity_comment": null,
+   "site_id": null,
+   "target_chembl_id": "CHEMBL1862",
+   "variant_sequence": null
+  },
+  {
+   "action_type": "INHIBITOR",
+   "binding_site_comment": null,
+   "direct_interaction": 1,
+   "disease_efficacy": 1,
+   "max_phase": 4,
+   "mec_id": 418,
+   "mechanism_comment": "Mechanism_for_indication: Dermatofibrosarcoma, Hypereosinophilic Syndrome, Myelodysplastic-Myeloproliferative Diseases",
+   "mechanism_of_action": "Platelet-derived growth factor receptor beta inhibitor",
+   "mechanism_refs": [
+    {
+     "ref_id": "setid=211ef2da-2868-4a77-8055-1cb2cd78e24b#section-13",
+     "ref_type": "DailyMed",
+     "ref_url": "http://dailymed.nlm.nih.gov/dailymed/lookup.cfm?setid=211ef2da-2868-4a77-8055-1cb2cd78e24b#section-13"
+    },
+    {
+     "ref_id": "Bcr-Abl_tyrosine-kinase_inhibitor",
+     "ref_type": "Wikipedia",
+     "ref_url": "http://en.wikipedia.org/wiki/Bcr-Abl_tyrosine-kinase_inhibitor"
+    }
+   ],
+   "molecular_mechanism": 1,
+   "molecule_chembl_id": "CHEMBL1642",
+   "parent_molecule_chembl_id": "CHEMBL941",
+   "record_id": 1343743,
+   "selectivity_comment": null,
+   "site_id": null,
+   "target_chembl_id": "CHEMBL1913",
+   "variant_sequence": null
+  },
+  {
+   "action_type": "INHIBITOR",
+   "binding_site_comment": null,
+   "direct_interaction": 1,
+   "disease_efficacy": 1,
+   "max_phase": 4,
+   "mec_id": 451,
+   "mechanism_comment": "Mechanism_for_indication: Gastrointestinal Stromal Tumors",
+   "mechanism_of_action": "Stem cell growth factor receptor inhibitor",
+   "mechanism_refs": [
+    {
+     "ref_id": "setid=211ef2da-2868-4a77-8055-1cb2cd78e24b#section-13",
+     "ref_type": "DailyMed",
+     "ref_url": "http://dailymed.nlm.nih.gov/dailymed/lookup.cfm?setid=211ef2da-2868-4a77-8055-1cb2cd78e24b#section-13"
+    },
+    {
+     "ref_id": "Bcr-Abl_tyrosine-kinase_inhibitor",
+     "ref_type": "Wikipedia",
+     "ref_url": "http://en.wikipedia.org/wiki/Bcr-Abl_tyrosine-kinase_inhibitor"
+    }
+   ],
+   "molecular_mechanism": 1,
+   "molecule_chembl_id": "CHEMBL1642",
+   "parent_molecule_chembl_id": "CHEMBL941",
+   "record_id": 1343743,
+   "selectivity_comment": null,
+   "site_id": null,
+   "target_chembl_id": "CHEMBL1936",
+   "variant_sequence": null
+  },
+  {
+   "action_type": "INHIBITOR",
+   "binding_site_comment": null,
+   "direct_interaction": 1,
+   "disease_efficacy": 1,
+   "max_phase": 4,
+   "mec_id": 1187,
+   "mechanism_comment": null,
+   "mechanism_of_action": "Cyclooxygenase inhibitor",
+   "mechanism_refs": [
+    {
+     "ref_id": "17131625",
+     "ref_type": "PubMed",
+     "ref_url": "http://europepmc.org/abstract/MED/17131625"
+    },
+    {
+     "ref_id": "17258197",
+     "ref_type": "PubMed",
+     "ref_url": "http://europepmc.org/abstract/MED/17258197"
+    },
+    {
+     "ref_id": "Aspirin#Mechanism_of_action",
+     "ref_type": "Wikipedia",
+     "ref_url": "http://en.wikipedia.org/wiki/Aspirin#Mechanism_of_action"
+    }
+   ],
+   "molecular_mechanism": 1,
+   "molecule_chembl_id": "CHEMBL25",
+   "parent_molecule_chembl_id": "CHEMBL25",
+   "record_id": 1343081,
+   "selectivity_comment": null,
+   "site_id": null,
+   "target_chembl_id": "CHEMBL2094253",
+   "variant_sequence": null
+  },
+  {
+   "action_type": "INHIBITOR",
+   "binding_site_comment": null,
+   "direct_interaction": 1,
+   "disease_efficacy": 1,
+   "max_phase": 4,
+   "mec_id": 8630,
+   "mechanism_comment": "Mechanism_for_indication: Precursor Cell Lymphoblastic Leukemia-Lymphoma, Leukemia, Myelogenous, Chronic, BCR-ABL Positive",
+   "mechanism_of_action": "Bcr/Abl fusion protein inhibitor",
+   "mechanism_refs": [
+    {
+     "ref_id": "label/2008/021588s024lbl.pdf",
+     "ref_type": "FDA",
+     "ref_url": "https://www.accessdata.fda.gov/drugsatfda_docs/label/2008/021588s024lbl.pdf"
+    }
+   ],
+   "molecular_mechanism": 1,
+   "molecule_chembl_id": "CHEMBL1642",
+   "parent_molecule_chembl_id": "CHEMBL941",
+   "record_id": 1343743,
+   "selectivity_comment": null,
+   "site_id": null,
+   "target_chembl_id": "CHEMBL2096618",
+   "variant_sequence": null
+  }
+ ],
+ "page_meta": {
+  "limit": 1000,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total_count": 5
+ }
+}

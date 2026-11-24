@@ -1,0 +1,108 @@
+7157	R-HSA-111448	https://reactome.org/PathwayBrowser/#/R-HSA-111448	Activation of NOXA and translocation to mitochondria	TAS	Homo sapiens
+7157	R-HSA-139915	https://reactome.org/PathwayBrowser/#/R-HSA-139915	Activation of PUMA and translocation to mitochondria	TAS	Homo sapiens
+7157	R-HSA-1912408	https://reactome.org/PathwayBrowser/#/R-HSA-1912408	Pre-NOTCH Transcription and Translation	TAS	Homo sapiens
+7157	R-HSA-2559580	https://reactome.org/PathwayBrowser/#/R-HSA-2559580	Oxidative Stress Induced Senescence	TAS	Homo sapiens
+7157	R-HSA-2559584	https://reactome.org/PathwayBrowser/#/R-HSA-2559584	Formation of Senescence-Associated Heterochromatin Foci (SAHF)	TAS	Homo sapiens
+7157	R-HSA-2559585	https://reactome.org/PathwayBrowser/#/R-HSA-2559585	Oncogene Induced Senescence	TAS	Homo sapiens
+7157	R-HSA-2559586	https://reactome.org/PathwayBrowser/#/R-HSA-2559586	DNA Damage/Telomere Stress Induced Senescence	TAS	Homo sapiens
+7157	R-HSA-3232118	https://reactome.org/PathwayBrowser/#/R-HSA-3232118	SUMOylation of transcription factors	TAS	Homo sapiens
+7157	R-HSA-349425	https://reactome.org/PathwayBrowser/#/R-HSA-349425	Autodegradation of the E3 ubiquitin ligase COP1	TAS	Homo sapiens
+7157	R-HSA-390471	https://reactome.org/PathwayBrowser/#/R-HSA-390471	Association of TriC/CCT with target proteins during biosynthesis	IEA	Homo sapiens
+7157	R-HSA-5620971	https://reactome.org/PathwayBrowser/#/R-HSA-5620971	Pyroptosis	TAS	Homo sapiens
+7157	R-HSA-5628897	https://reactome.org/PathwayBrowser/#/R-HSA-5628897	TP53 Regulates Metabolic Genes	TAS	Homo sapiens
+7157	R-HSA-5689880	https://reactome.org/PathwayBrowser/#/R-HSA-5689880	Ub-specific processing proteases	TAS	Homo sapiens
+7157	R-HSA-5689896	https://reactome.org/PathwayBrowser/#/R-HSA-5689896	Ovarian tumor domain proteases	TAS	Homo sapiens
+7157	R-HSA-5693565	https://reactome.org/PathwayBrowser/#/R-HSA-5693565	Recruitment and ATM-mediated phosphorylation of repair and signaling proteins at DNA double strand breaks	TAS	Homo sapiens
+7157	R-HSA-6785807	https://reactome.org/PathwayBrowser/#/R-HSA-6785807	Interleukin-4 and Interleukin-13 signaling	TAS	Homo sapiens
+7157	R-HSA-6796648	https://reactome.org/PathwayBrowser/#/R-HSA-6796648	TP53 Regulates Transcription of DNA Repair Genes	TAS	Homo sapiens
+7157	R-HSA-6803204	https://reactome.org/PathwayBrowser/#/R-HSA-6803204	TP53 Regulates Transcription of Genes Involved in Cytochrome C Release	TAS	Homo sapiens
+7157	R-HSA-6803205	https://reactome.org/PathwayBrowser/#/R-HSA-6803205	TP53 regulates transcription of several additional cell death genes whose specific roles in p53-dependent apoptosis remain uncertain	TAS	Homo sapiens
+7157	R-HSA-6803207	https://reactome.org/PathwayBrowser/#/R-HSA-6803207	TP53 Regulates Transcription of Caspase Activators and Caspases	TAS	Homo sapiens
+7157	R-HSA-6803211	https://reactome.org/PathwayBrowser/#/R-HSA-6803211	TP53 Regulates Transcription of Death Receptors and Ligands	TAS	Homo sapiens
+7157	R-HSA-6804114	https://reactome.org/PathwayBrowser/#/R-HSA-6804114	TP53 Regulates Transcription of Genes Involved in G2 Cell Cycle Arrest	TAS	Homo sapiens
+7157	R-HSA-6804115	https://reactome.org/PathwayBrowser/#/R-HSA-6804115	TP53 regulates transcription of additional cell cycle genes whose exact role in the p53 pathway remain uncertain	TAS	Homo sapiens
+7157	R-HSA-6804116	https://reactome.org/PathwayBrowser/#/R-HSA-6804116	TP53 Regulates Transcription of Genes Involved in G1 Cell Cycle Arrest	TAS	Homo sapiens
+7157	R-HSA-6804754	https://reactome.org/PathwayBrowser/#/R-HSA-6804754	Regulation of TP53 Expression	TAS	Homo sapiens
+7157	R-HSA-6804756	https://reactome.org/PathwayBrowser/#/R-HSA-6804756	Regulation of TP53 Activity through Phosphorylation	TAS	Homo sapiens
+7157	R-HSA-6804757	https://reactome.org/PathwayBrowser/#/R-HSA-6804757	Regulation of TP53 Degradation	TAS	Homo sapiens
+7157	R-HSA-6804758	https://reactome.org/PathwayBrowser/#/R-HSA-6804758	Regulation of TP53 Activity through Acetylation	TAS	Homo sapiens
+7157	R-HSA-6804759	https://reactome.org/PathwayBrowser/#/R-HSA-6804759	Regulation of TP53 Activity through Association with Co-factors	TAS	Homo sapiens
+7157	R-HSA-6804760	https://reactome.org/PathwayBrowser/#/R-HSA-6804760	Regulation of TP53 Activity through Methylation	TAS	Homo sapiens
+7157	R-HSA-6811555	https://reactome.org/PathwayBrowser/#/R-HSA-6811555	PI5P Regulates TP53 Acetylation	TAS	Homo sapiens
+7157	R-HSA-69473	https://reactome.org/PathwayBrowser/#/R-HSA-69473	G2/M DNA damage checkpoint	TAS	Homo sapiens
+7157	R-HSA-69481	https://reactome.org/PathwayBrowser/#/R-HSA-69481	G2/M Checkpoints	TAS	Homo sapiens
+7157	R-HSA-69541	https://reactome.org/PathwayBrowser/#/R-HSA-69541	Stabilization of p53	TAS	Homo sapiens
+7157	R-HSA-69895	https://reactome.org/PathwayBrowser/#/R-HSA-69895	Transcriptional  activation of  cell cycle inhibitor p21 	TAS	Homo sapiens
+7157	R-HSA-8852276	https://reactome.org/PathwayBrowser/#/R-HSA-8852276	The role of GTSE1 in G2/M progression after G2 checkpoint	TAS	Homo sapiens
+7157	R-HSA-8853884	https://reactome.org/PathwayBrowser/#/R-HSA-8853884	Transcriptional Regulation by VENTX	TAS	Homo sapiens
+7157	R-HSA-8941855	https://reactome.org/PathwayBrowser/#/R-HSA-8941855	RUNX3 regulates CDKN1A transcription	TAS	Homo sapiens
+7157	R-HSA-8943724	https://reactome.org/PathwayBrowser/#/R-HSA-8943724	Regulation of PTEN gene transcription	TAS	Homo sapiens
+7157	R-HSA-8943724	https://reactome.org/PathwayBrowser/#/R-HSA-8943724	Regulation of PTEN gene transcription	IEA	Homo sapiens
+7157	R-HSA-9723905	https://reactome.org/PathwayBrowser/#/R-HSA-9723905	Loss of function of TP53 in cancer due to loss of tetramerization ability	TAS	Homo sapiens
+7157	R-HSA-9725370	https://reactome.org/PathwayBrowser/#/R-HSA-9725370	Signaling by ALK fusions and activated point mutants	TAS	Homo sapiens
+7157	R-HSA-9758274	https://reactome.org/PathwayBrowser/#/R-HSA-9758274	Regulation of NF-kappa B signaling	TAS	Homo sapiens
+7157	R-HSA-9819196	https://reactome.org/PathwayBrowser/#/R-HSA-9819196	Zygotic genome activation (ZGA)	IEA	Homo sapiens
+7157	R-HSA-983231	https://reactome.org/PathwayBrowser/#/R-HSA-983231	Factors involved in megakaryocyte development and platelet production	IEA	Homo sapiens
+7157	R-HSA-9833482	https://reactome.org/PathwayBrowser/#/R-HSA-9833482	PKR-mediated signaling	TAS	Homo sapiens
+7157	R-HSA-9988426	https://reactome.org/PathwayBrowser/#/R-HSA-9988426	Negative transcriptional regulation of urea cycle enzymes	TAS	Homo sapiens
+1956	R-HSA-1227986	https://reactome.org/PathwayBrowser/#/R-HSA-1227986	Signaling by ERBB2	TAS	Homo sapiens
+1956	R-HSA-1236382	https://reactome.org/PathwayBrowser/#/R-HSA-1236382	Constitutive Signaling by Ligand-Responsive EGFR Cancer Variants	TAS	Homo sapiens
+1956	R-HSA-1236394	https://reactome.org/PathwayBrowser/#/R-HSA-1236394	Signaling by ERBB4	TAS	Homo sapiens
+1956	R-HSA-1250196	https://reactome.org/PathwayBrowser/#/R-HSA-1250196	SHC1 events in ERBB2 signaling	IEA	Homo sapiens
+1956	R-HSA-1250196	https://reactome.org/PathwayBrowser/#/R-HSA-1250196	SHC1 events in ERBB2 signaling	TAS	Homo sapiens
+1956	R-HSA-1251932	https://reactome.org/PathwayBrowser/#/R-HSA-1251932	PLCG1 events in ERBB2 signaling	IEA	Homo sapiens
+1956	R-HSA-1257604	https://reactome.org/PathwayBrowser/#/R-HSA-1257604	PIP3 activates AKT signaling	TAS	Homo sapiens
+1956	R-HSA-177929	https://reactome.org/PathwayBrowser/#/R-HSA-177929	Signaling by EGFR	TAS	Homo sapiens
+1956	R-HSA-179812	https://reactome.org/PathwayBrowser/#/R-HSA-179812	GRB2 events in EGFR signaling	TAS	Homo sapiens
+1956	R-HSA-180292	https://reactome.org/PathwayBrowser/#/R-HSA-180292	GAB1 signalosome	TAS	Homo sapiens
+1956	R-HSA-180336	https://reactome.org/PathwayBrowser/#/R-HSA-180336	SHC1 events in EGFR signaling	TAS	Homo sapiens
+1956	R-HSA-182971	https://reactome.org/PathwayBrowser/#/R-HSA-182971	EGFR downregulation	TAS	Homo sapiens
+1956	R-HSA-1963640	https://reactome.org/PathwayBrowser/#/R-HSA-1963640	GRB2 events in ERBB2 signaling	IEA	Homo sapiens
+1956	R-HSA-1963642	https://reactome.org/PathwayBrowser/#/R-HSA-1963642	PI3K events in ERBB2 signaling	TAS	Homo sapiens
+1956	R-HSA-212718	https://reactome.org/PathwayBrowser/#/R-HSA-212718	EGFR interacts with phospholipase C-gamma	TAS	Homo sapiens
+1956	R-HSA-2179392	https://reactome.org/PathwayBrowser/#/R-HSA-2179392	EGFR Transactivation by Gastrin	TAS	Homo sapiens
+1956	R-HSA-2219530	https://reactome.org/PathwayBrowser/#/R-HSA-2219530	Constitutive Signaling by Aberrant PI3K in Cancer	TAS	Homo sapiens
+1956	R-HSA-445144	https://reactome.org/PathwayBrowser/#/R-HSA-445144	Signal transduction by L1	TAS	Homo sapiens
+1956	R-HSA-5637810	https://reactome.org/PathwayBrowser/#/R-HSA-5637810	Constitutive Signaling by EGFRvIII	TAS	Homo sapiens
+1956	R-HSA-5638303	https://reactome.org/PathwayBrowser/#/R-HSA-5638303	Inhibition of Signaling by Overexpressed EGFR	TAS	Homo sapiens
+1956	R-HSA-5673001	https://reactome.org/PathwayBrowser/#/R-HSA-5673001	RAF/MAP kinase cascade	TAS	Homo sapiens
+1956	R-HSA-6785631	https://reactome.org/PathwayBrowser/#/R-HSA-6785631	ERBB2 Regulates Cell Motility	TAS	Homo sapiens
+1956	R-HSA-6811558	https://reactome.org/PathwayBrowser/#/R-HSA-6811558	PI5P, PP2A and IER3 Regulate PI3K/AKT Signaling	TAS	Homo sapiens
+1956	R-HSA-8847993	https://reactome.org/PathwayBrowser/#/R-HSA-8847993	ERBB2 Activates PTK6 Signaling	TAS	Homo sapiens
+1956	R-HSA-8856825	https://reactome.org/PathwayBrowser/#/R-HSA-8856825	Cargo recognition for clathrin-mediated endocytosis	TAS	Homo sapiens
+1956	R-HSA-8856828	https://reactome.org/PathwayBrowser/#/R-HSA-8856828	Clathrin-mediated endocytosis	TAS	Homo sapiens
+1956	R-HSA-8857538	https://reactome.org/PathwayBrowser/#/R-HSA-8857538	PTK6 promotes HIF1A stabilization	TAS	Homo sapiens
+1956	R-HSA-8863795	https://reactome.org/PathwayBrowser/#/R-HSA-8863795	Downregulation of ERBB2 signaling	TAS	Homo sapiens
+1956	R-HSA-8866910	https://reactome.org/PathwayBrowser/#/R-HSA-8866910	TFAP2 (AP-2) family regulates transcription of growth factors and their receptors	TAS	Homo sapiens
+1956	R-HSA-9009391	https://reactome.org/PathwayBrowser/#/R-HSA-9009391	Extra-nuclear estrogen signaling	TAS	Homo sapiens
+1956	R-HSA-9013507	https://reactome.org/PathwayBrowser/#/R-HSA-9013507	NOTCH3 Activation and Transmission of Signal to the Nucleus	TAS	Homo sapiens
+1956	R-HSA-9609690	https://reactome.org/PathwayBrowser/#/R-HSA-9609690	HCMV Early Events	TAS	Homo sapiens
+1956	R-HSA-9634638	https://reactome.org/PathwayBrowser/#/R-HSA-9634638	Estrogen-dependent nuclear events downstream of ESR-membrane signaling	TAS	Homo sapiens
+1956	R-HSA-9664565	https://reactome.org/PathwayBrowser/#/R-HSA-9664565	Signaling by ERBB2 KD Mutants	TAS	Homo sapiens
+1956	R-HSA-9665348	https://reactome.org/PathwayBrowser/#/R-HSA-9665348	Signaling by ERBB2 ECD mutants	TAS	Homo sapiens
+1956	R-HSA-9665686	https://reactome.org/PathwayBrowser/#/R-HSA-9665686	Signaling by ERBB2 TMD/JMD mutants	TAS	Homo sapiens
+1956	R-HSA-9820960	https://reactome.org/PathwayBrowser/#/R-HSA-9820960	Respiratory syncytial virus (RSV) attachment and entry	TAS	Homo sapiens
+1956	R-HSA-9927432	https://reactome.org/PathwayBrowser/#/R-HSA-9927432	Developmental Lineage of Mammary Gland Myoepithelial Cells	TAS	Homo sapiens
+1565	R-HSA-211935	https://reactome.org/PathwayBrowser/#/R-HSA-211935	Fatty acids	TAS	Homo sapiens
+1565	R-HSA-211958	https://reactome.org/PathwayBrowser/#/R-HSA-211958	Miscellaneous substrates	TAS	Homo sapiens
+1565	R-HSA-211981	https://reactome.org/PathwayBrowser/#/R-HSA-211981	Xenobiotics	TAS	Homo sapiens
+1565	R-HSA-211999	https://reactome.org/PathwayBrowser/#/R-HSA-211999	CYP2E1 reactions	TAS	Homo sapiens
+1565	R-HSA-9027307	https://reactome.org/PathwayBrowser/#/R-HSA-9027307	Biosynthesis of maresin-like SPMs	TAS	Homo sapiens
+1565	R-HSA-9749641	https://reactome.org/PathwayBrowser/#/R-HSA-9749641	Aspirin ADME	TAS	Homo sapiens
+506	R-HSA-1268020	https://reactome.org/PathwayBrowser/#/R-HSA-1268020	Mitochondrial protein import	IEA	Homo sapiens
+506	R-HSA-1268020	https://reactome.org/PathwayBrowser/#/R-HSA-1268020	Mitochondrial protein import	TAS	Homo sapiens
+506	R-HSA-163210	https://reactome.org/PathwayBrowser/#/R-HSA-163210	Formation of ATP by chemiosmotic coupling	TAS	Homo sapiens
+506	R-HSA-2151201	https://reactome.org/PathwayBrowser/#/R-HSA-2151201	Transcriptional activation of mitochondrial biogenesis	TAS	Homo sapiens
+506	R-HSA-8949613	https://reactome.org/PathwayBrowser/#/R-HSA-8949613	Cristae formation	TAS	Homo sapiens
+506	R-HSA-9837999	https://reactome.org/PathwayBrowser/#/R-HSA-9837999	Mitochondrial protein degradation	TAS	Homo sapiens
+7453	R-HSA-379716	https://reactome.org/PathwayBrowser/#/R-HSA-379716	Cytosolic tRNA aminoacylation	TAS	Homo sapiens
+1253480	R-HSA-844623	https://reactome.org/PathwayBrowser/#/R-HSA-844623	The IPAF inflammasome	TAS	Homo sapiens
+1253480	R-HSA-844623	https://reactome.org/PathwayBrowser/#/R-HSA-844623	The IPAF inflammasome	IEA	Homo sapiens
+1253480	R-GGA-433822	https://reactome.org/PathwayBrowser/#/R-GGA-433822	NFkB  and MAPK activation mediated by TRAF6	IEA	Gallus gallus
+1253480	R-GGA-451534	https://reactome.org/PathwayBrowser/#/R-GGA-451534	TLR5 cascade	TAS	Gallus gallus
+1253480	R-GGA-977240	https://reactome.org/PathwayBrowser/#/R-GGA-977240	MyD88 cascade initiated on plasma membrane	IEA	Gallus gallus
+1253480	R-GGA-977240	https://reactome.org/PathwayBrowser/#/R-GGA-977240	MyD88 cascade initiated on plasma membrane	TAS	Gallus gallus
+100009614	R-MMU-6805567	https://reactome.org/PathwayBrowser/#/R-MMU-6805567	Keratinization	IEA	Mus musculus
+100017	R-MMU-8856825	https://reactome.org/PathwayBrowser/#/R-MMU-8856825	Cargo recognition for clathrin-mediated endocytosis	IEA	Mus musculus
+100017	R-MMU-8856828	https://reactome.org/PathwayBrowser/#/R-MMU-8856828	Clathrin-mediated endocytosis	IEA	Mus musculus
+100017	R-MMU-8964026	https://reactome.org/PathwayBrowser/#/R-MMU-8964026	Chylomicron clearance	IEA	Mus musculus

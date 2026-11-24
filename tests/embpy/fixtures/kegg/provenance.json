@@ -1,0 +1,21 @@
+{
+  "recorded": "2026-11-11",
+  "note": "KEGG-derived tables are never committed to any repo (KEGG data are for academic use only). The .tsv and info.txt files here are therefore SYNTHETIC stand-ins, not KEGG data: they reuse the row format of the recorded KEGG REST bodies (tab-separated 'namespace:id<TAB>namespace:id' for conv/link, 'id<TAB>name' for list, the 'name count YYYY/MM/DD' lines of info/kegg) with every KEGG entry and pathway id renamed into an unused range by an order-preserving bijection (C0nnnn/C1nnnn -> C9nnnn, D0nnnn -> D9nnnn, map0nnnn -> map9nnnn, map07nnn -> map07(nnn+700), hsa0nnnn -> hsa9nnnn) and every pathway name replaced by a placeholder. PubChem SIDs/CIDs, InChIKeys, ChEBI ids and NCBI gene ids (hsa:<entrez>) are real public identifiers. Never add real KEGG rows here; tests that need real tables read the staged reference folder on the cluster (opt-in).",
+  "format_source": {
+    "info.txt": "format of GET https://rest.kegg.jp/info/kegg (synthetic counts; release dates kept so the release-string test is realistic)",
+    "conv_compound_pubchem.tsv": "format of GET https://rest.kegg.jp/conv/compound/pubchem (pubchem:<SID> -> cpd:<id>)",
+    "conv_drug_pubchem.tsv": "format of GET https://rest.kegg.jp/conv/drug/pubchem (pubchem:<SID> -> dr:<id>)",
+    "conv_compound_chebi.tsv": "format of GET https://rest.kegg.jp/conv/compound/chebi",
+    "conv_drug_chebi.tsv": "format of GET https://rest.kegg.jp/conv/drug/chebi",
+    "link_pathway_compound.tsv": "format of GET https://rest.kegg.jp/link/pathway/compound",
+    "link_pathway_drug.tsv": "format of GET https://rest.kegg.jp/link/pathway/drug",
+    "link_hsa_drug.tsv": "format of GET https://rest.kegg.jp/link/hsa/drug",
+    "link_pathway_hsa.tsv": "format of GET https://rest.kegg.jp/link/pathway/hsa",
+    "list_pathway.tsv": "format of GET https://rest.kegg.jp/list/pathway",
+    "list_pathway_hsa.tsv": "format of GET https://rest.kegg.jp/list/pathway/hsa (names keep the ' - Homo sapiens (human)' suffix)"
+  },
+  "recorded_responses": {
+    "pubchem_sid_cids_standardized.json": "POST https://pubchem.ncbi.nlm.nih.gov/rest/pug/substance/sid/cids/JSON?cids_type=standardized with sid=<the 11 SIDs in the conv tables> (complete response; SID 7847124 has no standardized CID)",
+    "pubchem_cid_inchikey.json": "POST https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/property/InChIKey/JSON with cid=962,1024,2244,5291,5743,9782,123596,643798 (complete response)"
+  }
+}

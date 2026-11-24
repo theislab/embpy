@@ -1,0 +1,22 @@
+{
+ "_embedded": {
+  "terms": [
+   {
+    "iri": "http://purl.obolibrary.org/obo/CHEBI_15365",
+    "label": "acetylsalicylic acid",
+    "description": [
+     "A member of the class of benzoic acids that is salicylic acid in which the hydrogen that is attached to the phenolic hydroxy group has been replaced by an acetoxy group. A non-steroidal anti-inflammatory drug with cyclooxygenase inhibitor activity."
+    ],
+    "obo_id": "CHEBI:15365",
+    "short_form": "CHEBI_15365",
+    "ontology_name": "chebi"
+   }
+  ]
+ },
+ "page": {
+  "size": 1,
+  "totalElements": 1,
+  "totalPages": 1,
+  "number": 0
+ }
+}

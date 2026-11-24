@@ -1,0 +1,6 @@
+{
+ "Fault": {
+  "Code": "PUGREST.NotFound",
+  "Message": "No assay data found for the given ID(s)"
+ }
+}

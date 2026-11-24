@@ -1,0 +1,34 @@
+Recorded provider payloads used by tests/embpy/test_molecule_annotator.py.
+All were fetched with curl from the cluster login node on 2026-11-11 (UTC),
+public identifiers only. "trimmed" = real payload with lists or fields cut
+down to stay small; no field or shape was invented.
+
+pubchem/  (https://pubchem.ncbi.nlm.nih.gov/rest/pug)
+  smiles_cids_449459.json         GET /compound/smiles/cids/JSON?smiles=<4-hydroxytamoxifen, contains '/'>  -> 200
+  smiles_cids_backslash.json      GET /compound/smiles/cids/JSON?smiles=CC/C(=C(\c1ccccc1)...)c1ccccc1      -> 200
+  smiles_cids_zero.json           GET /compound/smiles/cids/JSON for a structure absent from PubChem       -> 200 {CID:[0]}
+  badrequest_400_standardize.json GET /compound/smiles/<'%2F'-encoded SMILES>/cids/JSON                    -> 400
+  badrequest_400_invalid_id.json  GET /compound/cid/0/xrefs/RegistryID/JSON                                -> 400
+  inchikey_property_50.json       GET /compound/inchikey/<50 cohort keys>/property/InChIKey/JSON            -> 200 (49 keys, 2 with 2 CIDs)
+  inchikey_property_50_request.txt  the 50 comma-separated keys of that request
+  inchikey_property_mixed.json    GET /compound/inchikey/BSYNRYMUTXBXSQ-UHFFFAOYSA-N,ZZZZZZZZZZZZZZ-UHFFFAOYSA-N/property/InChIKey/JSON -> 200
+  inchikey_notfound_404.json      GET /compound/inchikey/ZZZZZZZZZZZZZZ-UHFFFAOYSA-N/property/InChIKey/JSON -> 404 PUGREST.NotFound
+  xrefs_registry_3cids.json       GET /compound/cid/2244,449459,170000000/xrefs/RegistryID/JSON             -> 200 (trimmed RegistryID lists)
+  assaysummary_74603.json         GET /compound/cid/74603/assaysummary/JSON                                -> 200 (98 rows, complete)
+  assaysummary_2244_trimmed.json  GET /compound/cid/2244/assaysummary/JSON                                 -> 200 (24 of 6,194 rows)
+  assay_notfound_404.json         GET /compound/cid/<CID without assays>/assaysummary/JSON                 -> 404 PUGREST.NotFound
+
+chebi/  (https://www.ebi.ac.uk/chebi/backend/api/public, ChEBI release 257 era; CC BY 4.0)
+  es_aspirin.json                 GET /es_search/?term=BSYNRYMUTXBXSQ-UHFFFAOYSA-N
+  es_tamoxifen_exact.json         GET /es_search/?term=NKANXQFJJICGDU-UHFFFAOYSA-N
+  es_tamoxifen_block.json         GET /es_search/?term=NKANXQFJJICGDU
+  es_dienestrol_exact.json        GET /es_search/?term=NFDFQCUYFHCNBW-UHFFFAOYSA-N
+  es_dienestrol_block.json        GET /es_search/?term=NFDFQCUYFHCNBW
+  es_vinorelbine_block.json       GET /es_search/?term=GBABOYUKABKIAF  (3 stereo variants)
+  es_404_no_match.json            GET /es_search/?term=GBABOYUKABKIAF-JKVZWNDSSA-N -> 404
+  compounds_aspirin.json          GET /compounds/?chebi_ids=CHEBI:15365,... (entry CHEBI:15365; data trimmed to identity + relations)
+  compounds_mixed.json            GET /compounds/?chebi_ids=CHEBI:92766,CHEBI:41774,CHEBI:4518,CHEBI:2890,CHEBI:999999999 (data trimmed)
+  ols_terms_aspirin.json          GET https://www.ebi.ac.uk/ols4/api/ontologies/chebi/terms?short_form=CHEBI_15365 (term trimmed)
+
+chembl/  (https://www.ebi.ac.uk/chembl/api/data; CC BY-SA 3.0)
+  molecule_by_inchikey_aspirin.json GET /molecule.json?molecule_structures__standard_inchi_key=BSYNRYMUTXBXSQ-UHFFFAOYSA-N&limit=5 (molfile dropped)

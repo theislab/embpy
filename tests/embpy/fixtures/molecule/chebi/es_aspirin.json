@@ -1,0 +1,31 @@
+{
+ "results": [
+  {
+   "_index": "chebi-prod-compounds-11112026",
+   "_type": "_doc",
+   "_id": "15365",
+   "_score": 11.741198,
+   "_source": {
+    "chebi_accession": "CHEBI:15365",
+    "name": "acetylsalicylic acid",
+    "ascii_name": "acetylsalicylic acid",
+    "stars": 3,
+    "default_structure": 94,
+    "definition": "A member of the class of benzoic acids that is salicylic acid in which the hydrogen that is attached to the phenolic hydroxy group has been replaced by an acetoxy group. A non-steroidal anti-inflammatory drug with cyclooxygenase inhibitor activity.",
+    "inchi": "InChI=1S/C9H8O4/c1-6(10)13-8-5-3-2-4-7(8)9(11)12/h2-5H,1H3,(H,11,12)",
+    "charge": 0,
+    "smiles": "CC(=O)Oc1ccccc1C(=O)O",
+    "formula": "C9H8O4",
+    "inchikey": "BSYNRYMUTXBXSQ-UHFFFAOYSA-N",
+    "monoisotopicmass": 180.04226,
+    "mass": 180.159,
+    "structures": [
+     50786,
+     94
+    ]
+   }
+  }
+ ],
+ "total": 1,
+ "number_pages": 1
+}

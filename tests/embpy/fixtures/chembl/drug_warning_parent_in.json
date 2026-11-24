@@ -1,0 +1,255 @@
+{
+ "drug_warnings": [
+  {
+   "efo_id": null,
+   "efo_id_for_warning_class": null,
+   "efo_term": null,
+   "molecule_chembl_id": "CHEMBL122",
+   "parent_molecule_chembl_id": "CHEMBL122",
+   "warning_class": null,
+   "warning_country": "United States",
+   "warning_description": null,
+   "warning_id": 1662,
+   "warning_refs": [],
+   "warning_type": "Black Box Warning",
+   "warning_year": null
+  },
+  {
+   "efo_id": "EFO:0000712",
+   "efo_id_for_warning_class": "EFO:1001482",
+   "efo_term": "stroke",
+   "molecule_chembl_id": "CHEMBL122",
+   "parent_molecule_chembl_id": "CHEMBL122",
+   "warning_class": "cardiotoxicity",
+   "warning_country": "Worldwide",
+   "warning_description": "Risk for heart attack and stroke",
+   "warning_id": 3952,
+   "warning_refs": [
+    {
+     "ref_id": "FR-2014-07-02/pdf/2014-15371.pdf",
+     "ref_type": "USGPO",
+     "ref_url": "https://www.govinfo.gov/content/pkg/FR-2014-07-02/pdf/2014-15371.pdf"
+    },
+    {
+     "ref_id": "WHO/PSM/QSM/2005.2",
+     "ref_type": "WHO",
+     "ref_url": "https://apps.who.int/iris/handle/10665/66869"
+    },
+    {
+     "ref_id": "21574210",
+     "ref_type": "PubMed",
+     "ref_url": "http://europepmc.org/abstract/MED/21574210"
+    }
+   ],
+   "warning_type": "Withdrawn",
+   "warning_year": 2004
+  },
+  {
+   "efo_id": "EFO:0000612",
+   "efo_id_for_warning_class": "EFO:1001482",
+   "efo_term": "myocardial infarction",
+   "molecule_chembl_id": "CHEMBL122",
+   "parent_molecule_chembl_id": "CHEMBL122",
+   "warning_class": "cardiotoxicity",
+   "warning_country": "Worldwide",
+   "warning_description": "Risk for heart attack and stroke",
+   "warning_id": 3953,
+   "warning_refs": [
+    {
+     "ref_id": "WHO/PSM/QSM/2005.2",
+     "ref_type": "WHO",
+     "ref_url": "https://apps.who.int/iris/handle/10665/66869"
+    },
+    {
+     "ref_id": "FR-2014-07-02/pdf/2014-15371.pdf",
+     "ref_type": "USGPO",
+     "ref_url": "https://www.govinfo.gov/content/pkg/FR-2014-07-02/pdf/2014-15371.pdf"
+    },
+    {
+     "ref_id": "21574210",
+     "ref_type": "PubMed",
+     "ref_url": "http://europepmc.org/abstract/MED/21574210"
+    }
+   ],
+   "warning_type": "Withdrawn",
+   "warning_year": 2004
+  },
+  {
+   "efo_id": "EFO:0000712",
+   "efo_id_for_warning_class": "EFO:1001482",
+   "efo_term": "stroke",
+   "molecule_chembl_id": "CHEMBL122",
+   "parent_molecule_chembl_id": "CHEMBL122",
+   "warning_class": "cardiotoxicity",
+   "warning_country": "Worldwide",
+   "warning_description": "Increased risk in cardiovascular events such as heart attack and strokes especially when used for long duration.",
+   "warning_id": 3954,
+   "warning_refs": [
+    {
+     "ref_id": "978-92-4-001477-0",
+     "ref_type": "WHO",
+     "ref_url": "https://www.who.int/publications/i/item/9789240014770"
+    }
+   ],
+   "warning_type": "Withdrawn",
+   "warning_year": 2004
+  },
+  {
+   "efo_id": "EFO:1001482",
+   "efo_id_for_warning_class": "EFO:1001482",
+   "efo_term": "cardiotoxicity",
+   "molecule_chembl_id": "CHEMBL122",
+   "parent_molecule_chembl_id": "CHEMBL122",
+   "warning_class": "cardiotoxicity",
+   "warning_country": "Worldwide",
+   "warning_description": "Increased risk of cardiovascular side effects",
+   "warning_id": 3967,
+   "warning_refs": [
+    {
+     "ref_id": "safety-notices/item?t=/withdrawn-all-vioxx-ceoxx-products-from-the-irish-market&id=d96bf825-9782-6eee-9b55-ff00008c97d0",
+     "ref_type": "HPRA",
+     "ref_url": "http://www.hpra.ie/homepage/medicines/safety-notices/item?t=/withdrawn-all-vioxx-ceoxx-products-from-the-irish-market&id=d96bf825-9782-6eee-9b55-ff00008c97d0"
+    }
+   ],
+   "warning_type": "Withdrawn",
+   "warning_year": 2004
+  },
+  {
+   "efo_id": "EFO:0000612",
+   "efo_id_for_warning_class": "EFO:1001482",
+   "efo_term": "myocardial infarction",
+   "molecule_chembl_id": "CHEMBL122",
+   "parent_molecule_chembl_id": "CHEMBL122",
+   "warning_class": "cardiotoxicity",
+   "warning_country": "Worldwide",
+   "warning_description": "Increased risk in cardiovascular events such as heart attack and strokes especially when used for long duration.",
+   "warning_id": 4088,
+   "warning_refs": [
+    {
+     "ref_id": "978-92-4-001477-0",
+     "ref_type": "WHO",
+     "ref_url": "https://www.who.int/publications/i/item/9789240014770"
+    }
+   ],
+   "warning_type": "Withdrawn",
+   "warning_year": 2004
+  },
+  {
+   "efo_id": "EFO:0000712",
+   "efo_id_for_warning_class": "EFO:1001482",
+   "efo_term": "stroke",
+   "molecule_chembl_id": "CHEMBL122",
+   "parent_molecule_chembl_id": "CHEMBL122",
+   "warning_class": "cardiotoxicity",
+   "warning_country": "Worldwide",
+   "warning_description": "Increased risk of serious cardiovascular events, such as heart attacks and strokes",
+   "warning_id": 4101,
+   "warning_refs": [
+    {
+     "ref_id": "recall-alert-rappel-avis/hc-sc/2004/13231a-eng.php",
+     "ref_type": "Health Canada",
+     "ref_url": "https://healthycanadians.gc.ca/recall-alert-rappel-avis/hc-sc/2004/13231a-eng.php"
+    }
+   ],
+   "warning_type": "Withdrawn",
+   "warning_year": 2004
+  },
+  {
+   "efo_id": "EFO:0000712",
+   "efo_id_for_warning_class": "EFO:0011057",
+   "efo_term": "stroke",
+   "molecule_chembl_id": "CHEMBL122",
+   "parent_molecule_chembl_id": "CHEMBL122",
+   "warning_class": "neurotoxicity",
+   "warning_country": "Worldwide",
+   "warning_description": "Risk for heart attack and stroke",
+   "warning_id": 4223,
+   "warning_refs": [
+    {
+     "ref_id": "FR-2014-07-02/pdf/2014-15371.pdf",
+     "ref_type": "USGPO",
+     "ref_url": "https://www.govinfo.gov/content/pkg/FR-2014-07-02/pdf/2014-15371.pdf"
+    },
+    {
+     "ref_id": "21574210",
+     "ref_type": "PubMed",
+     "ref_url": "http://europepmc.org/abstract/MED/21574210"
+    },
+    {
+     "ref_id": "WHO/PSM/QSM/2005.2",
+     "ref_type": "WHO",
+     "ref_url": "https://apps.who.int/iris/handle/10665/66869"
+    }
+   ],
+   "warning_type": "Withdrawn",
+   "warning_year": 2004
+  },
+  {
+   "efo_id": "EFO:0000612",
+   "efo_id_for_warning_class": "EFO:1001482",
+   "efo_term": "myocardial infarction",
+   "molecule_chembl_id": "CHEMBL122",
+   "parent_molecule_chembl_id": "CHEMBL122",
+   "warning_class": "cardiotoxicity",
+   "warning_country": "Worldwide",
+   "warning_description": "Increased risk of serious cardiovascular events, such as heart attacks and strokes",
+   "warning_id": 4510,
+   "warning_refs": [
+    {
+     "ref_id": "recall-alert-rappel-avis/hc-sc/2004/13231a-eng.php",
+     "ref_type": "Health Canada",
+     "ref_url": "https://healthycanadians.gc.ca/recall-alert-rappel-avis/hc-sc/2004/13231a-eng.php"
+    }
+   ],
+   "warning_type": "Withdrawn",
+   "warning_year": 2004
+  },
+  {
+   "efo_id": "EFO:0000712",
+   "efo_id_for_warning_class": "EFO:0011057",
+   "efo_term": "stroke",
+   "molecule_chembl_id": "CHEMBL122",
+   "parent_molecule_chembl_id": "CHEMBL122",
+   "warning_class": "neurotoxicity",
+   "warning_country": "Worldwide",
+   "warning_description": "Increased risk of serious cardiovascular events, such as heart attacks and strokes",
+   "warning_id": 4522,
+   "warning_refs": [
+    {
+     "ref_id": "recall-alert-rappel-avis/hc-sc/2004/13231a-eng.php",
+     "ref_type": "Health Canada",
+     "ref_url": "https://healthycanadians.gc.ca/recall-alert-rappel-avis/hc-sc/2004/13231a-eng.php"
+    }
+   ],
+   "warning_type": "Withdrawn",
+   "warning_year": 2004
+  },
+  {
+   "efo_id": "EFO:0000712",
+   "efo_id_for_warning_class": "EFO:0011057",
+   "efo_term": "stroke",
+   "molecule_chembl_id": "CHEMBL122",
+   "parent_molecule_chembl_id": "CHEMBL122",
+   "warning_class": "neurotoxicity",
+   "warning_country": "Worldwide",
+   "warning_description": "Increased risk in cardiovascular events such as heart attack and strokes especially when used for long duration.",
+   "warning_id": 4652,
+   "warning_refs": [
+    {
+     "ref_id": "978-92-4-001477-0",
+     "ref_type": "WHO",
+     "ref_url": "https://www.who.int/publications/i/item/9789240014770"
+    }
+   ],
+   "warning_type": "Withdrawn",
+   "warning_year": 2004
+  }
+ ],
+ "page_meta": {
+  "limit": 1000,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total_count": 11
+ }
+}

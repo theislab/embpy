@@ -1,0 +1,1 @@
+{"data": [], "jsonapi": {"version": "1.0"}, "links": {"self": "http://api.cellmodelpassports.sanger.ac.uk/models?filter=%5B%7B%22name%22%3A%22names%22%2C%22op%22%3A%22any%22%2C%22val%22%3A%22PC3%22%7D%5D&include=sample.tissue%2Csample.cancer_type%2Cmodel_msi_status&page%5Bsize%5D=5"}, "meta": {"count": 0}}

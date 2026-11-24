@@ -1,0 +1,286 @@
+{
+ "metabolisms": [
+  {
+   "drug_chembl_id": "CHEMBL25",
+   "enzyme_name": "Esterases",
+   "met_comment": "Organ: Plasma and Liver|Comment: Active metabolite with its own anti-inflammatory properties  is the cause of toxicity in aspirin by causing increased O2 consumption and CO2 production leading to hyperventilation by direct interaction with the medulla, and also increases the predisposition of ulceration by inhibiting the synthesis of vasodilators and cytoprotective prostaglandins.",
+   "met_conversion": "Ester hydrolysis, leaving a hydroxyl group substituent on the aromatic ring.",
+   "met_id": 623,
+   "metabolism_refs": [
+    {
+     "ref_id": "0443051488",
+     "ref_type": "ISBN",
+     "ref_url": "http://www.isbnsearch.org/isbn/0443051488"
+    },
+    {
+     "ref_id": "10.1007/s00210-012-0752-0",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1007/s00210-012-0752-0"
+    },
+    {
+     "ref_id": "10.1159/000327782",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1159/000327782"
+    }
+   ],
+   "metabolite_chembl_id": "CHEMBL424",
+   "metabolite_name": "SALICYLIC ACID",
+   "organism": null,
+   "pathway_id": 1,
+   "pathway_key": null,
+   "substrate_chembl_id": "CHEMBL25",
+   "substrate_name": "ASPIRIN",
+   "target_chembl_id": null,
+   "tax_id": null
+  },
+  {
+   "drug_chembl_id": "CHEMBL25",
+   "enzyme_name": "UGT1A6",
+   "met_comment": "Organ: Plasma and Liver|Comment: A glucuronide conjugate metabolite, these metabolites make up a significant percentage of the final product.",
+   "met_conversion": "O-glucuronide conjugation to the hydroxyl group forming an ether",
+   "met_id": 624,
+   "metabolism_refs": [
+    {
+     "ref_id": "0443051488",
+     "ref_type": "ISBN",
+     "ref_url": "http://www.isbnsearch.org/isbn/0443051488"
+    },
+    {
+     "ref_id": "10.1007/s00210-012-0752-0",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1007/s00210-012-0752-0"
+    },
+    {
+     "ref_id": "10.1159/000327782",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1159/000327782"
+    }
+   ],
+   "metabolite_chembl_id": "CHEMBL3544526",
+   "metabolite_name": "SALICYLIC ACID PHENOL GLUCURONIDE",
+   "organism": null,
+   "pathway_id": 1,
+   "pathway_key": null,
+   "substrate_chembl_id": "CHEMBL424",
+   "substrate_name": "SALICYLIC ACID",
+   "target_chembl_id": "CHEMBL1743316",
+   "tax_id": null
+  },
+  {
+   "drug_chembl_id": "CHEMBL25",
+   "enzyme_name": "UGT1A6",
+   "met_comment": "Organ: Liver|Comment: Glycine conjugate which id the major metabolite.",
+   "met_conversion": "Glycine conjugation to the carboxylic acid group",
+   "met_id": 625,
+   "metabolism_refs": [
+    {
+     "ref_id": "0443051488",
+     "ref_type": "ISBN",
+     "ref_url": "http://www.isbnsearch.org/isbn/0443051488"
+    },
+    {
+     "ref_id": "10.1007/s00210-012-0752-0",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1007/s00210-012-0752-0"
+    },
+    {
+     "ref_id": "10.1159/000327782",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1159/000327782"
+    }
+   ],
+   "metabolite_chembl_id": "CHEMBL586",
+   "metabolite_name": "SALICYLURIC ACID",
+   "organism": null,
+   "pathway_id": 1,
+   "pathway_key": null,
+   "substrate_chembl_id": "CHEMBL424",
+   "substrate_name": "SALICYLIC ACID",
+   "target_chembl_id": "CHEMBL1743316",
+   "tax_id": null
+  },
+  {
+   "drug_chembl_id": "CHEMBL25",
+   "enzyme_name": "Cytochrome P450s",
+   "met_comment": "Organ: Plasma and Liver",
+   "met_conversion": "Ring hydroxylation para to the other hydroxyl group",
+   "met_id": 626,
+   "metabolism_refs": [
+    {
+     "ref_id": "10.1007/s00210-012-0752-0",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1007/s00210-012-0752-0"
+    }
+   ],
+   "metabolite_chembl_id": "CHEMBL3544527",
+   "metabolite_name": "GENTISURIC ACID",
+   "organism": null,
+   "pathway_id": 1,
+   "pathway_key": null,
+   "substrate_chembl_id": "CHEMBL586",
+   "substrate_name": "SALICYLURIC ACID",
+   "target_chembl_id": null,
+   "tax_id": null
+  },
+  {
+   "drug_chembl_id": "CHEMBL25",
+   "enzyme_name": "Cytochrome P450s",
+   "met_comment": "Organ: Plasma and Liver",
+   "met_conversion": "Ring hydroxylation para to the other hydroxyl",
+   "met_id": 627,
+   "metabolism_refs": [
+    {
+     "ref_id": "0443051488",
+     "ref_type": "ISBN",
+     "ref_url": "http://www.isbnsearch.org/isbn/0443051488"
+    },
+    {
+     "ref_id": "10.1007/s00210-012-0752-0",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1007/s00210-012-0752-0"
+    }
+   ],
+   "metabolite_chembl_id": "CHEMBL1461",
+   "metabolite_name": "GENTISIC ACID",
+   "organism": null,
+   "pathway_id": 1,
+   "pathway_key": null,
+   "substrate_chembl_id": "CHEMBL424",
+   "substrate_name": "SALICYLIC ACID",
+   "target_chembl_id": null,
+   "tax_id": null
+  },
+  {
+   "drug_chembl_id": "CHEMBL25",
+   "enzyme_name": "UGT1A6",
+   "met_comment": "Organ: Plasma and Liver",
+   "met_conversion": "Glycine conjugation to the carboxylic acid group",
+   "met_id": 628,
+   "metabolism_refs": [
+    {
+     "ref_id": "10.1007/s00210-012-0752-0",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1007/s00210-012-0752-0"
+    }
+   ],
+   "metabolite_chembl_id": "CHEMBL3544527",
+   "metabolite_name": "GENTISURIC ACID",
+   "organism": null,
+   "pathway_id": 1,
+   "pathway_key": null,
+   "substrate_chembl_id": "CHEMBL1461",
+   "substrate_name": "GENTISIC ACID",
+   "target_chembl_id": "CHEMBL1743316",
+   "tax_id": null
+  },
+  {
+   "drug_chembl_id": "CHEMBL25",
+   "enzyme_name": "Cytochrome P450s",
+   "met_comment": "Organ: Plasma and Liver",
+   "met_conversion": "Ring hydroxylation ortho to the other hydroxyl",
+   "met_id": 629,
+   "metabolism_refs": [
+    {
+     "ref_id": "10.1007/s00210-012-0752-0",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1007/s00210-012-0752-0"
+    }
+   ],
+   "metabolite_chembl_id": "CHEMBL1432",
+   "metabolite_name": "2,3-DIHYDROXYBENZOIC ACID",
+   "organism": null,
+   "pathway_id": 1,
+   "pathway_key": null,
+   "substrate_chembl_id": "CHEMBL424",
+   "substrate_name": "SALICYLIC ACID",
+   "target_chembl_id": null,
+   "tax_id": null
+  },
+  {
+   "drug_chembl_id": "CHEMBL25",
+   "enzyme_name": "Cytochrome P450s",
+   "met_comment": "Organ: Plasma and Liver",
+   "met_conversion": "Ring hydroxylation para to one of the hydroxyls and meta to the other hydroxyl",
+   "met_id": 630,
+   "metabolism_refs": [
+    {
+     "ref_id": "10.1007/s00210-012-0752-0",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1007/s00210-012-0752-0"
+    }
+   ],
+   "metabolite_chembl_id": "CHEMBL3544545",
+   "metabolite_name": "2,3,5-TRIHYDROXYBENZOIC ACID",
+   "organism": null,
+   "pathway_id": 1,
+   "pathway_key": null,
+   "substrate_chembl_id": "CHEMBL1432",
+   "substrate_name": "2,3-DIHYDROXYBENZOIC ACID",
+   "target_chembl_id": null,
+   "tax_id": null
+  },
+  {
+   "drug_chembl_id": "CHEMBL25",
+   "enzyme_name": "Cytochrome P450s",
+   "met_comment": "Organ: Plasma and Liver",
+   "met_conversion": "Ring hydroxylation ortho to one of the hydroxyl groups and meta to the other hydroxyl group",
+   "met_id": 631,
+   "metabolism_refs": [
+    {
+     "ref_id": "10.1007/s00210-012-0752-0",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1007/s00210-012-0752-0"
+    }
+   ],
+   "metabolite_chembl_id": "CHEMBL3544545",
+   "metabolite_name": "2,3,5-TRIHYDROXYBENZOIC ACID",
+   "organism": null,
+   "pathway_id": 1,
+   "pathway_key": null,
+   "substrate_chembl_id": "CHEMBL1461",
+   "substrate_name": "GENTISIC ACID",
+   "target_chembl_id": null,
+   "tax_id": null
+  },
+  {
+   "drug_chembl_id": "CHEMBL25",
+   "enzyme_name": "UGT1A6",
+   "met_comment": "Organ: Plasma and Liver|Comment: A glucuronide conjugate metabolite, these metabolites make up a significant percentage of the final product.",
+   "met_conversion": "O-glucuronide conjugation to the carboxylic acid group forming an ester",
+   "met_id": 1295,
+   "metabolism_refs": [
+    {
+     "ref_id": "0443051488",
+     "ref_type": "ISBN",
+     "ref_url": "http://www.isbnsearch.org/isbn/0443051488"
+    },
+    {
+     "ref_id": "10.1007/s00210-012-0752-0",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1007/s00210-012-0752-0"
+    },
+    {
+     "ref_id": "10.1159/000327782",
+     "ref_type": "DOI",
+     "ref_url": "http://doi.org/10.1159/000327782"
+    }
+   ],
+   "metabolite_chembl_id": "CHEMBL3544525",
+   "metabolite_name": "SALICYL ACID ACYL GLUCURONIDE",
+   "organism": null,
+   "pathway_id": 1,
+   "pathway_key": null,
+   "substrate_chembl_id": "CHEMBL424",
+   "substrate_name": "SALICYLIC ACID",
+   "target_chembl_id": "CHEMBL1743316",
+   "tax_id": null
+  }
+ ],
+ "page_meta": {
+  "limit": 1000,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total_count": 10
+ }
+}

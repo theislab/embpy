@@ -1,0 +1,6 @@
+{
+ "Fault": {
+  "Code": "PUGREST.BadRequest",
+  "Message": "Invalid ID, must be positive integer"
+ }
+}

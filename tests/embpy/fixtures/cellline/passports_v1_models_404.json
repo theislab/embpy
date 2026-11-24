@@ -1,0 +1,1 @@
+{"errors": [{"detail": "The requested URL was not found on the server.  If you entered the URL manually please check your spelling and try again. Examples of valid endpoints are /models, /genes /datasets/mutations", "status": "404", "title": "Not Found"}], "jsonapi": {"version": "1.0"}}

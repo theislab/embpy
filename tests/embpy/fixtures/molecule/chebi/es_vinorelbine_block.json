@@ -1,0 +1,76 @@
+{
+ "results": [
+  {
+   "_index": "chebi-prod-compounds-11112026",
+   "_type": "_doc",
+   "_id": "480999",
+   "_score": 21.787798,
+   "_source": {
+    "chebi_accession": "CHEBI:480999",
+    "name": "vinorelbine",
+    "ascii_name": "vinorelbine",
+    "stars": 3,
+    "default_structure": 1057405,
+    "definition": "A vinca alkaloid with a norvinblastine skeleton.",
+    "charge": 0,
+    "formula": "C45H54N4O8",
+    "smiles": "[H][C@]12C=C(CC)CN(Cc3c(nc4ccccc34)[C@@](C(=O)OC)(c3cc4c(cc3OC)N(C)[C@@]3([H])[C@@](O)(C(=O)OC)[C@]([H])(OC(C)=O)[C@]5(CC)C=CCN6CC[C@]43[C@@]65[H])C1)C2",
+    "monoisotopicmass": 778.39416,
+    "inchikey": "GBABOYUKABKIAF-IELIFDKJSA-N",
+    "mass": 778.947,
+    "inchi": "InChI=1S/C45H54N4O8/c1-8-27-19-28-22-44(40(51)55-6,36-30(25-48(23-27)24-28)29-13-10-11-14-33(29)46-36)32-20-31-34(21-35(32)54-5)47(4)38-43(31)16-18-49-17-12-15-42(9-2,37(43)49)39(57-26(3)50)45(38,53)41(52)56-7/h10-15,19-21,28,37-39,46,53H,8-9,16-18,22-25H2,1-7H3/t28-,37-,38+,39+,42+,43+,44-,45-/m0/s1",
+    "structures": [
+     1057405
+    ]
+   }
+  },
+  {
+   "_index": "chebi-prod-compounds-11112026",
+   "_type": "_doc",
+   "_id": "93786",
+   "_score": 21.787798,
+   "_source": {
+    "chebi_accession": "CHEBI:93786",
+    "name": "LSM-4297",
+    "ascii_name": "LSM-4297",
+    "stars": 2,
+    "default_structure": 2913465,
+    "smiles": "CCC1=CC2CN(C1)Cc1c(nc3ccccc13)C(C(=O)OC)(c1cc3c(cc1OC)N(C)C1C(O)(C(=O)OC)C(OC(C)=O)C4(CC)C=CCN5CCC31C54)C2",
+    "charge": 0,
+    "formula": "C45H54N4O8",
+    "monoisotopicmass": 778.39416,
+    "inchi": "InChI=1S/C45H54N4O8/c1-8-27-19-28-22-44(40(51)55-6,36-30(25-48(23-27)24-28)29-13-10-11-14-33(29)46-36)32-20-31-34(21-35(32)54-5)47(4)38-43(31)16-18-49-17-12-15-42(9-2,37(43)49)39(57-26(3)50)45(38,53)41(52)56-7/h10-15,19-21,28,37-39,46,53H,8-9,16-18,22-25H2,1-7H3",
+    "inchikey": "GBABOYUKABKIAF-UHFFFAOYSA-N",
+    "mass": 778.947,
+    "structures": [
+     2913465
+    ]
+   }
+  },
+  {
+   "_index": "chebi-prod-compounds-11112026",
+   "_type": "_doc",
+   "_id": "94502",
+   "_score": 21.787798,
+   "_source": {
+    "chebi_accession": "CHEBI:94502",
+    "name": "LSM-5284",
+    "ascii_name": "LSM-5284",
+    "stars": 2,
+    "default_structure": 2916332,
+    "smiles": "CCC1=C[C@@H]2CN(C1)Cc1c(nc3ccccc13)[C@@](C(=O)OC)(c1cc3c(cc1OC)N(C)[C@H]1[C@@](O)(C(=O)OC)[C@H](OC(C)=O)[C@@]4(CC)C=CCN5CC[C@]31[C@@H]54)C2",
+    "inchi": "InChI=1S/C45H54N4O8/c1-8-27-19-28-22-44(40(51)55-6,36-30(25-48(23-27)24-28)29-13-10-11-14-33(29)46-36)32-20-31-34(21-35(32)54-5)47(4)38-43(31)16-18-49-17-12-15-42(9-2,37(43)49)39(57-26(3)50)45(38,53)41(52)56-7/h10-15,19-21,28,37-39,46,53H,8-9,16-18,22-25H2,1-7H3/t28-,37-,38+,39+,42-,43+,44-,45-/m0/s1",
+    "charge": 0,
+    "formula": "C45H54N4O8",
+    "inchikey": "GBABOYUKABKIAF-JEEMQKELSA-N",
+    "monoisotopicmass": 778.39416,
+    "mass": 778.947,
+    "structures": [
+     2916332
+    ]
+   }
+  }
+ ],
+ "total": 3,
+ "number_pages": 1
+}

@@ -1,0 +1,603 @@
+{
+ "page_meta": {
+  "limit": 1000,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total_count": 6
+ },
+ "target_components": [
+  {
+   "accession": "P35354",
+   "component_id": 148,
+   "component_type": "PROTEIN",
+   "description": "Prostaglandin G/H synthase 2",
+   "go_slims": [
+    {
+     "go_id": "GO:0003013"
+    },
+    {
+     "go_id": "GO:0005515"
+    }
+   ],
+   "organism": "Homo sapiens",
+   "protein_classifications": [
+    {
+     "protein_classification_id": 10
+    }
+   ],
+   "target_component_synonyms": [
+    {
+     "component_synonym": "1.14.99.1",
+     "syn_type": "EC_NUMBER"
+    },
+    {
+     "component_synonym": "COX-2",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "COX2",
+     "syn_type": "GENE_SYMBOL_OTHER"
+    },
+    {
+     "component_synonym": "Cyclooxygenase-2",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "PGHS-2",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "PGH synthase 2",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "PHS II",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Prostaglandin-endoperoxide synthase 2",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Prostaglandin G/H synthase 2",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Prostaglandin H2 synthase 2",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "PTGS2",
+     "syn_type": "GENE_SYMBOL"
+    },
+    {
+     "component_synonym": "Synonyms=COX2",
+     "syn_type": "GENE_SYMBOL_OTHER"
+    }
+   ],
+   "target_component_xrefs": [
+    {
+     "xref_id": "5F19",
+     "xref_name": "A",
+     "xref_src_db": "PDBe"
+    },
+    {
+     "xref_id": "5IKR",
+     "xref_name": "A",
+     "xref_src_db": "PDBe"
+    }
+   ],
+   "targets": [
+    {
+     "target_chembl_id": "CHEMBL230"
+    },
+    {
+     "target_chembl_id": "CHEMBL2094253"
+    },
+    {
+     "target_chembl_id": "CHEMBL3885623"
+    },
+    {
+     "target_chembl_id": "CHEMBL4523964"
+    }
+   ],
+   "tax_id": 9606
+  },
+  {
+   "accession": "P23219",
+   "component_id": 162,
+   "component_type": "PROTEIN",
+   "description": "Prostaglandin G/H synthase 1",
+   "go_slims": [
+    {
+     "go_id": "GO:0005515"
+    },
+    {
+     "go_id": "GO:0005575"
+    }
+   ],
+   "organism": "Homo sapiens",
+   "protein_classifications": [
+    {
+     "protein_classification_id": 10
+    }
+   ],
+   "target_component_synonyms": [
+    {
+     "component_synonym": "1.14.99.1",
+     "syn_type": "EC_NUMBER"
+    },
+    {
+     "component_synonym": "COX-1",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "COX1",
+     "syn_type": "GENE_SYMBOL_OTHER"
+    },
+    {
+     "component_synonym": "Cyclooxygenase-1",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "PGHS-1",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "PGH synthase 1",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "PHS 1",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Prostaglandin-endoperoxide synthase 1",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Prostaglandin G/H synthase 1",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Prostaglandin H2 synthase 1",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "PTGS1",
+     "syn_type": "GENE_SYMBOL"
+    },
+    {
+     "component_synonym": "Synonyms=COX1",
+     "syn_type": "GENE_SYMBOL_OTHER"
+    }
+   ],
+   "target_component_xrefs": [
+    {
+     "xref_id": "6Y3C",
+     "xref_name": "A",
+     "xref_src_db": "PDBe"
+    },
+    {
+     "xref_id": "GO:0004601",
+     "xref_name": "peroxidase activity",
+     "xref_src_db": "GoFunction"
+    }
+   ],
+   "targets": [
+    {
+     "target_chembl_id": "CHEMBL221"
+    },
+    {
+     "target_chembl_id": "CHEMBL2094253"
+    },
+    {
+     "target_chembl_id": "CHEMBL4523964"
+    }
+   ],
+   "tax_id": 9606
+  },
+  {
+   "accession": "P00519",
+   "component_id": 173,
+   "component_type": "PROTEIN",
+   "description": "Tyrosine-protein kinase ABL1",
+   "go_slims": [
+    {
+     "go_id": "GO:0000149"
+    },
+    {
+     "go_id": "GO:0002376"
+    }
+   ],
+   "organism": "Homo sapiens",
+   "protein_classifications": [
+    {
+     "protein_classification_id": 130
+    }
+   ],
+   "target_component_synonyms": [
+    {
+     "component_synonym": "2.7.10.2",
+     "syn_type": "EC_NUMBER"
+    },
+    {
+     "component_synonym": "Abelson murine leukemia viral oncogene homolog 1",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Abelson tyrosine-protein kinase 1",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "ABL",
+     "syn_type": "GENE_SYMBOL_OTHER"
+    },
+    {
+     "component_synonym": "ABL1",
+     "syn_type": "GENE_SYMBOL"
+    },
+    {
+     "component_synonym": "JTK7",
+     "syn_type": "GENE_SYMBOL_OTHER"
+    },
+    {
+     "component_synonym": "p150",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Proto-oncogene c-Abl",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Tyrosine-protein kinase ABL1",
+     "syn_type": "UNIPROT"
+    }
+   ],
+   "target_component_xrefs": [
+    {
+     "xref_id": "3UYO",
+     "xref_name": "A",
+     "xref_src_db": "PDBe"
+    },
+    {
+     "xref_id": "2FO0",
+     "xref_name": "A",
+     "xref_src_db": "PDBe"
+    }
+   ],
+   "targets": [
+    {
+     "target_chembl_id": "CHEMBL1862"
+    },
+    {
+     "target_chembl_id": "CHEMBL2096618"
+    },
+    {
+     "target_chembl_id": "CHEMBL2111414"
+    },
+    {
+     "target_chembl_id": "CHEMBL3885630"
+    },
+    {
+     "target_chembl_id": "CHEMBL3885645"
+    },
+    {
+     "target_chembl_id": "CHEMBL4296119"
+    },
+    {
+     "target_chembl_id": "CHEMBL4296120"
+    },
+    {
+     "target_chembl_id": "CHEMBL4296137"
+    },
+    {
+     "target_chembl_id": "CHEMBL4523725"
+    },
+    {
+     "target_chembl_id": "CHEMBL4523750"
+    },
+    {
+     "target_chembl_id": "CHEMBL4523751"
+    },
+    {
+     "target_chembl_id": "CHEMBL6193840"
+    },
+    {
+     "target_chembl_id": "CHEMBL6193843"
+    }
+   ],
+   "tax_id": 9606
+  },
+  {
+   "accession": "P09619",
+   "component_id": 227,
+   "component_type": "PROTEIN",
+   "description": "Platelet-derived growth factor receptor beta",
+   "go_slims": [
+    {
+     "go_id": "GO:0003674"
+    },
+    {
+     "go_id": "GO:0004930"
+    }
+   ],
+   "organism": "Homo sapiens",
+   "protein_classifications": [
+    {
+     "protein_classification_id": 159
+    }
+   ],
+   "target_component_synonyms": [
+    {
+     "component_synonym": "2.7.10.1",
+     "syn_type": "EC_NUMBER"
+    },
+    {
+     "component_synonym": "Beta platelet-derived growth factor receptor",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Beta-type platelet-derived growth factor receptor",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "CD140 antigen-like family member B",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "CD_antigen=CD140b",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "PDGFR",
+     "syn_type": "GENE_SYMBOL_OTHER"
+    },
+    {
+     "component_synonym": "PDGFR-1",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "PDGFR1",
+     "syn_type": "GENE_SYMBOL_OTHER"
+    },
+    {
+     "component_synonym": "PDGFRB",
+     "syn_type": "GENE_SYMBOL"
+    },
+    {
+     "component_synonym": "PDGF-R-beta",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "PDGFR-beta",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Platelet-derived growth factor receptor 1",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Platelet-derived growth factor receptor beta",
+     "syn_type": "UNIPROT"
+    }
+   ],
+   "target_component_xrefs": [
+    {
+     "xref_id": "1H9O",
+     "xref_name": "A",
+     "xref_src_db": "PDBe"
+    },
+    {
+     "xref_id": "1SHA",
+     "xref_name": "A",
+     "xref_src_db": "PDBe"
+    }
+   ],
+   "targets": [
+    {
+     "target_chembl_id": "CHEMBL1913"
+    },
+    {
+     "target_chembl_id": "CHEMBL2095189"
+    },
+    {
+     "target_chembl_id": "CHEMBL2111440"
+    },
+    {
+     "target_chembl_id": "CHEMBL4523729"
+    },
+    {
+     "target_chembl_id": "CHEMBL4879531"
+    }
+   ],
+   "tax_id": 9606
+  },
+  {
+   "accession": "P10721",
+   "component_id": 255,
+   "component_type": "PROTEIN",
+   "description": "Mast/stem cell growth factor receptor Kit",
+   "go_slims": [
+    {
+     "go_id": "GO:0002376"
+    },
+    {
+     "go_id": "GO:0003674"
+    }
+   ],
+   "organism": "Homo sapiens",
+   "protein_classifications": [
+    {
+     "protein_classification_id": 159
+    }
+   ],
+   "target_component_synonyms": [
+    {
+     "component_synonym": "2.7.10.1",
+     "syn_type": "EC_NUMBER"
+    },
+    {
+     "component_synonym": "CD_antigen=CD117",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "KIT",
+     "syn_type": "GENE_SYMBOL"
+    },
+    {
+     "component_synonym": "Mast/stem cell growth factor receptor Kit",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "p145 c-kit",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "PBT",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Piebald trait protein",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Proto-oncogene c-Kit",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "SCFR",
+     "syn_type": "GENE_SYMBOL_OTHER"
+    },
+    {
+     "component_synonym": "SCFR",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "Tyrosine-protein kinase Kit",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "v-kit Hardy-Zuckerman 4 feline sarcoma viral oncogene homolog",
+     "syn_type": "UNIPROT"
+    }
+   ],
+   "target_component_xrefs": [
+    {
+     "xref_id": "2E9W",
+     "xref_name": "A",
+     "xref_src_db": "PDBe"
+    },
+    {
+     "xref_id": "4HVS",
+     "xref_name": "A",
+     "xref_src_db": "PDBe"
+    }
+   ],
+   "targets": [
+    {
+     "target_chembl_id": "CHEMBL1936"
+    },
+    {
+     "target_chembl_id": "CHEMBL2111428"
+    },
+    {
+     "target_chembl_id": "CHEMBL4523731"
+    },
+    {
+     "target_chembl_id": "CHEMBL4630731"
+    }
+   ],
+   "tax_id": 9606
+  },
+  {
+   "accession": "P11274",
+   "component_id": 3450,
+   "component_type": "PROTEIN",
+   "description": "Breakpoint cluster region protein",
+   "go_slims": [
+    {
+     "go_id": "GO:0002376"
+    },
+    {
+     "go_id": "GO:0003013"
+    }
+   ],
+   "organism": "Homo sapiens",
+   "protein_classifications": [
+    {
+     "protein_classification_id": 8
+    },
+    {
+     "protein_classification_id": 291
+    }
+   ],
+   "target_component_synonyms": [
+    {
+     "component_synonym": "2.7.11.1",
+     "syn_type": "EC_NUMBER"
+    },
+    {
+     "component_synonym": "BCR",
+     "syn_type": "GENE_SYMBOL"
+    },
+    {
+     "component_synonym": "BCR1",
+     "syn_type": "GENE_SYMBOL_OTHER"
+    },
+    {
+     "component_synonym": "Breakpoint cluster region protein",
+     "syn_type": "UNIPROT"
+    },
+    {
+     "component_synonym": "D22S11",
+     "syn_type": "GENE_SYMBOL_OTHER"
+    },
+    {
+     "component_synonym": "Renal carcinoma antigen NY-REN-26",
+     "syn_type": "UNIPROT"
+    }
+   ],
+   "target_component_xrefs": [
+    {
+     "xref_id": "5OC7",
+     "xref_name": "A",
+     "xref_src_db": "PDBe"
+    },
+    {
+     "xref_id": "1K1F",
+     "xref_name": "A",
+     "xref_src_db": "PDBe"
+    }
+   ],
+   "targets": [
+    {
+     "target_chembl_id": "CHEMBL5146"
+    },
+    {
+     "target_chembl_id": "CHEMBL2096618"
+    },
+    {
+     "target_chembl_id": "CHEMBL4296119"
+    },
+    {
+     "target_chembl_id": "CHEMBL4296120"
+    },
+    {
+     "target_chembl_id": "CHEMBL4296137"
+    },
+    {
+     "target_chembl_id": "CHEMBL4523751"
+    },
+    {
+     "target_chembl_id": "CHEMBL6193840"
+    },
+    {
+     "target_chembl_id": "CHEMBL6193843"
+    }
+   ],
+   "tax_id": 9606
+  }
+ ]
+}

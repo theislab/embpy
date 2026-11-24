@@ -1,0 +1,1689 @@
+{
+ "Table": {
+  "Columns": {
+   "Column": [
+    "AID",
+    "Panel Member ID",
+    "SID",
+    "CID",
+    "Activity Outcome",
+    "Target Accession",
+    "Target GeneID",
+    "Activity Value [uM]",
+    "Activity Name",
+    "Assay Name",
+    "Assay Type",
+    "PubMed ID",
+    "RNAi"
+   ]
+  },
+  "Row": [
+   {
+    "Cell": [
+     "875",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "1OQA_A",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of BRCT-Phosphoprotein Interaction (Green Fluorophore)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "880",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "AAC39835",
+     "6002",
+     "",
+     "",
+     "qHTS Assay for Inhibitors of RGS12 GoLoco Motif Activity (Red Fluorophore)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "880",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_002060",
+     "2770",
+     "",
+     "",
+     "qHTS Assay for Inhibitors of RGS12 GoLoco Motif Activity (Red Fluorophore)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "881",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "O15296",
+     "247",
+     "19.9526",
+     "Potency",
+     "qHTS Assay for Inhibitors of 15-hLO-2 (15-human lipoxygenase 2)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "884",
+     "",
+     "26753265",
+     "74603",
+     "Inconclusive",
+     "NP_059488",
+     "1576",
+     "15.8489",
+     "Potency",
+     "qHTS Assay for Inhibitors and Substrates of Cytochrome P450 3A4",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "885",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_059488",
+     "1576",
+     "15.8489",
+     "Potency",
+     "qHTS Assay for Activators of Cytochrome P450 3A4",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "886",
+     "",
+     "26753265",
+     "74603",
+     "Active",
+     "2O23_A",
+     "",
+     "25.1189",
+     "Potency",
+     "qHTS Assay for Inhibitors of HADH2 (Hydroxyacyl-Coenzyme A Dehydrogenase, Type II)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "886",
+     "",
+     "26753265",
+     "74603",
+     "Active",
+     "2O23_B",
+     "",
+     "25.1189",
+     "Potency",
+     "qHTS Assay for Inhibitors of HADH2 (Hydroxyacyl-Coenzyme A Dehydrogenase, Type II)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "887",
+     "",
+     "26753265",
+     "74603",
+     "Inconclusive",
+     "AAC52118",
+     "246",
+     "39.8107",
+     "Potency",
+     "qHTS Assay for Inhibitors of 15-hLO (15-human lipoxygenase)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "889",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "P55210",
+     "840",
+     "",
+     "Potency",
+     "qHTS Assay for Allosteric/Competitive Inhibitors of Caspase-7",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "892",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "1OQA_A",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of BRCT-Phosphoprotein Interaction (Red Fluorophore)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "893",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "2O23_A",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of HSD17B4, hydroxysteroid (17-beta) dehydrogenase 4",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "893",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "2O23_B",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of HSD17B4, hydroxysteroid (17-beta) dehydrogenase 4",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "894",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_000851",
+     "3248",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of HPGD (15-Hydroxyprostaglandin Dehydrogenase)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "900",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_150634",
+     "834",
+     "",
+     "Potency",
+     "qHTS Assay for Allosteric/Competitive Inhibitors of Caspase-1",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "902",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_000537",
+     "7157",
+     "",
+     "Potency",
+     "qHTS Screen for Compounds that Selectively Target Cancer Cells with p53 Mutations: Cytotoxicity of p53ts Cells at the Nonpermissive Temperature",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "912",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_652928",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Anthrax Lethal Toxin Internalization",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "923",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Allosteric/Competitive Inhibitors of Caspase-1: Spectroscopic Profiling in AFC Spectral Region",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "924",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_000537",
+     "7157",
+     "",
+     "Potency",
+     "qHTS Screen for Compounds that Selectively Target Cancer Cells with p53 Mutations: Cytotoxicity of p53ts Cells at the Permissive Temperature",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "925",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_000509",
+     "3043",
+     "",
+     "Potency",
+     "qHTS Assay for Modulators of Hemoglobin Beta Chain Splicing",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "926",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "AAR07906",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Agonists of the Thyroid Stimulating Hormone Receptor",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "938",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "AAR07906",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Agonists of the Thyroid Stimulating Hormone Receptor: Activators of Intracellular cAMP Concentrations in Parental HEK 293",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "995",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_002736",
+     "5594",
+     "39.8107",
+     "Potency",
+     "qHTS Assay for Inhibitors of the ERK Signaling Pathway using a Homogeneous Screening Assay",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1030",
+     "",
+     "26753265",
+     "74603",
+     "Active",
+     "AAP35567",
+     "",
+     "19.9526",
+     "Potency",
+     "qHTS Assay for Inhibitors of Aldehyde Dehydrogenase 1 (ALDH1A1)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1379",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "BAA05005",
+     "",
+     "",
+     "Potency",
+     "Counterscreen for Luciferase (Kinase-Glo TM) Inhibition",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1452",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_000688",
+     "239",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of 12-hLO (12-human lipoxygenase)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1454",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_002736",
+     "5594",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of the ERK Signaling Pathway using a Homogeneous Screening Assay; Stimulation with EGF",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1457",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "P97697",
+     "83523",
+     "",
+     "Potency",
+     "qHTS Assay for Identifying the Cell-Membrane Permeable IMPase Inhibitors: Potentiation with Lithium",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1458",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_059107",
+     "6607",
+     "",
+     "Potency",
+     "qHTS Assay for Enhancers of SMN2 Splice Variant Expression",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1460",
+     "",
+     "26753265",
+     "74603",
+     "Inconclusive",
+     "AAI14949",
+     "4137",
+     "15.8489",
+     "Potency",
+     "qHTS for Inhibitors of Tau Fibril Formation, Thioflavin T Binding",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1463",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "",
+     "",
+     "",
+     "Potency",
+     "Counterscreen qHTS for Inhibitors of Tau Fibril Formation, Fluorescence Polarization",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1467",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "CAA29232",
+     "2717",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of Human alpha-Galactosidase at pH 4.5.",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1468",
+     "",
+     "26753265",
+     "74603",
+     "Inconclusive",
+     "AAI14949",
+     "4137",
+     "17.7828",
+     "Potency",
+     "qHTS for Inhibitors of Tau Fibril Formation, Fluorescence Polarization",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1469",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_001121649",
+     "7068",
+     "",
+     "Potency",
+     "qHTS for Inhibitors of the Interaction of Thyroid Hormone Receptor and Steroid Receptor Coregulator 2",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1471",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_002102",
+     "3064",
+     "",
+     "",
+     "qHTS Multiplex Assay to Identify Dual Action Probes in a Cell Model of Huntington: Cytoprotection (ATP)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1476",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "3I06_A",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Promiscuous and Specific Inhibitors of Cruzain (without detergent)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1477",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Compounds Blocking the Interaction Between CBF-beta and RUNX1 for the Treatment of Acute Myeloid Leukemia",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1478",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "3I06_A",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Promiscuous and Specific Inhibitors of Cruzain (with detergent)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1479",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_001121649",
+     "7068",
+     "",
+     "Potency",
+     "Total Fluorescence Counterscreen for Inhibitors of the Interaction of Thyroid Hormone Receptor and Steroid Receptor Coregulator 2",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1490",
+     "",
+     "26753265",
+     "74603",
+     "Active",
+     "AAG24257",
+     "",
+     "79.4328",
+     "Potency",
+     "qHTS Assay for Inhibitors of Bacillus subtilis Sfp phosphopantetheinyl transferase (PPTase)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1631",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_002645",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Activators of Human Muscle isoform 2 Pyruvate Kinase",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1634",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_002645",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of Human Muscle isoform 2 Pyruvate Kinase",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1766",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_000235",
+     "4221",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors Targeting the Menin-MLL Interaction in MLL Related Leukemias: Competition With Fluorescein Labeled MLL-derived Peptide",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1766",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_005924",
+     "4297",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors Targeting the Menin-MLL Interaction in MLL Related Leukemias: Competition With Fluorescein Labeled MLL-derived Peptide",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1768",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_000235",
+     "4221",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors Targeting the Menin-MLL Interaction in MLL Related Leukemias: Competition With Texas Red Labeled MLL-derived Mutant Peptide",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1768",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_005924",
+     "4297",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors Targeting the Menin-MLL Interaction in MLL Related Leukemias: Competition With Texas Red Labeled MLL-derived Mutant Peptide",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1865",
+     "",
+     "26753265",
+     "74603",
+     "Inconclusive",
+     "",
+     "",
+     "31.6228",
+     "Potency",
+     "Quantitative High-Throughput Screen for Regulators of Epigenetic Control",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1948",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Compounds that Induce Erasure of Genomic Imprints",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "2101",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "BAA02545",
+     "2629",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors and Activators of N370S glucocerebrosidase as a Potential Chaperone Treatment of Gaucher Disease",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "2107",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "CAA29232",
+     "2717",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors and Activators of Human alpha-Galactosidase From Spleen Homogenate",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "2112",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_000143",
+     "2548",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors and Activators of Human alpha-Glucosidase From Spleen Homogenate",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "2147",
+     "",
+     "26753265",
+     "74603",
+     "Inconclusive",
+     "2W2I_A",
+     "",
+     "25.1189",
+     "Potency",
+     "qHTS Assay for Inhibitors of  Human Jumonji Domain Containing 2E (JMJD2E)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "2451",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "2ISV_A",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of Fructose-1,6-bisphosphate Aldolase from Giardia Lamblia",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "2472",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_002037",
+     "2597",
+     "",
+     "",
+     "qHTS Assay for Inhibitors of Fructose-1,6-bisphosphate Aldolase from Giardia Lamblia: Coupling assay counterscreen",
+     "Screening",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "2517",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "1DE9_A",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of the Human Apurinic/apyrimidinic Endonuclease 1 (APE1)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "2528",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "NP_000048",
+     "641",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of Bloom's syndrome helicase (BLM)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "2546",
+     "",
+     "26753265",
+     "74603",
+     "Active",
+     "NP_035411",
+     "19885",
+     "7.9433",
+     "Potency",
+     "VP16 counterscreen qHTS for inhibitors of ROR gamma transcriptional activity",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "2549",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "2WWY_A",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of RecQ-Like Dna Helicase 1 (RECQ1)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "2551",
+     "",
+     "26753265",
+     "74603",
+     "Active",
+     "NP_035411",
+     "19885",
+     "5.0119",
+     "Potency",
+     "qHTS for inhibitors of ROR gamma transcriptional activity",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "360729",
+     "",
+     "103619420",
+     "74603",
+     "Unspecified",
+     "O60674",
+     "",
+     "",
+     "Activity",
+     "Inhibition of human JAK2 V617F mutant expressed in COS7 cells",
+     "Confirmatory",
+     "17178722",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "485281",
+     "",
+     "26753265",
+     "74603",
+     "Inconclusive",
+     "3F32_A",
+     "",
+     "28.1838",
+     "Potency",
+     "qHTS Assay for Identification of Novel General Anesthetics",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "485290",
+     "",
+     "26753265",
+     "74603",
+     "Inactive",
+     "1JY1_A",
+     "",
+     "",
+     "Potency",
+     "qHTS Assay for Inhibitors of Tyrosyl-DNA Phosphodiesterase (TDP1)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1345561",
+     "",
+     "376192849",
+     "74603",
+     "Inactive",
+     "EMB09144",
+     "",
+     "",
+     "",
+     "Tocris HTS for Inhibitors of Aerobactin Synthetase lucA",
+     "Other",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1346986",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "P-glycoprotein substrates identified in KB-3-1 adenocarcinoma cell line, qHTS therapeutic library screen",
+     "Confirmatory",
+     "31515284",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1346987",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "",
+     "",
+     "",
+     "Potency",
+     "P-glycoprotein substrates identified in KB-8-5-11 adenocarcinoma cell line, qHTS therapeutic library screen",
+     "Confirmatory",
+     "31515284",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1347055",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "",
+     "2271",
+     "",
+     "Potency",
+     "Identification of activators of human fumarate hydratase by quantitative high-throughput screening",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1347055",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "AAH17444",
+     "2271",
+     "",
+     "Potency",
+     "Identification of activators of human fumarate hydratase by quantitative high-throughput screening",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1347080",
+     "",
+     "384993806",
+     "74603",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "Lung cancer cell sensitization to miR-34 therapy: cell viability screen of compounds",
+     "Other",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1409598",
+     "",
+     "103619420",
+     "74603",
+     "Unspecified",
+     "",
+     "",
+     "",
+     "",
+     "Antiviral activity determined as inhibition of SARS-CoV-2 induced cytotoxicity of Caco-2 cells at 10 uM after 48 hours by high content imaging",
+     "Other",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1640020",
+     "",
+     "103619420",
+     "74603",
+     "Unspecified",
+     "P0DTD1",
+     "",
+     "",
+     "",
+     "SARS-CoV-2 3CL-Pro protease inhibition percentage at 20µM  by FRET kind of response from peptide substrate",
+     "Other",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1645758",
+     "",
+     "103619420",
+     "74603",
+     "Unspecified",
+     "",
+     "",
+     "",
+     "",
+     "Antiviral activity determined as inhibition of SARS-CoV-2 induced cytotoxicity of VERO-6 cells at 10 uM after 48 hours exposure to 0.01 MOI SARS CoV-2 virus by high content imaging",
+     "Other",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1645843",
+     "",
+     "384993806",
+     "74603",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "Rescue cell viability in cybrid cells with a genetic mutation in complex 1 of the mitochondria",
+     "Other",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1645870",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "",
+     "28989",
+     "",
+     "Potency",
+     "Primary qHTS for Inhibitors of N-terminal methyltransferase 1 (NTMT1): MTaseGlo Assay",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1645870",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "Q9BV86",
+     "28989",
+     "",
+     "Potency",
+     "Primary qHTS for Inhibitors of N-terminal methyltransferase 1 (NTMT1): MTaseGlo Assay",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1645876",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "",
+     "7468",
+     "",
+     "Potency",
+     "Primary qHTS for inhibitors of nuclear receptor binding SET domain protein 2 (NSD2) in an isogenic RCH-ACV NSD2 p.E1099K mutant (9B)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1645876",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "O96028",
+     "7468",
+     "",
+     "Potency",
+     "Primary qHTS for inhibitors of nuclear receptor binding SET domain protein 2 (NSD2) in an isogenic RCH-ACV NSD2 p.E1099K mutant (9B)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1645877",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "",
+     "7468",
+     "",
+     "Potency",
+     "Primary qHTS for inhibitors of nuclear receptor binding SET domain protein 2 (NSD2) in an RCH-ACV wild type WT cells (2C)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1645877",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "O96028",
+     "7468",
+     "",
+     "Potency",
+     "Primary qHTS for inhibitors of nuclear receptor binding SET domain protein 2 (NSD2) in an RCH-ACV wild type WT cells (2C)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1745853",
+     "",
+     "377020502",
+     "74603",
+     "Inconclusive",
+     "P11086",
+     "5409",
+     "",
+     "",
+     "Primary Screen for Target Class Profiling of Small Molecule Inhibitors of Methyltransferases",
+     "Screening",
+     "36976909",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1745853",
+     "",
+     "377020502",
+     "74603",
+     "Inconclusive",
+     "P21964",
+     "1312",
+     "",
+     "",
+     "Primary Screen for Target Class Profiling of Small Molecule Inhibitors of Methyltransferases",
+     "Screening",
+     "36976909",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1745853",
+     "",
+     "377020502",
+     "74603",
+     "Inconclusive",
+     "P40261",
+     "4837",
+     "",
+     "",
+     "Primary Screen for Target Class Profiling of Small Molecule Inhibitors of Methyltransferases",
+     "Screening",
+     "36976909",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1745853",
+     "",
+     "377020502",
+     "74603",
+     "Inconclusive",
+     "P50135",
+     "3176",
+     "",
+     "",
+     "Primary Screen for Target Class Profiling of Small Molecule Inhibitors of Methyltransferases",
+     "Screening",
+     "36976909",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1745853",
+     "",
+     "377020502",
+     "74603",
+     "Inconclusive",
+     "Q14353",
+     "2593",
+     "",
+     "",
+     "Primary Screen for Target Class Profiling of Small Molecule Inhibitors of Methyltransferases",
+     "Screening",
+     "36976909",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1745853",
+     "",
+     "377020502",
+     "74603",
+     "Inconclusive",
+     "Q14749",
+     "27232",
+     "",
+     "",
+     "Primary Screen for Target Class Profiling of Small Molecule Inhibitors of Methyltransferases",
+     "Screening",
+     "36976909",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1749710",
+     "",
+     "103619420",
+     "74603",
+     "Unspecified",
+     "Q9UBN7",
+     "",
+     "",
+     "",
+     "Enzymatic assay of human HDAC6 with commercial peptide substrate",
+     "Other",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1749711",
+     "",
+     "103619420",
+     "74603",
+     "Unspecified",
+     "Q9UBN7",
+     "",
+     "",
+     "",
+     "Enzymatic assay of human HDAC6 with custom peptide substrate",
+     "Other",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1845191",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "",
+     "2876",
+     "",
+     "Potency",
+     "Primary qHTS Assay for Inhibitors of Recombinant Selenoprotein Glutathione Peroxidase 1 (GPX1)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1845191",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "P07203",
+     "2876",
+     "",
+     "Potency",
+     "Primary qHTS Assay for Inhibitors of Recombinant Selenoprotein Glutathione Peroxidase 1 (GPX1)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1918969",
+     "",
+     "384993806",
+     "74603",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "Discovery of Small Molecules to Inhibit Human Cytomegalovirus Nuclear Egress",
+     "Screening",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1918969",
+     "",
+     "384993806",
+     "74603",
+     "Inactive",
+     "",
+     "3077439",
+     "",
+     "",
+     "Discovery of Small Molecules to Inhibit Human Cytomegalovirus Nuclear Egress",
+     "Screening",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1918969",
+     "",
+     "384993806",
+     "74603",
+     "Inactive",
+     "",
+     "3077575",
+     "",
+     "",
+     "Discovery of Small Molecules to Inhibit Human Cytomegalovirus Nuclear Egress",
+     "Screening",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1963822",
+     "",
+     "384993806",
+     "74603",
+     "Inactive",
+     "",
+     "",
+     "",
+     "",
+     "Inhibit  growth of gram-negative bacteria under anaerobic conditions with choline as the sole carbon and energy source in minimal media",
+     "Other",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1963823",
+     "",
+     "377020502",
+     "74603",
+     "Inconclusive",
+     "",
+     "6850",
+     "12.9953",
+     "Potency",
+     "Viability qHTS for spleen associated tyrosine kinase inhibitor (SYKi) naive MV4-11 cells",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1963823",
+     "",
+     "377020502",
+     "74603",
+     "Inconclusive",
+     "P43405",
+     "6850",
+     "12.9953",
+     "Potency",
+     "Viability qHTS for spleen associated tyrosine kinase inhibitor (SYKi) naive MV4-11 cells",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1963824",
+     "",
+     "377020502",
+     "74603",
+     "Inconclusive",
+     "",
+     "6850",
+     "18.3564",
+     "Potency",
+     "Viability qHTS for spleen associated tyrosine kinase inhibitor (SYKi) drug resistant MV4-11 cells",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1963824",
+     "",
+     "377020502",
+     "74603",
+     "Inconclusive",
+     "P43405",
+     "6850",
+     "18.3564",
+     "Potency",
+     "Viability qHTS for spleen associated tyrosine kinase inhibitor (SYKi) drug resistant MV4-11 cells",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "1964107",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "Q8JUX6",
+     "956309",
+     "",
+     "Potency",
+     "Primary qHTS for inhibitors of NSP2Pro chikungunya virus (CHIKV)",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   },
+   {
+    "Cell": [
+     "2202548",
+     "",
+     "377020502",
+     "74603",
+     "Inactive",
+     "",
+     "",
+     "",
+     "Potency",
+     "Primary qHTS to identify anti-liver cancer compounds using libraries of approved drugs and bioactive compounds",
+     "Confirmatory",
+     "",
+     ""
+    ]
+   }
+  ]
+ }
+}

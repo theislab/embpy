@@ -1,0 +1,389 @@
+{
+ "drug_indications": [
+  {
+   "drugind_id": 22713,
+   "efo_id": "EFO:0000275",
+   "efo_term": "atrial fibrillation",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00244426,NCT00496769,NCT00623779,NCT01830543,NCT02164864,NCT02960126",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00244426%20NCT00496769%20NCT00623779%20NCT01830543%20NCT02164864%20NCT02960126"
+    }
+   ],
+   "max_phase_for_ind": "3.0",
+   "mesh_heading": "Atrial Fibrillation",
+   "mesh_id": "D001281",
+   "molecule_chembl_id": "CHEMBL25",
+   "parent_molecule_chembl_id": "CHEMBL25"
+  },
+  {
+   "drugind_id": 22716,
+   "efo_id": "EFO:0004607",
+   "efo_term": "duodenal ulcer",
+   "indication_refs": [
+    {
+     "ref_id": "NCT01646814,NCT01847404,NCT01847417",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT01646814%20NCT01847404%20NCT01847417"
+    }
+   ],
+   "max_phase_for_ind": "2.0",
+   "mesh_heading": "Duodenal Ulcer",
+   "mesh_id": "D004381",
+   "molecule_chembl_id": "CHEMBL25",
+   "parent_molecule_chembl_id": "CHEMBL25"
+  },
+  {
+   "drugind_id": 22717,
+   "efo_id": "HP:0001945",
+   "efo_term": "Fever",
+   "indication_refs": [
+    {
+     "ref_id": "N02BA01",
+     "ref_type": "ATC",
+     "ref_url": "https://www.whocc.no/atc_ddd_index/?code=N02BA01"
+    },
+    {
+     "ref_id": "N02BA51",
+     "ref_type": "ATC",
+     "ref_url": "https://www.whocc.no/atc_ddd_index/?code=N02BA51"
+    },
+    {
+     "ref_id": "N02BA71",
+     "ref_type": "ATC",
+     "ref_url": "https://www.whocc.no/atc_ddd_index/?code=N02BA71"
+    },
+    {
+     "ref_id": "1118dc27-0a9e-4a48-b86c-1338bf28fecc",
+     "ref_type": "DailyMed",
+     "ref_url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=1118dc27-0a9e-4a48-b86c-1338bf28fecc"
+    },
+    {
+     "ref_id": "531a86b3-2915-6d55-e054-00144ff88e88",
+     "ref_type": "DailyMed",
+     "ref_url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=531a86b3-2915-6d55-e054-00144ff88e88"
+    },
+    {
+     "ref_id": "56279fd2-bec3-4d77-86dd-2a3bd46c6109",
+     "ref_type": "DailyMed",
+     "ref_url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=56279fd2-bec3-4d77-86dd-2a3bd46c6109"
+    },
+    {
+     "ref_id": "58a371d4-1f00-4fda-8e08-80610c58505a",
+     "ref_type": "DailyMed",
+     "ref_url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=58a371d4-1f00-4fda-8e08-80610c58505a"
+    },
+    {
+     "ref_id": "75862805-2cfe-fb45-e053-2991aa0a1403",
+     "ref_type": "DailyMed",
+     "ref_url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=75862805-2cfe-fb45-e053-2991aa0a1403"
+    },
+    {
+     "ref_id": "785e913e-1780-4fd4-8428-d83c26fe810c",
+     "ref_type": "DailyMed",
+     "ref_url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=785e913e-1780-4fd4-8428-d83c26fe810c"
+    },
+    {
+     "ref_id": "b4a9f50f-9eda-4d8f-91be-4053ee6ce0ec",
+     "ref_type": "DailyMed",
+     "ref_url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=b4a9f50f-9eda-4d8f-91be-4053ee6ce0ec"
+    }
+   ],
+   "max_phase_for_ind": "4.0",
+   "mesh_heading": "Fever",
+   "mesh_id": "D005334",
+   "molecule_chembl_id": "CHEMBL25",
+   "parent_molecule_chembl_id": "CHEMBL25"
+  },
+  {
+   "drugind_id": 22718,
+   "efo_id": "EFO:0000537",
+   "efo_term": "hypertension",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00223717,NCT01741922",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00223717%20NCT01741922"
+    }
+   ],
+   "max_phase_for_ind": "3.0",
+   "mesh_heading": "Hypertension",
+   "mesh_id": "D006973",
+   "molecule_chembl_id": "CHEMBL25",
+   "parent_molecule_chembl_id": "CHEMBL25"
+  },
+  {
+   "drugind_id": 22720,
+   "efo_id": "EFO:0004265",
+   "efo_term": "peripheral arterial disease",
+   "indication_refs": [
+    {
+     "ref_id": "NCT01802775,NCT02217501,NCT02227368,NCT02433587,NCT02770274,NCT02798913,NCT05308030",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT01802775%20NCT02217501%20NCT02227368%20NCT02433587%20NCT02770274%20NCT02798913%20NCT05308030"
+    }
+   ],
+   "max_phase_for_ind": "3.0",
+   "mesh_heading": "Peripheral Arterial Disease",
+   "mesh_id": "D058729",
+   "molecule_chembl_id": "CHEMBL25",
+   "parent_molecule_chembl_id": "CHEMBL25"
+  },
+  {
+   "drugind_id": 23307,
+   "efo_id": "EFO:0000339",
+   "efo_term": "chronic myelogenous leukemia",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00015834,NCT00030394,NCT00038649,NCT00040105,NCT00047502,NCT00048672,NCT00049192,NCT00050531,NCT00054431,NCT00070499,NCT00081926,NCT00088231,NCT00101088,NCT00114959,NCT00124748,NCT00146913,NCT00171158,NCT00171223,NCT00171899,NCT00210119,NCT00219726,NCT00219739,NCT00219752,NCT00219765,NCT00390897,NCT00415909,NCT00511303,NCT00514488,NCT00594555,NCT00702403,NCT00845221,NCT01003054,NCT01221376,NCT01400074,NCT01578213,NCT01795716,NCT01827930,NCT02204644,NCT02687425,NCT02709083,NCT03241199,NCT04626024,NCT05623774",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00015834%20NCT00030394%20NCT00038649%20NCT00040105%20NCT00047502%20NCT00048672%20NCT00049192%20NCT00050531%20NCT00054431%20NCT00070499%20NCT00081926%20NCT00088231%20NCT00101088%20NCT00114959%20NCT00124748%20NCT00146913%20NCT00171158%20NCT00171223%20NCT00171899%20NCT00210119%20NCT00219726%20NCT00219739%20NCT00219752%20NCT00219765%20NCT00390897%20NCT00415909%20NCT00511303%20NCT00514488%20NCT00594555%20NCT00702403%20NCT00845221%20NCT01003054%20NCT01221376%20NCT01400074%20NCT01578213%20NCT01795716%20NCT01827930%20NCT02204644%20NCT02687425%20NCT02709083%20NCT03241199%20NCT04626024%20NCT05623774"
+    },
+    {
+     "ref_id": "0e9927ab-771e-4c2d-881e-7031c40bf205",
+     "ref_type": "DailyMed",
+     "ref_url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=0e9927ab-771e-4c2d-881e-7031c40bf205"
+    },
+    {
+     "ref_id": "211ef2da-2868-4a77-8055-1cb2cd78e24b",
+     "ref_type": "DailyMed",
+     "ref_url": "https://dailymed.nlm.nih.gov/dailymed/drugInfo.cfm?setid=211ef2da-2868-4a77-8055-1cb2cd78e24b"
+    }
+   ],
+   "max_phase_for_ind": "4.0",
+   "mesh_heading": "Leukemia, Myelogenous, Chronic, BCR-ABL Positive",
+   "mesh_id": "D015464",
+   "molecule_chembl_id": "CHEMBL1642",
+   "parent_molecule_chembl_id": "CHEMBL941"
+  },
+  {
+   "drugind_id": 23309,
+   "efo_id": "EFO:0000658",
+   "efo_term": "plexiform neurofibroma",
+   "indication_refs": [
+    {
+     "ref_id": "NCT02177825,NCT03688568",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT02177825%20NCT03688568"
+    }
+   ],
+   "max_phase_for_ind": "2.0",
+   "mesh_heading": "Neurofibroma, Plexiform",
+   "mesh_id": "D018318",
+   "molecule_chembl_id": "CHEMBL1642",
+   "parent_molecule_chembl_id": "CHEMBL941"
+  },
+  {
+   "drugind_id": 23310,
+   "efo_id": "EFO:0002429",
+   "efo_term": "polycythemia vera",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00430066,NCT01120821",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00430066%20NCT01120821"
+    }
+   ],
+   "max_phase_for_ind": "2.0",
+   "mesh_heading": "Polycythemia Vera",
+   "mesh_id": "D011087",
+   "molecule_chembl_id": "CHEMBL1642",
+   "parent_molecule_chembl_id": "CHEMBL941"
+  },
+  {
+   "drugind_id": 23311,
+   "efo_id": "EFO:0001361",
+   "efo_term": "pulmonary arterial hypertension",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00477269,NCT00902174,NCT02042014,NCT04416750",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00477269%20NCT00902174%20NCT02042014%20NCT04416750"
+    }
+   ],
+   "max_phase_for_ind": "3.0",
+   "mesh_heading": "Hypertension, Pulmonary",
+   "mesh_id": "D006976",
+   "molecule_chembl_id": "CHEMBL1642",
+   "parent_molecule_chembl_id": "CHEMBL941"
+  },
+  {
+   "drugind_id": 24158,
+   "efo_id": "EFO:0000545",
+   "efo_term": "infertility",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00644085,NCT01633528",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00644085%20NCT01633528"
+    }
+   ],
+   "max_phase_for_ind": "3.0",
+   "mesh_heading": "Infertility",
+   "mesh_id": "D007246",
+   "molecule_chembl_id": "CHEMBL25",
+   "parent_molecule_chembl_id": "CHEMBL25"
+  },
+  {
+   "drugind_id": 24517,
+   "efo_id": "EFO:0000220",
+   "efo_term": "acute lymphoblastic leukemia",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00154349,NCT00388895,NCT01222013,NCT01312818,NCT03023046",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00154349%20NCT00388895%20NCT01222013%20NCT01312818%20NCT03023046"
+    }
+   ],
+   "max_phase_for_ind": "4.0",
+   "mesh_heading": "Precursor Cell Lymphoblastic Leukemia-Lymphoma",
+   "mesh_id": "D054198",
+   "molecule_chembl_id": "CHEMBL1642",
+   "parent_molecule_chembl_id": "CHEMBL941"
+  },
+  {
+   "drugind_id": 24518,
+   "efo_id": "EFO:0000565",
+   "efo_term": "leukemia",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00002514,NCT00004932,NCT00006052,NCT00006053,NCT00006343,NCT00006475,NCT00015847,NCT00015860,NCT00022490,NCT00028847,NCT00038610,NCT00045422,NCT00053248,NCT00055874,NCT00061945,NCT00064285,NCT00066326,NCT00081133,NCT00093639,NCT00110058,NCT00112775,NCT00244829,NCT00258271,NCT00268229,NCT00301093,NCT00458848,NCT00499889,NCT00509093,NCT00618501,NCT00686218,NCT00769327,NCT00882206,NCT01005758,NCT01005914,NCT01092741,NCT01227135",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00002514%20NCT00004932%20NCT00006052%20NCT00006053%20NCT00006343%20NCT00006475%20NCT00015847%20NCT00015860%20NCT00022490%20NCT00028847%20NCT00038610%20NCT00045422%20NCT00053248%20NCT00055874%20NCT00061945%20NCT00064285%20NCT00066326%20NCT00081133%20NCT00093639%20NCT00110058%20NCT00112775%20NCT00244829%20NCT00258271%20NCT00268229%20NCT00301093%20NCT00458848%20NCT00499889%20NCT00509093%20NCT00618501%20NCT00686218%20NCT00769327%20NCT00882206%20NCT01005758%20NCT01005914%20NCT01092741%20NCT01227135"
+    }
+   ],
+   "max_phase_for_ind": "3.0",
+   "mesh_heading": "Leukemia",
+   "mesh_id": "D007938",
+   "molecule_chembl_id": "CHEMBL1642",
+   "parent_molecule_chembl_id": "CHEMBL941"
+  },
+  {
+   "drugind_id": 68560,
+   "efo_id": "EFO:0000220",
+   "efo_term": "acute lymphoblastic leukemia",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00130195,NCT00137111,NCT00149136,NCT00287105,NCT00376467,NCT00476190,NCT00973752,NCT02081378,NCT02881086,NCT03589326,NCT04307576,NCT04688983,NCT04722848,NCT06051409,NCT06061094",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00130195%20NCT00137111%20NCT00149136%20NCT00287105%20NCT00376467%20NCT00476190%20NCT00973752%20NCT02081378%20NCT02881086%20NCT03589326%20NCT04307576%20NCT04688983%20NCT04722848%20NCT06051409%20NCT06061094"
+    }
+   ],
+   "max_phase_for_ind": "3.0",
+   "mesh_heading": "Precursor Cell Lymphoblastic Leukemia-Lymphoma",
+   "mesh_id": "D054198",
+   "molecule_chembl_id": "CHEMBL941",
+   "parent_molecule_chembl_id": "CHEMBL941"
+  },
+  {
+   "drugind_id": 68561,
+   "efo_id": "EFO:0000222",
+   "efo_term": "acute myeloid leukemia",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00707408,NCT02638428",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00707408%20NCT02638428"
+    }
+   ],
+   "max_phase_for_ind": "2.0",
+   "mesh_heading": "Leukemia, Myeloid, Acute",
+   "mesh_id": "D015470",
+   "molecule_chembl_id": "CHEMBL941",
+   "parent_molecule_chembl_id": "CHEMBL941"
+  },
+  {
+   "drugind_id": 68565,
+   "efo_id": "EFO:0000339",
+   "efo_term": "chronic myelogenous leukemia",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00103844,NCT00219739,NCT00237120,NCT00297570,NCT00320190,NCT00324077,NCT00327262,NCT00333840,NCT00428909,NCT00471497,NCT00481247,NCT00510926,NCT00514969,NCT00574873,NCT00718263,NCT00760877,NCT00802841,NCT00852566,NCT00858806,NCT01011998,NCT01188889,NCT01216085,NCT01275196,NCT01400074,NCT01460693,NCT01503502,NCT01593254,NCT01650805,NCT01795716,NCT01804985,NCT01819389,NCT02001818,NCT02081378,NCT02130557,NCT02174445,NCT02204644,NCT02269267,NCT02326311,NCT02480608,NCT03193281,NCT03228303,NCT03515018,NCT03578367,NCT03654768,NCT03722420,NCT03906292,NCT04070443,NCT04126681,NCT04147533,NCT04578847,NCT04838041,NCT04971226,NCT05413915",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00103844%20NCT00219739%20NCT00237120%20NCT00297570%20NCT00320190%20NCT00324077%20NCT00327262%20NCT00333840%20NCT00428909%20NCT00471497%20NCT00481247%20NCT00510926%20NCT00514969%20NCT00574873%20NCT00718263%20NCT00760877%20NCT00802841%20NCT00852566%20NCT00858806%20NCT01011998%20NCT01188889%20NCT01216085%20NCT01275196%20NCT01400074%20NCT01460693%20NCT01503502%20NCT01593254%20NCT01650805%20NCT01795716%20NCT01804985%20NCT01819389%20NCT02001818%20NCT02081378%20NCT02130557%20NCT02174445%20NCT02204644%20NCT02269267%20NCT02326311%20NCT02480608%20NCT03193281%20NCT03228303%20NCT03515018%20NCT03578367%20NCT03654768%20NCT03722420%20NCT03906292%20NCT04070443%20NCT04126681%20NCT04147533%20NCT04578847%20NCT04838041%20NCT04971226%20NCT05413915"
+    }
+   ],
+   "max_phase_for_ind": "3.0",
+   "mesh_heading": "Leukemia, Myelogenous, Chronic, BCR-ABL Positive",
+   "mesh_id": "D015464",
+   "molecule_chembl_id": "CHEMBL941",
+   "parent_molecule_chembl_id": "CHEMBL941"
+  },
+  {
+   "drugind_id": 68566,
+   "efo_id": "EFO:0000349",
+   "efo_term": "clear cell renal carcinoma",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00193258",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00193258"
+    }
+   ],
+   "max_phase_for_ind": "1.0",
+   "mesh_heading": "Carcinoma, Renal Cell",
+   "mesh_id": "D002292",
+   "molecule_chembl_id": "CHEMBL941",
+   "parent_molecule_chembl_id": "CHEMBL941"
+  },
+  {
+   "drugind_id": 68567,
+   "efo_id": "EFO:0000365",
+   "efo_term": "colorectal adenocarcinoma",
+   "indication_refs": [
+    {
+     "ref_id": "NCT00784446",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT00784446"
+    }
+   ],
+   "max_phase_for_ind": "1.0",
+   "mesh_heading": "Colorectal Neoplasms",
+   "mesh_id": "D015179",
+   "molecule_chembl_id": "CHEMBL941",
+   "parent_molecule_chembl_id": "CHEMBL941"
+  },
+  {
+   "drugind_id": 68568,
+   "efo_id": "EFO:0000497",
+   "efo_term": "fibromatosis",
+   "indication_refs": [
+    {
+     "ref_id": "NCT01137916,NCT02495519",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT01137916%20NCT02495519"
+    }
+   ],
+   "max_phase_for_ind": "2.0",
+   "mesh_heading": "Fibroma",
+   "mesh_id": "D005350",
+   "molecule_chembl_id": "CHEMBL941",
+   "parent_molecule_chembl_id": "CHEMBL941"
+  },
+  {
+   "drugind_id": 109727,
+   "efo_id": "EFO:0000266",
+   "efo_term": "aortic stenosis",
+   "indication_refs": [
+    {
+     "ref_id": "NCT02817789",
+     "ref_type": "ClinicalTrials",
+     "ref_url": "https://clinicaltrials.gov/search?term=NCT02817789"
+    }
+   ],
+   "max_phase_for_ind": "3.0",
+   "mesh_heading": "Aortic Valve Stenosis",
+   "mesh_id": "D001024",
+   "molecule_chembl_id": "CHEMBL1697753",
+   "parent_molecule_chembl_id": "CHEMBL25"
+  }
+ ],
+ "page_meta": {
+  "limit": 1000,
+  "next": null,
+  "offset": 0,
+  "previous": null,
+  "total_count": 302
+ }
+}

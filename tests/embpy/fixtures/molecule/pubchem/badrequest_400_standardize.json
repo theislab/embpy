@@ -1,0 +1,16 @@
+{
+ "Fault": {
+  "Code": "PUGREST.BadRequest",
+  "Message": "Unable to standardize the given structure - perhaps some special characters need to be escaped or data packed in a MIME form?",
+  "Details": [
+   "error: ",
+   "status: 400",
+   "output: Caught ncbi::CException: Standardization failed",
+   "Output Log:",
+   "Record 1: Warning: Cactvs Ensemble cannot be created from input string",
+   "Record 1: Error: Unable to convert input into a compound object",
+   "",
+   ""
+  ]
+ }
+}
