@@ -71,14 +71,29 @@ def _sanitize_for_h5ad(val: Any) -> Any:
 
 
 def _save_anndata_safely(adata: Any, path: str) -> None:
-    """Safely write an AnnData object to an .h5ad file, ensuring directories and HDF5 data types are valid."""
-    target_dir = os.path.dirname(os.path.abspath(path))
-    if target_dir:
-        os.makedirs(target_dir, exist_ok=True)
+    """Write an AnnData object to an .h5ad file without ever leaving a half-written file there.
+
+    The data is written to a temporary file in the destination's folder and moved
+    over ``path`` only once the write has succeeded, so a failed write (for example
+    a column h5py cannot store) leaves an existing file at ``path`` untouched.
+    """
+    import tempfile
+
+    target = os.path.abspath(path)
+    target_dir = os.path.dirname(target)
+    os.makedirs(target_dir, exist_ok=True)
     if getattr(adata, "uns", None):
         for k in list(adata.uns.keys()):
             adata.uns[k] = _sanitize_for_h5ad(adata.uns[k])
-    adata.write_h5ad(path)
+    fd, tmp_path = tempfile.mkstemp(prefix=".embpy-tmp-", suffix=".h5ad", dir=target_dir)
+    os.close(fd)
+    try:
+        adata.write_h5ad(tmp_path)
+        os.replace(tmp_path, target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp_path)
+        raise
 
 
 def _detect_expression_nature(adata: Any) -> dict[str, Any]:
@@ -1416,22 +1431,95 @@ def _merge_embedding_workspace(
         written.append(("uns", str(key)))
 
     # Alias columns (e.g. resolved ids) that embedding added to or changed in .obs/.var.
+    # Every other column -- a 'dose' with gaps, a categorical label -- is left exactly
+    # as it was, values and dtype, including in the rows that were not embedded.
     for frame_axis in ("obs", "var"):
         row_mask = mask if mask is not None and axis == frame_axis else None
         source, target = getattr(workspace, frame_axis), getattr(adata, frame_axis)
         for col in source.columns:
-            new_vals = source[col].to_numpy()
+            new = source[col]
             if col in target.columns:
-                old_vals = target[col].to_numpy()
-                if (old_vals if row_mask is None else old_vals[row_mask]).tolist() == new_vals.tolist():
+                old = target[col] if row_mask is None else target[col][row_mask]
+                if _same_column_values(old, new):
                     continue
-            if row_mask is None:
-                target[col] = new_vals
+                if row_mask is None:
+                    target[col] = pd.Series(new.array, index=target.index)
+                else:
+                    target[col] = _update_masked_rows(target[col], new, row_mask)
+            elif row_mask is None:
+                target[col] = pd.Series(new.array, index=target.index)
             else:
-                column = np.full(len(row_mask), None, dtype=object)
-                column[row_mask] = new_vals
-                target[col] = pd.array(column, dtype=object)
+                target[col] = _expand_masked_column(new, row_mask, target.index)
     return written
+
+
+def _is_missing(value: Any) -> bool:
+    """True for None, NaN and pandas NA (never raises on list-like values)."""
+    import pandas as pd
+
+    if value is None or value is pd.NA:
+        return True
+    return isinstance(value, (float, np.floating)) and math.isnan(value)
+
+
+def _same_column_values(a: Any, b: Any) -> bool:
+    """Positionwise equality of two columns, with missing values equal to each other."""
+    if len(a) != len(b):
+        return False
+    a, b = a.reset_index(drop=True), b.reset_index(drop=True)
+    if a.equals(b):
+        return True
+    for x, y in zip(a.astype(object), b.astype(object), strict=True):
+        if _is_missing(x) or _is_missing(y):
+            if not (_is_missing(x) and _is_missing(y)):
+                return False
+        elif x != y:
+            return False
+    return True
+
+
+def _update_masked_rows(column: Any, new: Any, row_mask: np.ndarray) -> Any:
+    """``column`` with the rows in ``row_mask`` replaced by ``new``; other rows keep their values."""
+    import pandas as pd
+
+    out = column.copy()
+    if isinstance(out.dtype, pd.CategoricalDtype):
+        extra = [v for v in pd.unique(new.astype(object)) if not _is_missing(v) and v not in out.cat.categories]
+        if extra:
+            out = out.cat.add_categories(extra)
+    positions = np.flatnonzero(row_mask)
+    try:
+        out.iloc[positions] = new.to_numpy()
+    except (TypeError, ValueError):
+        out = out.astype(object)
+        out.iloc[positions] = new.astype(object).to_numpy()
+    return out
+
+
+def _expand_masked_column(new: Any, row_mask: np.ndarray, index: Any) -> Any:
+    """A full-length column from ``new`` (the rows in ``row_mask``); other rows are missing.
+
+    The dtype is one .h5ad can store with gaps: float with NaN for numbers, a
+    nullable boolean for flags, a categorical for text and labels.
+    """
+    import pandas as pd
+
+    positions = np.flatnonzero(row_mask)
+    if pd.api.types.is_bool_dtype(new.dtype):
+        values = pd.array([pd.NA] * len(index), dtype="boolean")
+        values[positions] = new.astype("boolean").array
+        return pd.Series(values, index=index)
+    if pd.api.types.is_numeric_dtype(new.dtype):
+        values = np.full(len(index), np.nan, dtype=float)
+        values[positions] = new.to_numpy(dtype=float, na_value=np.nan)
+        return pd.Series(values, index=index)
+    labels: list[Any] = [None] * len(index)
+    for pos, value in zip(positions, new.astype(object), strict=True):
+        labels[pos] = None if _is_missing(value) else str(value)
+    categories = None
+    if isinstance(new.dtype, pd.CategoricalDtype):
+        categories = [str(c) for c in new.cat.categories]
+    return pd.Series(pd.Categorical(labels, categories=categories), index=index)
 
 
 def compute_embeddings(

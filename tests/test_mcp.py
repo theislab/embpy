@@ -958,6 +958,76 @@ def test_recomputing_embeddings_overwrites_earlier_results(tmp_path):
     assert key in result.uns["embeddings"]
 
 
+def _write_wells(path, smiles, dose):
+    import pandas as pd
+
+    obs = pd.DataFrame(
+        {
+            "smiles": pd.Categorical(smiles),
+            "dose": np.asarray(dose, dtype=float),
+            "plate": pd.Categorical(["p1", "p1", "p2", "p2"]),
+        },
+        index=[f"w{i}" for i in range(len(smiles))],
+    )
+    AnnData(obs=obs).write_h5ad(path)
+
+
+def test_missing_smiles_keeps_other_columns_and_their_types(tmp_path):
+    """One well without SMILES, another without a dose: the save succeeds and nothing else changes."""
+    import anndata
+
+    out = str(tmp_path / "wells_embedded.h5ad")
+    clean = str(tmp_path / "clean.h5ad")
+    _write_wells(clean, ["CCO", "c1ccccc1", "CC(=O)O", "CCN"], [1.0, 2.0, 0.1, 5.0])
+    first = compute_embeddings(path=clean, models="morgan_fp", entity_type="molecule", obs_column="smiles",
+                               output_path=out)
+    assert first["status"] == "success", first
+
+    gaps = str(tmp_path / "gaps.h5ad")
+    dose = [1.0, np.nan, 10.0, 0.1]
+    _write_wells(gaps, ["CCO", "c1ccccc1", None, "CC(=O)O"], dose)
+    res = compute_embeddings(path=gaps, models="morgan_fp", entity_type="molecule", obs_column="smiles",
+                             missing="nan", output_path=out)
+    assert res["status"] == "success", res
+
+    saved = anndata.read_h5ad(out)
+    (key,) = res["embedding_keys"]
+    fingerprints = np.asarray(saved.obsm[key])
+    assert np.isnan(fingerprints[2]).all()
+    assert np.isfinite(fingerprints[[0, 1, 3]]).all()
+    np.testing.assert_array_equal(saved.obs["dose"].to_numpy(), np.asarray(dose))
+    assert saved.obs["dose"].dtype == np.float64
+    assert saved.obs["plate"].tolist() == ["p1", "p1", "p2", "p2"]
+    assert str(saved.obs["plate"].dtype) == "category"
+    assert not [f for f in os.listdir(tmp_path) if f.startswith(".embpy-tmp-")]
+
+
+def test_failed_save_keeps_the_existing_file(monkeypatch, tmp_path):
+    """The destination is replaced only after the new file was written completely."""
+    import anndata
+
+    out = str(tmp_path / "wells_embedded.h5ad")
+    wells = str(tmp_path / "wells.h5ad")
+    _write_wells(wells, ["CCO", "c1ccccc1", "CC(=O)O", "CCN"], [1.0, 2.0, 0.1, 5.0])
+    assert compute_embeddings(path=wells, models="morgan_fp", entity_type="molecule", obs_column="smiles",
+                              output_path=out)["status"] == "success"
+    with open(out, "rb") as fh:
+        before = fh.read()
+
+    def write_then_fail(self, filename=None, *args, **kwargs):
+        with open(filename, "wb") as fh:
+            fh.write(b"half-written")
+        raise TypeError("Can't implicitly convert non-string objects to strings")
+
+    monkeypatch.setattr(anndata.AnnData, "write_h5ad", write_then_fail)
+    res = compute_embeddings(path=wells, models="morgan_fp", entity_type="molecule", obs_column="smiles",
+                             output_path=out)
+    assert res["status"] == "error"
+    with open(out, "rb") as fh:
+        assert fh.read() == before
+    assert not [f for f in os.listdir(tmp_path) if f.startswith(".embpy-tmp-")]
+
+
 def test_scaling_does_not_change_selected_hvgs(tmp_path):
     """HVGs are picked from log-normalized expression, before the optional scaling step."""
     import anndata
