@@ -1318,3 +1318,15 @@ def test_scikit_misc_is_part_of_the_mcp_extra():
 
     pyproject = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text(encoding="utf-8"))
     assert "scikit-misc" in pyproject["project"]["optional-dependencies"]["mcp"]
+
+
+def test_model_registry_without_torch_says_what_to_install(monkeypatch):
+    """The setup check (list_model_registry) must explain a missing PyTorch, not just fail."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "torch", None)
+    res = list_model_registry(entity_type="molecule")
+    assert res["status"] == "error"
+    assert "PyTorch is not installed" in res["error"]
+    assert 'embpy[models]' in res["suggestion"]
+    assert res["optional_extras_status"]["models"] == {"installed": False}

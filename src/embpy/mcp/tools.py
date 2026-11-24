@@ -1273,7 +1273,27 @@ def list_model_registry(
         - optional_extras_status: Installation status of optional dependency bundles
     """
     try:
-        import torch
+        extras = {
+            "mcp": {"installed": bool(importlib.util.find_spec("mcp") is not None)},
+            "models": {"installed": bool(importlib.util.find_spec("torch") is not None)},
+            "seqmodels": {"installed": bool(importlib.util.find_spec("borzoi_pytorch") is not None)},
+            "genome": {"installed": bool(importlib.util.find_spec("pyensembl") is not None or importlib.util.find_spec("pysam") is not None)},
+            "eval": {"installed": bool(importlib.util.find_spec("cell_eval") is not None)},
+            "scib": {"installed": bool(importlib.util.find_spec("scib") is not None)},
+            "scanpy": {"installed": bool(importlib.util.find_spec("scanpy") is not None)},
+        }
+
+        try:
+            import torch
+        except ImportError as exc:
+            # Every embedding model (PCA included) runs through embpy's torch-based stack.
+            return {
+                "status": "error",
+                "error_type": type(exc).__name__,
+                "error": f"PyTorch is not installed, so no embedding model can run ({exc}).",
+                "suggestion": _install_hint(str(exc)) or _INSTALL_FOR_MODULE["torch"],
+                "optional_extras_status": extras,
+            }
 
         if torch.cuda.is_available():
             device_str = "cuda"
@@ -1284,15 +1304,6 @@ def list_model_registry(
         else:
             device_str = "cpu"
             device_name = "CPU"
-
-        extras = {
-            "mcp": {"installed": bool(importlib.util.find_spec("mcp") is not None)},
-            "seqmodels": {"installed": bool(importlib.util.find_spec("borzoi_pytorch") is not None)},
-            "genome": {"installed": bool(importlib.util.find_spec("pyensembl") is not None or importlib.util.find_spec("pysam") is not None)},
-            "eval": {"installed": bool(importlib.util.find_spec("cell_eval") is not None)},
-            "scib": {"installed": bool(importlib.util.find_spec("scib") is not None)},
-            "scanpy": {"installed": bool(importlib.util.find_spec("scanpy") is not None)},
-        }
 
         from embpy.embedder_registry.flat import MODEL_REGISTRY
         from embpy.models.singlecell_models import list_singlecell_models
@@ -1371,11 +1382,15 @@ def list_model_registry(
 
     except Exception as exc:
         logger.error("list_model_registry failed: %s", exc, exc_info=True)
-        return {
+        resp = {
             "status": "error",
             "error_type": type(exc).__name__,
             "error": str(exc),
         }
+        hint = _install_hint(str(exc)) if isinstance(exc, ImportError) else None
+        if hint:
+            resp["suggestion"] = hint
+        return resp
 
 
 # Alias for backward compatibility
@@ -1392,8 +1407,11 @@ _CELL_EMBEDDING_RECORDS = "embpy_cell_embeddings"
 
 # Missing module -> what to install, for the hints in error responses.
 _INSTALL_FOR_MODULE = {
-    "torch": 'pip install "embpy[cpu]" (or "embpy[gpu]" on a CUDA machine)',
-    "transformers": 'pip install "embpy[cpu]"',
+    "torch": (
+        'pip install "embpy[models]" (on Linux without a GPU, first: '
+        "pip install torch --index-url https://download.pytorch.org/whl/cpu)"
+    ),
+    "transformers": 'pip install "embpy[models]"',
     "scvi": "pip install scvi-tools",
     "skmisc": "pip install scikit-misc",
     "scanpy": 'pip install "embpy[mcp]"',
