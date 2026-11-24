@@ -59,6 +59,13 @@ annotate_metadata(path="data/screen.h5ad", entity_type="gene", annotation_types=
 annotate_metadata(path="data/screen.h5ad", entity_type="gene", annotation_types="pathways", sources=["reactome"], column="target_gene")
 ```
 
+A question about a few entities needs no file: pass them as `identifiers` (and set `entity_type`).
+"Which human Reactome pathways include TP53?":
+
+```python
+annotate_metadata(identifiers=["TP53"], entity_type="gene", annotation_types="pathways", sources=["reactome"])
+```
+
 ```python
 annotate_metadata(path="data/compounds.h5ad", entity_type="molecule", annotation_types=["properties", "interactions"], column="smiles")
 ```
@@ -78,14 +85,22 @@ Annotation types and their sources per entity type:
 - Gene annotations work best on approved symbols or Ensembl ids, so resolve aliases first with
   `resolve_identifiers`.
 
+- Reactome pathways come from Reactome's own release files. The first Reactome request
+  downloads them (about 37 MB) into `~/.cache/embpy/reactome` (or `$EMBPY_CACHE/reactome`);
+  later requests and sessions reuse them. Nothing has to be downloaded by hand.
+
 **Reading the result.** `per_type` gives, for each type, how many entities were `annotated`,
 had `no_match`, or hit a `service_error`. An entity counts as annotated only when that type
-returned records.
+returned records. `records_preview` holds, per entity, type and source, the number of records
+(`n`) and the first ones (`id`, `name`, ...): answer "which pathways ..." from it.
 - `success`: every entity has every requested type. `partial_success`: some do; report `per_type`.
-- `error` with `NoAnnotationsFound`: the services answered but had nothing. Say so; do not
-  describe it as a failure of the service.
-- `error` with `AnnotationServiceError`: requests failed (see `service_errors_sample`). Suggest
-  retrying later; do not claim the genes have no annotations.
-- Nothing is written when nothing was annotated. Otherwise `.obs` gains `<prefix>_<type>_n`
-  record counts (molecules with `properties` also get `mol_<property>` columns) and
-  `.uns["embpy_annotations"]` holds the full records as JSON.
+- `error` with `NoAnnotationsFound` (error starts "No pathways found", "No GO terms found", ...):
+  the lookups completed and matched nothing. Say so; do not describe it as a failure of the service.
+- `error` with `AnnotationServiceError`: the error starts "Couldn't reach <service>." (e.g.
+  "Couldn't reach Reactome."). Say that and suggest retrying later; do not claim the genes have
+  no annotations.
+- `warning` and `unreachable_services` with a success: one source failed while others answered;
+  mention which.
+- Nothing is written when nothing was annotated, or with `identifiers` unless `output_path` is
+  given. Otherwise `.obs` gains `<prefix>_<type>_n` record counts (molecules with `properties`
+  also get `mol_<property>` columns) and `.uns["embpy_annotations"]` holds the full records as JSON.

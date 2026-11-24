@@ -552,16 +552,25 @@ def gene_pert_path(tmp_path):
     return p
 
 
-def _fake_annotators(monkeypatch, *, go=None, pathways=None, fail=False):
-    """Patch the gene/protein annotators; record the organisms and calls they receive."""
+def _fake_annotators(monkeypatch, *, go=None, pathways=None, fail=False, reactome_down=False):
+    """Patch the gene/protein annotators and the Reactome loader; record what they receive."""
     import requests
 
     from embpy.resources._service_errors import report_service_error
+    from embpy.resources.gene import reactome as reactome_module
     from embpy.resources.gene.annotator import GeneAnnotator
     from embpy.resources.protein.annotator import ProteinAnnotator
 
-    seen = {"organisms": [], "calls": []}
+    seen = {"organisms": [], "calls": [], "reactome_species": []}
     orig_gene_init, orig_prot_init = GeneAnnotator.__init__, ProteinAnnotator.__init__
+
+    def load_reactome_index(directory=None, *, species="Homo sapiens", download=True):
+        seen["reactome_species"].append(species)
+        if reactome_down:
+            raise reactome_module.ReactomeUnavailableError("Couldn't reach Reactome: test")
+        return "reactome-index"
+
+    monkeypatch.setattr(reactome_module, "load_reactome_index", load_reactome_index)
 
     def gene_init(self, organism="human", rate_limit_delay=0.2):
         seen["organisms"].append(("gene", organism))
@@ -571,11 +580,14 @@ def _fake_annotators(monkeypatch, *, go=None, pathways=None, fail=False):
         seen["organisms"].append(("protein", organism))
         orig_prot_init(self, organism=organism, rate_limit_delay=0)
 
-    def get_pathways(self, gene):
+    def get_pathways(self, gene, *, reactome_index=None):
         seen["calls"].append(("pathways", gene))
         if fail:
             report_service_error("https://mygene.info/v3/query", requests.ConnectionError("down"))
-        return (pathways or {}).get(gene, {"reactome": [], "kegg": [], "wikipathways": []})
+        result = dict((pathways or {}).get(gene, {"reactome": [], "kegg": [], "wikipathways": []}))
+        if reactome_index is None:  # as GeneAnnotator.get_pathways: no index, no Reactome
+            result["reactome"] = []
+        return result
 
     def annotate(self, identifier, id_type="auto", sources="all"):
         seen["calls"].append(("uniprot:" + ",".join(sources), identifier, id_type))
@@ -1174,3 +1186,109 @@ def test_annotation_provenance_fields_alone_are_not_annotations(monkeypatch, gen
                               sources=["hpa"], column="perturbation", output_path=str(tmp_path / "e.h5ad"))
     assert empty["status"] == "error"
     assert empty["error_type"] == "NoAnnotationsFound"
+
+
+# ---------------------------------------------------------------------------
+# Reactome through annotate_metadata: the real GeneAnnotator and ReactomeIndex
+# on recorded MyGene rows and Reactome release 98 rows; no network.
+# ---------------------------------------------------------------------------
+
+_GENE_FIXTURES = os.path.join(os.path.dirname(__file__), "embpy", "fixtures", "gene")
+
+
+def _mygene_rows():
+    import json
+
+    with open(os.path.join(_GENE_FIXTURES, "mygene_query_post_20.json"), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+@pytest.fixture
+def recorded_gene_services(monkeypatch):
+    """MyGene answers from recorded rows; Reactome is the release 98 fixture index."""
+    from embpy.resources.gene import annotator as gene_annotator
+    from embpy.resources.gene import reactome
+
+    rows = _mygene_rows()
+    state = {"mygene_down": False, "reactome_down": False, "species": []}
+    index = reactome.ReactomeIndex.from_dir(os.path.join(_GENE_FIXTURES, "reactome98"), release="98")
+
+    def post_json(url, json_data=None, data=None, timeout=30):
+        if state["mygene_down"]:
+            import requests
+
+            from embpy.resources._service_errors import report_service_error
+
+            report_service_error(url, requests.ConnectionError("connection refused"))
+            return None
+        wanted = data["q"].split(",")
+        return [row for q in wanted for row in rows if row["query"] == q]
+
+    def load_reactome_index(directory=None, *, species="Homo sapiens", download=True):
+        state["species"].append(species)
+        if state["reactome_down"]:
+            raise reactome.ReactomeUnavailableError("Couldn't reach Reactome: NCBI2Reactome.txt could not be downloaded")
+        return index
+
+    monkeypatch.setattr(gene_annotator, "_post_json", post_json)
+    monkeypatch.setattr(reactome, "load_reactome_index", load_reactome_index)
+    return state
+
+
+def test_reactome_pathways_of_tp53_from_identifiers(recorded_gene_services, tmp_path):
+    """'Which human Reactome pathways include TP53?' -- answered in the reply, no file needed."""
+    res = annotate_metadata(identifiers=["TP53"], entity_type="gene", annotation_types="pathways",
+                            sources="reactome")
+    assert res["status"] == "success", res
+    assert res["output_path"] is None
+    assert recorded_gene_services["species"] == ["Homo sapiens"]
+    reactome = res["records_preview"]["TP53"]["pathways"]["reactome"]
+    assert reactome["n"] == len(reactome["items"]) > 40
+    assert {"id": "R-HSA-111448", "name": "Activation of NOXA and translocation to mitochondria"} in reactome["items"]
+
+
+def test_reactome_unreachable_says_so(recorded_gene_services):
+    recorded_gene_services["reactome_down"] = True
+    res = annotate_metadata(identifiers=["TP53"], entity_type="gene", annotation_types="pathways",
+                            sources="reactome")
+    assert res["status"] == "error"
+    assert res["error_type"] == "AnnotationServiceError"
+    assert res["error"].startswith("Couldn't reach Reactome.")
+    assert "No pathways found" not in res["error"] + res["summary"]
+    assert res["unreachable_services"] == {"pathways": ["Reactome"]}
+
+
+def test_no_pathways_found_only_when_the_lookup_completed(recorded_gene_services):
+    res = annotate_metadata(identifiers=["NOTAREALGENE1"], entity_type="gene", annotation_types="pathways",
+                            sources="reactome")
+    assert res["status"] == "error"
+    assert res["error_type"] == "NoAnnotationsFound"
+    assert res["error"].startswith("No pathways found")
+
+    recorded_gene_services["mygene_down"] = True
+    res = annotate_metadata(identifiers=["TP53"], entity_type="gene", annotation_types="pathways",
+                            sources="reactome")
+    assert res["error_type"] == "AnnotationServiceError"
+    assert res["error"].startswith("Couldn't reach MyGene.info.")
+    assert "No pathways found" not in res["error"]
+
+
+def test_reactome_outage_is_reported_when_other_sources_answer(recorded_gene_services, tmp_path):
+    import anndata
+
+    recorded_gene_services["reactome_down"] = True
+    path = str(tmp_path / "genes.h5ad")
+    AnnData(obs={"gene": ["TP53"]}).write_h5ad(path)
+    res = annotate_metadata(path=path, entity_type="gene", column="gene", annotation_types="pathways",
+                            sources=["reactome", "kegg"])
+    assert res["status"] == "success", res
+    assert res["warning"].startswith("Couldn't reach Reactome.")
+    assert res["unreachable_services"] == {"pathways": ["Reactome"]}
+    preview = res["records_preview"]["TP53"]["pathways"]
+    assert preview["reactome"]["n"] == 0 and preview["kegg"]["n"] > 0
+    assert os.path.exists(res["output_path"]) and anndata.read_h5ad(res["output_path"]).n_obs == 1
+
+
+def test_annotation_needs_a_path_or_identifiers():
+    res = annotate_metadata(entity_type="gene")
+    assert res["status"] == "error" and "identifiers" in res["error"]

@@ -151,12 +151,17 @@ Returns `embedding_keys`, `embedding_slots` (`obsm` / `varm`), `embedding_shapes
 
 ```python
 annotate_metadata(
-    path, entity_type="auto",       # "gene" | "protein" | "molecule" | "cell_line"
+    path=None, entity_type="auto",  # "gene" | "protein" | "molecule" | "cell_line"
     annotation_types=None, annotation_type=None,
     column=None, sources=None, id_type="auto",
     organism="human", output_path=None,
+    identifiers=None,               # e.g. ["TP53"]: annotate a list, no file needed
 )
 ```
+
+Give either `path` (an `.h5ad` and its `column`) or `identifiers`. For example, "which human
+Reactome pathways include TP53?" is
+`annotate_metadata(identifiers=["TP53"], entity_type="gene", annotation_types="pathways", sources=["reactome"])`.
 
 | `entity_type` | `annotation_types` (sources) |
 |---|---|
@@ -172,12 +177,24 @@ type only if that type returned records; the input name echoed back does not cou
 `service_error` (a request that failed after retries).
 
 - `success`: every entity has every requested type; `partial_success`: some do.
-- `error` / `NoAnnotationsFound`: the services answered with nothing.
-- `error` / `AnnotationServiceError`: requests failed; `service_errors_sample` shows examples.
+- `error` / `NoAnnotationsFound`: the lookups completed and matched nothing; the error starts
+  "No pathways found" (or "No GO terms found", ...).
+- `error` / `AnnotationServiceError`: requests failed; the error starts "Couldn't reach
+  <service>." (e.g. "Couldn't reach Reactome.") and `service_errors_sample` shows examples.
+- A source that failed while others answered is listed in `unreachable_services`, with a
+  `warning`.
 
-Nothing is written when nothing was annotated. Otherwise `.obs` gains `<prefix>_<type>_n`
-record counts (`gene_`, `prot_`, `mol_`; molecules with `properties` also get `mol_<property>`
-columns) and `.uns["embpy_annotations"]` holds the records as JSON.
+`records_preview` gives, per entity (first 10), type and source, the number of records and the
+first ones (ids and names; up to 50 for a single entity).
+
+Reactome pathways come from Reactome's release files (release 98). The first Reactome request
+downloads them (about 37 MB) into `~/.cache/embpy/reactome/98` (`$EMBPY_CACHE` moves it) and
+later requests reuse them.
+
+Nothing is written when nothing was annotated, or for `identifiers` without `output_path`.
+Otherwise `.obs` gains `<prefix>_<type>_n` record counts (`gene_`, `prot_`, `mol_`; molecules
+with `properties` also get `mol_<property>` columns) and `.uns["embpy_annotations"]` holds the
+records as JSON.
 
 ---
 

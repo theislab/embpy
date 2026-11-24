@@ -2022,6 +2022,33 @@ _ANNOTATION_SOURCES: dict[str, dict[str, tuple[str, ...]]] = {
     },
 }
 _DEFAULT_ANNOTATION_TYPE = {"gene": "pathways", "protein": "go", "molecule": "properties", "cell_line": "cell_line"}
+# Reactome species names for the organisms the tools accept.
+_REACTOME_SPECIES = {"human": "Homo sapiens", "mouse": "Mus musculus"}
+# Host fragment -> service name, for "Couldn't reach <service>." messages.
+_SERVICE_NAMES = (
+    ("reactome.org", "Reactome"),
+    ("mygene.info", "MyGene.info"),
+    ("uniprot.org", "UniProt"),
+    ("ebi.ac.uk/interpro", "InterPro"),
+    ("ebi.ac.uk/chembl", "ChEMBL"),
+    ("ebi.ac.uk/gwas", "the GWAS Catalog"),
+    ("opentargets", "Open Targets"),
+    ("string-db.org", "STRING"),
+    ("gtexportal.org", "GTEx"),
+    ("proteinatlas.org", "the Human Protein Atlas"),
+    ("pubchem", "PubChem"),
+    ("kegg.jp", "KEGG"),
+    ("wikipathways", "WikiPathways"),
+)
+
+
+def _service_name(url: str) -> str:
+    """Name of the web service a failed request went to (its host if not a known one)."""
+    for fragment, name in _SERVICE_NAMES:
+        if fragment in url:
+            return name
+    host = re.sub(r"^[a-z]+://", "", url).split("/")[0]
+    return host or "the annotation service"
 # Served only for human genes (GTEx, HPA, GWAS Catalog, Open Targets).
 _HUMAN_ONLY_ANNOTATIONS = {("gene", "diseases"), ("gene", "expression")}
 _UNIPROT_ACCESSION_RE = re.compile(
@@ -2035,6 +2062,34 @@ _ANNOTATION_METADATA_KEYS = frozenset(
     {"source", "sources", "database", "reliability", "query", "organism", "taxonomy_id", "version", "url",
      "last_modified", "retrieved_at"}
 )
+
+
+_PREVIEW_ENTITIES = 10
+_PREVIEW_FIELDS = (
+    "id", "name", "term", "label", "symbol", "description", "aspect", "disease", "tissue",
+    "location", "partner", "target", "pathway", "value", "score",
+)
+
+
+def _join_names(names: list[str]) -> str:
+    """'A', 'A and B', 'A, B and C'."""
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + f" and {names[-1]}"
+
+
+def _preview_records(data: Any, limit: int) -> Any:
+    """A short, JSON-safe view of annotation records: per list its length and first entries."""
+    if isinstance(data, dict):
+        return {str(k): _preview_records(v, limit) for k, v in data.items() if k not in _ANNOTATION_METADATA_KEYS}
+    if isinstance(data, (list, tuple)):
+        items = []
+        for record in list(data)[:limit]:
+            if isinstance(record, dict):
+                compact = {k: record[k] for k in _PREVIEW_FIELDS if k in record}
+                items.append(_sanitize_val(compact or dict(list(record.items())[:3])))
+            else:
+                items.append(_sanitize_val(record))
+        return {"n": len(data), "items": items}
+    return _sanitize_val(data)
 
 
 def _n_annotation_items(value: Any) -> int:
@@ -2083,8 +2138,30 @@ def _annotation_fetchers(entity: str, organism: str, id_type: str) -> dict[str, 
             out = {"uniprot": res.get("uniprot_domains", []), "interpro": res.get("interpro_domains", [])}
             return {k: v for k, v in out.items() if k in srcs}
 
+        reactome: dict[str, Any] = {}
+
+        def _reactome_index():
+            """Reactome's release index, downloaded and cached on first use (once per server)."""
+            if "index" not in reactome:
+                from embpy.resources.gene.reactome import ReactomeUnavailableError, load_reactome_index
+
+                try:
+                    reactome["index"] = load_reactome_index(species=_REACTOME_SPECIES[organism])
+                except (ReactomeUnavailableError, OSError) as exc:
+                    reactome["index"] = None
+                    reactome["error"] = exc
+            return reactome["index"]
+
         def pathways(gene, srcs):
-            return {k: v for k, v in ga.get_pathways(gene).items() if k in srcs}
+            index = None
+            if "reactome" in srcs:
+                index = _reactome_index()
+                if index is None:
+                    from embpy.resources._service_errors import report_service_error
+                    from embpy.resources.gene.reactome import REACTOME_FILES
+
+                    report_service_error(REACTOME_FILES["NCBI2Reactome.txt"], reactome["error"])
+            return {k: v for k, v in ga.get_pathways(gene, reactome_index=index).items() if k in srcs}
 
         def interactions(gene, srcs):
             out: dict[str, Any] = {}
@@ -2168,7 +2245,7 @@ def _annotation_fetchers(entity: str, organism: str, id_type: str) -> dict[str, 
 
 
 def annotate_metadata(
-    path: str,
+    path: str | None = None,
     entity_type: Literal["auto", "gene", "protein", "molecule", "cell_line"] = "auto",
     annotation_types: list[AnnotationType] | AnnotationType | None = None,
     annotation_type: AnnotationType | None = None,
@@ -2178,8 +2255,15 @@ def annotate_metadata(
     id_type: Literal["auto", "symbol", "ensembl_id", "uniprot_id"] = "auto",
     output_path: str | None = None,
     organism: Literal["human", "mouse"] = "human",
+    identifiers: list[str] | str | None = None,
 ) -> dict[str, Any]:
-    """Annotate the entities in an adata.obs column with external biological knowledge.
+    """Annotate genes, proteins, molecules or cell lines with external biological knowledge.
+
+    The entities come from an adata.obs column (``path`` + ``column``) or directly from
+    ``identifiers``, e.g. ``annotate_metadata(identifiers=["TP53"], entity_type="gene",
+    annotation_types="pathways", sources=["reactome"])`` answers "which human Reactome
+    pathways include TP53?" without any file. Reactome's release files are downloaded
+    on first use and cached (``$EMBPY_CACHE/reactome``, default ``~/.cache/embpy``).
 
     Every requested annotation type is run for every unique entity, in the requested
     organism, against the requested sources. An entity counts as annotated for a type
@@ -2195,12 +2279,13 @@ def annotate_metadata(
     - molecule: properties (rdkit), interactions (chembl), pathways (kegg), diseases (pubchem)
     - cell_line: cell_line (depmap, via pertpy)
 
-    Token-Saving: Writes the enriched dataset to disk and returns per-type counts.
+    Token-Saving: Writes the enriched dataset to disk and returns per-type counts plus a
+    short preview of the records (ids and names, first entries per source).
 
     Parameters
     ----------
-    path : str
-        Filesystem path to the target .h5ad dataset.
+    path : str, optional
+        Filesystem path to the target .h5ad dataset. Give either path or identifiers.
     entity_type : {'auto', 'gene', 'protein', 'molecule', 'cell_line'}, default='auto'
         Entity type held in the column. 'auto' guesses from column names.
     annotation_types : list or str, optional
@@ -2219,18 +2304,26 @@ def annotate_metadata(
     id_type : {'auto', 'symbol', 'ensembl_id', 'uniprot_id'}, default='auto'
         Identifier type for UniProt-backed annotations (gene/protein go, domains, ...).
     output_path : str, optional
-        Filesystem destination (default: '<input>_annotated.h5ad'). Not written when
-        nothing was annotated.
+        Filesystem destination (default: '<input>_annotated.h5ad'; with identifiers,
+        nothing is written unless output_path is given). Not written when nothing was
+        annotated.
     organism : {'human', 'mouse'}, default='human'
         Species for gene and protein annotations.
+    identifiers : list[str] or str, optional
+        Entities to annotate directly (e.g. ['TP53', 'EGFR']), instead of an .h5ad column.
+        Set entity_type explicitly ('auto' assumes genes).
 
     Returns
     -------
     dict[str, Any]
         - status: "success" (every entity has every requested type), "partial_success",
-          or "error" (nothing annotated; error_type is "AnnotationServiceError" when requests
-          failed and "NoAnnotationsFound" when the services answered with nothing)
+          or "error" (nothing annotated; error_type is "AnnotationServiceError" when a
+          service could not be reached -- the error then starts "Couldn't reach <service>." --
+          and "NoAnnotationsFound" when the lookups completed and matched nothing, e.g.
+          "No pathways found ...")
         - per_type: For each type, counts of entities annotated / no_match / service_error
+        - records_preview: entity -> type -> source -> {"n": total, "items": first records}
+        - unreachable_services: type -> services that failed, also when other sources answered
         - sources_queried: Databases queried per type
         - successful_count: Entities annotated for every requested type
         - failed_count: Entities missing at least one requested type
@@ -2238,20 +2331,31 @@ def annotate_metadata(
         - summary: Human-readable description
     """
     try:
-        resolved_path = os.path.abspath(path)
-        if not os.path.exists(resolved_path):
-            return {
-                "status": "error",
-                "error_type": "FileNotFoundError",
-                "error": f"Dataset file not found: {path}",
-            }
-
         import anndata
         import pandas as pd
 
         from embpy.resources._service_errors import record_service_errors
 
-        adata = anndata.read_h5ad(resolved_path)
+        resolved_path: str | None = None
+        if identifiers is not None:
+            ids = [identifiers] if isinstance(identifiers, str) else [str(i) for i in identifiers]
+            adata = anndata.AnnData(obs=pd.DataFrame({"identifier": ids}, index=[f"id_{i}" for i in range(len(ids))]))
+            column, obs_column = "identifier", None
+        elif not path:
+            return {
+                "status": "error",
+                "error_type": "ValueError",
+                "error": "Pass path (an .h5ad with an identifier column) or identifiers (a list of names or IDs).",
+            }
+        else:
+            resolved_path = os.path.abspath(path)
+            if not os.path.exists(resolved_path):
+                return {
+                    "status": "error",
+                    "error_type": "FileNotFoundError",
+                    "error": f"Dataset file not found: {path}",
+                }
+            adata = anndata.read_h5ad(resolved_path)
 
         if entity_type == "auto":
             cols_lower = [str(c).lower() for c in adata.obs.columns]
@@ -2386,6 +2490,8 @@ def annotate_metadata(
         counts: dict[str, dict[str, int]] = {t: {} for t in requested}
         results: dict[str, dict[str, Any]] = {e: {} for e in entities}
         service_errors: list[dict[str, str]] = []
+        # unreachable[type] = names of the services whose requests failed for that type
+        unreachable: dict[str, set[str]] = {}
         new_cols: list[str] = []
 
         with contextlib.redirect_stdout(sys.stderr):
@@ -2422,11 +2528,16 @@ def annotate_metadata(
                         n = _n_annotation_items(data)
                         counts[t][e] = n
                         results[e][t] = data
+                        # Recorded even when another source answered, so a partial outage is reported.
+                        unreachable.setdefault(t, set()).update(_service_name(err.get("url") or "") for err in errs)
                         if n:
                             outcome[t][e] = "annotated"
                         elif errs:
                             outcome[t][e] = "service_error"
-                            service_errors.append({"entity": e, "type": t, "error": errs[0]["error"]})
+                            service_errors.append({
+                                "entity": e, "type": t,
+                                "service": _service_name(errs[0].get("url") or ""), "error": errs[0]["error"],
+                            })
                         else:
                             outcome[t][e] = "no_match"
 
@@ -2439,13 +2550,30 @@ def annotate_metadata(
         n_annotated_pairs = sum(p["annotated"] for p in per_type.values())
 
         type_label = {"go": "GO terms", "cell_line": "cell-line metadata"}
+        unreachable = {t: names for t, names in unreachable.items() if names}
+        couldnt_reach = {t: f"Couldn't reach {_join_names(sorted(names))}." for t, names in unreachable.items()}
+        where = "the given identifiers" if resolved_path is None else f"column '{query_col}'"
+        n_label = f"{len(entities)} {resolved_entity}{'' if len(entities) == 1 else 's'}"
         summary_parts = []
         for t in requested:
             p = per_type[t]
-            part = f"{type_label.get(t, t)}: {p['annotated']}/{len(entities)} {resolved_entity} entities annotated"
-            extras = [f"{p[k]} {k.replace('_', ' ')}" for k in ("no_match", "service_error") if p[k]]
-            summary_parts.append(part + (f" ({', '.join(extras)})" if extras else ""))
-        summary = "; ".join(summary_parts) + f" (column '{query_col}', organism {org})."
+            if p["annotated"] == 0 and p["service_error"] == 0:
+                part = f"No {type_label.get(t, t)} found ({n_label} looked up)"
+            else:
+                part = f"{type_label.get(t, t)}: {p['annotated']}/{len(entities)} {resolved_entity} entities annotated"
+                extras = [f"{p[k]} {k.replace('_', ' ')}" for k in ("no_match", "service_error") if p[k]]
+                part += f" ({', '.join(extras)})" if extras else ""
+            if t in couldnt_reach:
+                part += f" -- {couldnt_reach[t]}"
+            summary_parts.append(part)
+        summary = "; ".join(summary_parts) + f" ({where}, organism {org})."
+
+        preview_limit = 50 if len(entities) == 1 else 20 if len(entities) <= 3 else 5
+        records_preview = {
+            e: {t: _preview_records(results[e].get(t), preview_limit) for t in requested
+                if outcome[t].get(e) == "annotated"}
+            for e in entities[:_PREVIEW_ENTITIES]
+        }
 
         base_payload: dict[str, Any] = {
             "entity_type": resolved_entity,
@@ -2464,22 +2592,23 @@ def annotate_metadata(
             "successful_items": fully[:10],
             "failed_items": [e for e in entities if e not in fully][:10],
             "summary": summary,
+            "records_preview": records_preview,
         }
         if service_errors:
             base_payload["service_errors_sample"] = service_errors[:5]
+        if unreachable:
+            base_payload["unreachable_services"] = {t: sorted(names) for t, names in unreachable.items()}
 
         if n_annotated_pairs == 0:
-            any_service_error = any(p["service_error"] for p in per_type.values())
-            return {
-                "status": "error",
-                "error_type": "AnnotationServiceError" if any_service_error else "NoAnnotationsFound",
-                "error": (
-                    f"Annotation requests failed for the entities in column '{query_col}'; nothing was annotated."
-                    if any_service_error
-                    else f"The services returned no {requested} annotations for the entities in column '{query_col}'."
-                ),
-                **base_payload,
-            }
+            if any(p["service_error"] for p in per_type.values()):
+                reached = " ".join(dict.fromkeys(couldnt_reach.values())) or "Annotation requests failed."
+                error_type = "AnnotationServiceError"
+                error = f"{reached} Nothing was annotated for the {n_label} in {where}."
+            else:
+                error_type = "NoAnnotationsFound"
+                kinds = " or ".join(type_label.get(t, t) for t in requested)
+                error = f"No {kinds} found for the {n_label} in {where}; the lookups completed without a match."
+            return {"status": "error", "error_type": error_type, "error": error, **base_payload}
 
         if resolved_entity != "cell_line":
             prefix = {"gene": "gene", "protein": "prot", "molecule": "mol"}[resolved_entity]
@@ -2511,21 +2640,28 @@ def annotate_metadata(
                 "results_json": json.dumps(results, default=str),
             }
 
-        if not output_path:
+        if output_path:
+            saved_path = os.path.abspath(output_path)
+        elif resolved_path is not None:
             base, ext = os.path.splitext(resolved_path)
             saved_path = f"{base}_annotated{ext}"
         else:
-            saved_path = os.path.abspath(output_path)
+            saved_path = None  # identifiers only: the answer is in records_preview
+        if saved_path:
+            _save_anndata_safely(adata, saved_path)
 
-        _save_anndata_safely(adata, saved_path)
-
-        return {
+        response = {
             "status": "success" if n_annotated_pairs == len(entities) * len(requested) else "partial_success",
             "output_path": saved_path,
             "new_columns_added": new_cols,
             "added_columns": new_cols,
             **base_payload,
         }
+        if couldnt_reach:
+            response["warning"] = " ".join(dict.fromkeys(couldnt_reach.values())) + (
+                " Results from the other sources are included."
+            )
+        return response
 
     except Exception as exc:
         logger.error("annotate_metadata failed: %s", exc, exc_info=True)
