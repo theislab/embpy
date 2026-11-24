@@ -25,6 +25,19 @@ and paired benchmarks. Feature outputs use the standard `EmbeddingResult` contra
 
 ---
 
+## Protein–Phenotype Alignment
+
+See the [alignment guide](protein_phenotype_alignment.md) for matched inputs,
+control filtering, aggregation and interpretation of the permutation test.
+
+::: embpy.tl.protein_phenotype_alignment
+
+::: embpy.tl.alignment_summary
+
+::: embpy.tl.cross_modal_mantel
+
+---
+
 ## Model Wrappers
 
 ### Protein Models

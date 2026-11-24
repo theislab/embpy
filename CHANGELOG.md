@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning][].
 
 ### Added
 
+- Protein–phenotype alignment tools: `tl.protein_phenotype_alignment`,
+  `tl.alignment_summary` and `tl.cross_modal_mantel`. Compare matched protein
+  and transcriptomic embeddings with a seeded Mantel permutation test,
+  kNN Jaccard, phenocopy AUROC and Recall@K; optional perturbation-level
+  aggregation and control filtering support cell-level inputs.
+
 - Annotation sources rebuilt on verified provider contracts (`embpy.resources`). New offline indexes: `molecule.chebi_obo.ChebiOboIndex` (ChEBI OBO, `has role` edges keyed by standard InChIKey), `molecule.kegg_index` (`build_kegg_reference`, `KeggIndex`: KEGG entries keyed by InChIKey through KEGG's own PubChem **SIDs**, with exact and connectivity match tiers and separate compound-pathway, drug-map and target-pathway families) and `gene.reactome.ReactomeIndex` (Reactome release files joined on Entrez ID, lowest-level and top-level pathways). New methods: `MoleculeAnnotator.lookup_chebi_roles`, `lookup_kegg`, `resolve_pubchem_cids_by_inchikey`, `get_pubchem_xrefs_batch`, `get_chebi_compounds`; `GeneAnnotator.get_pathways_batch` (one MyGene POST per 250 symbols, HGNC renames recorded as `renamed_from`); `ChEMBLAnnotator.resolve_many` and `get_*_many` batch methods; `ChEMBLAnnotator(backend="sqlite", db_path=...)`, a read-only ChEMBL SQLite backend with the REST return shapes; `CellLineAnnotator(depmap_model_csv=..., passports_models=...)` and `get_cellosaurus_batch`. Every result carries a `status`, and failed requests are reported as `service_error`/`batch_failed` (or raise `AnnotationServiceError`), never as an empty answer.
 
 - Stage-1 `embpy.tl.fusion`: ID-aligned concatenation, reusable per-view normalization and weighting, joint PCA, score/rank ensembles, AnnData/static-store adapters, provenance and serializable fitted state.

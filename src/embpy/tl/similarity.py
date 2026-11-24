@@ -8,16 +8,20 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 import pandas as pd
 from anndata import AnnData
-from scipy.stats import pearsonr, spearmanr, wasserstein_distance
+from scipy.sparse import issparse
+from scipy.stats import pearsonr, rankdata, spearmanr, wasserstein_distance
 from sklearn.metrics.pairwise import cosine_similarity, euclidean_distances
 from sklearn.neighbors import NearestNeighbors
+
+logger = logging.getLogger(__name__)
 
 
 def _get_embedding(adata: AnnData, obsm_key: str) -> np.ndarray:
     """Extract an embedding matrix from *adata.obsm* with validation."""
     if obsm_key not in adata.obsm:
         raise KeyError(f"'{obsm_key}' not found in adata.obsm. Available keys: {list(adata.obsm.keys())}")
-    X = np.asarray(adata.obsm[obsm_key], dtype=np.float64)
+    value = adata.obsm[obsm_key]
+    X = np.asarray(value.toarray() if issparse(value) else value, dtype=np.float64)
     if X.ndim != 2:
         raise ValueError(f"Expected a 2-D array in adata.obsm['{obsm_key}'], got shape {X.shape}.")
     return X
@@ -288,17 +292,20 @@ def knn_jaccard(
         raise ValueError("knn_jaccard: matrices must have the same number of rows.")
     if X_a.shape[0] < 2:
         raise ValueError("knn_jaccard: at least two rows are required.")
+    if isinstance(k, bool | np.bool_) or not isinstance(k, int | np.integer) or k < 1:
+        raise ValueError("knn_jaccard: k must be a positive integer.")
 
     actual_k = min(int(k), X_a.shape[0] - 1)
     nn_a = NearestNeighbors(n_neighbors=actual_k + 1, metric=metric).fit(X_a)
     nn_b = NearestNeighbors(n_neighbors=actual_k + 1, metric=metric).fit(X_b)
-    idx_a = nn_a.kneighbors(X_a, return_distance=False)[:, 1:]
-    idx_b = nn_b.kneighbors(X_b, return_distance=False)[:, 1:]
+    # Tied vectors can place self anywhere in the returned neighbours.
+    idx_a = nn_a.kneighbors(X_a, return_distance=False)
+    idx_b = nn_b.kneighbors(X_b, return_distance=False)
 
     jaccard = np.zeros(X_a.shape[0], dtype=np.float64)
     for i, (a_row, b_row) in enumerate(zip(idx_a, idx_b, strict=True)):
-        set_a = set(a_row)
-        set_b = set(b_row)
+        set_a = set(a_row[a_row != i][:actual_k])
+        set_b = set(b_row[b_row != i][:actual_k])
         union = len(set_a | set_b)
         jaccard[i] = len(set_a & set_b) / union if union else 0.0
     return jaccard, float(jaccard.mean())
@@ -476,6 +483,128 @@ def _neighbor_row(
     if metric == "cosine":
         row["similarity"] = float(1.0 - distance)
     return row
+
+
+def cross_modal_mantel(
+    adata: AnnData,
+    obsm_key_a: str,
+    obsm_key_b: str,
+    metric: str = "cosine",
+    *,
+    n_permutations: int = 999,
+    random_state: int | np.random.Generator | None = 0,
+) -> tuple[float, float]:
+    """Mantel test: Spearman correlation between two pairwise distance matrices.
+
+    A non-zero correlation indicates that observations that are far apart in
+    space *A* also tend to be far apart in space *B*.  Used to quantify
+    cross-modal geometric alignment (e.g. protein embedding vs. transcriptomic
+    phenotype space) without requiring the two spaces to have the same
+    dimensionality.
+
+    Parameters
+    ----------
+    adata
+        AnnData containing both embeddings.
+    obsm_key_a, obsm_key_b
+        Keys in ``.obsm`` for the two embedding spaces.
+    metric
+        Distance metric used to build both matrices.
+        ``"cosine"`` (default) or ``"euclidean"``.
+    n_permutations
+        Number of joint row/column label permutations used for the two-sided
+        Mantel p-value. Zero computes only the correlation, returning a NaN
+        p-value. The smallest possible p-value is ``1 / (n_permutations + 1)``.
+    random_state
+        Random seed or generator for reproducible permutations; ``None`` uses
+        fresh randomness.
+
+    Returns
+    -------
+    Tuple of ``(rho, p_value)`` — Spearman correlation between the upper
+    triangles of the two distance matrices and the corresponding two-sided
+    permutation p-value. Constant distances give ``(nan, nan)``.
+
+    Notes
+    -----
+    Distances sharing an observation are dependent. Significance therefore
+    permutes observation labels jointly on both axes of one distance matrix,
+    rather than using the ordinary Spearman p-value for independent pairs.
+    This assumes exchangeable observations: analyse cell lines/contexts
+    separately when unrestricted permutations are inappropriate. Memory is
+    quadratic in the number of observations.
+
+    Examples
+    --------
+    >>> rho, p = tl.cross_modal_mantel(adata_pb, "X_esm2_650M", "X_scgpt")
+    >>> print(f"Mantel ρ = {rho:.3f}  (p = {p:.2e})")
+    """
+    if (
+        isinstance(n_permutations, bool | np.bool_)
+        or not isinstance(n_permutations, int | np.integer)
+        or n_permutations < 0
+    ):
+        raise ValueError("n_permutations must be a non-negative integer.")
+    X_a = _get_embedding(adata, obsm_key_a)
+    X_b = _get_embedding(adata, obsm_key_b)
+    if not np.isfinite(X_a).all() or not np.isfinite(X_b).all():
+        raise ValueError("Embedding matrices must contain only finite values.")
+
+    if X_a.shape[0] != X_b.shape[0]:
+        raise ValueError(
+            f"Embeddings must have the same number of observations; "
+            f"got {X_a.shape[0]} for '{obsm_key_a}' and {X_b.shape[0]} for '{obsm_key_b}'."
+        )
+    n = X_a.shape[0]
+    if n < 3:
+        raise ValueError(f"Need at least 3 observations for a Mantel test, got {n}.")
+
+    if metric == "cosine":
+        dist_a = 1.0 - cosine_similarity(X_a.astype(np.float64))
+        dist_b = 1.0 - cosine_similarity(X_b.astype(np.float64))
+    elif metric == "euclidean":
+        dist_a = euclidean_distances(X_a.astype(np.float64))
+        dist_b = euclidean_distances(X_b.astype(np.float64))
+    else:
+        raise ValueError(f"Unknown metric '{metric}'. Choose from: cosine, euclidean.")
+
+    triu = np.triu_indices(n, k=1)
+    # Ranking once is equivalent to re-ranking after a label permutation:
+    # the set of off-diagonal distances never changes, including ties.
+    rank_a = rankdata(dist_a[triu])
+    rank_b = rankdata(dist_b[triu])
+    rank_a -= rank_a.mean()
+    rank_b -= rank_b.mean()
+    norm_a, norm_b = np.linalg.norm(rank_a), np.linalg.norm(rank_b)
+    if norm_a == 0 or norm_b == 0:
+        return float("nan"), float("nan")
+    rank_a /= norm_a
+    rank_b /= norm_b
+    rho = float(np.clip(rank_a @ rank_b, -1.0, 1.0))
+    p = float("nan")
+    if n_permutations:
+        rank_matrix = np.zeros((n, n), dtype=np.float64)
+        rank_matrix[triu] = rank_b
+        rank_matrix[(triu[1], triu[0])] = rank_b
+        rng = np.random.default_rng(random_state)
+        exceedances = 0
+        tolerance = 100 * np.finfo(float).eps
+        for _ in range(n_permutations):
+            perm = rng.permutation(n)
+            permuted_rho = float(rank_a @ rank_matrix[perm[triu[0]], perm[triu[1]]])
+            exceedances += abs(permuted_rho) >= abs(rho) - tolerance
+        p = float((exceedances + 1) / (n_permutations + 1))
+
+    logger.info(
+        "Mantel test ('%s' vs '%s', metric=%s, n=%d): rho=%.4f, p=%.4e",
+        obsm_key_a,
+        obsm_key_b,
+        metric,
+        n,
+        rho,
+        p,
+    )
+    return rho, p
 
 
 def pseudobulk_embeddings(

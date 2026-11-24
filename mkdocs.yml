@@ -95,6 +95,7 @@ nav:
       - Stage 2 LINCS Benchmark: fusion_alignment_benchmark_lincs.md
       - Kernel and Neural Fusion: fusion_nonlinear.md
   - Cross-Platform & Hardware: cross-platform.md
+  - Protein–Phenotype Alignment: protein_phenotype_alignment.md
   - Architecture: technical.md
   - API Reference: api-reference.md
   - Contributing: contributing.md

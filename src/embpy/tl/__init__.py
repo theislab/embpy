@@ -35,6 +35,7 @@ __all__ = [
     "compute_distance_matrix",
     "compute_knn_overlap",
     "compute_similarity",
+    "cross_modal_mantel",
     "embedding_similarity_matrix",
     "knn_jaccard",
     "nearest_neighbors",
@@ -93,6 +94,8 @@ __all__ = [
     "run_pipeline",
     # protein
     "WeightedProteinEmbedder",
+    "alignment_summary",
+    "protein_phenotype_alignment",
     "build_cross_species_adata",
     "identity_vs_similarity",
     "ortholog_similarity_matrix",
@@ -185,6 +188,7 @@ from .protein.cross_species import (
     identity_vs_similarity,
     ortholog_similarity_matrix,
 )
+from .protein.phenotype_alignment import alignment_summary, protein_phenotype_alignment
 from .protein.weighted_embedding import WeightedProteinEmbedder
 from .scib_metrics import compute_scib_metrics
 from .similarity import (
@@ -193,6 +197,7 @@ from .similarity import (
     compute_distance_matrix,
     compute_knn_overlap,
     compute_similarity,
+    cross_modal_mantel,
     embedding_similarity_matrix,
     knn_jaccard,
     nearest_neighbors,
