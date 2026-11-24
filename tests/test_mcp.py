@@ -1028,6 +1028,107 @@ def test_failed_save_keeps_the_existing_file(monkeypatch, tmp_path):
     assert not [f for f in os.listdir(tmp_path) if f.startswith(".embpy-tmp-")]
 
 
+@pytest.fixture
+def scvi_unavailable(monkeypatch):
+    """scVI fails as it does without scvi-tools, whether or not it is installed here."""
+    from embpy.models.singlecell_models import ScVIToolsWrapper
+
+    def missing(self, device="cpu"):
+        raise ModuleNotFoundError("No module named 'scvi'")
+
+    monkeypatch.setattr(ScVIToolsWrapper, "load", missing)
+
+
+def _with_earlier_scvi(sample_adata_path, tmp_path):
+    """The sample data plus an scVI result and its record from an earlier run."""
+    import anndata
+
+    adata = anndata.read_h5ad(sample_adata_path)
+    adata.obsm["X_scvi"] = np.full((adata.n_obs, 10), 7.0, dtype=np.float32)
+    adata.uns["embpy_cell_embeddings"] = {"scvi": {"obsm_key": "X_scvi", "embedding_dim": 10}}
+    path = str(tmp_path / "with_old_scvi.h5ad")
+    adata.write_h5ad(path)
+    return path
+
+
+def test_failed_models_are_not_reported_as_computed(scvi_unavailable, sample_adata_path, tmp_path):
+    """One model fails: partial_success, only the others listed, the earlier result untouched and flagged."""
+    import anndata
+
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=_with_earlier_scvi(sample_adata_path, tmp_path), models=["pca", "scvi"],
+                             output_path=out)
+    assert res["status"] == "partial_success", res
+    assert res["models_computed"] == ["pca"]
+    assert "No module named 'scvi'" in res["models_failed"]["scvi"]
+    assert res["not_updated"] == ["X_scvi"]
+    assert res["embedding_keys"] == ["X_pca"]
+    assert "scvi-tools" in res["suggestion"]
+
+    saved = anndata.read_h5ad(out)
+    np.testing.assert_array_equal(np.asarray(saved.obsm["X_scvi"]), 7.0)
+    records = saved.uns["embpy_cell_embeddings"]
+    assert records["pca"]["obsm_key"] == "X_pca"
+    assert records["scvi"]["obsm_key"] == "X_scvi" and "error" not in records["scvi"]
+    assert not [k for k in saved.obsm if k.startswith("_embpy_new_")]
+
+
+def test_all_models_failing_is_an_error_and_writes_nothing(scvi_unavailable, sample_adata_path, tmp_path):
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=_with_earlier_scvi(sample_adata_path, tmp_path), models=["scvi"],
+                             output_path=out)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "ModuleNotFoundError"
+    assert res["models_computed"] == [] and "scvi" in res["models_failed"]
+    assert res["not_updated"] == ["X_scvi"]
+    assert not os.path.exists(out)
+
+
+def test_output_key_is_recorded_in_the_metadata(sample_adata_path, tmp_path):
+    """PCA saved as my_pca: the record points at my_pca and an earlier X_pca is left alone."""
+    import anndata
+
+    adata = anndata.read_h5ad(sample_adata_path)
+    adata.obsm["X_pca"] = np.full((adata.n_obs, 5), 3.0, dtype=np.float32)
+    path = str(tmp_path / "with_old_pca.h5ad")
+    adata.write_h5ad(path)
+
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", output_key="my_pca", output_path=out)
+    assert res["status"] == "success", res
+    assert res["embedding_keys"] == ["my_pca"]
+
+    saved = anndata.read_h5ad(out)
+    assert saved.uns["embpy_cell_embeddings"]["pca"]["obsm_key"] == "my_pca"
+    assert saved.obsm["my_pca"].shape[0] == saved.n_obs
+    np.testing.assert_array_equal(np.asarray(saved.obsm["X_pca"]), 3.0)
+
+
+def test_one_failing_model_keeps_the_others_results(monkeypatch, tmp_path):
+    """Two molecule models, one fails: the other is saved and the call is a partial success."""
+    import anndata
+    from embpy import BioEmbedder
+
+    real_embed = BioEmbedder.embed
+
+    def embed(self, *args, model=None, **kwargs):
+        if model == "maccs_fp":
+            raise RuntimeError("weights could not be downloaded")
+        return real_embed(self, *args, model=model, **kwargs)
+
+    monkeypatch.setattr(BioEmbedder, "embed", embed)
+    wells = str(tmp_path / "wells.h5ad")
+    _write_wells(wells, ["CCO", "c1ccccc1", "CC(=O)O", "CCN"], [1.0, 2.0, 0.1, 5.0])
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=wells, models=["morgan_fp", "maccs_fp"], entity_type="molecule",
+                             obs_column="smiles", output_path=out)
+    assert res["status"] == "partial_success", res
+    assert res["models_computed"] == ["morgan_fp"]
+    assert "weights could not be downloaded" in res["models_failed"]["maccs_fp"]
+    (key,) = res["embedding_keys"]
+    assert "morgan_fp" in key and key in anndata.read_h5ad(out).obsm
+
+
 def test_scaling_does_not_change_selected_hvgs(tmp_path):
     """HVGs are picked from log-normalized expression, before the optional scaling step."""
     import anndata

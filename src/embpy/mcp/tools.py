@@ -1385,6 +1385,115 @@ list_available_models = list_model_registry
 # .uns entries that collect one record per embedding key; merged, not replaced.
 _UNS_COLLECTIONS = ("embeddings", "uns_embeddings", "perturbations")
 
+# embed_cells writes this call's matrices under this prefix first; a matrix moves to
+# its final key (X_<model> or output_key) only when its model succeeded.
+_NEW_CELL_EMBEDDING_PREFIX = "_embpy_new_X_"
+_CELL_EMBEDDING_RECORDS = "embpy_cell_embeddings"
+
+# Missing module -> what to install, for the hints in error responses.
+_INSTALL_FOR_MODULE = {
+    "torch": 'pip install "embpy[cpu]" (or "embpy[gpu]" on a CUDA machine)',
+    "transformers": 'pip install "embpy[cpu]"',
+    "scvi": "pip install scvi-tools",
+    "skmisc": "pip install scikit-misc",
+    "scanpy": 'pip install "embpy[mcp]"',
+    "scib": 'pip install "embpy[scib]"',
+    "cell_eval": 'pip install "embpy[eval]"',
+    "pertpy": 'pip install "embpy[pertpy]"',
+    "pyensembl": 'pip install "embpy[genome]"',
+}
+
+
+def _install_hint(message: str) -> str | None:
+    """What to install for the first "No module named ..." in ``message``, if there is one."""
+    match = re.search(r"No module named '([A-Za-z0-9_]+)", message)
+    if not match:
+        return None
+    module = match.group(1)
+    command = _INSTALL_FOR_MODULE.get(module)
+    if command:
+        return f"The package providing '{module}' is not installed: {command}"
+    return f"The Python module '{module}' is not installed; install the package that provides it."
+
+
+def _settle_cell_embeddings(
+    adata: Any, earlier_records: dict[str, Any], models: list[str], output_key: str | None
+) -> tuple[list[tuple[str, str]], list[str], dict[str, str], list[str]]:
+    """Move each successful model's matrix to its final key; leave a failed model's data alone.
+
+    embed_cells wrote this call's matrices under ``_NEW_CELL_EMBEDDING_PREFIX`` and
+    recorded, per model, the key it wrote or the error it hit. A successful model's
+    matrix replaces whatever ``X_<model>`` (or ``output_key``) held, and its record
+    points at that key. A failed model changes nothing: an earlier matrix and its
+    record stay as they were, and the key is reported as not updated.
+
+    Returns ``(written, succeeded, failed, not_updated)``.
+    """
+    run_records = dict(adata.uns.get(_CELL_EMBEDDING_RECORDS) or {})
+    records = dict(earlier_records)
+    written: list[tuple[str, str]] = []
+    succeeded: list[str] = []
+    failed: dict[str, str] = {}
+    not_updated: list[str] = []
+    for model in models:
+        record = run_records.get(model)
+        new_key = record.get("obsm_key") if isinstance(record, dict) else None
+        final_key = output_key or f"X_{model}"
+        if isinstance(record, dict) and "error" not in record and new_key in adata.obsm:
+            adata.obsm[final_key] = adata.obsm[new_key]
+            del adata.obsm[new_key]
+            records[model] = {**record, "obsm_key": final_key}
+            if f"{model}__vocab" in run_records:
+                records[f"{model}__vocab"] = run_records[f"{model}__vocab"]
+            succeeded.append(model)
+            written.append(("obsm", final_key))
+        else:
+            error = record.get("error") if isinstance(record, dict) else None
+            failed[model] = str(error or "the model returned no embedding")
+            if final_key in adata.obsm:
+                not_updated.append(final_key)
+    for key in [k for k in adata.obsm.keys() if str(k).startswith(_NEW_CELL_EMBEDDING_PREFIX)]:
+        del adata.obsm[key]
+    if succeeded:
+        if "__preprocessing__" in run_records:
+            records["__preprocessing__"] = run_records["__preprocessing__"]
+        adata.uns[_CELL_EMBEDDING_RECORDS] = records
+        written.append(("uns", _CELL_EMBEDDING_RECORDS))
+    elif earlier_records:
+        adata.uns[_CELL_EMBEDDING_RECORDS] = records
+    else:
+        adata.uns.pop(_CELL_EMBEDDING_RECORDS, None)
+    return written, succeeded, failed, not_updated
+
+
+def _keys_for_model(adata: Any, model: str) -> list[str]:
+    """Embedding keys in ``adata`` that an earlier run of ``model`` wrote (e.g. X_emb__molecule__morgan_fp__...)."""
+    keys = [*adata.obsm.keys(), *adata.varm.keys()]
+    return [str(k) for k in keys if f"__{model}__" in str(k) or str(k) == f"X_{model}"]
+
+
+def _no_model_succeeded(path: str, models: list[str], failed: dict[str, str], not_updated: list[str]) -> dict[str, Any]:
+    """Error response when every requested model failed; nothing is written in that case."""
+    details = "; ".join(f"{model}: {error}" for model, error in failed.items())
+    response: dict[str, Any] = {
+        "status": "error",
+        "error_type": "ModuleNotFoundError" if "No module named" in details else "EmbeddingError",
+        "error": f"No model produced an embedding, so nothing was written. {details}",
+        "path": str(path),
+        "models": models,
+        "models_computed": [],
+        "models_failed": failed,
+    }
+    if not_updated:
+        response["not_updated"] = not_updated
+        response["note"] = (
+            f"The input already holds {not_updated} from an earlier run; those results were not recomputed."
+        )
+    hint = _install_hint(details)
+    if hint:
+        response["suggestion"] = hint
+    return response
+
 
 def _embedding_workspace(adata: Any, mask: np.ndarray | None, axis: str | None) -> Any:
     """Return a container with the rows to embed and none of ``adata``'s earlier results.
@@ -1596,13 +1705,17 @@ def compute_embeddings(
     Returns
     -------
     dict[str, Any]
-        - status: "success" or "error"
+        - status: "success" (every model produced an embedding), "partial_success"
+          (some failed; see models_failed) or "error" (none did; nothing is written)
         - output_path: Saved AnnData destination path
         - entity_type: Modality embedded
-        - models_computed: Canonical model keys that were run
+        - models_computed: Canonical keys of the models that produced an embedding
+        - models_failed: Model -> error, for the models that did not (only when some failed)
+        - not_updated: Keys already in the file from an earlier run of a failed model;
+          they were left unchanged and are not this call's results
         - model_aliases_applied: Requested names that were mapped to a canonical key
-        - embedding_keys: Keys added by this call (.obsm / .varm / .uns)
-        - embedding_shapes: Shapes of the added embedding matrices
+        - embedding_keys: Keys written by this call (.obsm / .varm)
+        - embedding_shapes: Shapes of the written embedding matrices
         - execution_time_seconds: Wall-clock execution time
     """
     t0 = time.time()
@@ -1676,6 +1789,9 @@ def compute_embeddings(
 
         adata = anndata.read_h5ad(resolved_path)
         before = {("obsm", k) for k in adata.obsm} | {("varm", k) for k in adata.varm} | {("uns", k) for k in adata.uns}
+        succeeded: list[str] = []
+        failed: dict[str, str] = {}
+        not_updated: list[str] = []
 
         with contextlib.redirect_stdout(sys.stderr):
             embedder = BioEmbedder(device=device)
@@ -1697,13 +1813,21 @@ def compute_embeddings(
                     if adata.n_vars < 2000:
                         extra_kwargs["pca_use_hvg"] = False
 
+                # embed_cells records a failed model as {"error": ...} and carries on.
+                # New matrices go to temporary keys and move to X_<model> (or
+                # output_key) only for the models that succeeded, so a failure
+                # never leaves an earlier result looking freshly computed.
+                earlier_records = dict(adata.uns.get(_CELL_EMBEDDING_RECORDS) or {})
                 adata_out = embedder.embed_cells(
                     adata,
                     models=resolved_models,
                     batch_size=batch_size,
                     preprocessing=preprocessing,
-                    obsm_prefix="X_",
+                    obsm_prefix=_NEW_CELL_EMBEDDING_PREFIX,
                     **extra_kwargs,
+                )
+                written, succeeded, failed, not_updated = _settle_cell_embeddings(
+                    adata_out, earlier_records, resolved_models, output_key
                 )
             else:
                 # Rows with no identifier in the chosen column (e.g. control wells after
@@ -1733,45 +1857,48 @@ def compute_embeddings(
                     if has_id.all():
                         has_id = None
 
-                # Embed into a fresh container that holds only the rows to embed and
-                # no earlier embeddings, so every matrix in it afterwards was computed
-                # by this call -- including keys that already existed in the file.
-                workspace = _embedding_workspace(adata, has_id, axis)
-                embedder.embed(
-                    workspace,
-                    entity_type=route["backend"],
-                    model=resolved_models[0] if len(resolved_models) == 1 else resolved_models,
-                    id_type=id_type,
-                    organism=organism,
-                    obs_column=obs_column,
-                    var_column=var_column,
-                    anndata_axis=None if input_axis == "auto" else input_axis,
-                    # Attach to the axis the inputs were read from.
-                    attach_to="obs" if obs_column else "var" if var_column else "auto" if input_axis == "auto" else input_axis,
-                    is_perturbation=bool(route.get("is_perturbation")),
-                    key=output_key,
-                    missing=missing,
-                    output="anndata",
-                )
-                # Copy new and recomputed results back; rows without an id become NaN.
-                written = _merge_embedding_workspace(adata, workspace, has_id, axis)
+                # Embed each model into a fresh container that holds only the rows to
+                # embed and no earlier embeddings, so every matrix in it afterwards was
+                # computed by this call -- including keys that already existed in the
+                # file. One model at a time, so a failing model does not discard the
+                # others' results.
+                written = []
+                for model in resolved_models:
+                    workspace = _embedding_workspace(adata, has_id, axis)
+                    try:
+                        embedder.embed(
+                            workspace,
+                            entity_type=route["backend"],
+                            model=model,
+                            id_type=id_type,
+                            organism=organism,
+                            obs_column=obs_column,
+                            var_column=var_column,
+                            anndata_axis=None if input_axis == "auto" else input_axis,
+                            # Attach to the axis the inputs were read from.
+                            attach_to="obs" if obs_column else "var" if var_column else "auto" if input_axis == "auto" else input_axis,
+                            is_perturbation=bool(route.get("is_perturbation")),
+                            key=output_key,
+                            missing=missing,
+                            output="anndata",
+                        )
+                    except Exception as exc:  # noqa: BLE001 -- reported per model below
+                        if len(resolved_models) == 1:
+                            raise
+                        logger.warning("compute_embeddings: model %s failed on %s: %s", model, path, exc)
+                        failed[model] = f"{type(exc).__name__}: {exc}"
+                        not_updated += _keys_for_model(adata, model)
+                        continue
+                    # Copy new and recomputed results back; rows without an id become NaN.
+                    written += _merge_embedding_workspace(adata, workspace, has_id, axis)
+                    succeeded.append(model)
                 adata_out = adata
 
-        if ent_str == "single_cell":
-            # embed_cells records the .obsm key of every model it computed.
-            cell_meta = adata_out.uns.get("embpy_cell_embeddings", {}) or {}
-            written = [("obsm", str(m["obsm_key"])) for m in cell_meta.values()
-                       if isinstance(m, dict) and m.get("obsm_key") in adata_out.obsm]
-            if cell_meta:
-                written.append(("uns", "embpy_cell_embeddings"))
+        if not succeeded:
+            return _no_model_succeeded(path, resolved_models, failed, not_updated)
+
         after = {("obsm", k) for k in adata_out.obsm} | {("varm", k) for k in adata_out.varm} | {("uns", k) for k in adata_out.uns}
         added = sorted((after - before) | set(written))
-
-        if output_key and ent_str == "single_cell":
-            new_obsm = [k for slot, k in written if slot == "obsm"]
-            if len(new_obsm) == 1 and new_obsm[0] != output_key:
-                adata_out.obsm[output_key] = adata_out.obsm.pop(new_obsm[0])
-                added = sorted((set(added) - {("obsm", new_obsm[0])}) | {("obsm", output_key)})
 
         if not output_path:
             base, ext = os.path.splitext(resolved_path)
@@ -1786,13 +1913,13 @@ def compute_embeddings(
         matrix_keys = [(slot, key) for slot, key in added if slot in ("obsm", "varm")]
         shapes = {str(key): [int(d) for d in getattr(adata_out, slot)[key].shape] for slot, key in matrix_keys}
 
-        return {
-            "status": "success",
+        response: dict[str, Any] = {
+            "status": "partial_success" if failed else "success",
             "input_path": str(resolved_path),
             "output_path": saved_path,
             "entity_type": ent_str,
             "n_cells": int(adata_out.n_obs),
-            "models_computed": resolved_models,
+            "models_computed": succeeded,
             "model_aliases_applied": aliases_applied,
             "preprocessing_adjustments": locals().get("adjustments") or {},
             "embedding_keys": [str(key) for _, key in matrix_keys],
@@ -1801,6 +1928,20 @@ def compute_embeddings(
             "metadata_keys": [str(key) for slot, key in added if slot == "uns"],
             "execution_time_seconds": round(time.time() - t0, 3),
         }
+        if failed:
+            response["models_failed"] = failed
+            warning = (
+                f"{len(failed)} of {len(resolved_models)} models failed ({', '.join(failed)}); "
+                f"only {succeeded} were computed."
+            )
+            if not_updated:
+                response["not_updated"] = not_updated
+                warning += f" {not_updated} in the file come from an earlier run and were not recomputed."
+            response["warning"] = warning
+            hint = _install_hint(" ".join(failed.values()))
+            if hint:
+                response["suggestion"] = hint
+        return response
 
     except Exception as exc:
         msg = str(exc)
@@ -1825,7 +1966,9 @@ def compute_embeddings(
             "models": [str(m) for m in (model_list or [models])],
         }
         if isinstance(exc, (ImportError, ModuleNotFoundError)):
-            resp["suggestion"] = "Install the model's optional dependencies (see list_model_registry optional_extras_status)."
+            resp["suggestion"] = _install_hint(msg) or (
+                "Install the model's optional dependencies (see list_model_registry optional_extras_status)."
+            )
         return resp
 
 
