@@ -1,0 +1,4 @@
+# Test fixtures are recorded provider replies and release files, and some tests
+# compare their bytes (test_kegg_index). Keep them byte-identical on every
+# platform: no CRLF conversion on Windows checkouts.
+tests/embpy/fixtures/** -text
