@@ -395,7 +395,25 @@ def run_phase_c(tmpdir: str) -> None:
     print("Simulating services that answer with no annotations...")
     empty = mock.MagicMock(status_code=200, ok=True)
     empty.json.return_value = {"hits": [], "results": []}
-    with mock.patch("requests.get", return_value=empty), mock.patch("requests.post", return_value=empty):
+
+    def mygene_batch(url, data=None, json=None, timeout=None, **kwargs):
+        # MyGene's batch endpoint answers a list with one "notfound" row per query.
+        reply = mock.MagicMock(status_code=200, ok=True)
+        terms = (data or {}).get("q", "").split(",") if isinstance(data, dict) else []
+        reply.json.return_value = [{"query": t, "notfound": True} for t in terms if t]
+        return reply
+
+    from embpy.resources.gene.reactome import ReactomeIndex
+
+    fixture_index = ReactomeIndex.from_dir(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "tests", "embpy", "fixtures", "gene", "reactome98"),
+        release="98",
+    )
+    with (
+        mock.patch("requests.get", return_value=empty),
+        mock.patch("requests.post", side_effect=mygene_batch),
+        mock.patch("embpy.resources.gene.reactome.load_reactome_index", return_value=fixture_index),
+    ):
         res_empty = tools.annotate_metadata(
             path=fail_h5ad,
             output_path=fail_out_h5ad,
