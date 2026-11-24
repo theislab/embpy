@@ -38,6 +38,7 @@ import io
 import json
 import logging
 import os
+import tempfile
 import threading
 from collections import defaultdict
 from collections.abc import Iterable, Iterator
@@ -382,6 +383,31 @@ def reactome_cache_dir(release: str = REACTOME_RELEASE) -> Path:
     return root / "reactome" / str(release)
 
 
+#: Columns of the first data row of each release file and the ones holding a pathway stId.
+_FILE_LAYOUT: dict[str, tuple[int, tuple[int, ...]]] = {
+    "NCBI2Reactome.txt": (6, (1,)),
+    "ReactomePathwaysRelation.txt": (2, (0, 1)),
+    "ReactomePathways.txt": (3, (0,)),
+}
+
+
+def _check_release_file(path: Path, name: str) -> None:
+    """Raise ValueError unless ``path`` looks like Reactome's ``name`` (not, say, a proxy's HTML page).
+
+    The first line must be UTF-8 text with the file's tab-separated columns and
+    pathway stIds (``R-...``) where the release puts them.
+    """
+    n_cols, st_id_cols = _FILE_LAYOUT[name]
+    with open(path, "rb") as fh:
+        first = fh.readline(1 << 16)
+    try:
+        cols = first.decode("utf-8").rstrip("\r\n").split("\t")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"{name} is not UTF-8 text") from exc
+    if len(cols) < n_cols or not all(cols[i].strip().startswith("R-") for i in st_id_cols):
+        raise ValueError(f"{name} does not look like a Reactome release file (first line: {first[:80]!r})")
+
+
 def download_reactome_files(
     directory: str | os.PathLike[str] | None = None,
     *,
@@ -418,7 +444,10 @@ def download_reactome_files(
     for name, url in REACTOME_FILES.items():
         if _find(folder, name, required=False) is not None:
             continue
-        part = folder / f"{name}.part"
+        # A name of its own per download, so two processes never write one file.
+        fd, part_name = tempfile.mkstemp(prefix=f".{name}.", suffix=".part", dir=folder)
+        os.close(fd)
+        part = Path(part_name)
         size = 0
         try:
             with requests.get(url, stream=True, timeout=timeout) as resp:
@@ -431,13 +460,14 @@ def download_reactome_files(
                         size += len(chunk)
             if expected is not None and not encoded and size != int(expected):
                 raise OSError(f"incomplete download: {size} of {expected} bytes")
+            _check_release_file(part, name)
+            os.replace(part, folder / name)
         except (requests.RequestException, OSError, ValueError) as exc:
             with contextlib.suppress(OSError):
                 part.unlink()
             raise ReactomeUnavailableError(
                 f"Couldn't reach Reactome: {name} could not be downloaded from {url} ({type(exc).__name__}: {exc})"
             ) from exc
-        os.replace(part, folder / name)
         logger.info("Downloaded Reactome %s (%d bytes) to %s", name, size, folder)
     version = folder / "version.json"
     if not version.exists():
@@ -483,6 +513,32 @@ def load_reactome_index(
         if index is None:
             if download:
                 download_reactome_files(folder)
-            index = ReactomeIndex.from_dir(folder, species=species)
+            try:
+                index = _parse_cached(folder, species)
+            except ReactomeUnavailableError:
+                if not download:
+                    raise
+                # A damaged cache: remove it and fetch the files once more.
+                _clear_cached(folder)
+                download_reactome_files(folder)
+                index = _parse_cached(folder, species)
             _INDEXES[key] = index
     return index
+
+
+def _parse_cached(folder: Path, species: str) -> ReactomeIndex:
+    """Parse the cached files; an unreadable or empty result means the cache is damaged."""
+    try:
+        index = ReactomeIndex.from_dir(folder, species=species)
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise ReactomeUnavailableError(f"The cached Reactome files in {folder} cannot be read: {exc}") from exc
+    if len(index) == 0 and species in ("Homo sapiens", "Mus musculus"):
+        raise ReactomeUnavailableError(f"The cached Reactome files in {folder} hold no {species} genes")
+    return index
+
+
+def _clear_cached(folder: Path) -> None:
+    for name in (*REACTOME_FILES, "version.json"):
+        for candidate in (folder / name, folder / f"{name}.gz"):
+            with contextlib.suppress(OSError):
+                candidate.unlink()

@@ -264,3 +264,43 @@ class TestDownload:
         with pytest.raises(ReactomeUnavailableError, match="^Couldn't reach Reactome"):
             load_reactome_index(tmp_path)
         assert not list(tmp_path.iterdir())
+
+
+class _HtmlPage(_Download):
+    """A proxy or captive portal: HTTP 200, a correct Content-Length, but an HTML page."""
+
+    def __call__(self, url, stream=False, timeout=None):
+        self.urls.append(url)
+        body = b"<html><body>Please log in to the network</body></html>\n"
+        return _Response(body, length=len(body))
+
+
+class TestDamagedDownloads:
+    @pytest.fixture(autouse=True)
+    def _fresh_index_cache(self, monkeypatch):
+        from embpy.resources.gene import reactome
+
+        monkeypatch.setattr(reactome, "_INDEXES", {})
+
+    def test_a_page_that_is_not_the_release_file_is_not_kept(self, monkeypatch, tmp_path):
+        import requests
+
+        from embpy.resources.gene.reactome import ReactomeUnavailableError, load_reactome_index
+
+        monkeypatch.setattr(requests, "get", _HtmlPage())
+        with pytest.raises(ReactomeUnavailableError, match="does not look like a Reactome release file"):
+            load_reactome_index(tmp_path)
+        assert not list(tmp_path.iterdir())
+
+    def test_a_damaged_cache_is_replaced(self, monkeypatch, tmp_path):
+        import requests
+
+        from embpy.resources.gene.reactome import load_reactome_index
+
+        for name in REACTOME_FILES:  # left behind by an older version, a full disk, ...
+            (tmp_path / name).write_bytes(b"\xff\xfe not a release file\n")
+        fake = _Download()
+        monkeypatch.setattr(requests, "get", fake)
+        index = load_reactome_index(tmp_path)
+        assert len(fake.urls) == len(REACTOME_FILES)
+        assert any(p["id"] == "R-HSA-111448" for p in index.lookup(7157)["pathways"])
