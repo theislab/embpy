@@ -8,7 +8,7 @@ description: Embed, visualize and benchmark single-cell AnnData (.h5ad) datasets
 These steps use the tools of the `embpy` MCP server (`inspect_data`, `preprocess_counts`,
 `list_model_registry`, `compute_embeddings`, `compute_umap`, `benchmark_scib`,
 `benchmark_perturbations`). If the tools are missing, the server is not installed:
-`pip install "embpy[mcp]"`, then run `embpy-mcp`.
+`pip install "embpy[mcp,models]"`, then connect it (see the embpy-mcp-setup skill).
 
 Every tool reads an `.h5ad` path, writes a new `.h5ad` next to it (or to `output_path`) and
 returns compact JSON with an `output_path`. Pass that path to the next step. The tools never

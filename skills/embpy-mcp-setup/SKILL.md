@@ -8,8 +8,12 @@ description: Install, connect, check and troubleshoot the embpy MCP server and i
 ## Install
 
 ```bash
-pip install "embpy[mcp]"
+pip install "embpy[mcp,models]"
 ```
+
+`models` brings PyTorch, which every embedding model needs (PCA included). On a Linux machine
+without a GPU, install the CPU build first:
+`pip install torch --index-url https://download.pytorch.org/whl/cpu`.
 
 Optional extras, installed only when a task needs them:
 
@@ -23,8 +27,9 @@ Optional extras, installed only when a task needs them:
 
 ## Connect
 
-- Claude Code: `claude mcp add embpy -- python -m embpy.mcp.server`, or load this repository as a
-  plugin with `claude --plugin-dir <path-to-embpy>`.
+- Claude Code: `claude mcp add embpy --scope user -- <full path of that python> -m embpy.mcp.server`
+  (on Windows add `-e PYTHONUTF8=1` before `--`), or load this repository as a plugin with
+  `claude --plugin-dir <path-to-embpy>`. `claude mcp list` shows whether it connects.
 - Claude Desktop / Cursor: add a server whose `command` is the **full path** of the Python that
   has embpy installed, with `args` `["-m", "embpy.mcp.server"]` (see `docs/mcp/client-setup.md`).
 
@@ -44,7 +49,10 @@ runs; `optional_extras_status` shows which extras are installed.
 
 | Symptom | Cause and fix |
 |---|---|
-| No embpy tools available | The server did not start: wrong Python in the config, or embpy/mcp not installed there. Run `python -m embpy.mcp.server` in a terminal with that Python and read the error. |
+| No embpy tools available | The server did not start: wrong Python in the config, or embpy/mcp not installed there. Run `python -m embpy.mcp.server` in a terminal with that Python and read the error (no output and no exit means it works). |
+| `list_model_registry` says PyTorch is not installed | Install the `models` extra: `pip install "embpy[mcp,models]"`. |
+| `preprocess_counts(log_transform=False)` asks for scikit-misc | Older install: `pip install scikit-misc` (the `mcp` extra now includes it). |
+| Reactome pathways: the first request is slow | It downloads Reactome's release files once (about 37 MB) into `~/.cache/embpy/reactome`; later requests reuse them. "Couldn't reach Reactome." means that download failed: retry when online. |
 | Server listed but "connecting" or failed, client log says the connection timed out | The first start of a large environment (cold disk cache) can exceed the client's 30 s limit. Start the session again, or raise the limit for Claude Code with the environment variable `MCP_TIMEOUT=60000`. |
 | `FileNotFoundError` for a file that exists | Relative paths resolve against the **server's** working directory, not yours. Pass absolute paths. |
 | First call that loads scipy never returns (Windows, MCP SDK 1.x) | Fixed in this version: the server preloads scipy at startup. Upgrade embpy if it still happens. |

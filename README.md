@@ -481,9 +481,11 @@ pl.plot_embedding_space(
 `embpy` includes a native [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server exposing an extended suite of bioinformatics tools directly to AI coding assistants (Claude Desktop, Cursor, Windsurf) and autonomous agents. With MCP, your agent can inspect `.h5ad` datasets, map gene identifiers, execute foundation model cell embeddings (`pca`, `scvi`, `scgpt`, `geneformer`, `state`), run `scIB` bio-conservation benchmarks, evaluate perturbations, and project 2D UMAP coordinates.
 
 ```bash
-pip install "embpy[mcp]"
-embpy-mcp
+pip install "embpy[mcp,models]"     # models = PyTorch, needed by every embedding tool
+claude mcp add embpy -- /path/to/env/bin/python -m embpy.mcp.server
 ```
+
+Use the full path of the Python that has embpy installed. `benchmark_scib` and `benchmark_perturbations` also need `embpy[scib]` and `embpy[eval]`; [Client Setup](docs/mcp/client-setup.md) covers Claude Desktop, Cursor and Windsurf.
 
 The repository is also a Claude Code plugin whose [Agent Skills](docs/mcp/skills.md) (`skills/`) teach Claude how to use these tools (`claude --plugin-dir .`). For tool references, setup guides, and example prompts, see the **[MCP documentation](docs/mcp/index.md)** or follow the interactive walkthrough in **[tutorials/05_mcp_agent_workflows.ipynb](tutorials/05_mcp_agent_workflows.ipynb)**.
 

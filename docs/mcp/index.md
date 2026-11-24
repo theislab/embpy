@@ -89,7 +89,7 @@ flowchart TD
 Install `embpy` with MCP support:
 
 ```bash
-pip install "embpy[mcp]"
+pip install "embpy[mcp,models]"     # models = PyTorch, needed by every embedding tool
 ```
 
 Start the MCP server via stdio:

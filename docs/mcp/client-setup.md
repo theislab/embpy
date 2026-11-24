@@ -1,26 +1,53 @@
 # Client Setup & Configuration Guide
 
-The `embpy` MCP server communicates over standard input/output (`stdio`) using JSON-RPC 2.0. This guide provides ready-to-copy configuration files to integrate `embpy` with **Claude Desktop**, **Cursor IDE**, **Windsurf**, and custom Python LLM agent frameworks.
+The `embpy` MCP server communicates over standard input/output (`stdio`) using JSON-RPC 2.0. This guide provides ready-to-copy configuration for **Claude Code**, **Claude Desktop**, **Cursor IDE**, **Windsurf**, and custom Python LLM agent frameworks.
 
 ---
 
 ## 1. Prerequisites
 
-First, ensure that `embpy` is installed with the `[mcp]` extra inside your Python virtual environment:
+Install `embpy` with the `mcp` and `models` extras in a Python 3.11-3.13 virtual environment:
 
 ```bash
-pip install "embpy[mcp]"
+pip install "embpy[mcp,models]"
 ```
 
-Verify that the CLI command is accessible:
+- `mcp` brings the MCP SDK, scanpy and scikit-misc; `models` brings PyTorch, which every
+  embedding model needs (PCA included). On a Linux machine without a GPU, install the CPU
+  build of PyTorch first: `pip install torch --index-url https://download.pytorch.org/whl/cpu`.
+- `benchmark_scib` also needs `embpy[scib]`, and `benchmark_perturbations` needs `embpy[eval]`.
+
+Check the command, and note the full path of this environment's Python for the client configuration:
 
 ```bash
 embpy-mcp --help
+python -c "import sys; print(sys.executable)"
 ```
+
+Started by hand, `embpy-mcp` prints nothing and waits for JSON-RPC messages on stdin; that is
+normal. MCP clients start it themselves.
 
 ---
 
-## 2. Claude Desktop Setup
+## 2. Claude Code Setup
+
+Register the server once, with the full path of the Python that has embpy installed:
+
+```bash
+# macOS / Linux
+claude mcp add embpy --scope user -- /path/to/env/bin/python -m embpy.mcp.server
+# Windows
+claude mcp add embpy --scope user -e PYTHONUTF8=1 -- C:\path\to\env\Scripts\python.exe -m embpy.mcp.server
+```
+
+`claude mcp list` then shows `embpy` as connected, and `/mcp` inside a session lists its tools.
+`--scope user` makes the server available in every project; without it, it is added to the
+current project only. To load the [Agent Skills](skills.md) as well, start Claude with
+`claude --plugin-dir /path/to/embpy` from an environment whose `python` has embpy installed.
+
+---
+
+## 3. Claude Desktop Setup
 
 Claude Desktop looks for server definitions in its configuration file:
 
@@ -89,7 +116,7 @@ After updating `claude_desktop_config.json`, fully quit and restart Claude Deskt
 
 ---
 
-## 3. Cursor IDE Setup
+## 4. Cursor IDE Setup
 
 In Cursor, MCP servers can be configured globally in UI settings or committed directly to a workspace.
 
@@ -155,7 +182,7 @@ On Windows with a local `.venv`:
 
 ---
 
-## 4. Windsurf IDE Setup
+## 5. Windsurf IDE Setup
 
 Windsurf uses `mcp_config.json` to manage tool providers.
 
@@ -198,7 +225,7 @@ Alternatively, targeting an explicit Python environment:
 
 ---
 
-## 5. Custom Python / LLM Agent Frameworks
+## 6. Custom Python / LLM Agent Frameworks
 
 If you are developing custom agent pipelines with Python, LangChain, LlamaIndex, or the official `mcp` client SDK, you can spawn `embpy-mcp` via `stdio`:
 
@@ -234,7 +261,7 @@ asyncio.run(run_agent())
 
 ---
 
-## 6. Verifying Connectivity & Diagnostics
+## 7. Verifying Connectivity & Diagnostics
 
 If your client reports that tools are missing or disconnected:
 
@@ -243,5 +270,5 @@ If your client reports that tools are missing or disconnected:
    python -m embpy.mcp.server
    ```
    The process should wait silently for JSON-RPC input without printing errors or crashing.
-2. **Check Stderr Output:** The server prints diagnostic initialization messages to `stderr`. Check your client's developer console or logs to see confirmation of the 7 registered tools.
+2. **Check Stderr Output:** The server prints diagnostic initialization messages to `stderr`. Check your client's developer console or logs to see confirmation of the 9 registered tools (plus 6 backward-compatible aliases).
 3. **Encoding Issues on Windows:** If you encounter Unicode issues, ensure `PYTHONIOENCODING=utf-8` is set in the `env` block of your client config.

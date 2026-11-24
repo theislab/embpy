@@ -36,7 +36,7 @@ The repository is a Claude Code plugin: `.claude-plugin/plugin.json` registers t
 server, and `skills/` holds the skills.
 
 ```bash
-pip install "embpy[mcp]"
+pip install "embpy[mcp,models]"     # models = PyTorch, needed by every embedding tool
 claude --plugin-dir /path/to/embpy      # load for one session
 ```
 
