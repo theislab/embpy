@@ -112,7 +112,7 @@ Claude Desktop looks for server definitions in its configuration file:
     }
     ```
 
-After updating `claude_desktop_config.json`, fully quit and restart Claude Desktop. The tools menu will list the 9 `embpy` tools (plus 6 backward-compatible aliases).
+After updating `claude_desktop_config.json`, fully quit and restart Claude Desktop. The tools menu will list the 9 `embpy` tools.
 
 ---
 
@@ -249,9 +249,9 @@ async def run_agent():
             tools_result = await session.list_tools()
             print([t.name for t in tools_result.tools])
             
-            # Call inspect_anndata
+            # Call inspect_data
             result = await session.call_tool(
-                "inspect_anndata",
+                "inspect_data",
                 arguments={"path": "data/pbmc3k.h5ad"},
             )
             print(result.content[0].text)
@@ -270,5 +270,5 @@ If your client reports that tools are missing or disconnected:
    python -m embpy.mcp.server
    ```
    The process should wait silently for JSON-RPC input without printing errors or crashing.
-2. **Check Stderr Output:** The server prints diagnostic initialization messages to `stderr`. Check your client's developer console or logs to see confirmation of the 9 registered tools (plus 6 backward-compatible aliases).
+2. **Check Stderr Output:** The server prints diagnostic initialization messages to `stderr`. Check your client's developer console or logs to see confirmation of the 9 registered tools.
 3. **Encoding Issues on Windows:** If you encounter Unicode issues, ensure `PYTHONIOENCODING=utf-8` is set in the `env` block of your client config.

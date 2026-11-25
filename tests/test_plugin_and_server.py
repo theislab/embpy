@@ -2,7 +2,8 @@
 
 * ``.claude-plugin/plugin.json`` starts the server through ``scripts/embpy-mcp-launcher``
   (``embpy-mcp-launcher.cmd`` on Windows). The launcher picks the Python that has embpy
-  and, when there is none, tells the MCP client what to do.
+  and, when there is none, tells the MCP client what to do;
+* the server registers exactly the nine documented tools.
 
 The launcher tests run the real scripts against fake interpreters: the POSIX script
 wherever ``sh`` exists (Linux, macOS, Git for Windows), the ``.cmd`` script on Windows.
@@ -14,6 +15,7 @@ import asyncio
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +31,27 @@ LAUNCHER = ROOT / "scripts" / "embpy-mcp-launcher"
 LAUNCHER_CMD = ROOT / "scripts" / "embpy-mcp-launcher.cmd"
 WINDOWS = sys.platform == "win32"
 SH = shutil.which("sh")
+
+NINE_TOOLS = {
+    "inspect_data",
+    "resolve_identifiers",
+    "preprocess_counts",
+    "list_model_registry",
+    "compute_embeddings",
+    "annotate_metadata",
+    "compute_umap",
+    "benchmark_scib",
+    "benchmark_perturbations",
+}
+# Older names of six tools. They stay importable from embpy.mcp but are not MCP tools.
+OLDER_NAMES = {
+    "inspect_anndata": "inspect_data",
+    "map_gene_identifiers": "resolve_identifiers",
+    "list_available_models": "list_model_registry",
+    "embed_cells": "compute_embeddings",
+    "evaluate_scib": "benchmark_scib",
+    "evaluate_perturbations": "benchmark_perturbations",
+}
 
 
 def _request(request_id) -> str:
@@ -504,3 +527,45 @@ def _flatten(exc: BaseException) -> list[BaseException]:
     for inner in getattr(exc, "exceptions", ()):
         found += _flatten(inner)
     return found
+
+
+# ---------------------------------------------------------------------------
+# Tools the server registers
+# ---------------------------------------------------------------------------
+
+
+def test_server_registers_only_the_nine_documented_tools():
+    _require_mcp()
+    from embpy.mcp import create_server
+
+    async def names():
+        return {tool.name for tool in await create_server("test").list_tools()}
+
+    assert asyncio.run(names()) == NINE_TOOLS
+
+
+def test_older_names_stay_importable_as_python_functions():
+    import embpy.mcp
+    import embpy.mcp.tools
+
+    for old, new in OLDER_NAMES.items():
+        assert getattr(embpy.mcp, old) is getattr(embpy.mcp, new)
+        assert getattr(embpy.mcp.tools, old) is getattr(embpy.mcp.tools, new)
+
+
+def _doc_files() -> list[Path]:
+    files = [ROOT / "README.md", *ROOT.glob("docs/**/*.md"), *ROOT.glob("skills/**/*.md"), *ROOT.glob("evals/**/*.md")]
+    return sorted(files)
+
+
+def test_docs_do_not_offer_the_older_names_as_tools():
+    problems = []
+    for path in _doc_files():
+        text = path.read_text(encoding="utf-8")
+        for phrase in ("backward-compatible aliases", "plus older aliases", "15 tools"):
+            if phrase in text:
+                problems.append(f"{path.relative_to(ROOT)}: {phrase!r}")
+        for old in OLDER_NAMES:
+            if re.search(rf'call_tool\(\s*"{old}"', text) or f"mcp__embpy__{old}" in text:
+                problems.append(f"{path.relative_to(ROOT)}: calls {old} as a tool")
+    assert not problems, problems

@@ -35,7 +35,7 @@ __all__ = [
     "compute_umap",
     "benchmark_scib",
     "benchmark_perturbations",
-    # Aliases
+    # Older names of six of them, for Python callers; not registered as MCP tools
     "inspect_anndata",
     "list_available_models",
     "map_gene_identifiers",

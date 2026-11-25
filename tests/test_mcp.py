@@ -310,7 +310,7 @@ def test_evaluate_perturbations_success(sample_adata_path, tmp_path):
 
 
 def test_mcp_server_instance_and_tools():
-    """Verify MCP server instantiates cleanly and registers all 7 bioinformatics skills."""
+    """Verify MCP server instantiates cleanly and registers the nine tools, without the older names."""
     _require_mcp()
 
     async def _check():
@@ -318,15 +318,17 @@ def test_mcp_server_instance_and_tools():
         tools = await server.list_tools()
         tool_names = {t.name for t in tools}
         expected = {
-            "inspect_anndata",
-            "list_available_models",
-            "map_gene_identifiers",
-            "embed_cells",
-            "evaluate_scib",
-            "evaluate_perturbations",
+            "inspect_data",
+            "resolve_identifiers",
+            "preprocess_counts",
+            "list_model_registry",
+            "compute_embeddings",
+            "annotate_metadata",
             "compute_umap",
+            "benchmark_scib",
+            "benchmark_perturbations",
         }
-        assert expected.issubset(tool_names)
+        assert tool_names == expected
 
     asyncio.run(_check())
 

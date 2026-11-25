@@ -28,14 +28,8 @@ from .tools import (
     benchmark_scib,
     compute_embeddings,
     compute_umap,
-    embed_cells,
-    evaluate_perturbations,
-    evaluate_scib,
-    inspect_anndata,
     inspect_data,
-    list_available_models,
     list_model_registry,
-    map_gene_identifiers,
     preprocess_counts,
     resolve_identifiers,
 )
@@ -101,7 +95,9 @@ def create_server(name: str = "embpy-mcp") -> FastMCP:
         ),
     )
 
-    # Register 9 universal tools
+    # The nine tools. Their older names (inspect_anndata, map_gene_identifiers,
+    # list_available_models, embed_cells, evaluate_scib, evaluate_perturbations) remain
+    # importable from embpy.mcp but are not registered: clients would list each tool twice.
     server.tool(name="inspect_data")(inspect_data)
     server.tool(name="resolve_identifiers")(resolve_identifiers)
     server.tool(name="preprocess_counts")(preprocess_counts)
@@ -112,15 +108,7 @@ def create_server(name: str = "embpy-mcp") -> FastMCP:
     server.tool(name="benchmark_scib")(benchmark_scib)
     server.tool(name="benchmark_perturbations")(benchmark_perturbations)
 
-    # Register backward-compatible aliases
-    server.tool(name="inspect_anndata")(inspect_anndata)
-    server.tool(name="map_gene_identifiers")(map_gene_identifiers)
-    server.tool(name="list_available_models")(list_available_models)
-    server.tool(name="embed_cells")(embed_cells)
-    server.tool(name="evaluate_scib")(evaluate_scib)
-    server.tool(name="evaluate_perturbations")(evaluate_perturbations)
-
-    logger.info("embpy MCP server initialized with 9 universal tools and aliases.")
+    logger.info("embpy MCP server initialized with 9 tools.")
     return server
 
 

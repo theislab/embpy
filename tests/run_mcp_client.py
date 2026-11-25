@@ -1,9 +1,9 @@
 """Standalone client test harness for live execution of embpy MCP server over stdio.
 
 Spawns 'python -m embpy.mcp.server' as a sub-process, establishes a JSON-RPC session
-over stdio, queries the tool list, and executes the complete 7-tool suite live:
-inspect_anndata, list_available_models, map_gene_identifiers, embed_cells,
-evaluate_scib, evaluate_perturbations, and compute_umap.
+over stdio, checks the tool list (the nine tools), and calls seven of them live:
+list_model_registry, resolve_identifiers, inspect_data, compute_embeddings,
+compute_umap, benchmark_scib and benchmark_perturbations.
 
 Works with MCP SDK 1.x (camelCase result fields) and 2.x (snake_case). The
 pytest version of these checks is ``tests/test_mcp_client.py``.
@@ -86,30 +86,31 @@ async def run_live_mcp_harness() -> None:
                 tools_response = await session.list_tools()
                 tool_names = [t.name for t in tools_response.tools]
                 print(f"[TEST HARNESS] Registered {len(tool_names)} tools: {tool_names}")
-                expected_tools = (
-                    "inspect_anndata",
-                    "list_available_models",
-                    "map_gene_identifiers",
-                    "embed_cells",
-                    "evaluate_scib",
-                    "evaluate_perturbations",
+                expected_tools = {
+                    "inspect_data",
+                    "resolve_identifiers",
+                    "preprocess_counts",
+                    "list_model_registry",
+                    "compute_embeddings",
+                    "annotate_metadata",
                     "compute_umap",
-                )
-                for tool in expected_tools:
-                    assert tool in tool_names, f"Expected tool '{tool}' missing from server!"
+                    "benchmark_scib",
+                    "benchmark_perturbations",
+                }
+                assert set(tool_names) == expected_tools, f"Unexpected tool list: {tool_names}"
 
-                # 2. tools/call: list_available_models
-                print("\n[TEST HARNESS] 2. Executing list_available_models...")
-                models_call = await session.call_tool("list_available_models", {})
+                # 2. tools/call: list_model_registry
+                print("\n[TEST HARNESS] 2. Executing list_model_registry...")
+                models_call = await session.call_tool("list_model_registry", {})
                 models_payload = _payload(models_call)
                 assert models_payload["status"] == "success"
                 print(f"               Compute device: {models_payload['compute_device']} ({models_payload['device_details']})")
                 print(f"               Runnable models: {models_payload['runnable_models']}")
 
-                # 3. tools/call: map_gene_identifiers
-                print("\n[TEST HARNESS] 3. Executing map_gene_identifiers...")
+                # 3. tools/call: resolve_identifiers
+                print("\n[TEST HARNESS] 3. Executing resolve_identifiers...")
                 map_call = await session.call_tool(
-                    "map_gene_identifiers",
+                    "resolve_identifiers",
                     {"genes": ["TP53", "GAPDH", "CD4"], "target_type": "ensembl", "organism": "human"},
                 )
                 map_payload = _payload(map_call)
@@ -117,18 +118,18 @@ async def run_live_mcp_harness() -> None:
                 print(f"               Mapped {map_payload['mapped_count']}/{map_payload['total_genes']} genes ({map_payload['mapping_rate']}%)")
                 print(f"               Sample: {map_payload['mapping_sample']}")
 
-                # 4. tools/call: inspect_anndata
-                print("\n[TEST HARNESS] 4. Executing inspect_anndata...")
-                inspect_call = await session.call_tool("inspect_anndata", {"path": sample_path})
+                # 4. tools/call: inspect_data
+                print("\n[TEST HARNESS] 4. Executing inspect_data...")
+                inspect_call = await session.call_tool("inspect_data", {"path": sample_path})
                 inspect_payload = _payload(inspect_call)
                 assert inspect_payload["status"] == "success"
                 print(f"               Dimensions: {inspect_payload['n_obs']} cells, {inspect_payload['n_vars']} genes")
                 print(f"               Expression nature: {inspect_payload['expression_nature']['detected_nature']}")
 
-                # 5. tools/call: embed_cells
-                print("\n[TEST HARNESS] 5. Executing embed_cells (PCA baseline)...")
+                # 5. tools/call: compute_embeddings
+                print("\n[TEST HARNESS] 5. Executing compute_embeddings (PCA baseline)...")
                 embed_call = await session.call_tool(
-                    "embed_cells",
+                    "compute_embeddings",
                     {
                         "path": sample_path,
                         "models": ["pca"],
@@ -153,10 +154,10 @@ async def run_live_mcp_harness() -> None:
                 assert umap_payload["status"] == "success"
                 print(f"               UMAP key: {umap_payload['umap_key']}, shape: {umap_payload['umap_shape']}")
 
-                # 7. tools/call: evaluate_scib
-                print("\n[TEST HARNESS] 7. Executing evaluate_scib...")
+                # 7. tools/call: benchmark_scib
+                print("\n[TEST HARNESS] 7. Executing benchmark_scib...")
                 scib_call = await session.call_tool(
-                    "evaluate_scib",
+                    "benchmark_scib",
                     {
                         "path": embedded_path,
                         "embedding_keys": ["X_pca"],
@@ -170,10 +171,10 @@ async def run_live_mcp_harness() -> None:
                 print(f"               Total scIB score: {scib_payload['metrics']['X_pca'].get('total')}")
                 print(f"               Markdown table generated: {'Yes' if scib_payload.get('markdown_table') else 'No'}")
 
-                # 8. tools/call: evaluate_perturbations
-                print("\n[TEST HARNESS] 8. Executing evaluate_perturbations...")
+                # 8. tools/call: benchmark_perturbations
+                print("\n[TEST HARNESS] 8. Executing benchmark_perturbations...")
                 pert_call = await session.call_tool(
-                    "evaluate_perturbations",
+                    "benchmark_perturbations",
                     {
                         "path": sample_path,
                         "split_col": "split",

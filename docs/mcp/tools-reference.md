@@ -1,8 +1,9 @@
 # MCP Tools Reference
 
-The `embpy` MCP server registers nine tools (plus older aliases: `inspect_anndata`,
-`map_gene_identifiers`, `list_available_models`, `embed_cells`, `evaluate_scib`,
-`evaluate_perturbations`). Every tool reads and writes `.h5ad` files on disk and returns
+The `embpy` MCP server registers nine tools. (Older names of six of them, `inspect_anndata`,
+`map_gene_identifiers`, `list_available_models`, `embed_cells`, `evaluate_scib` and
+`evaluate_perturbations`, can still be imported from `embpy.mcp` as Python functions, but
+they are not MCP tools.) Every tool reads and writes `.h5ad` files on disk and returns
 compact JSON with a `status` field:
 
 | `status` | Meaning |
