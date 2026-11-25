@@ -508,3 +508,23 @@ def test_a_second_smiles_column_gets_its_own_property_columns(tmp_path, offline_
     assert list(saved.obs["mol_molecular_weight"]) == drug_weights
     assert list(saved.obs["mol_molecular_weight_vehicle"]) == water
     assert offline_molecules == []
+
+
+def test_every_count_column_follows_the_stored_records(uniprot, tmp_path):
+    """Both columns hold EGFR: looking it up again through one column updates the other's count too."""
+    pairs = _write_obs(tmp_path / "pairs.h5ad", gene=["TP53", "EGFR"], target=["EGFR", "EGFR"])
+    gene = annotate_metadata(path=pairs, entity_type="gene", column="gene", annotation_types="go",
+                             output_path=str(tmp_path / "gene.h5ad"))
+    target = annotate_metadata(path=gene["output_path"], entity_type="gene", column="target",
+                               annotation_types="go", output_path=str(tmp_path / "target.h5ad"))
+    assert gene["status"] == target["status"] == "success"
+
+    uniprot["entries"]["P00533"]["uniProtKBCrossReferences"] = [_go_xref("GO:0005886", "C", "plasma membrane")]
+    again = annotate_metadata(path=target["output_path"], entity_type="gene", column="target",
+                              annotation_types="go", output_path=str(tmp_path / "again.h5ad"))
+    assert again["new_columns_added"] == ["gene_go_n_target"]
+
+    saved, records, _ = _stored(again["output_path"])
+    assert _go_ids(records["EGFR"]["go"]["uniprot"]) == {"GO:0005886"}
+    assert list(saved.obs["gene_go_n_target"]) == [1, 1]
+    assert list(saved.obs["gene_go_n"]) == [3, 1]  # EGFR's row in column 'gene' agrees with the records

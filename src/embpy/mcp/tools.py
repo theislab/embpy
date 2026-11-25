@@ -3179,6 +3179,18 @@ def annotate_metadata(
                 adata.obs[col] = [n_stored.get(v, 0) if v else 0 for v in values]
                 new_cols.append(col)
                 count_columns[col] = {"column": query_col, "entity_type": resolved_entity, "annotation_type": t}
+            # The other identifier columns' counts follow the stored records too: this call may
+            # have looked up their entities again.
+            for name, info in list(count_columns.items()):
+                if name not in adata.obs.columns or not isinstance(info, dict):
+                    del count_columns[name]  # removed from the file since
+                    continue
+                column = info.get("column")
+                if name in new_cols or column not in adata.obs.columns:
+                    continue
+                rows = [str(v).strip() if pd.notna(v) else "" for v in adata.obs[column]]
+                ann_type = info.get("annotation_type")
+                adata.obs[name] = [_n_annotation_items(stored.get(v, {}).get(ann_type)) if v else 0 for v in rows]
             if resolved_entity == "molecule" and "properties" in requested:
                 # Scalar RDKit properties as columns, as tl.annotate_molecules writes them.
                 props = {e: (results[e].get("properties", {}).get("rdkit") or {}).get("physicochemical") or {} for e in entities}
