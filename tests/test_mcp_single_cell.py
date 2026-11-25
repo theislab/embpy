@@ -1,8 +1,8 @@
 """Single-cell steps of the embpy MCP tools: what each step keeps, changes and reports.
 
 Covers which inputs ``preprocess_counts`` refuses, which cells and genes it and
-``compute_embeddings`` remove, which genes PCA is fitted on, which keys ``compute_umap``
-writes, and how rows without a finite embedding are handled.
+``compute_embeddings`` remove, which genes PCA is fitted on, which keys ``compute_umap`` and
+``compute_embeddings`` write, and how rows without a finite embedding are handled.
 """
 
 from __future__ import annotations
@@ -345,3 +345,59 @@ def test_scib_leaves_out_rows_without_a_finite_embedding(tmp_path):
     assert res["n_cells_scored"] == 58
     assert "cell_3" in res["warning"] and "cell_10" in res["warning"] and "missing='nan'" in res["warning"]
     assert set(res["metrics"]) == {"X_emb", "X_pca"}
+
+
+# --- compute_embeddings: keys owned by other models, temporary keys -----------------------
+
+
+def _with_cell_records(tmp_path, records: dict, obsm: dict) -> str:
+    adata = _cells(_poisson_counts(30, 40))
+    for key, value in obsm.items():
+        adata.obsm[key] = np.full((adata.n_obs, 3), value, dtype=np.float32)
+    adata.uns["embpy_cell_embeddings"] = records
+    path = str(tmp_path / "with_records.h5ad")
+    adata.write_h5ad(path)
+    return path
+
+
+@pytest.mark.parametrize("output_key", ["X_scvi", None], ids=["output_key", "default-key"])
+def test_key_of_another_model_is_refused(tmp_path, output_key):
+    """PCA must not be saved where uns['embpy_cell_embeddings'] says scVI's embedding is."""
+    scvi_key = output_key or "X_pca"
+    path = _with_cell_records(tmp_path, {"scvi": {"obsm_key": scvi_key, "embedding_dim": 3}}, {scvi_key: 7.0})
+    with open(path, "rb") as fh:
+        before = fh.read()
+
+    res = compute_embeddings(path=path, models="pca", output_key=output_key, output_path=path)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "OutputKeyConflictError"
+    assert "'scvi'" in res["error"] and scvi_key in res["error"]
+    with open(path, "rb") as fh:
+        assert fh.read() == before
+
+
+def test_a_model_can_reuse_its_own_key(tmp_path):
+    import anndata
+
+    path = _with_cell_records(tmp_path, {"pca": {"obsm_key": "my_pca", "embedding_dim": 3}}, {"my_pca": 7.0})
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", output_key="my_pca", preprocessing="none", output_path=out)
+    assert res["status"] == "success", res
+    saved = anndata.read_h5ad(out)
+    assert saved.uns["embpy_cell_embeddings"]["pca"]["obsm_key"] == "my_pca"
+    assert not np.all(np.asarray(saved.obsm["my_pca"]) == 7.0)
+
+
+def test_unrelated_keys_with_the_temporary_prefix_survive(tmp_path):
+    """Only this call's temporary matrices are deleted, even when other keys share their prefix."""
+    import anndata
+
+    path = _with_cell_records(tmp_path, {}, {"_embpy_new_X_pca": 1.0, "_embpy_new_X_notes": 2.0})
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", preprocessing="none", output_path=out)
+    assert res["status"] == "success", res
+    saved = anndata.read_h5ad(out)
+    np.testing.assert_array_equal(np.asarray(saved.obsm["_embpy_new_X_pca"]), 1.0)
+    np.testing.assert_array_equal(np.asarray(saved.obsm["_embpy_new_X_notes"]), 2.0)
+    assert set(saved.obsm) == {"_embpy_new_X_pca", "_embpy_new_X_notes", "X_pca"}
+    assert res["embedding_keys"] == ["X_pca"]

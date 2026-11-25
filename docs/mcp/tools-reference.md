@@ -159,6 +159,11 @@ the models need, with QC/HVG thresholds lowered for small datasets (`preprocessi
 `standard` and `raw` always run their pipeline; `none` never filters or transforms.
 `preprocessing_applied` names the pipeline that ran.
 
+**Keys.** Each single-cell model is saved as `.obsm["X_<model>"]` (or `output_key`) and recorded
+in `.uns["embpy_cell_embeddings"]`. A key that this record assigns to another model is refused
+before anything runs (`error_type: "OutputKeyConflictError"`, naming the model in
+`conflicting_keys`), so two records never describe one matrix; a model may reuse its own key.
+
 Returns `n_obs_input` / `n_obs_output` and `n_vars_input` / `n_vars_output` (cells and genes
 before and after; when preprocessing removed some, `warning` says how many and which
 thresholds removed them), `embedding_keys`, `embedding_slots` (`obsm` / `varm`),

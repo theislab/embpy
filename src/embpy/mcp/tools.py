@@ -30,6 +30,7 @@ import os
 import re
 import sys
 import time
+import uuid
 from typing import Any, Literal, Sequence
 
 import numpy as np
@@ -1551,11 +1552,15 @@ def _install_hint(message: str) -> str | None:
 
 
 def _settle_cell_embeddings(
-    adata: Any, earlier_records: dict[str, Any], models: list[str], output_key: str | None
+    adata: Any,
+    earlier_records: dict[str, Any],
+    models: list[str],
+    output_key: str | None,
+    prefix: str = _NEW_CELL_EMBEDDING_PREFIX,
 ) -> tuple[list[tuple[str, str]], list[str], dict[str, str], list[str]]:
     """Move each successful model's matrix to its final key; leave a failed model's data alone.
 
-    embed_cells wrote this call's matrices under ``_NEW_CELL_EMBEDDING_PREFIX`` and
+    embed_cells wrote this call's matrices under ``prefix`` (unique per call) and
     recorded, per model, the key it wrote or the error it hit. A successful model's
     matrix replaces whatever ``X_<model>`` (or ``output_key``) held, and its record
     points at that key. A failed model changes nothing: an earlier matrix and its
@@ -1586,7 +1591,8 @@ def _settle_cell_embeddings(
             failed[model] = str(error or "the model returned no embedding")
             if final_key in adata.obsm:
                 not_updated.append(final_key)
-    for key in [k for k in adata.obsm.keys() if str(k).startswith(_NEW_CELL_EMBEDDING_PREFIX)]:
+    # Only this call's temporary matrices; other keys that share the prefix stay.
+    for key in [k for k in adata.obsm.keys() if str(k).startswith(prefix)]:
         del adata.obsm[key]
     if succeeded:
         if "__preprocessing__" in run_records:
@@ -1598,6 +1604,44 @@ def _settle_cell_embeddings(
     else:
         adata.uns.pop(_CELL_EMBEDDING_RECORDS, None)
     return written, succeeded, failed, not_updated
+
+
+def _cell_key_conflicts(
+    earlier_records: dict[str, Any], models: list[str], output_key: str | None
+) -> dict[str, list[str]]:
+    """Keys this call would write that an earlier record of another model points at: key -> owners."""
+    owners: dict[str, list[str]] = {}
+    for owner, record in earlier_records.items():
+        if isinstance(record, dict) and record.get("obsm_key") and not str(owner).startswith("__"):
+            owners.setdefault(str(record["obsm_key"]), []).append(str(owner))
+    conflicts: dict[str, list[str]] = {}
+    for model in models:
+        key = output_key or f"X_{model}"
+        others = [owner for owner in owners.get(key, []) if owner != model]
+        if others:
+            conflicts[key] = others
+    return conflicts
+
+
+def _key_conflict_error(path: str, models: list[str], conflicts: dict[str, list[str]]) -> dict[str, Any]:
+    """Error reply when compute_embeddings would save over another model's recorded embedding."""
+    details = "; ".join(
+        f".obsm['{key}'] holds the embedding of {', '.join(repr(o) for o in owners)} "
+        f"(uns['{_CELL_EMBEDDING_RECORDS}'])"
+        for key, owners in conflicts.items()
+    )
+    return {
+        "status": "error",
+        "error_type": "OutputKeyConflictError",
+        "error": (
+            f"{details}. Saving {models} there would leave two model records pointing at one matrix. "
+            "Pass an output_key no other model uses (or recompute that model itself). "
+            "Nothing was computed or written."
+        ),
+        "path": str(path),
+        "models": models,
+        "conflicting_keys": conflicts,
+    }
 
 
 def _note_preprocessing_choice(adata: Any, requested: str, reason: str) -> None:
@@ -1872,7 +1916,10 @@ def compute_embeddings(
     batch_size : int, default=32
         Inference batch size for 'single_cell' models.
     output_key : str, optional
-        Key for the new embedding (only when computing a single model).
+        Key for the new embedding (only when computing a single model). For 'single_cell',
+        a key (this one or the default X_<model>) that .uns['embpy_cell_embeddings'] records
+        for another model is refused with error_type 'OutputKeyConflictError' before
+        anything runs; a model may reuse its own key.
     output_path : str, optional
         Filesystem path to save the updated dataset (default: '<input>_embedded.h5ad').
     preprocessing : {'auto', 'standard', 'raw', 'none'}, default='auto'
@@ -1988,6 +2035,15 @@ def compute_embeddings(
         # embed_cells' QC defaults; preprocessing='auto' scales them for small datasets.
         qc_thresholds = {"min_genes": 200, "min_cells": 3}
 
+        if ent_str == "single_cell":
+            # A key another model's record points at would leave two records describing
+            # one matrix; refuse before anything runs.
+            conflicts = _cell_key_conflicts(
+                dict(adata.uns.get(_CELL_EMBEDDING_RECORDS) or {}), resolved_models, output_key
+            )
+            if conflicts:
+                return _key_conflict_error(path, resolved_models, conflicts)
+
         with contextlib.redirect_stdout(sys.stderr):
             embedder = BioEmbedder(device=device)
 
@@ -2023,14 +2079,16 @@ def compute_embeddings(
                 # embed_cells records a failed model as {"error": ...} and carries on.
                 # New matrices go to temporary keys and move to X_<model> (or
                 # output_key) only for the models that succeeded, so a failure
-                # never leaves an earlier result looking freshly computed.
+                # never leaves an earlier result looking freshly computed. The
+                # prefix is unique to this call, so the cleanup cannot touch other keys.
                 earlier_records = dict(adata.uns.get(_CELL_EMBEDDING_RECORDS) or {})
+                run_prefix = f"{_NEW_CELL_EMBEDDING_PREFIX}{uuid.uuid4().hex[:12]}_"
                 adata_out = embedder.embed_cells(
                     adata,
                     models=resolved_models,
                     batch_size=batch_size,
                     preprocessing=run_preprocessing,
-                    obsm_prefix=_NEW_CELL_EMBEDDING_PREFIX,
+                    obsm_prefix=run_prefix,
                     **extra_kwargs,
                 )
                 plan = (adata_out.uns.get(_CELL_EMBEDDING_RECORDS) or {}).get("__preprocessing__") or {}
@@ -2038,7 +2096,7 @@ def compute_embeddings(
                 if preprocessing_note:
                     _note_preprocessing_choice(adata_out, requested=preprocessing, reason=preprocessing_note)
                 written, succeeded, failed, not_updated = _settle_cell_embeddings(
-                    adata_out, earlier_records, resolved_models, output_key
+                    adata_out, earlier_records, resolved_models, output_key, prefix=run_prefix
                 )
             else:
                 # Rows with no identifier in the chosen column (e.g. control wells after
