@@ -3,6 +3,7 @@ import contextlib
 import logging
 import os
 import re
+import threading
 import time
 import weakref
 from pathlib import Path
@@ -461,6 +462,29 @@ def default_gene_cache_path() -> Path:
         home = Path.home() if os.environ.get("HOME") else Path("/tmp")
         base = home / ".cache" / "embpy"
     return base / "gene_id_cache.json"
+
+
+# Resolvers reused by _shared_gene_resolver, per thread: {species: (cache file, resolver)}.
+_SHARED_RESOLVERS = threading.local()
+
+
+def _shared_gene_resolver(species: str = "human") -> "GeneResolver":
+    """Return this thread's ``GeneResolver(species=species)``, built on first use.
+
+    For helpers that resolve one gene per call (HPA antibody lookups, the JUMP
+    gene fallback): building a resolver per call reloads the id cache from disk
+    and repeats pyensembl's download/index check each time. Resolvers are kept
+    per thread because pyensembl's SQLite connection only works in the thread
+    that opened it; a new one is built when ``EMBPY_CACHE`` has changed.
+    """
+    cache_file = default_gene_cache_path()
+    by_species = getattr(_SHARED_RESOLVERS, "by_species", None)
+    if by_species is None:
+        by_species = _SHARED_RESOLVERS.by_species = {}
+    entry = by_species.get(species)
+    if entry is None or entry[0] != cache_file:
+        entry = by_species[species] = (cache_file, GeneResolver(species=species))
+    return entry[1]
 
 
 def _looks_like_smiles(s: str) -> bool:

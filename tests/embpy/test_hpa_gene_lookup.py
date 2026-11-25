@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sys
+import threading
 from unittest.mock import patch
 
 import pytest
 
 from embpy.resources.gene import resolver as resolver_mod
+from embpy.resources.gene.resolver import GeneResolver
 from embpy.resources.morphology import hpa
 
 _FAKE_ID = "ENSG90000000007"
@@ -17,14 +19,9 @@ def _fake_symbol_lookup(symbol, organism, **kwargs):
     return {"status": "ok", "symbol": symbol, "ensembl_id": _FAKE_ID, "ensembl_ids": [_FAKE_ID], "candidates": [symbol]}
 
 
-@pytest.mark.parametrize(
-    ("resolve", "expected"),
-    [
-        (hpa._resolve_ensembl_id, _FAKE_ID),
-        (hpa._resolve_ensembl_id_quiet, (_FAKE_ID, "GeneResolver")),
-    ],
-)
-def test_symbol_is_resolved_with_gene_resolver(resolve, expected, monkeypatch, tmp_path):
+@pytest.fixture
+def mygene_lookup(monkeypatch, tmp_path):
+    """GeneResolver's MyGene.info lookup, faked; no other way to resolve a symbol."""
     monkeypatch.setenv("EMBPY_CACHE", str(tmp_path))
     # Without pyensembl (no Ensembl download) and without the mygene fallback package,
     # only GeneResolver's MyGene.info lookup can answer.
@@ -36,5 +33,48 @@ def test_symbol_is_resolved_with_gene_resolver(resolve, expected, monkeypatch, t
         patch.object(resolver_mod.requests, "get", side_effect=no_network),
         patch.object(resolver_mod.requests, "post", side_effect=no_network),
     ):
-        assert resolve("NOTASEEDGENE") == expected
-    lookup.assert_called_once_with("NOTASEEDGENE", "human")
+        yield lookup
+
+
+@pytest.fixture
+def resolver_builds(monkeypatch) -> list[dict]:
+    """Keyword arguments of every GeneResolver built during the test."""
+    builds: list[dict] = []
+    real_init = GeneResolver.__init__
+
+    def counting_init(self, *args, **kwargs):
+        builds.append(kwargs)
+        real_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(GeneResolver, "__init__", counting_init)
+    return builds
+
+
+@pytest.mark.parametrize(
+    ("resolve", "expected"),
+    [
+        (hpa._resolve_ensembl_id, _FAKE_ID),
+        (hpa._resolve_ensembl_id_quiet, (_FAKE_ID, "GeneResolver")),
+    ],
+)
+def test_symbol_is_resolved_with_gene_resolver(resolve, expected, mygene_lookup):
+    assert resolve("NOTASEEDGENE") == expected
+    mygene_lookup.assert_called_once_with("NOTASEEDGENE", "human")
+
+
+def test_two_lookups_build_one_resolver(mygene_lookup, resolver_builds):
+    assert hpa._resolve_ensembl_id("GENEA") == _FAKE_ID
+    assert hpa._resolve_ensembl_id_quiet("GENEB") == (_FAKE_ID, "GeneResolver")
+    assert resolver_builds == [{"species": "human"}]
+    assert mygene_lookup.call_count == 2
+
+
+def test_each_thread_builds_its_own_resolver(mygene_lookup, resolver_builds):
+    # pyensembl's SQLite connection only works in the thread that opened it.
+    hpa._resolve_ensembl_id("GENEA")
+    worker = threading.Thread(target=hpa._resolve_ensembl_id, args=("GENEB",))
+    worker.start()
+    worker.join()
+    hpa._resolve_ensembl_id("GENEC")
+    assert resolver_builds == [{"species": "human"}, {"species": "human"}]
+    assert mygene_lookup.call_count == 3

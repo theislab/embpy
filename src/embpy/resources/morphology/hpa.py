@@ -487,9 +487,9 @@ def _resolve_ensembl_id(gene_or_ensembl: str) -> str | None:
 
     # Prefer embpy GeneResolver (pyensembl + MyGene REST + Ensembl REST)
     try:
-        from embpy.resources.gene_resolver import GeneResolver
+        from embpy.resources.gene.resolver import _shared_gene_resolver
 
-        resolver = GeneResolver(species="human")
+        resolver = _shared_gene_resolver("human")
         ensembl_id = resolver.symbol_to_ensembl(gene_or_ensembl)
         if ensembl_id:
             return ensembl_id
@@ -533,9 +533,9 @@ def _resolve_ensembl_id_quiet(gene_or_ensembl: str) -> tuple[str | None, str | N
 
     # Prefer embpy GeneResolver (pyensembl + MyGene REST + Ensembl REST)
     try:
-        from embpy.resources.gene_resolver import GeneResolver
+        from embpy.resources.gene.resolver import _shared_gene_resolver
 
-        resolver = GeneResolver(species="human")
+        resolver = _shared_gene_resolver("human")
         ensembl_id = resolver.symbol_to_ensembl(gene_or_ensembl)
         if ensembl_id:
             return ensembl_id, "GeneResolver"

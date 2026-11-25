@@ -5424,12 +5424,10 @@ def _resolve_gene_jump_fallback(
         return rows
 
     try:
-        from .resources.gene_resolver import GeneResolver
+        from .resources.gene.resolver import _shared_gene_resolver
 
-        # species=, not organism= -- passing organism= raised a TypeError that the
-        # broad `except Exception` below swallowed, silently disabling both this
-        # canonicalisation and the mygene alias fallback after it.
-        resolver = GeneResolver(species="human")
+        # One GeneResolver(species="human") per thread, reused across calls.
+        resolver = _shared_gene_resolver("human")
         ensembl_id = resolver.symbol_to_ensembl(gene_symbol)
         if ensembl_id:
             canonical = resolver.ensembl_to_symbol(ensembl_id)

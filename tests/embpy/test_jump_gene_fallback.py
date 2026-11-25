@@ -13,6 +13,7 @@ return nothing), so these tests assert on the call itself.
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -34,7 +35,9 @@ class TestResolverIsConstructible:
 
 
 class TestFallbackReachesTheResolver:
-    @patch("embpy.resources.gene_resolver.GeneResolver")
+    # The fallback gets its resolver from resources.gene.resolver._shared_gene_resolver,
+    # which builds GeneResolver from that module.
+    @patch("embpy.resources.gene.resolver.GeneResolver")
     @patch("embpy.resources.jump_metadata.get_jump_item_location_metadata")
     def test_resolver_is_constructed_with_species(
         self, mock_jump: MagicMock, mock_resolver_cls: MagicMock
@@ -52,7 +55,7 @@ class TestFallbackReachesTheResolver:
         assert "organism" not in kwargs
         assert kwargs.get("species") == "human"
 
-    @patch("embpy.resources.gene_resolver.GeneResolver")
+    @patch("embpy.resources.gene.resolver.GeneResolver")
     @patch("embpy.resources.jump_metadata.get_jump_item_location_metadata")
     def test_canonical_symbol_is_looked_up(
         self, mock_jump: MagicMock, mock_resolver_cls: MagicMock
@@ -67,7 +70,7 @@ class TestFallbackReachesTheResolver:
         resolver.symbol_to_ensembl.assert_called_once_with("TUMOUR_PROTEIN_53")
         resolver.ensembl_to_symbol.assert_called_once_with("ENSG00000141510")
 
-    @patch("embpy.resources.gene_resolver.GeneResolver")
+    @patch("embpy.resources.gene.resolver.GeneResolver")
     @patch("embpy.resources.jump_metadata.get_jump_item_location_metadata")
     def test_canonical_rename_reports_its_source(
         self, mock_jump: MagicMock, mock_resolver_cls: MagicMock
@@ -81,3 +84,36 @@ class TestFallbackReachesTheResolver:
 
         assert rows == [{"well": "A01"}]
         assert source is not None and "TP53" in source
+
+
+class TestOneResolverPerThread:
+    def test_two_lookups_build_one_resolver(self, monkeypatch) -> None:
+        from embpy.resources.gene import resolver as resolver_mod
+
+        # No pyensembl (no Ensembl download) and no mygene package: only the faked
+        # MyGene.info lookup inside GeneResolver can answer.
+        monkeypatch.setitem(sys.modules, "pyensembl", None)
+        monkeypatch.setitem(sys.modules, "mygene", None)
+        builds: list[dict] = []
+        real_init = GeneResolver.__init__
+
+        def counting_init(self, *args, **kwargs):
+            builds.append(kwargs)
+            real_init(self, *args, **kwargs)
+
+        monkeypatch.setattr(GeneResolver, "__init__", counting_init)
+
+        def mygene(symbol, organism, **kwargs):
+            return {"status": "ok", "symbol": symbol, "ensembl_id": "ENSG90000000007", "candidates": [symbol]}
+
+        no_network = AssertionError("network access in a test")
+        with (
+            patch("embpy.resources.jump_metadata.get_jump_item_location_metadata", return_value=[]),
+            patch.object(resolver_mod, "_mygene_exact_symbol_lookup", side_effect=mygene) as lookup,
+            patch.object(resolver_mod.requests, "get", side_effect=no_network),
+            patch.object(resolver_mod.requests, "post", side_effect=no_network),
+        ):
+            assert _resolve_gene_jump_fallback("GENEA") == []
+            assert _resolve_gene_jump_fallback("GENEB") == []
+        assert builds == [{"species": "human"}]
+        assert lookup.call_count == 2
