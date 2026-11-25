@@ -192,9 +192,14 @@ downloads them (about 37 MB) into `~/.cache/embpy/reactome/98` (`$EMBPY_CACHE` m
 later requests reuse them.
 
 Nothing is written when nothing was annotated, or for `identifiers` without `output_path`.
-Otherwise `.obs` gains `<prefix>_<type>_n` record counts (`gene_`, `prot_`, `mol_`; molecules
-with `properties` also get `mol_<property>` columns) and `.uns["embpy_annotations"]` holds the
-records as JSON.
+Otherwise `.uns["embpy_annotations"]["results_json"]` holds the records as JSON (entity, type,
+source), and `.obs` gains `<prefix>_<type>_n` counts of the records stored per row (`gene_`,
+`prot_`, `mol_`; molecules with `properties` also get `mol_<property>` columns).
+
+Annotating the output again adds to the stored records: other types and sources stay. A type
+and source looked up again replace their records for the entities looked up; where that request
+failed, the earlier records stay. `provenance_json` gives the organism and column of each
+stored entity type, annotation type and source, and `annotation_types` lists every stored type.
 
 ---
 

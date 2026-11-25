@@ -2189,6 +2189,57 @@ def _n_annotation_items(value: Any) -> int:
     return 1
 
 
+# .uns entry holding the annotation records annotate_metadata stored in a file.
+_ANNOTATIONS_KEY = "embpy_annotations"
+
+
+def _json_field(record: Any, key: str) -> dict[str, Any]:
+    """The JSON object an earlier call stored under ``record[key]``; {} if there is none."""
+    text = record.get(key) if isinstance(record, dict) else None
+    if not isinstance(text, str):
+        return {}
+    try:
+        value = json.loads(text)
+    except ValueError:
+        logger.warning("Ignoring an unreadable .uns['%s']['%s'] entry", _ANNOTATIONS_KEY, key)
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _merge_annotation_records(
+    earlier: dict[str, Any],
+    results: dict[str, dict[str, Any]],
+    sources_queried: dict[str, list[str]],
+    failed: set[tuple[str, str]],
+) -> tuple[dict[str, dict[str, Any]], set[tuple[str, str]]]:
+    """Merge this call's records into those stored by earlier calls (entity -> type -> source).
+
+    A source this call looked up replaces its earlier records for each entity looked up,
+    also with an empty answer. When the request for an entity and type failed, a source
+    that returned nothing keeps its earlier records. Other types, sources and entities
+    stay as they were.
+
+    Returns the merged records and the (type, source) pairs this call wrote.
+    """
+    merged = {str(e): dict(by_type) for e, by_type in earlier.items() if isinstance(by_type, dict)}
+    updated: set[tuple[str, str]] = set()
+    for entity, by_type in results.items():
+        stored = merged.setdefault(entity, {})
+        for ann_type, data in by_type.items():
+            slot = dict(stored[ann_type]) if isinstance(stored.get(ann_type), dict) else {}
+            new = data if isinstance(data, dict) else {}
+            for source in sources_queried.get(ann_type, ()):
+                if (entity, ann_type) in failed and not _n_annotation_items(new.get(source)):
+                    continue  # the request failed: keep what an earlier call found
+                if source in new:
+                    slot[source] = new[source]
+                else:
+                    slot.pop(source, None)
+                updated.add((ann_type, source))
+            stored[ann_type] = slot
+    return merged, updated
+
+
 def _protein_id_type(identifier: str, id_type: str) -> str:
     if id_type != "auto":
         return id_type
@@ -2388,7 +2439,8 @@ def annotate_metadata(
     output_path : str, optional
         Filesystem destination (default: '<input>_annotated.h5ad'; with identifiers,
         nothing is written unless output_path is given). Not written when nothing was
-        annotated.
+        annotated. Records stored in the input by earlier calls are kept: a type and
+        source looked up again replace their records for the entities looked up.
     organism : {'human', 'mouse'}, default='human'
         Species for gene and protein annotations.
     identifiers : list[str] or str, optional
@@ -2569,11 +2621,12 @@ def annotate_metadata(
 
         # outcome[type][entity] = "annotated" | "no_match" | "service_error"
         outcome: dict[str, dict[str, str]] = {t: {} for t in requested}
-        counts: dict[str, dict[str, int]] = {t: {} for t in requested}
         results: dict[str, dict[str, Any]] = {e: {} for e in entities}
         service_errors: list[dict[str, str]] = []
         # unreachable[type] = names of the services whose requests failed for that type
         unreachable: dict[str, set[str]] = {}
+        # (entity, type) pairs with a failed request, also when another source answered
+        failed_lookups: set[tuple[str, str]] = set()
         new_cols: list[str] = []
 
         with contextlib.redirect_stdout(sys.stderr):
@@ -2594,7 +2647,6 @@ def annotate_metadata(
                         continue
                     rows = adata.obs.loc[[v == e for v in values], added] if added else None
                     n = int(rows.notna().any(axis=0).sum()) if rows is not None and len(rows) else 0
-                    counts["cell_line"][e] = n
                     outcome["cell_line"][e] = "annotated" if n else "no_match"
                     if n:  # the annotated fields, for records_preview (and identifiers mode)
                         first = rows.iloc[0]
@@ -2613,10 +2665,11 @@ def annotate_metadata(
                                 data = {}
                                 errs.append({"url": "", "error": f"{type(exc).__name__}: {exc}"})
                         n = _n_annotation_items(data)
-                        counts[t][e] = n
                         results[e][t] = data
                         # Recorded even when another source answered, so a partial outage is reported.
                         unreachable.setdefault(t, set()).update(_service_name(err.get("url") or "") for err in errs)
+                        if errs:
+                            failed_lookups.add((e, t))
                         if n:
                             outcome[t][e] = "annotated"
                         elif errs:
@@ -2698,10 +2751,17 @@ def annotate_metadata(
             return {"status": "error", "error_type": error_type, "error": error, **base_payload}
 
         if resolved_entity != "cell_line":
+            # Records of earlier calls on this file are kept; this call's lookups update them.
+            earlier = adata.uns.get(_ANNOTATIONS_KEY)
+            stored, updated = _merge_annotation_records(
+                _json_field(earlier, "results_json"), results, sources_queried, failed_lookups
+            )
             prefix = {"gene": "gene", "protein": "prot", "molecule": "mol"}[resolved_entity]
             for t in requested:
                 col = f"{prefix}_{t}_n"
-                adata.obs[col] = [counts[t].get(v, 0) if v else 0 for v in values]
+                # The number of records stored for the row's entity, from every source of the type.
+                n_stored = {e: _n_annotation_items(stored.get(e, {}).get(t)) for e in entities}
+                adata.obs[col] = [n_stored.get(v, 0) if v else 0 for v in values]
                 new_cols.append(col)
             if resolved_entity == "molecule" and "properties" in requested:
                 # Scalar RDKit properties as columns, as tl.annotate_molecules writes them.
@@ -2719,12 +2779,23 @@ def annotate_metadata(
                     else:
                         adata.obs[f"mol_{key}"] = pd.Categorical([None if x is None else str(x) for x in column_values])
                     new_cols.append(f"mol_{key}")
-            adata.uns["embpy_annotations"] = {
+            provenance = _json_field(earlier, "provenance_json")
+            if not isinstance(provenance.get(resolved_entity), dict):
+                provenance[resolved_entity] = {}
+            for t, source in sorted(updated):
+                provenance[resolved_entity].setdefault(t, {})[source] = {"organism": org, "column": query_col}
+            earlier_types = earlier.get("annotation_types", []) if isinstance(earlier, dict) else []
+            if isinstance(earlier_types, str):
+                earlier_types = [earlier_types]
+            adata.uns[_ANNOTATIONS_KEY] = {
+                # entity_type, column and organism describe this call; provenance_json says
+                # where each stored type and source came from.
                 "entity_type": resolved_entity,
                 "column": query_col,
                 "organism": org,
-                "annotation_types": requested,
-                "results_json": json.dumps(results, default=str),
+                "annotation_types": list(dict.fromkeys([*(str(t) for t in earlier_types), *requested])),
+                "results_json": json.dumps(stored, default=str),
+                "provenance_json": json.dumps(provenance),
             }
 
         if output_path:

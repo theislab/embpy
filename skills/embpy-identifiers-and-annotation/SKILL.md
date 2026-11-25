@@ -104,3 +104,6 @@ returned records. `records_preview` holds, per entity, type and source, the numb
 - Nothing is written when nothing was annotated, or with `identifiers` unless `output_path` is
   given. Otherwise `.obs` gains `<prefix>_<type>_n` record counts (molecules with `properties`
   also get `mol_<property>` columns) and `.uns["embpy_annotations"]` holds the full records as JSON.
+- To add annotation types or sources, call the tool again on its output: earlier records stay.
+  Looking up a type and source again replaces its records for those entities (a failed request
+  keeps the earlier ones).
