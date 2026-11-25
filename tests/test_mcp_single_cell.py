@@ -439,3 +439,31 @@ def test_only_named_layers_are_reported(tmp_path):
     assert sorted(res["layers"]) == ["counts", "log_normalized"]
     res = preprocess_counts(path=path, output_path=str(tmp_path / "none.h5ad"), preprocessing="none")
     assert res["layers"] == ["counts"]
+
+
+def test_scib_table_names_each_embedding_without_tabulate(tmp_path, monkeypatch):
+    """pandas' to_markdown needs tabulate; the table must name each row's embedding without it."""
+    import sys
+
+    import pandas as pd
+
+    from embpy import tl
+
+    monkeypatch.setitem(sys.modules, "tabulate", None)  # as if tabulate were not installed
+    monkeypatch.setattr(
+        tl,
+        "compute_scib_metrics",
+        lambda adata, embedding_keys, **kwargs: pd.DataFrame(
+            {"nmi": [0.5, 0.25], "graph_conn": [np.nan, np.nan], "total": [0.6, 0.3]}, index=embedding_keys
+        ),
+    )
+    path = str(tmp_path / "embedded.h5ad")
+    _embedded_cells().write_h5ad(path)
+
+    res = benchmark_scib(path=path, embedding_keys=["X_pca", "X_prior"], label_key="cell_type")
+    assert res["status"] == "success", res
+    lines = res["markdown_table"].splitlines()
+    assert [cell.strip() for cell in lines[0].strip("|").split("|")] == ["embedding", "nmi", "graph_conn", "total"]
+    rows = {line.strip("|").split("|")[0].strip(): line for line in lines[2:]}
+    assert set(rows) == {"X_pca", "X_prior"}
+    assert "0.5000" in rows["X_pca"] and "0.2500" in rows["X_prior"]

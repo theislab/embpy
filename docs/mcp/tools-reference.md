@@ -277,7 +277,8 @@ embedding, the call returns `error_type: "NonFiniteEmbeddingError"`.
 
 `benchmark_scib(path, embedding_keys, label_key, batch_key=None, output_csv=None)`
 
-Returns `markdown_table`, `rankings` (by `total`) and per-key `metrics`. Needs `embpy[scib]`.
+Returns `markdown_table` (one row per embedding, named in its first column, `embedding`),
+`rankings` (by `total`) and per-key `metrics`. Needs `embpy[scib]`.
 
 Cells with NaN or infinite values in any of the `embedding_keys` are left out, so every
 embedding is scored on the same cells: `n_cells_scored`, `n_excluded_nonfinite`,

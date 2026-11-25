@@ -3270,6 +3270,23 @@ def _nonfinite_rows_note(names: Any, keys: list[str], n_total: int) -> str:
     )
 
 
+def _metrics_markdown(table: Any, index_name: str) -> str:
+    """A Markdown table of a metrics DataFrame, with its row labels as the first column."""
+
+    def cell(value: Any) -> str:
+        if isinstance(value, (float, np.floating)):
+            return "NaN" if math.isnan(value) else f"{value:.4f}"
+        return str(value)
+
+    lines = [
+        "| " + " | ".join([index_name, *(str(c) for c in table.columns)]) + " |",
+        "| " + " | ".join(["---"] + ["---:"] * len(table.columns)) + " |",
+    ]
+    for label, row in table.iterrows():
+        lines.append("| " + " | ".join([str(label), *(cell(v) for v in row)]) + " |")
+    return "\n".join(lines)
+
+
 def _no_finite_rows_error(path: str, names: Any, keys: list[str]) -> dict[str, Any]:
     """Error reply when no cell has a finite embedding."""
     return {
@@ -3552,18 +3569,9 @@ def benchmark_scib(
             os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
             metrics_df.to_csv(csv_path)
 
-        # Markdown representation
-        try:
-            md_table = metrics_df.round(4).to_markdown()
-        except Exception:
-            cols = list(metrics_df.columns)
-            hdr = "| " + " | ".join(cols) + " |\n"
-            sep = "| " + " | ".join([":---:" for _ in cols]) + " |\n"
-            rows = []
-            for _, row in metrics_df.iterrows():
-                row_str = "| " + " | ".join([f"{v:.4f}" if isinstance(v, float) and not math.isnan(v) else str(v) for v in row]) + " |"
-                rows.append(row_str)
-            md_table = hdr + sep + "\n".join(rows)
+        # Built here rather than with DataFrame.to_markdown, which needs the optional
+        # 'tabulate' package; without it the old fallback dropped the embedding names.
+        md_table = _metrics_markdown(metrics_df, index_name="embedding")
 
         metrics_dict: dict[str, dict[str, Any]] = {}
         for row_key, row in metrics_df.iterrows():
