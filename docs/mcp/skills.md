@@ -52,6 +52,12 @@ use only the MCP server; see [Client Setup](client-setup.md).
   every embpy Python call (`ep.tl.*`, `ep.pl.*`, `BioEmbedder` methods) exists and binds to its
   signature; and that every name quoted in backticks exists in the embpy source or model
   registry. The annotation and modality tables are compared with the tool's own tables.
+- `tests/test_skill_mcp_examples.py` runs every tool call of the three MCP skills
+  (single-cell workflow, entity embeddings, identifiers and annotation) as written in their
+  `SKILL.md`, in order, on small generated files, with the web services replaced by recorded
+  answers; any other network request fails the test. It is required in CI (job `test-mcp`).
+  The two entity-embedding calls that download a model (`gene2vec`, `esm2_8M`) run only with
+  `EMBPY_RUN_SKILL_EXAMPLES=1`.
 - `tests/test_skill_examples.py` runs the examples of the sixteen Python-API skills, block by
   block, on small generated datasets (MCP calls go to the real tool functions). It downloads
   small models and calls web services, so it runs only with `EMBPY_RUN_SKILL_EXAMPLES=1`
@@ -65,7 +71,7 @@ use only the MCP server; see [Client Setup](client-setup.md).
 
 - Workflows needing a GPU or large downloads (scGPT, Geneformer, STATE, ESM-2 650M and larger,
   Enformer) were not run; the examples use small CPU models.
-- The examples of the first three skills reference user datasets and optional models (scVI)
-  and are checked statically, not executed.
+- The MCP skills' offline run uses generated data and recorded service answers; scVI runs
+  only where scvi-tools is installed (otherwise the call is checked to report it as failed).
 - There is no automated eval suite measuring how reliably each skill triggers across many
   prompts; the `evals/` folder holds two starter prompts only.

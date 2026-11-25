@@ -131,14 +131,18 @@ jobs:
           pytest -v --color=yes
           tests/test_mcp.py tests/test_mcp_client.py tests/test_resolvers.py
           tests/embpy/test_gene_resolver_exact_lookup.py
+      # Required: the MCP Skills' tool calls, run offline on generated data.
+      - name: MCP Skill examples (offline)
+        run: pytest -v --color=yes tests/test_skills.py tests/test_skill_mcp_examples.py
       - name: End-to-end verification script
         if: ${{ matrix.verify }}
         run: python verify_full_ecosystem.py
 
-  # Runs every example in the Python-API Agent Skills (skills/*/SKILL.md) on
-  # small generated datasets. They download small models and call Ensembl,
-  # UniProt, PubChem and ChEMBL, so a failure can be a network problem:
-  # reported, but not blocking.
+  # Runs every example in the Python-API Agent Skills (skills/*/SKILL.md) and
+  # the MCP Skill calls that need a model download, on small generated
+  # datasets. They download small models and call Ensembl, UniProt, PubChem and
+  # ChEMBL, so a failure can be a network problem: reported, but not blocking.
+  # The MCP Skills' offline examples are required in the test-mcp job above.
   skill-examples:
     name: Agent Skill examples
     runs-on: ubuntu-latest
@@ -161,7 +165,7 @@ jobs:
           pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
           pip install -e ".[mcp,test,eval,models,bio]"
       - name: Skill checks and examples
-        run: pytest -v --color=yes tests/test_skills.py tests/test_skill_examples.py
+        run: pytest -v --color=yes tests/test_skills.py tests/test_skill_examples.py tests/test_skill_mcp_examples.py
 
   # Runs the README's [cpu] install (Option A: pip, Option B: uv) on the PR's own
   # checkout, then checks that it really gave the CPU build of PyTorch -- the
