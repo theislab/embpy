@@ -174,13 +174,19 @@ Every requested type runs for every unique entity in `column`, in `organism`, ag
 requested `sources` (default: all sources of the type). An entity counts as annotated for a
 type only if that type returned records; the input name echoed back does not count.
 `per_type` reports, per type, how many entities were `annotated`, had `no_match`, or hit a
-`service_error` (a request that failed after retries).
+`service_error` (a request that failed after retries), plus `species_mismatch` when it happened:
+for UniProt-backed types the entry's species is checked against `organism`, and an entry of
+another species (e.g. human P04637 asked for as mouse) is not annotated; `species_mismatches`
+names both species.
 
 - `success`: every entity has every requested type; `partial_success`: some do.
 - `error` / `NoAnnotationsFound`: the lookups completed and matched nothing; the error starts
   "No pathways found" (or "No GO terms found", ...).
 - `error` / `AnnotationServiceError`: requests failed; the error starts "Couldn't reach
   <service>." (e.g. "Couldn't reach Reactome.") and `service_errors_sample` shows examples.
+- `error` / `SpeciesMismatch`: the identifiers lead to UniProt entries of another species; the
+  error starts "Species mismatch:" and names both species. With some entities annotated, the
+  same text is the `warning`.
 - A source that failed while others answered is listed in `unreachable_services`, with a
   `warning`.
 

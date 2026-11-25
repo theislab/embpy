@@ -2283,6 +2283,66 @@ def _load_kegg_reference() -> tuple[Any, dict[str, str] | None]:
         }
 
 
+# NCBI taxonomy id and species of the organisms the tools accept, as UniProt entries name them.
+_ORGANISM_TAXA = {"human": (9606, "Homo sapiens"), "mouse": (10090, "Mus musculus")}
+
+
+class _SpeciesMismatch(Exception):
+    """The UniProt entry an identifier led to belongs to another species than the one asked for."""
+
+    def __init__(self, accession: str, species: str, taxonomy_id: int) -> None:
+        super().__init__(f"{accession} is a {species} entry (taxon {taxonomy_id})")
+        self.accession, self.species, self.taxonomy_id = accession, species, taxonomy_id
+
+
+def _uniprot_annotator(organism: str) -> Any:
+    """A ProteinAnnotator that keeps the organism of every UniProt entry it fetches.
+
+    Symbols and Ensembl ids are resolved in ``organism``, but an accession names one
+    entry of whatever species, so :func:`_check_uniprot_species` checks the entry.
+    """
+    from embpy.resources.protein.annotator import ProteinAnnotator
+
+    class _SpeciesRecordingAnnotator(ProteinAnnotator):
+        def _fetch_uniprot_entry(self, accession: str) -> dict | None:
+            entry = super()._fetch_uniprot_entry(accession)
+            if isinstance(entry, dict) and isinstance(entry.get("organism"), dict):
+                self.entry_organisms[accession] = entry["organism"]
+            return entry
+
+    annotator = _SpeciesRecordingAnnotator(organism=organism)
+    annotator.entry_organisms = {}
+    return annotator
+
+
+def _check_uniprot_species(annotator: Any, result: dict[str, Any], organism: str) -> None:
+    """Raise :class:`_SpeciesMismatch` when the entry behind ``result`` is not of ``organism``."""
+    found = getattr(annotator, "entry_organisms", {}).get(result.get("uniprot_accession"))
+    if not found or found.get("taxonId") is None:
+        return  # no entry was fetched, so there is nothing to label
+    taxonomy_id = int(found["taxonId"])
+    if taxonomy_id != _ORGANISM_TAXA[organism][0]:
+        species = str(found.get("scientificName") or f"taxon {taxonomy_id}")
+        raise _SpeciesMismatch(str(result["uniprot_accession"]), species, taxonomy_id)
+
+
+def _species_mismatch_text(mismatches: list[dict[str, Any]], organism: str) -> str:
+    """'Species mismatch: the UniProt entry of P04637 (Homo sapiens, taxon 9606) is not mouse ...'."""
+    taxonomy_id, species = _ORGANISM_TAXA[organism]
+    named = []
+    for m in mismatches[:5]:
+        accession = "" if m["entity"] == m["uniprot_accession"] else f"{m['uniprot_accession']}: "
+        named.append(f"{m['entity']} ({accession}{m['uniprot_species']}, taxon {m['uniprot_taxonomy_id']})")
+    if len(mismatches) > 5:
+        named.append(f"{len(mismatches) - 5} more")
+    one = len(mismatches) == 1
+    return (
+        f"Species mismatch: the UniProt entr{'y' if one else 'ies'} of {_join_names(named)} "
+        f"{'is' if one else 'are'} not {organism} ({species}, taxon {taxonomy_id}), so "
+        f"{'it was' if one else 'they were'} not annotated."
+    )
+
+
 def _protein_id_type(identifier: str, id_type: str) -> str:
     if id_type != "auto":
         return id_type
@@ -2300,13 +2360,13 @@ def _annotation_fetchers(entity: str, organism: str, id_type: str, kegg_index: A
     """
     if entity == "gene":
         from embpy.resources.gene.annotator import GeneAnnotator
-        from embpy.resources.protein.annotator import ProteinAnnotator
 
         ga = GeneAnnotator(organism=organism)
-        pa = ProteinAnnotator(organism=organism)
+        pa = _uniprot_annotator(organism)
 
         def _uniprot(gene: str, section: str) -> dict[str, Any]:
             res = pa.annotate(gene, id_type=_protein_id_type(gene, id_type), sources=[section])
+            _check_uniprot_species(pa, res, organism)
             return res
 
         def go(gene, srcs):
@@ -2376,9 +2436,7 @@ def _annotation_fetchers(entity: str, organism: str, id_type: str, kegg_index: A
         }
 
     if entity == "protein":
-        from embpy.resources.protein.annotator import ProteinAnnotator
-
-        pa = ProteinAnnotator(organism=organism)
+        pa = _uniprot_annotator(organism)
         sections = {
             "go": (("go", "go_terms", "uniprot"),),
             "domains": (("domains", "uniprot_domains", "uniprot"), ("domains", "interpro_domains", "interpro")),
@@ -2392,6 +2450,7 @@ def _annotation_fetchers(entity: str, organism: str, id_type: str, kegg_index: A
             def fetch(ident, srcs):
                 section = sections[ann_type][0][0]
                 res = pa.annotate(ident, id_type=_protein_id_type(ident, id_type), sources=[section])
+                _check_uniprot_species(pa, res, organism)
                 return {src: res.get(key) for _, key, src in sections[ann_type] if src in srcs and key in res}
 
             return fetch
@@ -2492,7 +2551,8 @@ def annotate_metadata(
         annotated. Records stored in the input by earlier calls are kept: a type and
         source looked up again replace their records for the entities looked up.
     organism : {'human', 'mouse'}, default='human'
-        Species for gene and protein annotations.
+        Species for gene and protein annotations. A UniProt entry of another species
+        (e.g. an accession of a human protein with organism='mouse') is not annotated.
     identifiers : list[str] or str, optional
         Entities to annotate directly (e.g. ['TP53', 'EGFR']), instead of an .h5ad column.
         Set entity_type explicitly ('auto' assumes genes).
@@ -2503,9 +2563,12 @@ def annotate_metadata(
         - status: "success" (every entity has every requested type), "partial_success",
           or "error" (nothing annotated; error_type is "AnnotationServiceError" when a
           service could not be reached -- the error then starts "Couldn't reach <service>." --
-          and "NoAnnotationsFound" when the lookups completed and matched nothing, e.g.
-          "No pathways found ...")
-        - per_type: For each type, counts of entities annotated / no_match / service_error
+          "NoAnnotationsFound" when the lookups completed and matched nothing, e.g.
+          "No pathways found ...", and "SpeciesMismatch" when the UniProt entries belong
+          to another species than organism)
+        - per_type: For each type, counts of entities annotated / no_match / service_error,
+          and species_mismatch when a UniProt entry was of another species
+        - species_mismatches: those entities, with the entry's and the requested species
         - records_preview: entity -> type -> source -> {"n": total, "items": first records}
         - unreachable_services: type -> services that failed, also when other sources answered
         - kegg_reference: folder and release of the KEGG reference used (molecule pathways)
@@ -2680,14 +2743,17 @@ def annotate_metadata(
                 "error": f"Column '{query_col}' holds no identifiers.",
             }
 
-        # outcome[type][entity] = "annotated" | "no_match" | "service_error"
+        # outcome[type][entity] = "annotated" | "no_match" | "service_error" | "species_mismatch"
         outcome: dict[str, dict[str, str]] = {t: {} for t in requested}
         results: dict[str, dict[str, Any]] = {e: {} for e in entities}
         service_errors: list[dict[str, str]] = []
         # unreachable[type] = names of the services whose requests failed for that type
         unreachable: dict[str, set[str]] = {}
-        # (entity, type) pairs with a failed request, also when another source answered
+        # (entity, type) pairs without a usable answer -- a failed request (also when another
+        # source answered) or a UniProt entry of another species: earlier records stay.
         failed_lookups: set[tuple[str, str]] = set()
+        # entity -> its UniProt entry's species, when that is not the requested organism
+        mismatched: dict[str, dict[str, Any]] = {}
         new_cols: list[str] = []
 
         with contextlib.redirect_stdout(sys.stderr):
@@ -2719,9 +2785,12 @@ def annotate_metadata(
                 fetchers = _annotation_fetchers(resolved_entity, org, id_type, kegg_index=kegg_index)
                 for e in entities:
                     for t in requested:
+                        mismatch = None
                         with record_service_errors() as errs:
                             try:
                                 data = fetchers[t](e, sources_queried[t])
+                            except _SpeciesMismatch as exc:
+                                data, mismatch = {}, exc
                             except Exception as exc:  # noqa: BLE001
                                 data = {}
                                 errs.append({"url": "", "error": f"{type(exc).__name__}: {exc}"})
@@ -2729,9 +2798,20 @@ def annotate_metadata(
                         results[e][t] = data
                         # Recorded even when another source answered, so a partial outage is reported.
                         unreachable.setdefault(t, set()).update(_service_name(err.get("url") or "") for err in errs)
-                        if errs:
+                        if errs or mismatch is not None:
                             failed_lookups.add((e, t))
-                        if n:
+                        if mismatch is not None:
+                            # Annotations of another species' entry are not labeled with this organism.
+                            outcome[t][e] = "species_mismatch"
+                            mismatched.setdefault(e, {
+                                "entity": e,
+                                "uniprot_accession": mismatch.accession,
+                                "uniprot_species": mismatch.species,
+                                "uniprot_taxonomy_id": mismatch.taxonomy_id,
+                                "requested_species": _ORGANISM_TAXA[org][1],
+                                "requested_taxonomy_id": _ORGANISM_TAXA[org][0],
+                            })
+                        elif n:
                             outcome[t][e] = "annotated"
                         elif errs:
                             outcome[t][e] = "service_error"
@@ -2746,6 +2826,10 @@ def annotate_metadata(
             t: {k: sum(1 for v in outcome[t].values() if v == k) for k in ("annotated", "no_match", "service_error")}
             for t in requested
         }
+        for t in requested:  # reported only when it happened
+            n_mismatched = sum(1 for v in outcome[t].values() if v == "species_mismatch")
+            if n_mismatched:
+                per_type[t]["species_mismatch"] = n_mismatched
         fully = [e for e in entities if all(outcome[t].get(e) == "annotated" for t in requested)]
         any_annotated = [e for e in entities if any(outcome[t].get(e) == "annotated" for t in requested)]
         n_annotated_pairs = sum(p["annotated"] for p in per_type.values())
@@ -2758,11 +2842,13 @@ def annotate_metadata(
         summary_parts = []
         for t in requested:
             p = per_type[t]
-            if p["annotated"] == 0 and p["service_error"] == 0:
+            if p["annotated"] == 0 and p["service_error"] == 0 and not p.get("species_mismatch"):
                 part = f"No {type_label.get(t, t)} found ({n_label} looked up)"
             else:
                 part = f"{type_label.get(t, t)}: {p['annotated']}/{len(entities)} {resolved_entity} entities annotated"
-                extras = [f"{p[k]} {k.replace('_', ' ')}" for k in ("no_match", "service_error") if p[k]]
+                extras = [
+                    f"{p[k]} {k.replace('_', ' ')}" for k in ("no_match", "service_error", "species_mismatch") if p.get(k)
+                ]
                 part += f" ({', '.join(extras)})" if extras else ""
             if t in couldnt_reach:
                 part += f" -- {couldnt_reach[t]}"
@@ -2797,6 +2883,9 @@ def annotate_metadata(
         }
         if kegg_reference is not None:
             base_payload["kegg_reference"] = kegg_reference
+        mismatch_text = _species_mismatch_text(list(mismatched.values()), org) if mismatched else ""
+        if mismatched:
+            base_payload["species_mismatches"] = list(mismatched.values())[:10]
         if service_errors:
             base_payload["service_errors_sample"] = service_errors[:5]
         if unreachable:
@@ -2806,7 +2895,12 @@ def annotate_metadata(
             if any(p["service_error"] for p in per_type.values()):
                 reached = " ".join(dict.fromkeys(couldnt_reach.values())) or "Annotation requests failed."
                 error_type = "AnnotationServiceError"
-                error = f"{reached} Nothing was annotated for the {n_label} in {where}."
+                error = " ".join(filter(None, (reached, mismatch_text))) + (
+                    f" Nothing was annotated for the {n_label} in {where}."
+                )
+            elif mismatched:
+                error_type = "SpeciesMismatch"
+                error = f"{mismatch_text} Nothing was annotated for the {n_label} in {where}."
             else:
                 error_type = "NoAnnotationsFound"
                 kinds = " or ".join(type_label.get(t, t) for t in requested)
@@ -2882,6 +2976,8 @@ def annotate_metadata(
             response["warning"] = " ".join(dict.fromkeys(couldnt_reach.values())) + (
                 " Results from the other sources are included."
             )
+        if mismatch_text:
+            response["warning"] = " ".join(filter(None, (response.get("warning"), mismatch_text)))
         return response
 
     except Exception as exc:

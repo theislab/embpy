@@ -105,6 +105,10 @@ returned records. `records_preview` holds, per entity, type and source, the numb
 - `error` with `KeggReferenceUnavailable` ("The KEGG search could not run ..."): no usable KEGG
   reference. Say the search did not run and pass on the `suggestion`; do not say the molecules
   have no pathways.
+- `error` with `SpeciesMismatch`, or `species_mismatch` in `per_type`: a UniProt entry belongs to
+  another species than `organism` (e.g. human P04637 asked for as mouse) and was not annotated.
+  Report both species; ask for that species' `organism`, or use the identifier for the requested
+  species.
 - `warning` and `unreachable_services` with a success: one source failed while others answered;
   mention which.
 - Nothing is written when nothing was annotated, or with `identifiers` unless `output_path` is

@@ -312,3 +312,50 @@ def test_a_kegg_reference_that_cannot_be_loaded_is_reported(monkeypatch, tmp_pat
     assert res["error_type"] == "KeggReferenceUnavailable", res
     assert res["error"].startswith("The KEGG search could not run")
     assert "never_built" in res["error"]
+
+
+# ---------------------------------------------------------------------------
+# 3. UniProt entries must belong to the requested species
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("entity_type", ["protein", "gene"])
+def test_a_human_entry_asked_for_as_mouse_is_a_species_mismatch(uniprot, entity_type):
+    res = annotate_metadata(identifiers=["P04637"], entity_type=entity_type, annotation_types="go",
+                            organism="mouse")
+    assert res["status"] == "error", res
+    assert res["error_type"] == "SpeciesMismatch"
+    assert "Homo sapiens" in res["error"] and "Mus musculus" in res["error"]
+    assert res["per_type"]["go"] == {"annotated": 0, "no_match": 0, "service_error": 0, "species_mismatch": 1}
+    assert res["species_mismatches"] == [{
+        "entity": "P04637", "uniprot_accession": "P04637",
+        "uniprot_species": "Homo sapiens", "uniprot_taxonomy_id": 9606,
+        "requested_species": "Mus musculus", "requested_taxonomy_id": 10090,
+    }]
+    assert res["records_preview"] == {"P04637": {}}
+
+
+def test_entries_of_the_requested_species_are_still_annotated(uniprot):
+    res = annotate_metadata(identifiers=["P02340", "P04637"], entity_type="protein", annotation_types="go",
+                            organism="mouse")
+    assert res["status"] == "partial_success", res
+    assert res["per_type"]["go"] == {"annotated": 1, "no_match": 0, "service_error": 0, "species_mismatch": 1}
+    assert res["successful_items"] == ["P02340"]
+    assert "P04637" in res["warning"] and "Homo sapiens" in res["warning"]
+
+    human = annotate_metadata(identifiers=["P04637"], entity_type="protein", annotation_types="go")
+    assert human["status"] == "success", human
+    assert "species_mismatches" not in human
+    assert human["per_type"]["go"] == {"annotated": 1, "no_match": 0, "service_error": 0}
+
+
+@pytest.mark.parametrize("entity_type", ["protein", "gene"])
+def test_gene_symbols_are_looked_up_in_the_requested_species(uniprot, entity_type):
+    mouse = annotate_metadata(identifiers=["Trp53"], entity_type=entity_type, annotation_types="go",
+                              organism="mouse")
+    assert mouse["status"] == "success", mouse
+    human_symbol = annotate_metadata(identifiers=["TP53"], entity_type=entity_type, annotation_types="go",
+                                     organism="mouse")
+    assert human_symbol["error_type"] == "NoAnnotationsFound", human_symbol
+    assert {p["species"] for url, p in uniprot["requests"] if url.endswith("/query")} == {10090}
+    assert not any(url.endswith("/P04637.json") for url, _ in uniprot["requests"])
