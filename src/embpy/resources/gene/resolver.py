@@ -3,7 +3,6 @@ import contextlib
 import logging
 import os
 import re
-import tempfile
 import time
 import weakref
 from pathlib import Path
@@ -16,7 +15,7 @@ from embpy.errors import GeneResolutionError
 from embpy.observability import log_event, time_block
 from embpy.retry import retry_with_backoff
 
-from ._cache_files import save_every
+from ._cache_files import save_every, write_json_atomically
 
 
 def _load_seqio():
@@ -453,32 +452,6 @@ def _save_unsaved_gene_caches() -> None:
 atexit.register(_save_unsaved_gene_caches)
 
 
-def _file_mode(path: Path) -> int:
-    """Permission bits for a new version of ``path``: the ones it has, or a new file's."""
-    try:
-        return os.stat(path).st_mode & 0o777
-    except OSError:
-        umask = os.umask(0)
-        os.umask(umask)
-        return 0o666 & ~umask
-
-
-def _replace_file(src: str, dst: Path) -> None:
-    """``os.replace(src, dst)``, retried briefly on Windows.
-
-    Windows refuses to replace a file while another process is replacing or
-    reading it (PermissionError); that clears within milliseconds.
-    """
-    for attempt in range(8):
-        try:
-            os.replace(src, dst)
-            return
-        except PermissionError:
-            if os.name != "nt" or attempt == 7:
-                raise
-            time.sleep(0.02 * (attempt + 1))
-
-
 def default_gene_cache_path() -> Path:
     """Return path to persistent gene ID resolution cache."""
     env = os.environ.get("EMBPY_CACHE")
@@ -716,12 +689,7 @@ class GeneResolver:
         self._ensure_cache()
         if not self._cache_file:
             return
-        tmp_name: str | None = None
         try:
-            import json
-
-            cache_file = Path(self._cache_file)
-            cache_file.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "version": _GENE_CACHE_VERSION,
                 "symbols": {
@@ -735,17 +703,9 @@ class GeneResolver:
                     if sym is not None
                 },
             }
-            fd, tmp_name = tempfile.mkstemp(prefix=f".{cache_file.name}.", suffix=".tmp", dir=cache_file.parent)
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
-            # mkstemp creates the file owner-only; keep the cache file's permissions.
-            os.chmod(tmp_name, _file_mode(cache_file))
-            _replace_file(tmp_name, cache_file)
+            write_json_atomically(Path(self._cache_file), payload, indent=2)
         except Exception as e:  # noqa: BLE001
             logging.warning("Could not save gene cache %s: %s", self._cache_file, e)
-            if tmp_name is not None:
-                with contextlib.suppress(OSError):
-                    os.remove(tmp_name)
             if self._cache_unsaved:
                 _RESOLVERS_WITH_UNSAVED_CACHE.add(self)
             return

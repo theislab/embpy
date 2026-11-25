@@ -35,13 +35,18 @@ library so this module is importable in environments without
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import json
 import logging
 import os
 import threading
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+from ._cache_files import save_every, write_json_atomically
 
 __all__ = [
     "ALIAS_CACHE_VERSION",
@@ -57,7 +62,12 @@ logger = logging.getLogger(__name__)
 ALIAS_CACHE_VERSION: int = 1
 """Bump if the cache schema changes incompatibly."""
 
-_CACHE_LOCK = threading.Lock()
+# Re-entrant: a cache garbage-collected while another one is saving saves itself
+# from __del__ in the same thread.
+_CACHE_LOCK = threading.RLock()
+
+# The file is saved every this many new entries (EMBPY_GENE_CACHE_SAVE_EVERY overrides it).
+_ALIAS_CACHE_SAVE_EVERY = 500
 
 
 def default_cache_path() -> Path:
@@ -98,16 +108,17 @@ class Resolution:
 class AliasCache:
     """File-backed JSON cache for :class:`Resolution` results.
 
-    Atomic writes via ``os.replace``; threading lock guards against
-    interleaved writes from concurrent providers in the same process.
-    Cross-process races are tolerated (last writer wins; the data is
-    insert-only modulo unresolved-flag flips).
+    Writes go through a temporary file of their own and ``os.replace``, and
+    are batched (see :meth:`flush`); a re-entrant lock guards against
+    interleaved writes in the same process. Cross-process races are tolerated
+    (last writer wins; the data is insert-only modulo unresolved-flag flips).
     """
 
     path: Path
     version: int = ALIAS_CACHE_VERSION
     _data: dict[str, dict[str, Any]] = field(default_factory=dict)
     _loaded: bool = False
+    _unsaved: int = field(default=0, init=False, repr=False, compare=False)
 
     def _load(self) -> None:
         if self._loaded:
@@ -161,6 +172,7 @@ class AliasCache:
             return None
 
     def put(self, resolution: Resolution) -> None:
+        """Add ``resolution``; the file is saved every 500 new entries (see :meth:`flush`)."""
         self._load()
         key = self._key(resolution.input_symbol, resolution.organism)
         self._data[key] = {
@@ -170,22 +182,58 @@ class AliasCache:
             "source": resolution.source,
             "chain": [list(step) for step in resolution.chain],
         }
-        self._flush()
+        self._unsaved += 1
+        _UNSAVED_ALIAS_CACHES[id(self)] = self
+        if self._unsaved % save_every(_ALIAS_CACHE_SAVE_EVERY) == 0:
+            self._flush()
+
+    def flush(self) -> None:
+        """Write entries that are not saved yet.
+
+        :meth:`put` saves the file every 500 new entries (the environment
+        variable ``EMBPY_GENE_CACHE_SAVE_EVERY`` changes that number); entries
+        still unsaved are written when the cache is garbage-collected or the
+        process exits normally. Call this to save earlier.
+        """
+        if self._unsaved:
+            self._flush()
 
     def _flush(self) -> None:
-        # Atomic write under a process-local lock. We do not bother with
-        # fcntl because resolution rows are append-only and an
-        # occasional last-writer-wins is fine; the worst case is a
-        # second resolver re-issuing the same HTTP request.
+        # Last writer wins across processes: rows are insert-only, so the worst
+        # case is another process re-issuing the same HTTP request.
         with _CACHE_LOCK:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {
-                "version": int(self.version),
-                "entries": self._data,
-            }
-            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
-            os.replace(tmp, self.path)
+            payload = {"version": int(self.version), "entries": dict(self._data)}
+            try:
+                write_json_atomically(self.path, payload, indent=2, sort_keys=True)
+            except Exception as e:  # noqa: BLE001 - a cache that cannot be saved must not break resolution
+                logger.warning("AliasCache: could not save %s (%s); retrying at the next save.", self.path, e)
+                return
+            self._unsaved = 0
+            _UNSAVED_ALIAS_CACHES.pop(id(self), None)
+
+    def __del__(self) -> None:
+        # A dropped cache writes what it has not saved yet (the exit hook
+        # covers caches still alive when the process ends).
+        try:
+            if getattr(self, "_unsaved", 0):
+                self._flush()
+        except Exception:  # noqa: BLE001 - a finalizer must not raise
+            pass
+
+
+# Caches holding entries their file does not have yet, by id (dataclass
+# instances are not hashable). Weak references: never keeps a cache alive.
+_UNSAVED_ALIAS_CACHES: weakref.WeakValueDictionary[int, AliasCache] = weakref.WeakValueDictionary()
+
+
+def _save_unsaved_alias_caches() -> None:
+    """Exit hook: write what each live alias cache has not saved yet."""
+    for cache in list(_UNSAVED_ALIAS_CACHES.values()):
+        with contextlib.suppress(Exception):
+            cache.flush()
+
+
+atexit.register(_save_unsaved_alias_caches)
 
 
 # ----------------------------------------------------------------------
@@ -370,7 +418,14 @@ def resolve_symbol_chain(
             chain=(("input", "empty"),),
         )
 
-    cache = cache or AliasCache(path=default_cache_path())
+    if cache is None:
+        # A cache made for this one call is saved before returning.
+        cache = AliasCache(path=default_cache_path())
+        try:
+            return resolve_symbol_chain(symbol, organism=organism, ensembl=ensembl, cache=cache)
+        finally:
+            cache.flush()
+
     cached = cache.get(sym, organism)
     if cached is not None:
         logger.debug(
