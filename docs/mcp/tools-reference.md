@@ -222,3 +222,9 @@ Either `split_col` with two different categories `pred_label` and `ref_label`, o
 pointing to a different predictions file. Identical labels, the same file twice, or two files
 with the same cells and values are rejected, since they would score predictions against
 themselves. Needs `embpy[eval]` (cell-eval).
+
+Each of `embedding_keys` must be in `.obsm` of both the prediction and the reference data,
+with the same number of columns. Otherwise nothing is scored: the error names the missing
+key and the files it is missing from, and `available_keys` lists the embeddings both have
+(for example "Embedding 'X_DOES_NOT_EXIST' is missing from .obsm of the prediction file
+(pred.h5ad) and the reference file (real.h5ad). Available embedding: X_good.").

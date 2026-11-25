@@ -3029,6 +3029,51 @@ def _same_observations(a: Any, b: Any) -> bool:
     return bool(np.array_equal(xa, xb))
 
 
+def _embedding_key_list(embedding_keys: list[str] | str | None) -> list[str]:
+    """The requested embedding keys as a list, without repeats."""
+    if not embedding_keys:
+        return []
+    keys = [embedding_keys] if isinstance(embedding_keys, str) else list(embedding_keys)
+    return list(dict.fromkeys(str(key) for key in keys))
+
+
+def _check_embedding_keys(keys: list[str], sources: list[tuple[str, Any]]) -> dict[str, Any] | None:
+    """Error response if a requested embedding is not usable in every source, else None.
+
+    ``sources`` holds (description, AnnData) pairs for the prediction and the reference
+    data. A key must be in ``.obsm`` of each, with the same number of columns.
+    """
+    present = [[str(key) for key in adata.obsm.keys()] for _, adata in sources]
+    available = [key for key in present[0] if all(key in keys_ for keys_ in present)]
+    missing = {
+        key: [name for (name, _), keys_ in zip(sources, present) if key not in keys_]
+        for key in keys
+        if any(key not in keys_ for keys_ in present)
+    }
+    if missing:
+        sentences = [f"Embedding '{key}' is missing from .obsm of {' and '.join(names)}." for key, names in missing.items()]
+        sentences.append(f"Available embedding{'s' if len(available) != 1 else ''}: {', '.join(available) or 'none'}.")
+        return {
+            "status": "error",
+            "error_type": "KeyError",
+            "error": " ".join(sentences),
+            "missing_keys": list(missing),
+            "available_keys": available,
+        }
+    for key in keys:
+        widths = [np.shape(adata.obsm[key])[1] if np.ndim(adata.obsm[key]) > 1 else 1 for _, adata in sources]
+        if len(set(widths)) > 1:
+            return {
+                "status": "error",
+                "error_type": "ValueError",
+                "error": (
+                    f"Embedding '{key}' has {widths[0]} columns in {sources[0][0]} but {widths[1]} columns in "
+                    f"{sources[1][0]}. The prediction and the reference must be embedded the same way."
+                ),
+            }
+    return None
+
+
 def benchmark_perturbations(
     path: str,
     control_pert: str,
@@ -3065,7 +3110,9 @@ def benchmark_perturbations(
     path_pred : str, optional
         Filesystem path to a predicted dataset when using paired files.
     embedding_keys : list[str] or str, optional
-        Target representation keys to evaluate.
+        ``.obsm`` embeddings to evaluate. Each must be in ``.obsm`` of both the prediction
+        and the reference data, with the same number of columns; otherwise the call fails
+        and lists the embeddings that are available.
     output_csv : str, optional
         Filesystem path to export results as CSV.
     output_dir : str, optional
@@ -3188,9 +3235,18 @@ def benchmark_perturbations(
                 "error": f"pert_col '{pert_col}' must exist in both real and predicted observations.",
             }
 
+        key_list = _embedding_key_list(embedding_keys)
+        if key_list:
+            if path_pred:
+                sources = [(f"the prediction file ({path_pred})", adata_pred), (f"the reference file ({path})", adata_real)]
+            else:
+                sources = [(f"the dataset ({path})", adata_real)]
+            problem = _check_embedding_keys(key_list, sources)
+            if problem:
+                return problem
+
         extra_configs: dict[str, Any] = {}
-        if embedding_keys:
-            key_list = [embedding_keys] if isinstance(embedding_keys, str) else list(embedding_keys)
+        if key_list:
             extra_configs["metric_configs"] = {
                 "discrimination_score_cosine": {"embed_key": key_list[0]}
             }
