@@ -1537,6 +1537,41 @@ def _settle_cell_embeddings(
     return written, succeeded, failed, not_updated
 
 
+def _note_preprocessing_choice(adata: Any, requested: str, reason: str) -> None:
+    """Record in embed_cells' provenance which mode was requested and why it was not run."""
+    records = adata.uns.get(_CELL_EMBEDDING_RECORDS) or {}
+    plans = [records.get("__preprocessing__")]
+    plans += [record.get("preprocessing") for record in records.values() if isinstance(record, dict)]
+    for plan in plans:
+        if isinstance(plan, dict):
+            plan["requested"] = requested
+            plan["reason"] = reason
+
+
+def _removed_by_preprocessing(
+    adata_in: Any, adata_out: Any, thresholds: dict[str, int], mode: str | None
+) -> str | None:
+    """A warning naming the cells and genes that single-cell preprocessing removed, if any."""
+    n_cells = int(adata_in.n_obs) - int(adata_out.n_obs)
+    n_genes = int(adata_in.n_vars) - int(adata_out.n_vars)
+    if n_cells <= 0 and n_genes <= 0:
+        return None
+    parts = []
+    if n_cells > 0:
+        gone = adata_in.obs_names[~adata_in.obs_names.isin(adata_out.obs_names)]
+        parts.append(
+            f"{n_cells} of {adata_in.n_obs} cells (fewer than {thresholds['min_genes']} genes detected; "
+            f"e.g. {[str(name) for name in gone[:5]]})"
+        )
+    if n_genes > 0:
+        parts.append(f"{n_genes} of {adata_in.n_vars} genes (detected in fewer than {thresholds['min_cells']} cells)")
+    return (
+        f"Preprocessing ('{mode}') removed {' and '.join(parts)}, so the saved file holds "
+        f"{adata_out.n_obs} cells and {adata_out.n_vars} genes. For data that is already "
+        "preprocessed, pass preprocessing='none' to keep every cell and gene."
+    )
+
+
 def _keys_for_model(adata: Any, model: str) -> list[str]:
     """Embedding keys in ``adata`` that an earlier run of ``model`` wrote.
 
@@ -1778,7 +1813,10 @@ def compute_embeddings(
     output_path : str, optional
         Filesystem path to save the updated dataset (default: '<input>_embedded.h5ad').
     preprocessing : {'auto', 'standard', 'raw', 'none'}, default='auto'
-        Single-cell preprocessing strategy (ignored by other modalities).
+        Single-cell preprocessing strategy (ignored by other modalities). 'auto' uses an
+        input that already holds .layers['log_normalized'] (preprocess_counts output) as
+        is; otherwise it filters, normalizes and selects HVGs as each model needs, with
+        thresholds scaled down for small datasets. 'none' never filters or transforms.
     device : str, default='auto'
         Compute device target ('auto', 'cpu', 'cuda', 'mps').
 
@@ -1789,6 +1827,11 @@ def compute_embeddings(
           (some failed; see models_failed) or "error" (none did; nothing is written)
         - output_path: Saved AnnData destination path
         - entity_type: Modality embedded
+        - n_obs_input / n_obs_output, n_vars_input / n_vars_output: Cells and genes in the
+          input and in the saved file; single-cell preprocessing can remove some, and then
+          ``warning`` says how many and why
+        - preprocessing_applied: Single-cell preprocessing that ran ('standard', 'raw' or
+          'none'); preprocessing_note explains when 'auto' used the input as is
         - models_computed: Canonical keys of the models that produced an embedding
         - models_failed: Model -> error, for the models that did not (only when some failed)
         - not_updated: Keys already in the file from an earlier run of a failed model;
@@ -1871,10 +1914,16 @@ def compute_embeddings(
         from embpy import BioEmbedder
 
         adata = anndata.read_h5ad(resolved_path)
+        n_obs_input, n_vars_input = int(adata.n_obs), int(adata.n_vars)
         before = {("obsm", k) for k in adata.obsm} | {("varm", k) for k in adata.varm} | {("uns", k) for k in adata.uns}
         succeeded: list[str] = []
         failed: dict[str, str] = {}
         not_updated: list[str] = []
+        adjustments: dict[str, str] = {}
+        applied_preprocessing: str | None = None
+        preprocessing_note: str | None = None
+        # embed_cells' QC defaults; preprocessing='auto' scales them for small datasets.
+        qc_thresholds = {"min_genes": 200, "min_cells": 3}
 
         with contextlib.redirect_stdout(sys.stderr):
             embedder = BioEmbedder(device=device)
@@ -1888,11 +1937,23 @@ def compute_embeddings(
                         "path": str(path),
                     }
                 extra_kwargs: dict[str, Any] = {}
-                if preprocessing == "auto":
+                run_preprocessing = preprocessing
+                if preprocessing == "auto" and "log_normalized" in adata.layers:
+                    # preprocess_counts output: cells and genes are filtered, the data is
+                    # normalized and the HVGs are chosen. Doing it again would drop cells and
+                    # genes that step kept and replace its HVGs, so use the data as it is.
+                    run_preprocessing = "none"
+                    preprocessing_note = (
+                        "The input already holds normalized expression (.layers['log_normalized'], "
+                        "as written by preprocess_counts), so it was used as is: no cells or genes "
+                        "were filtered and the highly variable genes in .var were not selected again."
+                    )
+                elif preprocessing == "auto":
                     # embed_cells' defaults (min_genes=200, 2000 HVGs) would filter out
                     # every cell of a small dataset; scale them as preprocess_counts does.
                     min_g, min_c, n_hvg, adjustments = _small_dataset_thresholds(adata.n_obs, adata.n_vars, 200, 3, 2000)
                     extra_kwargs.update(min_genes=min_g, min_cells=min_c, n_top_genes=n_hvg)
+                    qc_thresholds = {"min_genes": min_g, "min_cells": min_c}
                     if adata.n_vars < 2000:
                         extra_kwargs["pca_use_hvg"] = False
 
@@ -1905,10 +1966,14 @@ def compute_embeddings(
                     adata,
                     models=resolved_models,
                     batch_size=batch_size,
-                    preprocessing=preprocessing,
+                    preprocessing=run_preprocessing,
                     obsm_prefix=_NEW_CELL_EMBEDDING_PREFIX,
                     **extra_kwargs,
                 )
+                plan = (adata_out.uns.get(_CELL_EMBEDDING_RECORDS) or {}).get("__preprocessing__") or {}
+                applied_preprocessing = str(plan.get("resolved", run_preprocessing))
+                if preprocessing_note:
+                    _note_preprocessing_choice(adata_out, requested=preprocessing, reason=preprocessing_note)
                 written, succeeded, failed, not_updated = _settle_cell_embeddings(
                     adata_out, earlier_records, resolved_models, output_key
                 )
@@ -2002,15 +2067,24 @@ def compute_embeddings(
             "output_path": saved_path,
             "entity_type": ent_str,
             "n_cells": int(adata_out.n_obs),
+            "n_obs_input": n_obs_input,
+            "n_obs_output": int(adata_out.n_obs),
+            "n_vars_input": n_vars_input,
+            "n_vars_output": int(adata_out.n_vars),
             "models_computed": succeeded,
             "model_aliases_applied": aliases_applied,
-            "preprocessing_adjustments": locals().get("adjustments") or {},
+            "preprocessing_adjustments": adjustments,
             "embedding_keys": [str(key) for _, key in matrix_keys],
             "embedding_slots": {str(key): slot for slot, key in matrix_keys},
             "embedding_shapes": shapes,
             "metadata_keys": [str(key) for slot, key in added if slot == "uns"],
             "execution_time_seconds": round(time.time() - t0, 3),
         }
+        if applied_preprocessing is not None:
+            response["preprocessing_applied"] = applied_preprocessing
+        if preprocessing_note:
+            response["preprocessing_note"] = preprocessing_note
+        warnings: list[str] = []
         if failed:
             response["models_failed"] = failed
             warning = (
@@ -2020,10 +2094,15 @@ def compute_embeddings(
             if not_updated:
                 response["not_updated"] = not_updated
                 warning += f" {not_updated} in the file come from an earlier run and were not recomputed."
-            response["warning"] = warning
+            warnings.append(warning)
             hint = _install_hint(" ".join(failed.values()))
             if hint:
                 response["suggestion"] = hint
+        removed = _removed_by_preprocessing(adata, adata_out, qc_thresholds, applied_preprocessing)
+        if removed:
+            warnings.append(removed)
+        if warnings:
+            response["warning"] = " ".join(warnings)
         return response
 
     except Exception as exc:

@@ -51,13 +51,20 @@ lists the ones whose dependencies are installed here; `pca` always works, and `s
 check `compute_device` and warn the user before starting one on a CPU.
 
 ```python
-compute_embeddings(path="data/pbmc_preprocessed.h5ad", models=["pca", "scvi"], entity_type="single_cell", device="auto")
+# Step 2 already filtered and normalized the data and selected the genes, so do not preprocess again.
+compute_embeddings(path="data/pbmc_preprocessed.h5ad", models=["pca", "scvi"], entity_type="single_cell", preprocessing="none", device="auto")
 ```
 
 - Each model adds `.obsm["X_<model>"]` (e.g. `X_pca`); the result lists `embedding_keys` and
   `embedding_shapes`.
-- With the default `preprocessing="auto"`, small datasets get lower QC/HVG thresholds so no
-  cell is filtered out; the result lists them in `preprocessing_adjustments`. Mention them.
+- With `preprocessing="none"`, PCA uses `.layers["log_normalized"]` and the genes step 2 marked
+  in `.var["highly_variable"]`, and every cell of the step 2 file is kept.
+- Raw counts that skipped step 2 need the default `preprocessing="auto"`: it filters cells and
+  genes and normalizes first, with lower QC/HVG thresholds on small datasets (listed in
+  `preprocessing_adjustments`). A file that already holds `.layers["log_normalized"]` is used
+  as is under `auto` too.
+- If preprocessing removed cells or genes, `n_obs_output` / `n_vars_output` are smaller than
+  `n_obs_input` / `n_vars_input` and the result has a `warning` saying how many. Tell the user.
 - `obs_column` / `var_column` do not apply to `single_cell`; it embeds the expression matrix.
 - `status: "error"` with `error_type: "UnsupportedModelError"` means the model is not a
   single-cell model. Its message names the `entity_type` it belongs to.

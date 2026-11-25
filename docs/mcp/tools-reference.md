@@ -143,8 +143,19 @@ and gives the same matrix. Results are attached to the axis the inputs came from
 `missing="error"` fails when a row gets no embedding and names it; `missing="nan"` fills
 those rows with NaN.
 
-Returns `embedding_keys`, `embedding_slots` (`obsm` / `varm`), `embedding_shapes`,
-`metadata_keys` (provenance in `.uns`) and `output_path` (default `<input>_embedded.h5ad`).
+**Single-cell preprocessing.** With `preprocessing="auto"` (the default), an input that already
+holds `.layers["log_normalized"]` (`preprocess_counts` output) is used as is: no cells or genes
+are filtered and `.var["highly_variable"]` is kept, so PCA uses the genes `preprocess_counts`
+selected (`preprocessing_note` says so). Raw counts are filtered, normalized and given HVGs as
+the models need, with QC/HVG thresholds lowered for small datasets (`preprocessing_adjustments`).
+`standard` and `raw` always run their pipeline; `none` never filters or transforms.
+`preprocessing_applied` names the pipeline that ran.
+
+Returns `n_obs_input` / `n_obs_output` and `n_vars_input` / `n_vars_output` (cells and genes
+before and after; when preprocessing removed some, `warning` says how many and which
+thresholds removed them), `embedding_keys`, `embedding_slots` (`obsm` / `varm`),
+`embedding_shapes`, `metadata_keys` (provenance in `.uns`) and `output_path` (default
+`<input>_embedded.h5ad`).
 
 ---
 
