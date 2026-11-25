@@ -604,6 +604,25 @@ def compare_deg(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+def _stored_metric_kwargs(ce: Any, metric_configs: dict[str, dict[str, Any]] | None) -> dict[str, Any]:
+    """Copy the registry settings of the metrics ``metric_configs`` will change."""
+    stored = getattr(getattr(ce, "metrics_registry", None), "metrics", None)
+    if not metric_configs or not isinstance(stored, dict):
+        return {}
+    return {
+        name: None if stored[name].kwargs is None else dict(stored[name].kwargs)
+        for name in metric_configs
+        if name in stored
+    }
+
+
+def _restore_metric_kwargs(ce: Any, saved: dict[str, Any]) -> None:
+    """Put back the registry settings copied by :func:`_stored_metric_kwargs`."""
+    stored = ce.metrics_registry.metrics if saved else {}
+    for name, kwargs in saved.items():
+        stored[name].kwargs = kwargs
+
+
 def cell_eval(
     adata_pred: AnnData,
     adata_real: AnnData,
@@ -649,7 +668,8 @@ def cell_eval(
 
         Note that ``discrimination_score_l1`` ignores ``embed_key`` upstream,
         so a profile including it mixes expression-space and embedding-space
-        numbers.
+        numbers. The configs apply to this call only: cell-eval keeps them in
+        its process-wide metric registry, which is restored afterwards.
     skip_metrics
         Metric names to leave out, also forwarded to ``compute``.
     **kwargs
@@ -680,12 +700,19 @@ def cell_eval(
     # `MetricsEvaluator.__init__() got an unexpected keyword argument
     # 'metric_configs'`, which left `embed_key` -- and therefore the whole
     # embedding-scoring path -- unreachable through this wrapper.
-    results_pl, agg_pl = evaluator.compute(
-        profile=profile,
-        metric_configs=metric_configs,
-        skip_metrics=skip_metrics,
-        write_csv=False,
-    )
+    # cell-eval also stores metric_configs in its process-wide metric registry,
+    # where they would outlive this call: a later call without an embed_key
+    # would still score the embedding named here. Put the stored settings back.
+    saved = _stored_metric_kwargs(ce, metric_configs)
+    try:
+        results_pl, agg_pl = evaluator.compute(
+            profile=profile,
+            metric_configs=metric_configs,
+            skip_metrics=skip_metrics,
+            write_csv=False,
+        )
+    finally:
+        _restore_metric_kwargs(ce, saved)
 
     results = results_pl.to_pandas()
     agg_results = agg_pl.to_pandas()

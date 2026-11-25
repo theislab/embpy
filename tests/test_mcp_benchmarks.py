@@ -118,3 +118,82 @@ def test_embedding_widths_must_match_between_files(write_pair):
     assert res["status"] == "error", res.get("evaluated_keys")
     assert res["error_type"] == "ValueError"
     assert "X_good" in res["error"] and "6 columns" in res["error"] and "4" in res["error"]
+
+
+# ---------------------------------------------------------------------------
+# Scores recomputed from the files
+# ---------------------------------------------------------------------------
+
+EXPRESSION = "gene expression (.X)"
+
+
+def _read(path: str) -> AnnData:
+    import anndata
+
+    return anndata.read_h5ad(path)
+
+
+def _means(adata: AnnData, rep: str | None) -> dict[str, np.ndarray]:
+    """Mean of each perturbation's cells, on .X (rep=None) or on .obsm[rep]."""
+    matrix = np.asarray(adata.X if rep is None else adata.obsm[rep], dtype=np.float64)
+    labels = adata.obs["perturbation"].to_numpy()
+    return {p: matrix[labels == p].mean(axis=0) for p in PERTS}
+
+
+def _discrimination(real: AnnData, pred: AnnData, rep: str | None, metric: str) -> dict[str, float]:
+    """cell-eval's discrimination score, recomputed.
+
+    Per perturbation: 1 - rank / n, where rank is the place of its own observed effect when
+    all observed effects are sorted by distance to its predicted effect.
+    """
+    r, q = _means(real, rep), _means(pred, rep)
+    names = sorted(p for p in PERTS if p != "ctrl")
+    observed = np.vstack([r[p] - r["ctrl"] for p in names])
+    scores = {}
+    for i, p in enumerate(names):
+        predicted = q[p] - q["ctrl"]
+        if metric == "cosine":
+            distances = 1 - observed @ predicted / (np.linalg.norm(observed, axis=1) * np.linalg.norm(predicted))
+        else:  # l2
+            distances = np.linalg.norm(observed - predicted, axis=1)
+        rank = int(np.flatnonzero(np.argsort(distances) == i)[0])
+        scores[p] = 1 - rank / len(names)
+    return scores
+
+
+def _column(res: dict, name: str) -> dict[str, float]:
+    return {row["perturbation"]: row[name] for row in res["results"]}
+
+
+# ---------------------------------------------------------------------------
+# 2. Metric settings of one call do not carry over to the next
+# ---------------------------------------------------------------------------
+
+
+def test_a_later_call_scores_expression_not_an_earlier_calls_embedding(write_pair):
+    real, pred = write_pair(pred_emb={"X_good": SWAPPED})
+    first = _bench(real, pred, embedding_keys="X_good", profile="anndata")
+    assert first["status"] == "success", first
+    later = _bench(real, pred, profile="anndata")
+    assert later["status"] == "success", later
+    expected = _discrimination(_read(real), _read(pred), None, "cosine")
+    assert expected == {"A": 1.0, "B": 1.0, "C": 1.0, "D": 1.0}
+    assert _column(later, "discrimination_score_cosine") == pytest.approx(expected)
+
+
+def test_cell_eval_does_not_keep_metric_configs(write_pair, tmp_path):
+    import cell_eval
+
+    from embpy.tl import cell_eval as run_cell_eval_suite
+
+    real, pred = write_pair()
+    stored = cell_eval.metrics_registry.get_metric("discrimination_score_cosine")
+    before = dict(stored.kwargs or {})
+    run_cell_eval_suite(
+        _read(pred), _read(real), control_pert="ctrl", profile="anndata",
+        metric_configs={"discrimination_score_cosine": {"embed_key": "X_good"}},
+        skip_de=True, outdir=str(tmp_path / "cell-eval"),
+    )
+    after = dict(stored.kwargs or {})
+    assert after.get("embed_key") != "X_good"
+    assert after == before
