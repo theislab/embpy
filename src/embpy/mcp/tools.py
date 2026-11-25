@@ -1471,6 +1471,7 @@ _INSTALL_FOR_MODULE = {
     "cell_eval": 'pip install "embpy[eval]"',
     "pertpy": 'pip install "embpy[pertpy]"',
     "pyensembl": 'pip install "embpy[genome]"',
+    "rdkit": "pip install rdkit",
 }
 
 
@@ -2578,6 +2579,7 @@ def annotate_metadata(
         - new_columns_added: '<entity>_<type>_n' record counts per row in .obs
         - summary: Human-readable description
     """
+    resolved_entity = str(entity_type)  # the entity type resolved below; for the install hint
     try:
         import anndata
         import pandas as pd
@@ -2695,6 +2697,11 @@ def annotate_metadata(
                 "error_type": "ImportError",
                 "error": "Source 'dorothea' needs the decoupler package: pip install decoupler.",
             }
+        if resolved_entity == "molecule":
+            # Every molecule lookup starts from RDKit. MoleculeAnnotator carries on without it
+            # (sending SMILES to PubChem's name search, skipping properties), which would be
+            # reported as "nothing found"; raise so the reply names the package instead.
+            import rdkit  # noqa: F401
 
         # KEGG pathways of molecules are looked up in a local KEGG reference; without one
         # the search cannot run, which is not the same as finding no pathways.
@@ -2789,6 +2796,8 @@ def annotate_metadata(
                         with record_service_errors() as errs:
                             try:
                                 data = fetchers[t](e, sources_queried[t])
+                            except ImportError:
+                                raise  # a missing package, not an unreachable service
                             except _SpeciesMismatch as exc:
                                 data, mismatch = {}, exc
                             except Exception as exc:  # noqa: BLE001
@@ -2989,8 +2998,13 @@ def annotate_metadata(
             "successful_count": 0,
             "suggestion": "Check that the target dataset contains valid identifiers in .obs.",
         }
-        if isinstance(exc, (ImportError, ModuleNotFoundError)):
-            resp["suggestion"] = "Cell-line annotation needs pertpy: pip install 'embpy[pertpy]'."
+        if isinstance(exc, ImportError):
+            # A ModuleNotFoundError names the module also when its message does not say "No module named".
+            module = exc.name if isinstance(exc, ModuleNotFoundError) else None
+            hint = _install_hint(str(exc)) or (_install_hint(f"No module named '{module}'") if module else None)
+            if resolved_entity == "cell_line" and (hint is None or module == "pertpy"):
+                hint = "Cell-line annotation needs pertpy: pip install 'embpy[pertpy]'."
+            resp["suggestion"] = hint or "Install the Python package named in the error."
         return resp
 
 

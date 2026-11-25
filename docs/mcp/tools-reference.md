@@ -187,6 +187,8 @@ names both species.
 - `error` / `SpeciesMismatch`: the identifiers lead to UniProt entries of another species; the
   error starts "Species mismatch:" and names both species. With some entities annotated, the
   same text is the `warning`.
+- `error` / `ModuleNotFoundError`: a package is missing (e.g. RDKit, used by every molecule
+  lookup; pertpy for cell lines); `suggestion` gives the install command.
 - A source that failed while others answered is listed in `unreachable_services`, with a
   `warning`.
 

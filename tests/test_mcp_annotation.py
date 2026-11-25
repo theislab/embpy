@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import sys
 from pathlib import Path
 
 import anndata
@@ -359,3 +360,58 @@ def test_gene_symbols_are_looked_up_in_the_requested_species(uniprot, entity_typ
     assert human_symbol["error_type"] == "NoAnnotationsFound", human_symbol
     assert {p["species"] for url, p in uniprot["requests"] if url.endswith("/query")} == {10090}
     assert not any(url.endswith("/P04637.json") for url, _ in uniprot["requests"])
+
+
+# ---------------------------------------------------------------------------
+# 4. Install hints name the missing package
+# ---------------------------------------------------------------------------
+
+
+class _NoRDKit:
+    """Import hook that makes RDKit look uninstalled ("No module named 'rdkit'")."""
+
+    def find_spec(self, name, path=None, target=None):
+        if name == "rdkit" or name.startswith("rdkit."):
+            raise ModuleNotFoundError(f"No module named {name!r}", name=name)
+        return None
+
+
+@pytest.fixture
+def rdkit_missing(monkeypatch):
+    for name in [m for m in sys.modules if m == "rdkit" or m.startswith("rdkit.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(sys, "meta_path", [_NoRDKit(), *sys.meta_path])
+
+
+def test_missing_rdkit_names_rdkit(rdkit_missing, offline_molecules):
+    res = annotate_metadata(identifiers=[ETHANOL], entity_type="molecule", annotation_types="properties")
+    assert res["status"] == "error"
+    assert res["error_type"] == "ModuleNotFoundError", res
+    assert "pip install rdkit" in res["suggestion"]
+    assert "pertpy" not in res["suggestion"]
+    assert offline_molecules == []  # nothing was looked up online instead
+
+
+def test_cell_line_annotation_still_names_pertpy(monkeypatch):
+    import embpy.tl as tl
+
+    def annotate_cell_lines(adata, query_id):
+        raise ModuleNotFoundError("No module named 'pertpy'", name="pertpy")
+
+    monkeypatch.setattr(tl, "annotate_cell_lines", annotate_cell_lines)
+    res = annotate_metadata(identifiers=["A549"], entity_type="cell_line")
+    assert res["error_type"] == "ModuleNotFoundError"
+    assert "embpy[pertpy]" in res["suggestion"]
+
+
+def test_a_package_missing_during_a_lookup_is_not_a_service_outage(monkeypatch):
+    from embpy.resources.gene.annotator import GeneAnnotator
+
+    def get_pathways(self, gene, *, reactome_index=None):
+        raise ModuleNotFoundError("No module named 'pyensembl'", name="pyensembl")
+
+    monkeypatch.setattr(GeneAnnotator, "get_pathways", get_pathways)
+    res = annotate_metadata(identifiers=["TP53"], entity_type="gene", annotation_types="pathways", sources="kegg")
+    assert res["error_type"] == "ModuleNotFoundError", res
+    assert "Couldn't reach" not in res["error"]
+    assert 'pip install "embpy[genome]"' in res["suggestion"]
