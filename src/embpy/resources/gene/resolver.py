@@ -1353,7 +1353,8 @@ class GeneResolver:
         Positive and negative results are persisted to
         ``~/.cache/embpy/symbol_resolution.json`` so subsequent runs
         skip the network entirely. Pass ``use_cache=False`` to bypass
-        the cache (forces a fresh resolution; still WRITES the cache).
+        the cache (forces a fresh resolution; still WRITES the cache:
+        the new answer replaces the cached one).
 
         Returns the approved symbol or ``None`` if every step failed.
         See :class:`embpy.resources.gene._alias_resolver.Resolution` for
@@ -1367,14 +1368,12 @@ class GeneResolver:
 
         if not hasattr(self, "_alias_cache") or self._alias_cache is None:
             self._alias_cache = AliasCache(path=default_cache_path())
-        cache = self._alias_cache if use_cache else AliasCache(
-            path=default_cache_path(),
-        )
         res = resolve_symbol_chain(
             symbol,
             organism=organism,
             ensembl=self.ensembl,
-            cache=cache,
+            cache=self._alias_cache,
+            refresh=not use_cache,
         )
         return res.approved_symbol
 

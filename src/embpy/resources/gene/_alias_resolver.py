@@ -389,6 +389,7 @@ def resolve_symbol_chain(
     organism: str = "human",
     ensembl: Any | None = None,
     cache: AliasCache | None = None,
+    refresh: bool = False,
 ) -> Resolution:
     """Run the four-step chain and cache the result.
 
@@ -407,6 +408,9 @@ def resolve_symbol_chain(
         Optional :class:`AliasCache`; defaults to a fresh cache pointing
         at :func:`default_cache_path`. Pass the same instance across
         many calls to amortise the cache load.
+    refresh
+        If True, ignore a cached answer and run the chain again; the new
+        result replaces the cached one.
     """
     sym = symbol.strip()
     if not sym:
@@ -422,11 +426,11 @@ def resolve_symbol_chain(
         # A cache made for this one call is saved before returning.
         cache = AliasCache(path=default_cache_path())
         try:
-            return resolve_symbol_chain(symbol, organism=organism, ensembl=ensembl, cache=cache)
+            return resolve_symbol_chain(symbol, organism=organism, ensembl=ensembl, cache=cache, refresh=refresh)
         finally:
             cache.flush()
 
-    cached = cache.get(sym, organism)
+    cached = None if refresh else cache.get(sym, organism)
     if cached is not None:
         logger.debug(
             "resolve_symbol: cache hit for %s/%s -> %s (%s)",

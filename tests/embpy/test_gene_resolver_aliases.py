@@ -11,6 +11,7 @@ endpoint) so the test is hermetic. We assert:
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -189,3 +190,39 @@ def test_pyensembl_step_wins_when_available(monkeypatch, cache: AliasCache) -> N
     assert res.source == "pyensembl"
     # No HTTP calls were issued.
     assert n_calls["count"] == 0
+
+
+def test_resolve_symbol_without_cache_resolves_again(monkeypatch, tmp_path: Path) -> None:
+    """use_cache=False ignores the cached answer; the fresh answer then replaces it."""
+    from embpy.resources.gene.resolver import GeneResolver
+
+    monkeypatch.setenv("EMBPY_CACHE", str(tmp_path))
+    stale = {"input_symbol": "OLDNAME", "organism": "human", "approved_symbol": "STALE1", "source": "hgnc", "chain": []}
+    (tmp_path / "symbol_resolution.json").write_text(
+        json.dumps({"version": 1, "entries": {"human::OLDNAME": stale}}), encoding="utf-8"
+    )
+
+    class _Release:
+        calls = 0
+
+        def genes_by_name(self, sym):
+            _Release.calls += 1
+            return [type("Gene", (), {"gene_name": "FRESH1"})()]
+
+    def _no_network(url, **kwargs):
+        raise AssertionError(f"network access in a test: {url}")
+
+    monkeypatch.setattr(requests, "get", _no_network)
+    resolver = GeneResolver.__new__(GeneResolver)
+    resolver.ensembl = _Release()
+
+    assert resolver.resolve_symbol("OLDNAME") == "STALE1"  # use_cache=True answers from the cache
+    assert _Release.calls == 0
+    assert resolver.resolve_symbol("OLDNAME", use_cache=False) == "FRESH1"
+    assert _Release.calls == 1
+    assert resolver.resolve_symbol("OLDNAME") == "FRESH1"
+    assert _Release.calls == 1
+
+    resolver._alias_cache.flush()
+    saved = json.loads((tmp_path / "symbol_resolution.json").read_text(encoding="utf-8"))
+    assert saved["entries"]["human::OLDNAME"]["approved_symbol"] == "FRESH1"
