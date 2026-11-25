@@ -114,6 +114,25 @@ def test_single_lookups_save_every_n_new_entries(resolver, monkeypatch):
     assert "human:GENE20" not in saved
 
 
+def test_save_threshold_can_be_set_with_an_environment_variable(resolver, monkeypatch):
+    monkeypatch.setenv("EMBPY_GENE_CACHE_SAVE_EVERY", "10")
+    with _fake_network(), _record_writes(resolver._cache_file) as writes:
+        for i in range(25):
+            resolver.symbol_to_ensembl(f"GENE{i}")
+    assert len(writes) == 2
+
+
+@pytest.mark.parametrize("value", ["0", "-3", "often"])
+def test_invalid_save_threshold_falls_back_to_the_default(resolver, monkeypatch, caplog, value):
+    monkeypatch.setattr(resolver_mod, "_GENE_CACHE_SAVE_EVERY", 10)
+    monkeypatch.setenv("EMBPY_GENE_CACHE_SAVE_EVERY", value)
+    with _fake_network(), _record_writes(resolver._cache_file) as writes, caplog.at_level(logging.WARNING):
+        for i in range(25):
+            resolver.symbol_to_ensembl(f"GENE{i}")
+    assert len(writes) == 2
+    assert any("EMBPY_GENE_CACHE_SAVE_EVERY" in r.getMessage() for r in caplog.records)
+
+
 def test_batch_calls_write_the_cache_at_most_once(resolver):
     symbols = [f"GENE{i}" for i in range(50)]
     ids = [f"ENSG8{i:010d}" for i in range(50)]

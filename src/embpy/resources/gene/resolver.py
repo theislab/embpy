@@ -16,6 +16,8 @@ from embpy.errors import GeneResolutionError
 from embpy.observability import log_event, time_block
 from embpy.retry import retry_with_backoff
 
+from ._cache_files import save_every
+
 
 def _load_seqio():
     """Lazily import ``Bio.SeqIO`` (biopython is an optional dependency).
@@ -431,9 +433,9 @@ def _get_ensembl_offline_warning(
 _GENE_CACHE_VERSION = 3
 
 # Single lookups save the cache file every this many new lookups instead of
-# after each one; batch lookups save once per call. Lookups not saved yet are
-# written by GeneResolver.flush_cache(), when the resolver is garbage-collected,
-# or when the process exits.
+# after each one (EMBPY_GENE_CACHE_SAVE_EVERY overrides it); batch lookups save
+# once per call. Lookups not saved yet are written by GeneResolver.flush_cache(),
+# when the resolver is garbage-collected, or when the process exits.
 _GENE_CACHE_SAVE_EVERY = 500
 
 # Resolvers holding lookups their cache file does not have yet. Weak references,
@@ -555,6 +557,10 @@ class GeneResolver:
     """
     Handles mapping gene identifiers to DNA or protein sequences.
     Uses pyensembl for local genomic data and APIs (Ensembl, MyGene, UniProt) for remote lookups.
+
+    Resolved ids are kept in a cache file that is saved every 500 new lookups
+    (``EMBPY_GENE_CACHE_SAVE_EVERY`` changes that), once per batch call, and on
+    garbage collection or exit; :meth:`flush_cache` saves it on demand.
     """
 
     def __init__(
@@ -747,22 +753,30 @@ class GeneResolver:
         _RESOLVERS_WITH_UNSAVED_CACHE.discard(self)
 
     def _cache_changed(self) -> None:
-        """Count a lookup that added cache entries; save every ``_GENE_CACHE_SAVE_EVERY`` of them.
+        """Count a lookup that added cache entries; save every 500 of them (see :meth:`flush_cache`).
 
         While a batch call runs, the save waits for the end of the batch.
         """
         self._cache_unsaved += 1
         _RESOLVERS_WITH_UNSAVED_CACHE.add(self)
-        if not self._cache_batch_depth and self._cache_unsaved % _GENE_CACHE_SAVE_EVERY == 0:
+        if not self._cache_batch_depth and self._cache_unsaved % save_every(_GENE_CACHE_SAVE_EVERY) == 0:
             self._save_cache()
 
     def flush_cache(self) -> None:
         """Write lookups that are not saved yet to the gene id cache file.
 
-        Single lookups are saved every few hundred new entries and batch lookups
-        once per call; whatever is left is written when the resolver is
-        garbage-collected or the process exits. Call this to save earlier, for
-        example in a job that may be killed.
+        The cache file (``gene_id_cache.json`` in ``$EMBPY_CACHE``, default
+        ``~/.cache/embpy``) is not rewritten after every lookup:
+
+        * single lookups save it every 500 new entries; set the environment
+          variable ``EMBPY_GENE_CACHE_SAVE_EVERY`` to another positive whole
+          number to change that (``1`` saves after every new entry);
+        * batch lookups save it once, at the end of the call;
+        * entries still unsaved are written when the resolver is
+          garbage-collected or the process exits normally.
+
+        Call this to save earlier, for example in a job that may be killed
+        (a killed process does not get to save at exit).
         """
         self._ensure_cache()
         if self._cache_unsaved:
