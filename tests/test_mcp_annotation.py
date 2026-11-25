@@ -474,3 +474,37 @@ def test_a_second_identifier_column_gets_its_own_count_column(uniprot, tmp_path)
     assert sorted(c for c in saved.obs.columns if c.startswith("gene_go_n")) == ["gene_go_n", "gene_go_n_target"]
     assert list(saved.obs["gene_go_n"]) == [3, 3, 1]
     assert list(saved.obs["gene_go_n_target"]) == [1, 1, 1]
+
+
+def test_a_second_smiles_column_gets_its_own_property_columns(tmp_path, offline_molecules):
+    """Drug and vehicle SMILES in one file: the vehicle's properties do not replace the drug's."""
+    wells = _write_obs(tmp_path / "wells.h5ad", drug=[ETHANOL, ASPIRIN], vehicle=["O", "O"])
+    drug = annotate_metadata(path=wells, entity_type="molecule", column="drug", annotation_types="properties",
+                             output_path=str(tmp_path / "drug.h5ad"))
+    assert drug["status"] == "success", drug
+    assert "mol_molecular_weight" in drug["new_columns_added"]
+    drug_weights = list(anndata.read_h5ad(drug["output_path"]).obs["mol_molecular_weight"])
+
+    vehicle = annotate_metadata(path=drug["output_path"], entity_type="molecule", column="vehicle",
+                                annotation_types="properties", output_path=str(tmp_path / "vehicle.h5ad"))
+    assert vehicle["status"] == "success", vehicle
+    assert {"mol_properties_n_vehicle", "mol_molecular_weight_vehicle"} <= set(vehicle["new_columns_added"])
+    assert "mol_molecular_weight" not in vehicle["new_columns_added"]
+
+    saved, _, record = _stored(vehicle["output_path"])
+    assert list(saved.obs["mol_molecular_weight"]) == drug_weights  # still the drug's
+    water = list(saved.obs["mol_molecular_weight_vehicle"])
+    assert water[0] == water[1] and water[0] < min(drug_weights)
+    property_columns = json.loads(record["provenance_json"])["property_columns"]
+    assert property_columns["mol_molecular_weight"] == {"column": "drug", "property": "molecular_weight"}
+    assert property_columns["mol_molecular_weight_vehicle"] == {"column": "vehicle", "property": "molecular_weight"}
+
+    # Annotating the drug column again writes the drug's columns, under the same names.
+    again = annotate_metadata(path=vehicle["output_path"], entity_type="molecule", column="drug",
+                              annotation_types="properties", output_path=str(tmp_path / "again.h5ad"))
+    assert "mol_molecular_weight" in again["new_columns_added"]
+    assert not any(c.endswith("_drug") for c in again["new_columns_added"])
+    saved = anndata.read_h5ad(again["output_path"])
+    assert list(saved.obs["mol_molecular_weight"]) == drug_weights
+    assert list(saved.obs["mol_molecular_weight_vehicle"]) == water
+    assert offline_molecules == []

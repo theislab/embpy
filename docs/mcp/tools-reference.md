@@ -251,7 +251,10 @@ annotated for that type, and annotating that column again updates it. When anoth
 annotated for a type that already has counts from a different column (e.g. `target` after
 `gene`), its counts go to `<prefix>_<type>_n_<column>` (`gene_go_n_target`), listed in
 `new_columns_added`. `provenance_json["count_columns"]` maps each count column to its identifier
-column, entity type and annotation type.
+column, entity type and annotation type. Molecule property columns follow the same rule:
+`mol_<property>` belongs to the first SMILES column annotated with `properties`, another column
+gets `mol_<property>_<column>` (e.g. `mol_molecular_weight_vehicle`), and
+`provenance_json["property_columns"]` maps each to its identifier column and property.
 
 ---
 

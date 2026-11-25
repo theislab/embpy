@@ -2450,14 +2450,25 @@ def _merge_annotation_records(
     return merged, updated
 
 
-def _count_column_source(
-    name: str, record: Any, provenance: dict[str, Any], entity_type: str, ann_type: str
+def _obs_column_source(
+    name: str,
+    record: Any,
+    provenance: dict[str, Any],
+    entity_type: str,
+    ann_type: str,
+    registry: str = "count_columns",
 ) -> str | None:
-    """The identifier column whose record counts ``.obs[name]`` holds, or None if unknown."""
-    recorded = provenance.get("count_columns")
-    if isinstance(recorded, dict) and isinstance(recorded.get(name), dict):
-        return recorded[name].get("column")
-    # Written before count columns were recorded: the column the type's records came from ...
+    """The identifier column whose annotations ``.obs[name]`` holds, or None if unknown.
+
+    ``registry`` is the provenance_json entry that lists the columns of this kind
+    ("count_columns" or "property_columns"); a column it does not list was not written
+    by annotate_metadata. Files written before it existed are read from the stored
+    provenance or record.
+    """
+    recorded = provenance.get(registry)
+    if isinstance(recorded, dict):
+        return recorded[name].get("column") if isinstance(recorded.get(name), dict) else None
+    # Written before such columns were recorded: the column the type's records came from ...
     by_source = provenance.get(entity_type, {}).get(ann_type) if isinstance(provenance.get(entity_type), dict) else None
     if isinstance(by_source, dict):
         columns = {info.get("column") for info in by_source.values() if isinstance(info, dict)}
@@ -2807,7 +2818,8 @@ def annotate_metadata(
         - failed_count: Entities missing at least one requested type
         - new_columns_added: '<entity>_<type>_n' record counts per row in .obs (empty when
           nothing was written, e.g. identifiers without output_path); '<entity>_<type>_n_<column>'
-          when that name already holds the counts of another identifier column
+          when that name already holds the counts of another identifier column. Molecule
+          properties: 'mol_<property>', or 'mol_<property>_<column>' by the same rule
         - summary: Human-readable description
     """
     resolved_entity = str(entity_type)  # the entity type resolved below; for the install hint
@@ -3159,7 +3171,7 @@ def annotate_metadata(
             prefix = {"gene": "gene", "protein": "prot", "molecule": "mol"}[resolved_entity]
             for t in requested:
                 col = f"{prefix}_{t}_n"
-                if col in adata.obs.columns and _count_column_source(col, earlier, provenance, resolved_entity, t) != query_col:
+                if col in adata.obs.columns and _obs_column_source(col, earlier, provenance, resolved_entity, t) != query_col:
                     # These are another identifier column's counts: keep them, name this column's after it.
                     col = f"{col}_{query_col}"
                 # The number of records stored for the row's entity, from every source of the type.
@@ -3171,18 +3183,28 @@ def annotate_metadata(
                 # Scalar RDKit properties as columns, as tl.annotate_molecules writes them.
                 props = {e: (results[e].get("properties", {}).get("rdkit") or {}).get("physicochemical") or {} for e in entities}
                 prop_keys = list(dict.fromkeys(k for p in props.values() for k, v in p.items() if not isinstance(v, (dict, list))))
+                property_columns = provenance.get("property_columns")
+                property_columns = dict(property_columns) if isinstance(property_columns, dict) else {}
                 for key in prop_keys:
+                    name = f"mol_{key}"
+                    if name in adata.obs.columns and _obs_column_source(
+                        name, earlier, provenance, "molecule", "properties", registry="property_columns"
+                    ) != query_col:
+                        # Another identifier column's properties: keep them, name this column's after it.
+                        name = f"{name}_{query_col}"
                     column_values = [props.get(v, {}).get(key) if v else None for v in values]
                     present = [x for x in column_values if x is not None]
                     # Rows without the compound (controls) have no value. Keep numbers and flags
                     # as floats with NaN, text as a categorical: both write to .h5ad with gaps.
                     if all(isinstance(x, (bool, int, float, np.number, np.bool_)) for x in present):
-                        adata.obs[f"mol_{key}"] = np.array(
+                        adata.obs[name] = np.array(
                             [np.nan if x is None else float(x) for x in column_values], dtype=float
                         )
                     else:
-                        adata.obs[f"mol_{key}"] = pd.Categorical([None if x is None else str(x) for x in column_values])
-                    new_cols.append(f"mol_{key}")
+                        adata.obs[name] = pd.Categorical([None if x is None else str(x) for x in column_values])
+                    new_cols.append(name)
+                    property_columns[name] = {"column": query_col, "property": key}
+                provenance["property_columns"] = property_columns
             if not isinstance(provenance.get(resolved_entity), dict):
                 provenance[resolved_entity] = {}
             for t, source in sorted(updated):
