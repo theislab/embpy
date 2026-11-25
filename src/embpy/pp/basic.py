@@ -143,7 +143,8 @@ class PerturbationProcessor:
         organism
             Target organism for gene resolution.
         fallback_to_unmapped
-            If True, unmapped symbols retain their input string.
+            If True, unmapped symbols keep their input string as
+            ``canonical_id`` (with ``resolved`` False).
         strict
             If True, raises GeneResolutionError on unmapped genes.
 
@@ -153,7 +154,9 @@ class PerturbationProcessor:
         ``id_type``, ``resolved``.
         """
         rows: list[dict] = []
-        lookup = _symbol_lookup(self.gene_resolver, organism, fallback_to_unmapped=fallback_to_unmapped, strict=strict)
+        # The fallback is applied below, so an unmapped symbol is not mistaken
+        # for one the resolver mapped (the resolver's fallback returns the input).
+        lookup = _symbol_lookup(self.gene_resolver, organism, fallback_to_unmapped=False, strict=strict)
         for ident in identifiers:
             detected = detect_identifier_type(ident) if id_type == "auto" else id_type
 
