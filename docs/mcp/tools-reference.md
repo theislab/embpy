@@ -228,3 +228,23 @@ with the same number of columns. Otherwise nothing is scored: the error names th
 key and the files it is missing from, and `available_keys` lists the embeddings both have
 (for example "Embedding 'X_DOES_NOT_EXIST' is missing from .obsm of the prediction file
 (pred.h5ad) and the reference file (real.h5ad). Available embedding: X_good.").
+
+Two cell-eval metrics score an embedding, the two that `cell-eval run --embed-key` uses:
+`discrimination_score_l2` and `discrimination_score_cosine`. They run with `profile="anndata"`
+or `"full"`: once on gene expression (the plain columns) and once per requested embedding, in
+columns `discrimination_score_l2[<key>]` and `discrimination_score_cosine[<key>]`. Every other
+score is computed on gene expression (`.X`). `profile="minimal"` (the default), `"vcc"` and
+`"de"` score gene expression only; requested embeddings are then listed in `unscored_keys`,
+with a `warning` naming the profiles that score them.
+
+Returns:
+
+- `markdown_table` and `results`: one row per perturbation, one column per score.
+- `scored_on`: the data each column was computed on, `"gene expression (.X)"` or
+  `"embedding <key> (.obsm['<key>'])"`.
+- `evaluated_keys`: the embeddings a metric read. A key is listed only if it was scored.
+- `unscored_keys`: requested embeddings the profile does not score.
+- `output_csv`: the per-perturbation table, if requested.
+
+An embedding that cell-eval cannot score (for example one with NaN values) is an error
+quoting cell-eval's message; cell-eval itself only logs a failing metric and leaves it out.

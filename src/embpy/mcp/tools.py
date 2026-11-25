@@ -3074,6 +3074,107 @@ def _check_embedding_keys(keys: list[str], sources: list[tuple[str, Any]]) -> di
     return None
 
 
+# The cell-eval metrics that score an .obsm embedding, the two that `cell-eval run --embed-key`
+# configures, and the profiles that run them. Every other metric reads gene expression (.X):
+# the DE metrics always, and discrimination_score_l1 ignores embed_key.
+_EMBEDDING_METRICS = ("discrimination_score_l2", "discrimination_score_cosine")
+_EMBEDDING_PROFILES = ("anndata", "full")
+_EXPRESSION_DATA = "gene expression (.X)"
+
+
+@contextlib.contextmanager
+def _logged_errors(logger_name: str):
+    """Collect the error messages that ``logger_name`` and its children log in the block."""
+    messages: list[str] = []
+
+    class _Collect(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            messages.append(record.getMessage())
+
+    handler = _Collect(logging.ERROR)
+    target = logging.getLogger(logger_name)
+    target.addHandler(handler)
+    try:
+        yield messages
+    finally:
+        target.removeHandler(handler)
+
+
+def _unscored_embedding(key: str, metrics: list[str], errors: list[str]) -> ValueError:
+    """The error for an embedding that ``metrics`` failed on, quoting what cell-eval logged."""
+    details = " ".join(e for e in errors if any(f"'{m}'" in e for m in metrics)) or "see the server log."
+    return ValueError(f"Embedding '{key}' could not be scored with {' or '.join(metrics)}: {details}")
+
+
+def _score_perturbations(
+    adata_pred: Any,
+    adata_real: Any,
+    control_pert: str,
+    pert_col: str,
+    profile: str,
+    keys: list[str],
+    **evaluator_kwargs: Any,
+) -> tuple[Any, dict[str, str], list[str]]:
+    """Score with cell-eval: gene expression with ``profile``, then each embedding in ``keys``.
+
+    Returns the per-perturbation table, the data each of its columns was scored on, and the
+    embeddings that were scored. Each embedding gets its own columns, ``<metric>[<key>]``.
+    cell-eval logs a metric that raises and leaves its column out; an embedding metric that
+    did that raises ValueError here instead.
+    """
+    from embpy.tl import run_cell_eval
+
+    # embed_key=None: in this run the embedding metrics score .X, like every other metric.
+    with contextlib.redirect_stdout(sys.stderr):
+        table = run_cell_eval(
+            adata_pred=adata_pred,
+            adata_real=adata_real,
+            control_pert=control_pert,
+            pert_col=pert_col,
+            profile=profile,
+            metric_configs={metric: {"embed_key": None} for metric in _EMBEDDING_METRICS},
+            **evaluator_kwargs,
+        )
+    scored_on = {str(column): _EXPRESSION_DATA for column in table.columns if column != "perturbation"}
+    if not keys:
+        return table, scored_on, []
+
+    import cell_eval
+
+    other_metrics = [
+        metric
+        for metric in cell_eval.metrics_registry.list_metrics(cell_eval.MetricType.ANNDATA_PAIR)
+        if metric not in _EMBEDDING_METRICS
+    ]
+    for key in keys:
+        with _logged_errors("cell_eval") as errors, contextlib.redirect_stdout(sys.stderr):
+            try:
+                scores = run_cell_eval(
+                    adata_pred=adata_pred,
+                    adata_real=adata_real,
+                    control_pert=control_pert,
+                    pert_col=pert_col,
+                    profile="anndata",
+                    metric_configs={metric: {"embed_key": key} for metric in _EMBEDDING_METRICS},
+                    skip_metrics=other_metrics,
+                    skip_de=True,
+                    **evaluator_kwargs,
+                )
+            except Exception as exc:
+                # When no metric produced a value, cell-eval fails while summarizing the results.
+                if not errors:
+                    raise
+                raise _unscored_embedding(key, list(_EMBEDDING_METRICS), errors) from exc
+        failed = [m for m in _EMBEDDING_METRICS if m not in scores.columns or scores[m].isna().all()]
+        if failed:
+            raise _unscored_embedding(key, failed, errors)
+        labelled = {metric: f"{metric}[{key}]" for metric in _EMBEDDING_METRICS}
+        scores = scores[["perturbation", *_EMBEDDING_METRICS]].rename(columns=labelled)
+        table = table.merge(scores, on="perturbation", how="left") if "perturbation" in table.columns else scores
+        scored_on.update({column: f"embedding {key} (.obsm['{key}'])" for column in labelled.values()})
+    return table, scored_on, list(keys)
+
+
 def benchmark_perturbations(
     path: str,
     control_pert: str,
@@ -3112,7 +3213,11 @@ def benchmark_perturbations(
     embedding_keys : list[str] or str, optional
         ``.obsm`` embeddings to evaluate. Each must be in ``.obsm`` of both the prediction
         and the reference data, with the same number of columns; otherwise the call fails
-        and lists the embeddings that are available.
+        and lists the embeddings that are available. As in ``cell-eval run --embed-key``,
+        discrimination_score_l2 and discrimination_score_cosine score an embedding; they
+        run with profile 'anndata' or 'full' and give each key its own columns, e.g.
+        ``discrimination_score_cosine[X_pca]``. Profiles 'minimal', 'vcc' and 'de' score
+        gene expression only, so the keys are then reported in ``unscored_keys``.
     output_csv : str, optional
         Filesystem path to export results as CSV.
     output_dir : str, optional
@@ -3127,7 +3232,11 @@ def benchmark_perturbations(
         - status: "success" or "error"
         - markdown_table: Formatted table of perturbation metrics
         - n_perturbations: Number of perturbations evaluated
-        - results: Summary records
+        - results: Summary records, one per perturbation
+        - scored_on: The data each score column was computed on, "gene expression (.X)"
+          or "embedding <key> (.obsm['<key>'])"
+        - evaluated_keys: The embeddings a metric read
+        - unscored_keys: Requested embeddings that the profile does not score (see warning)
         - output_csv: Path to exported CSV
     """
     try:
@@ -3140,7 +3249,6 @@ def benchmark_perturbations(
             }
 
         import anndata
-        from embpy.tl import run_cell_eval
 
         if path_pred:
             resolved_pred = os.path.abspath(path_pred)
@@ -3245,21 +3353,11 @@ def benchmark_perturbations(
             if problem:
                 return problem
 
-        extra_configs: dict[str, Any] = {}
-        if key_list:
-            extra_configs["metric_configs"] = {
-                "discrimination_score_cosine": {"embed_key": key_list[0]}
-            }
-
-        with contextlib.redirect_stdout(sys.stderr):
-            df_results = run_cell_eval(
-                adata_pred=adata_pred,
-                adata_real=adata_real,
-                control_pert=control_pert,
-                pert_col=pert_col,
-                profile=profile,
-                **extra_configs,
-            )
+        scored_keys = key_list if profile in _EMBEDDING_PROFILES else []
+        unscored_keys = [key for key in key_list if key not in scored_keys]
+        df_results, scored_on, evaluated_keys = _score_perturbations(
+            adata_pred, adata_real, control_pert, pert_col, profile, scored_keys
+        )
 
         saved_csv: str | None = None
         if output_csv:
@@ -3283,19 +3381,30 @@ def benchmark_perturbations(
 
         pert_count = len(df_results)
 
-        return {
+        response: dict[str, Any] = {
             "status": "success",
             "path": str(resolved_real),
             "control_pert": control_pert,
             "pert_col": pert_col,
+            "profile": profile,
             "n_perturbations": pert_count,
             "perturbation_count": pert_count,
-            "evaluated_keys": [embedding_keys] if isinstance(embedding_keys, str) else (list(embedding_keys) if embedding_keys else []),
+            "evaluated_keys": evaluated_keys,
+            "unscored_keys": unscored_keys,
+            "scored_on": scored_on,
             "markdown_table": markdown_table,
             "results": summary_records,
             "summary_metrics": summary_records,
             "output_csv": saved_csv,
         }
+        if unscored_keys:
+            response["warning"] = (
+                f"Profile '{profile}' scores gene expression (.X) only, so {', '.join(unscored_keys)} "
+                f"{'was' if len(unscored_keys) == 1 else 'were'} not scored. An embedding is scored by "
+                f"{' and '.join(_EMBEDDING_METRICS)}, which run with "
+                f"{' or '.join(f'profile={name!r}' for name in _EMBEDDING_PROFILES)}."
+            )
+        return response
 
     except Exception as exc:
         logger.error("benchmark_perturbations failed on %s: %s", path, exc, exc_info=True)

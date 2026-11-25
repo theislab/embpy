@@ -197,3 +197,84 @@ def test_cell_eval_does_not_keep_metric_configs(write_pair, tmp_path):
     after = dict(stored.kwargs or {})
     assert after.get("embed_key") != "X_good"
     assert after == before
+
+
+# ---------------------------------------------------------------------------
+# 3. Each score says which data it was computed on
+# ---------------------------------------------------------------------------
+
+
+def test_expression_only_profile_reports_the_embedding_as_not_scored(write_pair):
+    real, pred = write_pair()
+    plain = _bench(real, pred)
+    asked = _bench(real, pred, embedding_keys="X_good")
+    assert asked["status"] == "success", asked
+    assert asked["evaluated_keys"] == []
+    assert asked["unscored_keys"] == ["X_good"]
+    for hint in ("minimal", "anndata", "full", "discrimination_score_cosine"):
+        assert hint in asked["warning"]
+    assert set(asked["scored_on"]) >= {"mse", "mae", "pearson_delta", "discrimination_score_l1"}
+    assert set(asked["scored_on"].values()) == {EXPRESSION}
+    assert asked["results"] == plain["results"]
+    # mse of A: mean over genes of (mean predicted - mean observed expression)^2
+    r, q = _means(_read(real), None), _means(_read(pred), None)
+    assert _column(asked, "mse")["A"] == pytest.approx(np.mean((q["A"] - r["A"]) ** 2), rel=1e-4)
+
+
+def test_embedding_metrics_read_the_embedding(write_pair):
+    right = write_pair("right", pred_emb={"X_good": CENTERS})
+    swapped = write_pair("swapped", pred_emb={"X_good": SWAPPED})
+    results = {}
+    for name, (real, pred) in {"right": right, "swapped": swapped}.items():
+        res = _bench(real, pred, embedding_keys="X_good", profile="anndata")
+        assert res["status"] == "success", res
+        assert res["evaluated_keys"] == ["X_good"]
+        assert res["scored_on"]["discrimination_score_cosine[X_good]"] == "embedding X_good (.obsm['X_good'])"
+        assert res["scored_on"]["discrimination_score_l2[X_good]"] == "embedding X_good (.obsm['X_good'])"
+        assert res["scored_on"]["discrimination_score_cosine"] == EXPRESSION
+        assert res["scored_on"]["mse"] == EXPRESSION
+        real_ad, pred_ad = _read(real), _read(pred)
+        for metric in ("cosine", "l2"):
+            assert _column(res, f"discrimination_score_{metric}[X_good]") == pytest.approx(
+                _discrimination(real_ad, pred_ad, "X_good", metric)
+            )
+            assert _column(res, f"discrimination_score_{metric}") == pytest.approx(
+                _discrimination(real_ad, pred_ad, None, metric)
+            )
+        results[name] = res
+
+    # Same expression, different predicted embedding: only the embedding columns change.
+    expression_columns = [c for c, data in results["right"]["scored_on"].items() if data == EXPRESSION]
+    for column in expression_columns:
+        assert _column(results["right"], column) == _column(results["swapped"], column), column
+    assert set(_column(results["right"], "discrimination_score_cosine[X_good]").values()) == {1.0}
+    assert _column(results["swapped"], "discrimination_score_cosine[X_good]")["A"] < 1.0
+
+
+def test_each_requested_embedding_is_scored_separately(write_pair):
+    real, pred = write_pair(
+        real_emb={"X_good": CENTERS, "X_alt": CENTERS},
+        pred_emb={"X_good": CENTERS, "X_alt": SWAPPED},
+    )
+    res = _bench(real, pred, embedding_keys=["X_good", "X_alt"], profile="anndata")
+    assert res["status"] == "success", res
+    assert res["evaluated_keys"] == ["X_good", "X_alt"]
+    real_ad, pred_ad = _read(real), _read(pred)
+    for key in ("X_good", "X_alt"):
+        assert res["scored_on"][f"discrimination_score_cosine[{key}]"] == f"embedding {key} (.obsm['{key}'])"
+        assert _column(res, f"discrimination_score_cosine[{key}]") == pytest.approx(
+            _discrimination(real_ad, pred_ad, key, "cosine")
+        )
+    assert _column(res, "discrimination_score_cosine[X_good]") != _column(res, "discrimination_score_cosine[X_alt]")
+
+
+def test_an_embedding_cell_eval_cannot_score_is_an_error(write_pair):
+    """cell-eval logs a metric that raises and leaves its column out; that is not a score."""
+    real, pred = write_pair()
+    broken = _read(pred)
+    broken.obsm["X_good"][0, 0] = np.nan
+    broken.write_h5ad(pred)
+    res = _bench(real, pred, embedding_keys="X_good", profile="anndata")
+    assert res["status"] == "error", res.get("evaluated_keys")
+    assert "X_good" in res["error"] and "NaN" in res["error"]
+    assert "discrimination_score_cosine" in res["error"]

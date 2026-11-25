@@ -71,6 +71,12 @@ benchmark_perturbations(path="data/observed.h5ad", path_pred="data/predicted.h5a
 Runs ArcInstitute cell-eval (`pip install "embpy[eval]"`) and returns `markdown_table`. The tool
 rejects comparing a dataset with itself.
 
+To score an `.obsm` embedding as well, pass `embedding_keys` with `profile="anndata"` (or
+`"full"`); each key must be in both files. `scored_on` gives the data behind every column
+(`gene expression (.X)` or the embedding), and `evaluated_keys` lists only the embeddings a
+metric read. The default profile scores expression only: the keys come back in
+`unscored_keys`, with a `warning`. Say which data each reported score used.
+
 ## Reporting
 
 Report metrics per perturbation and averaged, the number of perturbations, and the baseline.

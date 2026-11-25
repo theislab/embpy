@@ -103,6 +103,9 @@ benchmark_perturbations(path="data/observed.h5ad", path_pred="data/predicted.h5a
 - The tool refuses identical labels, the same file twice, or two files with the same cells and
   values, because those would score predictions against themselves.
 - `control_pert` is the label of unperturbed cells in `pert_col`.
+- To score an `.obsm` embedding too, add `embedding_keys` and `profile="anndata"`. A key
+  missing from either file is an error that lists the available ones. `scored_on` gives the
+  data behind each score, and `evaluated_keys` lists only the embeddings a metric read.
 - Needs `pip install "embpy[eval]"` (cell-eval).
 
 ## Reading results
