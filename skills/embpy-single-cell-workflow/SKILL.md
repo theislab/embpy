@@ -33,9 +33,14 @@ preprocess_counts(path="data/pbmc.h5ad", preprocessing="standard", n_top_genes=2
 ```
 
 - `standard` applies `min_genes` / `min_cells` exactly as given. On small or toy datasets this
-  can remove every cell (`n_cells: 0` in the result). Use `preprocessing="auto"` to scale the
-  thresholds to the dataset, and tell the user which thresholds were changed
-  (`adjustments_applied`).
+  can remove every cell or every gene: the result is then `status: "error"` with
+  `error_type: "EmptyAfterFilteringError"` and the `thresholds` used, and no file is written.
+  Use `preprocessing="auto"` to scale the thresholds to the dataset, and tell the user which
+  thresholds were changed (`adjustments_applied`).
+- The input must hold raw counts, in `.layers["counts"]` or in `.X`. Normalized values there give
+  `error_type: "NotRawCountsError"` (the message says what was found): the data is already
+  normalized, so skip this step and run step 3 on the input file with `preprocessing="none"`. Pass `assume_counts=True` only if the user confirms the values
+  are counts (e.g. ambient-corrected, non-integer counts).
 - Raw counts stay in `.X` and `.layers["counts"]`; normalized values go to
   `.layers["log_normalized"]` (and `.layers["scaled"]` with `scale=True`).
 

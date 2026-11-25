@@ -148,8 +148,8 @@ def _copy_access(source: str, destination: str) -> None:
                 os.setxattr(destination, _POSIX_ACL_XATTR, acl)
 
 
-def _detect_expression_nature(adata: Any) -> dict[str, Any]:
-    """Inspect AnnData to determine if .X holds raw integer counts or normalized expression."""
+def _detect_expression_nature(adata: Any, layer: str | None = None) -> dict[str, Any]:
+    """Inspect AnnData to determine if .X (or ``layer``) holds raw integer counts or normalized expression."""
     has_counts_layer = "counts" in adata.layers
     has_norm_layer = any(k in adata.layers for k in ("log_normalized", "normalized", "log1p"))
 
@@ -164,7 +164,7 @@ def _detect_expression_nature(adata: Any) -> dict[str, Any]:
 
         # Sample up to 50 cells
         n_sample = min(50, adata.n_obs)
-        X_sample = adata.X[:n_sample]
+        X_sample = (adata.X if layer is None else adata.layers[layer])[:n_sample]
         if sp.issparse(X_sample):
             data_arr = X_sample.data[:1000] if len(X_sample.data) > 0 else np.array([])
         else:
@@ -196,6 +196,31 @@ def _detect_expression_nature(adata: Any) -> dict[str, Any]:
         "sample_max": max_val,
         "has_counts_layer": has_counts_layer,
         "has_normalized_layer": has_norm_layer,
+    }
+
+
+# detected_nature values that are certainly not raw counts.
+_NOT_RAW_COUNTS = ("log_normalized", "continuous_normalized", "scaled_or_centered")
+
+
+def _not_raw_counts_error(path: str, nature: dict[str, Any], counts_layer: str | None) -> dict[str, Any]:
+    """Error reply for preprocess_counts when its raw-count source holds normalized values."""
+    source = f".layers['{counts_layer}']" if counts_layer else ".X (and there is no .layers['counts'])"
+    found = (
+        f"{nature['detected_nature']} values (sampled range {nature['sample_min']:.3g} to "
+        f"{nature['sample_max']:.3g}, {'integers' if nature['is_discrete_integers'] else 'not integers'})"
+    )
+    return {
+        "status": "error",
+        "error_type": "NotRawCountsError",
+        "error": (
+            f"preprocess_counts needs raw counts, but {source} holds {found}. Normalizing and "
+            "log-transforming them again would distort the data. If the data is already normalized, "
+            "skip preprocess_counts. If these values are counts (e.g. ambient-corrected, non-integer "
+            "counts), call again with assume_counts=True."
+        ),
+        "path": str(path),
+        "expression_nature": _sanitize_val(nature),
     }
 
 
@@ -930,6 +955,7 @@ def preprocess_counts(
     log_transform: bool = True,
     scale: bool = False,
     auto_adjust: bool = False,
+    assume_counts: bool = False,
 ) -> dict[str, Any]:
     """Preprocess single-cell AnnData counts and save the preprocessed object to disk.
 
@@ -967,12 +993,19 @@ def preprocess_counts(
         Whether to scale expression to unit variance (stored in .layers['scaled']).
     auto_adjust : bool, default=False
         If True, automatically lowers thresholds for small tutorial/test datasets.
+    assume_counts : bool, default=False
+        The raw counts are read from .layers['counts'] when it exists, else from .X. If
+        they do not look like counts (non-integer or negative values), the call fails with
+        error_type 'NotRawCountsError' instead of normalizing normalized data again. Pass
+        True to treat them as counts anyway (e.g. ambient-corrected, non-integer counts).
 
     Returns
     -------
     dict[str, Any]
         Preprocessed dataset metadata:
-        - status: "success" or "error"
+        - status: "success" or "error" ('NotRawCountsError' for input that is not raw
+          counts; 'EmptyAfterFilteringError', with the thresholds used, when filtering
+          would leave no cell or no gene; no file is written in either case)
         - input_path: Source dataset path
         - output_path: Saved preprocessed file path
         - n_cells: Final cell count after QC
@@ -995,6 +1028,14 @@ def preprocess_counts(
         import scanpy as sc
 
         adata = anndata.read_h5ad(resolved_path)
+
+        # Every step starts from raw counts: .layers['counts'] when present, else .X.
+        counts_layer = "counts" if "counts" in adata.layers else None
+        # 'none' only writes .layers['counts'] (from .X) when it is missing.
+        if not assume_counts and (preprocessing != "none" or counts_layer is None):
+            nature = _detect_expression_nature(adata, layer=counts_layer)
+            if nature["detected_nature"] in _NOT_RAW_COUNTS:
+                return _not_raw_counts_error(path, nature, counts_layer)
 
         if preprocessing == "auto":
             auto_adjust = True
@@ -1034,15 +1075,37 @@ def preprocess_counts(
             effective_n_hvg = min(n_top_genes, adata.n_vars)
 
         with contextlib.redirect_stdout(sys.stderr):
-            # Store raw counts in layers
-            if "counts" not in adata.layers:
+            # Normalize from the raw counts, and keep them in layers['counts'].
+            if counts_layer:
+                adata.X = adata.layers[counts_layer].copy()
+            else:
                 adata.layers["counts"] = adata.X.copy()
 
             # QC Filtering
+            n_cells_input, n_genes_input = int(adata.n_obs), int(adata.n_vars)
             if effective_min_genes > 0 and adata.n_obs > 0:
                 sc.pp.filter_cells(adata, min_genes=effective_min_genes)
-            if effective_min_cells > 0 and adata.n_vars > 0:
+            if effective_min_cells > 0 and adata.n_vars > 0 and adata.n_obs > 0:
                 sc.pp.filter_genes(adata, min_cells=effective_min_cells)
+            if adata.n_obs == 0 or adata.n_vars == 0:
+                emptied = "cell" if adata.n_obs == 0 else "gene"
+                return {
+                    "status": "error",
+                    "error_type": "EmptyAfterFilteringError",
+                    "error": (
+                        f"Filtering with min_genes={effective_min_genes} and min_cells={effective_min_cells} "
+                        f"removed every {emptied} (input: {n_cells_input} cells x {n_genes_input} genes), so "
+                        "no file was written. Lower min_genes / min_cells, or use preprocessing='auto' to "
+                        "scale them to the dataset."
+                    ),
+                    "path": str(path),
+                    "thresholds": {"min_genes": int(effective_min_genes), "min_cells": int(effective_min_cells)},
+                    "n_cells_input": n_cells_input,
+                    "n_genes_input": n_genes_input,
+                    "n_cells_after_filtering": int(adata.n_obs),
+                    "n_genes_after_filtering": int(adata.n_vars),
+                    **({"adjustments_applied": adjustments_applied} if adjustments_applied else {}),
+                }
 
             # Normalization & Log1p
             if target_sum and adata.n_obs > 0 and adata.n_vars > 0:

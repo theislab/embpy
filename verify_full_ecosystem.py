@@ -175,11 +175,12 @@ def run_phase_a(tmpdir: str) -> dict[str, str]:
     print("\nPreprocessing Result Payload:")
     print(json.dumps(res_prep, indent=2))
 
-    assert res_prep["status"] == "success"
-    assert res_prep["n_cells"] == 0, f"Expected 0 cells, got: {res_prep['n_cells']}"
-    saved_prep = ad.read_h5ad(prep_out_path)
-    assert saved_prep.n_obs == 0, f"Saved dataset cell count is {saved_prep.n_obs}, expected 0!"
-    print("\n[VERIFIED] min_genes=200 strictly honored; zero cells survived without silent threshold attenuation.")
+    assert res_prep["status"] == "error", res_prep
+    assert res_prep["error_type"] == "EmptyAfterFilteringError", res_prep
+    assert res_prep["thresholds"] == {"min_genes": 200, "min_cells": 3}, res_prep
+    assert not os.path.exists(prep_out_path), "No file may be written when filtering removes every cell!"
+    print("\n[VERIFIED] min_genes=200 strictly honored without silent threshold attenuation; no cell survived, "
+          "so the tool returned an error with the thresholds and wrote no file.")
 
     return {
         "aligned_h5ad": resolved_h5ad,

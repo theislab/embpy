@@ -1,11 +1,12 @@
 """Single-cell steps of the embpy MCP tools: what each step keeps, changes and reports.
 
-Covers which cells and genes ``preprocess_counts`` and ``compute_embeddings`` remove and
-which genes PCA is fitted on.
+Covers which inputs ``preprocess_counts`` refuses, which cells and genes it and
+``compute_embeddings`` remove, and which genes PCA is fitted on.
 """
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -179,3 +180,73 @@ def test_skill_steps_2_and_3_embed_the_genes_step_2_selected(tmp_path, monkeypat
     assert 0 < len(selected) < prepped.n_vars
     assert pca_genes == [selected]
     assert list(anndata.read_h5ad(step3["output_path"]).obs_names) == list(prepped.obs_names)
+
+
+# --- preprocess_counts: input checks ------------------------------------------------------
+
+
+def _log_normalized(counts: np.ndarray) -> np.ndarray:
+    return np.log1p(counts / counts.sum(axis=1, keepdims=True) * 1e4).astype(np.float32)
+
+
+def _poisson_counts(n_cells: int = 60, n_genes: int = 50, seed: int = 3) -> np.ndarray:
+    return np.random.default_rng(seed).poisson(3.0, size=(n_cells, n_genes)).astype(np.float32)
+
+
+@pytest.mark.parametrize("mode", ["standard", "auto", "none"])
+def test_normalized_input_without_counts_is_refused(tmp_path, mode):
+    """Log-normalized .X and no counts layer: NotRawCountsError, unless assume_counts=True."""
+    path = str(tmp_path / "lognorm.h5ad")
+    _cells(_log_normalized(_poisson_counts())).write_h5ad(path)
+    out = str(tmp_path / "prepped.h5ad")
+
+    res = preprocess_counts(path=path, output_path=out, preprocessing=mode, min_genes=0, min_cells=0)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "NotRawCountsError"
+    assert res["expression_nature"]["detected_nature"] == "log_normalized"
+    assert "log_normalized" in res["error"] and "assume_counts=True" in res["error"]
+    assert not os.path.exists(out)
+
+    forced = preprocess_counts(path=path, output_path=out, preprocessing=mode, min_genes=0, min_cells=0,
+                               assume_counts=True)
+    assert forced["status"] == "success", forced
+    assert os.path.exists(out)
+
+
+def test_counts_layer_is_the_raw_source(tmp_path):
+    """Normalized .X next to a counts layer: normalization starts from the counts layer."""
+    import anndata
+
+    counts = _poisson_counts()
+    adata = _cells(_log_normalized(counts))
+    adata.layers["counts"] = counts.copy()
+    path = str(tmp_path / "with_counts.h5ad")
+    adata.write_h5ad(path)
+    out = str(tmp_path / "prepped.h5ad")
+
+    res = preprocess_counts(path=path, output_path=out, min_genes=0, min_cells=0, select_hvg=False)
+    assert res["status"] == "success", res
+    saved = anndata.read_h5ad(out)
+    np.testing.assert_allclose(saved.layers["log_normalized"], _log_normalized(counts), rtol=1e-5, atol=1e-6)
+    np.testing.assert_array_equal(saved.layers["counts"], counts)
+    np.testing.assert_array_equal(saved.X, counts)
+
+
+@pytest.mark.parametrize(
+    ("thresholds", "emptied"),
+    [({"min_genes": 200}, "cell"), ({"min_genes": 0, "min_cells": 1000}, "gene")],
+    ids=["no-cells-left", "no-genes-left"],
+)
+def test_filtering_everything_is_an_error(tmp_path, thresholds, emptied):
+    """40 genes with min_genes=200 (or min_cells above the cell count): an error and no file."""
+    path = str(tmp_path / "small.h5ad")
+    _cells(_poisson_counts(30, 40)).write_h5ad(path)
+    out = str(tmp_path / "prepped.h5ad")
+
+    res = preprocess_counts(path=path, output_path=out, **thresholds)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "EmptyAfterFilteringError"
+    expected = {"min_genes": thresholds["min_genes"], "min_cells": thresholds.get("min_cells", 3)}
+    assert res["thresholds"] == expected
+    assert f"every {emptied}" in res["error"]
+    assert not os.path.exists(out)

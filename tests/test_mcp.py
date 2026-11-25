@@ -447,14 +447,17 @@ def test_reverse_cache_official_symbol_casing():
 
 def test_preprocessing_strictness_and_scale(sample_adata_path, tmp_path):
     """Test that explicit preprocessing thresholds are honored and scale option is functional."""
-    # 1. Enforce strict min_genes=200 on 40-gene dataset (auto_adjust=False) -> filters out all cells
+    # 1. Enforce strict min_genes=200 on 40-gene dataset (auto_adjust=False) -> filters out all cells,
+    #    which is an error and writes no file
     res_strict = preprocess_counts(
         path=sample_adata_path,
         min_genes=200,
         auto_adjust=False,
     )
-    assert res_strict["status"] == "success"
-    assert res_strict["n_cells"] == 0
+    assert res_strict["status"] == "error"
+    assert res_strict["error_type"] == "EmptyAfterFilteringError"
+    assert res_strict["thresholds"] == {"min_genes": 200, "min_cells": 3}
+    assert not os.path.exists(sample_adata_path.replace(".h5ad", "_preprocessed.h5ad"))
 
     # 2. Test scale=True executes sc.pp.scale and produces scaled layer
     scaled_out = str(tmp_path / "scaled_output.h5ad")

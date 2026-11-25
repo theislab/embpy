@@ -86,13 +86,21 @@ With `path` and `output_path`, the mapped ids are written to `<column>_mapped` (
 
 ## `preprocess_counts`
 
-`preprocess_counts(path, output_path=None, preprocessing="standard", min_genes=200, min_cells=3, target_sum=1e4, n_top_genes=2000, select_hvg=True, log_transform=True, scale=False, auto_adjust=False)`
+`preprocess_counts(path, output_path=None, preprocessing="standard", min_genes=200, min_cells=3, target_sum=1e4, n_top_genes=2000, select_hvg=True, log_transform=True, scale=False, auto_adjust=False, assume_counts=False)`
 
-`standard` applies the thresholds exactly (a small dataset can lose every cell);
-`auto` / `auto_adjust=True` lowers them for small datasets and reports `adjustments_applied`;
-`none` only copies counts to `.layers["counts"]`. Raw counts stay in `.X` and
-`.layers["counts"]`; normalized values go to `.layers["log_normalized"]` (and
-`.layers["scaled"]`). Default output: `<input>_preprocessed.h5ad`.
+`standard` applies the thresholds exactly; `auto` / `auto_adjust=True` lowers them for small
+datasets and reports `adjustments_applied`; `none` only copies counts to `.layers["counts"]`.
+Raw counts stay in `.X` and `.layers["counts"]`; normalized values go to
+`.layers["log_normalized"]` (and `.layers["scaled"]`). Default output:
+`<input>_preprocessed.h5ad`.
+
+**Input checks.** Normalization starts from `.layers["counts"]` when it exists, else from `.X`.
+If those values are not raw counts (non-integer or negative; see `inspect_data`'s
+`expression_nature`), the call returns `error_type: "NotRawCountsError"` with the detected
+`expression_nature` instead of normalizing normalized data again; `assume_counts=True` treats
+them as counts anyway (e.g. ambient-corrected counts). If filtering would leave no cell or no
+gene, the call returns `error_type: "EmptyAfterFilteringError"` with the `thresholds` it used.
+No file is written in either case.
 
 ---
 
