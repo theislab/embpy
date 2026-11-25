@@ -114,6 +114,7 @@ def test_symbol_to_ensembl_caches_approved_symbol_not_the_alias(resolver):
     # Reverse lookup is answered from cache, with the approved symbol.
     with patch("embpy.resources.gene.resolver.requests.get", side_effect=AssertionError("no network")):
         assert resolver.ensembl_to_symbol("ENSG00000141510") == "TP53"
+    resolver.flush_cache()
     saved = json.loads(resolver._cache_file.read_text(encoding="utf-8"))
     assert saved["ensembl"]["human:ENSG00000141510"] == "TP53"
     assert "P53" not in saved["ensembl"].values()

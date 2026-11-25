@@ -1,7 +1,11 @@
+import atexit
+import contextlib
 import logging
 import os
 import re
+import tempfile
 import time
+import weakref
 from pathlib import Path
 from typing import Any, Literal
 
@@ -426,6 +430,52 @@ def _get_ensembl_offline_warning(
 #    are exact symbol/alias queries instead of a free-text search.
 _GENE_CACHE_VERSION = 3
 
+# Single lookups save the cache file every this many new lookups instead of
+# after each one; batch lookups save once per call. Lookups not saved yet are
+# written by GeneResolver.flush_cache(), when the resolver is garbage-collected,
+# or when the process exits.
+_GENE_CACHE_SAVE_EVERY = 500
+
+# Resolvers holding lookups their cache file does not have yet. Weak references,
+# so the set never keeps a resolver alive.
+_RESOLVERS_WITH_UNSAVED_CACHE: "weakref.WeakSet[GeneResolver]" = weakref.WeakSet()
+
+
+def _save_unsaved_gene_caches() -> None:
+    """Exit hook: write what each live resolver has not saved yet."""
+    for resolver in list(_RESOLVERS_WITH_UNSAVED_CACHE):
+        with contextlib.suppress(Exception):
+            resolver.flush_cache()
+
+
+atexit.register(_save_unsaved_gene_caches)
+
+
+def _file_mode(path: Path) -> int:
+    """Permission bits for a new version of ``path``: the ones it has, or a new file's."""
+    try:
+        return os.stat(path).st_mode & 0o777
+    except OSError:
+        umask = os.umask(0)
+        os.umask(umask)
+        return 0o666 & ~umask
+
+
+def _replace_file(src: str, dst: Path) -> None:
+    """``os.replace(src, dst)``, retried briefly on Windows.
+
+    Windows refuses to replace a file while another process is replacing or
+    reading it (PermissionError); that clears within milliseconds.
+    """
+    for attempt in range(8):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if os.name != "nt" or attempt == 7:
+                raise
+            time.sleep(0.02 * (attempt + 1))
+
 
 def default_gene_cache_path() -> Path:
     """Return path to persistent gene ID resolution cache."""
@@ -582,6 +632,10 @@ class GeneResolver:
         self._ensembl_cache: dict[tuple[str, str], str | None] = {}
         self._ambiguous_symbols: dict[tuple[str, str], list[str]] = {}
         self._last_diagnostics: dict[str, Any] | None = None
+        # New lookups not in the cache file yet, and how many batch calls are
+        # running (they save once when they finish).
+        self._cache_unsaved = 0
+        self._cache_batch_depth = 0
         self._load_cache()
 
     def _ensure_cache(self) -> None:
@@ -595,6 +649,10 @@ class GeneResolver:
             self._cache_file = default_gene_cache_path()
         if not hasattr(self, "_last_diagnostics"):
             self._last_diagnostics = None
+        if not hasattr(self, "_cache_unsaved"):
+            self._cache_unsaved = 0
+        if not hasattr(self, "_cache_batch_depth"):
+            self._cache_batch_depth = 0
 
     def _load_cache(self) -> None:
         self._ensure_cache()
@@ -642,32 +700,82 @@ class GeneResolver:
                 logging.debug("Could not load gene cache: %s", e)
 
     def _save_cache(self) -> None:
+        """Write the whole cache to ``self._cache_file``.
+
+        The data goes to a temporary file of its own in the cache folder, which
+        then replaces the cache file in one step: readers never see a half-written
+        file, and processes sharing the folder (e.g. SLURM array jobs) never write
+        into the same temporary file.
+        """
         self._ensure_cache()
         if not self._cache_file:
             return
+        tmp_name: str | None = None
         try:
             import json
 
-            self._cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file = Path(self._cache_file)
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
             payload = {
                 "version": _GENE_CACHE_VERSION,
                 "symbols": {
                     f"{org}:{sym}": ens
-                    for (org, sym), ens in self._symbol_cache.items()
+                    for (org, sym), ens in list(self._symbol_cache.items())
                     if ens is not None
                 },
                 "ensembl": {
                     f"{org}:{ens}": sym
-                    for (org, ens), sym in self._ensembl_cache.items()
+                    for (org, ens), sym in list(self._ensembl_cache.items())
                     if sym is not None
                 },
             }
-            tmp_path = self._cache_file.with_suffix(".tmp")
-            with open(tmp_path, "w", encoding="utf-8") as f:
+            fd, tmp_name = tempfile.mkstemp(prefix=f".{cache_file.name}.", suffix=".tmp", dir=cache_file.parent)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
-            tmp_path.replace(self._cache_file)
-        except Exception as e:
-            logging.debug("Could not save gene cache: %s", e)
+            # mkstemp creates the file owner-only; keep the cache file's permissions.
+            os.chmod(tmp_name, _file_mode(cache_file))
+            _replace_file(tmp_name, cache_file)
+        except Exception as e:  # noqa: BLE001
+            logging.warning("Could not save gene cache %s: %s", self._cache_file, e)
+            if tmp_name is not None:
+                with contextlib.suppress(OSError):
+                    os.remove(tmp_name)
+            if self._cache_unsaved:
+                _RESOLVERS_WITH_UNSAVED_CACHE.add(self)
+            return
+        self._cache_unsaved = 0
+        _RESOLVERS_WITH_UNSAVED_CACHE.discard(self)
+
+    def _cache_changed(self) -> None:
+        """Count a lookup that added cache entries; save every ``_GENE_CACHE_SAVE_EVERY`` of them.
+
+        While a batch call runs, the save waits for the end of the batch.
+        """
+        self._cache_unsaved += 1
+        _RESOLVERS_WITH_UNSAVED_CACHE.add(self)
+        if not self._cache_batch_depth and self._cache_unsaved % _GENE_CACHE_SAVE_EVERY == 0:
+            self._save_cache()
+
+    def flush_cache(self) -> None:
+        """Write lookups that are not saved yet to the gene id cache file.
+
+        Single lookups are saved every few hundred new entries and batch lookups
+        once per call; whatever is left is written when the resolver is
+        garbage-collected or the process exits. Call this to save earlier, for
+        example in a job that may be killed.
+        """
+        self._ensure_cache()
+        if self._cache_unsaved:
+            self._save_cache()
+
+    def __del__(self) -> None:
+        # A dropped resolver writes what it has not saved yet (the exit hook
+        # covers resolvers still alive when the process ends).
+        try:
+            if getattr(self, "_cache_unsaved", 0):
+                self._save_cache()
+        except Exception:  # noqa: BLE001 - a finalizer must not raise
+            pass
 
     @property
     def last_diagnostics(self) -> dict[str, Any] | None:
@@ -1395,7 +1503,7 @@ class GeneResolver:
                 if self._symbol_cache.get((org, official_sym)) is None:
                     self._symbol_cache[(org, official_sym)] = resolved_id
                 self._ensembl_cache[(org, resolved_id)] = official_sym
-            self._save_cache()
+            self._cache_changed()
             return resolved_id
 
         # Not resolved
@@ -1492,7 +1600,7 @@ class GeneResolver:
                 # Reverse cache only: several Ensembl ids can share a symbol, so a
                 # reverse lookup must not decide the forward symbol -> id answer.
                 self._ensembl_cache[(org, ens)] = resolved_sym
-                self._save_cache()
+                self._cache_changed()
             return resolved_sym
 
         if network_failed:
@@ -1612,6 +1720,7 @@ class GeneResolver:
                         self._symbol_cache[(org, sym)] = ens_id
                         if official_sym:
                             self._ensembl_cache[(org, ens_id)] = official_sym
+                        self._cache_unsaved += 1
                     else:
                         unresolved_after_pyensembl.append(s)
                 except Exception as e:
@@ -1651,6 +1760,7 @@ class GeneResolver:
                                     self._symbol_cache[(org, sym)] = ens_id
                                     if official_sym:
                                         self._ensembl_cache[(org, ens_id)] = official_sym
+                                    self._cache_unsaved += 1
                                 else:
                                     still_unresolved.append(orig)
                         else:
@@ -1670,20 +1780,25 @@ class GeneResolver:
 
         # Step 3: For small remaining sets, fallback to individual symbol_to_ensembl (MyGene / alias)
         final_unresolved: list[str] = list(blank_inputs)
-        for orig in still_unresolved:
-            sym = orig.strip()
-            if not network_failed:
-                try:
-                    ens_id = self.symbol_to_ensembl(sym, organism=organism, fallback_to_unmapped=False, strict=False)
-                    if ens_id:
-                        result[orig] = ens_id
-                        continue
-                except Exception:
-                    pass
-            final_unresolved.append(orig)
-            result[orig] = None
+        self._cache_batch_depth += 1  # saved once below, with the rest of the batch
+        try:
+            for orig in still_unresolved:
+                sym = orig.strip()
+                if not network_failed:
+                    try:
+                        ens_id = self.symbol_to_ensembl(sym, organism=organism, fallback_to_unmapped=False, strict=False)
+                        if ens_id:
+                            result[orig] = ens_id
+                            continue
+                    except Exception:
+                        pass
+                final_unresolved.append(orig)
+                result[orig] = None
+        finally:
+            self._cache_batch_depth -= 1
 
-        self._save_cache()
+        if self._cache_unsaved:
+            self._save_cache()
 
         mapped_count = sum(1 for s in symbols if result.get(s) is not None)
         total_count = len(symbols)
@@ -1825,6 +1940,7 @@ class GeneResolver:
                         sym = g.gene_name
                         result[e] = sym
                         self._ensembl_cache[(org, ens)] = sym  # reverse cache only
+                        self._cache_unsaved += 1
                     else:
                         unresolved_after_pyensembl.append(e)
                 except Exception as exc:
@@ -1861,6 +1977,7 @@ class GeneResolver:
                                     sym = val["display_name"]
                                     result[orig] = sym
                                     self._ensembl_cache[(org, ens)] = sym  # reverse cache only
+                                    self._cache_unsaved += 1
                                 else:
                                     still_unresolved.append(orig)
                         else:
@@ -1880,20 +1997,25 @@ class GeneResolver:
 
         # Step 3: Fallback
         final_unresolved: list[str] = list(blank_inputs)
-        for orig in still_unresolved:
-            ens = orig.strip().split(".")[0]
-            if not network_failed:
-                try:
-                    sym = self.ensembl_to_symbol(ens, organism=organism, fallback_to_unmapped=False, strict=False)
-                    if sym:
-                        result[orig] = sym
-                        continue
-                except Exception:
-                    pass
-            final_unresolved.append(orig)
-            result[orig] = None
+        self._cache_batch_depth += 1  # saved once below, with the rest of the batch
+        try:
+            for orig in still_unresolved:
+                ens = orig.strip().split(".")[0]
+                if not network_failed:
+                    try:
+                        sym = self.ensembl_to_symbol(ens, organism=organism, fallback_to_unmapped=False, strict=False)
+                        if sym:
+                            result[orig] = sym
+                            continue
+                    except Exception:
+                        pass
+                final_unresolved.append(orig)
+                result[orig] = None
+        finally:
+            self._cache_batch_depth -= 1
 
-        self._save_cache()
+        if self._cache_unsaved:
+            self._save_cache()
 
         mapped_count = sum(1 for e in ensembl_ids if result.get(e) is not None)
         total_count = len(ensembl_ids)
