@@ -245,6 +245,10 @@ Returns:
 - `evaluated_keys`: the embeddings a metric read. A key is listed only if it was scored.
 - `unscored_keys`: requested embeddings the profile does not score.
 - `output_csv`: the per-perturbation table, if requested.
+- `output_dir` and `report_files`: the reports written to `output_dir`, as `cell-eval run`
+  names them: `results.csv` (the table in `results`), `agg_results.csv` (statistics per
+  score), and `real_de.csv` and `pred_de.csv` (differential expression of each perturbation
+  against `control_pert`). Without `output_dir` nothing is written apart from `output_csv`.
 
 An embedding that cell-eval cannot score (for example one with NaN values) is an error
 quoting cell-eval's message; cell-eval itself only logs a failing metric and leaves it out.

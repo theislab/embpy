@@ -75,7 +75,8 @@ To score an `.obsm` embedding as well, pass `embedding_keys` with `profile="annd
 `"full"`); each key must be in both files. `scored_on` gives the data behind every column
 (`gene expression (.X)` or the embedding), and `evaluated_keys` lists only the embeddings a
 metric read. The default profile scores expression only: the keys come back in
-`unscored_keys`, with a `warning`. Say which data each reported score used.
+`unscored_keys`, with a `warning`. Say which data each reported score used. Pass `output_dir`
+to keep cell-eval's report files; `report_files` lists them.
 
 ## Reporting
 

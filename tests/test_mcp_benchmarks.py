@@ -6,7 +6,10 @@ embeddings in ``.obsm``, and checks the scores against values recomputed here wi
 
 from __future__ import annotations
 
+import os
+
 import numpy as np
+import pandas as pd
 import pytest
 from anndata import AnnData
 
@@ -278,3 +281,40 @@ def test_an_embedding_cell_eval_cannot_score_is_an_error(write_pair):
     assert res["status"] == "error", res.get("evaluated_keys")
     assert "X_good" in res["error"] and "NaN" in res["error"]
     assert "discrimination_score_cosine" in res["error"]
+
+
+# ---------------------------------------------------------------------------
+# 4. Reports are written to output_dir, and nowhere else
+# ---------------------------------------------------------------------------
+
+
+def test_reports_are_written_to_output_dir(write_pair, tmp_path, monkeypatch):
+    real, pred = write_pair()
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    out = tmp_path / "reports"
+    res = _bench(real, pred, embedding_keys="X_good", profile="anndata", output_dir=str(out))
+    assert res["status"] == "success", res
+    assert os.listdir(cwd) == []
+    expected = {"results.csv", "agg_results.csv", "real_de.csv", "pred_de.csv"}
+    assert set(os.listdir(out)) == expected
+    assert res["output_dir"] == str(out)
+    assert sorted(res["report_files"]) == sorted(str(out / name) for name in expected)
+    table = pd.read_csv(out / "results.csv")
+    assert set(res["scored_on"]) <= set(table.columns)
+    assert list(table["perturbation"]) == [row["perturbation"] for row in res["results"]]
+    assert list(table["discrimination_score_cosine[X_good]"]) == pytest.approx(
+        [row["discrimination_score_cosine[X_good]"] for row in res["results"]]
+    )
+
+
+def test_nothing_is_written_without_output_dir(write_pair, tmp_path, monkeypatch):
+    real, pred = write_pair()
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    res = _bench(real, pred)
+    assert res["status"] == "success", res
+    assert os.listdir(cwd) == []
+    assert res["output_dir"] is None and res["report_files"] == []

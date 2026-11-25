@@ -3175,6 +3175,22 @@ def _score_perturbations(
     return table, scored_on, list(keys)
 
 
+def _write_benchmark_reports(table: Any, folder: str) -> list[str]:
+    """Write results.csv and agg_results.csv as ``cell-eval run`` does; return the reports in ``folder``.
+
+    agg_results.csv holds the same statistics cell-eval computes per score (polars
+    ``describe``). cell-eval itself has already written its DE tables to ``folder``.
+    """
+    import polars as pl
+
+    table.to_csv(os.path.join(folder, "results.csv"), index=False)
+    pl.from_pandas(table.drop(columns=["perturbation"], errors="ignore")).describe().write_csv(
+        os.path.join(folder, "agg_results.csv")
+    )
+    names = ("results.csv", "agg_results.csv", "real_de.csv", "pred_de.csv")
+    return [os.path.join(folder, name) for name in names if os.path.exists(os.path.join(folder, name))]
+
+
 def benchmark_perturbations(
     path: str,
     control_pert: str,
@@ -3221,7 +3237,10 @@ def benchmark_perturbations(
     output_csv : str, optional
         Filesystem path to export results as CSV.
     output_dir : str, optional
-        Filesystem directory to store detailed cell-eval report artifacts.
+        Directory for the cell-eval reports: results.csv (the per-perturbation scores),
+        agg_results.csv (statistics per score), and real_de.csv and pred_de.csv
+        (differential expression against control_pert). Without it, nothing is written
+        apart from output_csv.
     profile : {'full', 'vcc', 'minimal', 'de', 'anndata'}, default='minimal'
         Evaluation profile to run.
 
@@ -3238,6 +3257,7 @@ def benchmark_perturbations(
         - evaluated_keys: The embeddings a metric read
         - unscored_keys: Requested embeddings that the profile does not score (see warning)
         - output_csv: Path to exported CSV
+        - output_dir, report_files: The report folder and the reports written to it
     """
     try:
         resolved_real = os.path.abspath(path)
@@ -3355,9 +3375,22 @@ def benchmark_perturbations(
 
         scored_keys = key_list if profile in _EMBEDDING_PROFILES else []
         unscored_keys = [key for key in key_list if key not in scored_keys]
-        df_results, scored_on, evaluated_keys = _score_perturbations(
-            adata_pred, adata_real, control_pert, pert_col, profile, scored_keys
-        )
+        # cell-eval writes its DE tables to a folder (./cell-eval-outdir unless told otherwise):
+        # output_dir, or a temporary folder that is removed afterwards.
+        with contextlib.ExitStack() as stack:
+            if output_dir:
+                report_dir = os.path.abspath(output_dir)
+                os.makedirs(report_dir, exist_ok=True)
+            else:
+                import tempfile
+
+                report_dir = stack.enter_context(
+                    tempfile.TemporaryDirectory(prefix="embpy-cell-eval-", ignore_cleanup_errors=True)
+                )
+            df_results, scored_on, evaluated_keys = _score_perturbations(
+                adata_pred, adata_real, control_pert, pert_col, profile, scored_keys, outdir=report_dir
+            )
+        report_files = _write_benchmark_reports(df_results, report_dir) if output_dir else []
 
         saved_csv: str | None = None
         if output_csv:
@@ -3396,6 +3429,8 @@ def benchmark_perturbations(
             "results": summary_records,
             "summary_metrics": summary_records,
             "output_csv": saved_csv,
+            "output_dir": report_dir if output_dir else None,
+            "report_files": report_files,
         }
         if unscored_keys:
             response["warning"] = (
