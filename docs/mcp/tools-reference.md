@@ -31,7 +31,8 @@ compact JSON with a `status` field:
 `inspect_data(path=None, data=None, max_categories=10)`
 
 Reads an `.h5ad` in backed mode (or inspects a list of strings via `data`) and returns
-`n_obs`, `n_vars`, `obs_columns`, `obs_summary`, `layers`, `obsm_keys`, `var_sample`,
+`n_obs`, `n_vars`, `obs_columns`, `obs_summary`, `layers` (named layers only; anndata 0.13 also
+lists `.X` as an unnamed layer, which is left out), `obsm_keys`, `var_sample`,
 `gene_id_type_hint`, `expression_nature` (`detected_nature` is `raw_counts`,
 `log_normalized`, `scaled_or_centered` or `continuous_normalized`), and candidate label and
 batch columns (`recommended_label_key`, `recommended_batch_key`; picked from column names).

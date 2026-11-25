@@ -200,6 +200,11 @@ def _detect_expression_nature(adata: Any, layer: str | None = None) -> dict[str,
     }
 
 
+def _layer_names(adata: Any) -> list[str]:
+    """Names of the layers in ``adata``; anndata >= 0.13 also lists .X there, as layers[None]."""
+    return [str(k) for k in adata.layers.keys() if k is not None]
+
+
 # detected_nature values that are certainly not raw counts.
 _NOT_RAW_COUNTS = ("log_normalized", "continuous_normalized", "scaled_or_centered")
 
@@ -326,7 +331,7 @@ def inspect_data(
                 "obs_columns": [str(c) for c in adata.obs.columns],
                 "obs_summary": obs_summary,
                 "var_sample": var_sample,
-                "layers": [str(k) for k in adata.layers.keys()],
+                "layers": _layer_names(adata),
                 "obsm_keys": [str(k) for k in adata.obsm.keys()],
                 "obsp_keys": [str(k) for k in adata.obsp.keys()],
                 "uns_keys": [str(k) for k in adata.uns.keys()],
@@ -1058,7 +1063,7 @@ def preprocess_counts(
                 "n_genes": int(adata.n_vars),
                 "n_hvg": 0,
                 "hvg_count": 0,
-                "layers": [str(k) for k in adata.layers.keys()],
+                "layers": _layer_names(adata),
                 "summary": (
                     f"Preprocessing bypassed (mode='none'). Saved {adata.n_obs} cells and "
                     f"{adata.n_vars} genes with raw counts preserved in .layers['counts']."
@@ -1159,7 +1164,7 @@ def preprocess_counts(
             "n_genes": int(adata.n_vars),
             "n_hvg": n_hvg_count,
             "hvg_count": n_hvg_count,
-            "layers": [str(k) for k in adata.layers.keys()],
+            "layers": _layer_names(adata),
             "summary": (
                 f"Successfully preprocessed {adata.n_obs} cells and {adata.n_vars} genes. "
                 f"Stored raw counts in .layers['counts'], log-normalized expression in .layers['log_normalized'], "

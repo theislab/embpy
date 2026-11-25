@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 from anndata import AnnData
 
-from embpy.mcp import benchmark_scib, compute_embeddings, compute_umap, preprocess_counts
+from embpy.mcp import benchmark_scib, compute_embeddings, compute_umap, inspect_data, preprocess_counts
 
 SKILLS_DIR = Path(__file__).resolve().parents[1] / "skills"
 
@@ -425,3 +425,17 @@ def test_saved_files_with_counts_in_x_are_not_marked_log_transformed(tmp_path):
         np.testing.assert_array_equal(np.asarray(saved.X), counts)
         assert "log1p" not in saved.uns, saved_path
         np.testing.assert_allclose(saved.layers["log_normalized"], _log_normalized(counts), rtol=1e-5, atol=1e-6)
+
+
+def test_only_named_layers_are_reported(tmp_path):
+    """anndata 0.13 lists .X as layers[None]; the replies list only real, named layers."""
+    adata = _cells(_poisson_counts())
+    adata.layers["counts"] = adata.X.copy()
+    path = str(tmp_path / "counts.h5ad")
+    adata.write_h5ad(path)
+
+    assert inspect_data(path=path)["layers"] == ["counts"]
+    res = preprocess_counts(path=path, output_path=str(tmp_path / "pp.h5ad"), min_genes=0, min_cells=0)
+    assert sorted(res["layers"]) == ["counts", "log_normalized"]
+    res = preprocess_counts(path=path, output_path=str(tmp_path / "none.h5ad"), preprocessing="none")
+    assert res["layers"] == ["counts"]
