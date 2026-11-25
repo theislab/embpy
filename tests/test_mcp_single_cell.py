@@ -584,3 +584,63 @@ def test_count_models_alone_on_normalized_x_are_an_error(tmp_path, fast_scvi, mo
     assert res["error_type"] == "NotRawCountsError"
     assert "needs raw counts" in res["models_failed"]["scvi"]
     assert not os.path.exists(out)
+
+
+# --- embpy.pp preprocess_counts, the library function embed_cells uses ----------------------
+
+
+def test_library_preprocessing_warns_when_x_is_not_counts():
+    """No counts layer and log-normalized .X: a UserWarning names what was found."""
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    adata = _cells(_log_normalized(_poisson_counts()))
+    with pytest.warns(UserWarning, match="log_normalized"):
+        library_preprocess(adata, min_genes=0, min_cells=0)
+
+
+def test_library_preprocessing_of_raw_counts_is_unchanged():
+    """Raw counts: no warning, and the same result as scanpy's steps run by hand."""
+    import warnings
+
+    import scanpy as sc
+
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    counts = _poisson_counts()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = library_preprocess(_cells(counts), min_genes=0, min_cells=0, n_top_genes=20)
+    assert not [w for w in caught if "raw counts" in str(w.message)]
+    expected = _cells(counts)
+    sc.pp.normalize_total(expected, target_sum=1e4)
+    sc.pp.log1p(expected)
+    sc.pp.highly_variable_genes(expected, n_top_genes=20, flavor="seurat")
+    np.testing.assert_array_equal(np.asarray(result.X), counts)
+    np.testing.assert_array_equal(np.asarray(result.layers["counts"]), counts)
+    np.testing.assert_allclose(result.layers["log_normalized"], expected.X, rtol=1e-6)
+    np.testing.assert_array_equal(result.var["highly_variable"], expected.var["highly_variable"])
+
+
+def test_library_preprocessing_starts_from_the_counts_layer():
+    """Log-normalized .X next to a counts layer: the counts layer is used, not overwritten."""
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    counts = _poisson_counts()
+    adata = _cells(_log_normalized(counts))
+    adata.layers["counts"] = counts.copy()
+    result = library_preprocess(adata, min_genes=0, min_cells=0, select_hvg=False)
+    np.testing.assert_array_equal(np.asarray(result.layers["counts"]), counts)
+    np.testing.assert_array_equal(np.asarray(result.X), counts)
+    np.testing.assert_allclose(result.layers["log_normalized"], _log_normalized(counts), rtol=1e-5, atol=1e-6)
+
+
+def test_embed_cells_records_the_counts_warning():
+    """BioEmbedder.embed_cells keeps the warning in uns['embpy_cell_embeddings']['__preprocessing__']."""
+    from embpy import BioEmbedder
+
+    adata = _cells(_log_normalized(_poisson_counts()))
+    with pytest.warns(UserWarning, match="log_normalized"):
+        out = BioEmbedder(device="cpu").embed_cells(adata, models="pca", preprocessing="standard",
+                                                    min_genes=0, min_cells=0)
+    record = out.uns["embpy_cell_embeddings"]["__preprocessing__"]
+    assert any("log_normalized" in warning for warning in record["input_warnings"])
