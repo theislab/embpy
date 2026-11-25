@@ -2,3 +2,8 @@
 # compare their bytes (test_kegg_index). Keep them byte-identical on every
 # platform: no CRLF conversion on Windows checkouts.
 tests/embpy/fixtures/** -text
+
+# The plugin's MCP launchers: a CR would break the shell script's #! line, and cmd.exe
+# can miss labels in a batch file with LF line endings.
+scripts/embpy-mcp-launcher text eol=lf
+scripts/embpy-mcp-launcher.cmd text eol=crlf

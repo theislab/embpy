@@ -4,11 +4,7 @@
   "version": "0.1.0",
   "mcpServers": {
     "embpy": {
-      "command": "python",
-      "args": [
-        "-m",
-        "embpy.mcp.server"
-      ],
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/embpy-mcp-launcher",
       "env": {
         "PYTHONUNBUFFERED": "1"
       }
