@@ -53,7 +53,7 @@ flowchart TD
         D3 --> T7["compute_umap"]
         D3 --> T8["benchmark_scib"]
         D3 --> T9["benchmark_perturbations"]
-        T7 -->|"2D coordinates in .obsm['X_umap']"| Summary["Markdown Summary Tables to Agent"]
+        T7 -->|"2D coordinates in .obsm['X_umap_{model}']"| Summary["Markdown Summary Tables to Agent"]
         T8 -->|"Bio-conservation (NMI, ARI, ASW, cLISI)"| Summary
         T9 -->|"Perturbation response evaluation"| Summary
     end

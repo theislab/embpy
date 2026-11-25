@@ -251,7 +251,17 @@ column, entity type and annotation type.
 
 `compute_umap(path, embedding_key="X_pca", n_neighbors=15, min_dist=0.5, output_key=None, output_path=None, random_state=42)`
 
-Stores coordinates in `.obsm["X_umap_<name>"]` and returns `umap_key` and `umap_shape`.
+Stores coordinates in `.obsm["X_umap_<name>"]` and the kNN graph the way scanpy does with
+`neighbors_key="neighbors_<name>"` (`.uns["neighbors_<name>"]`,
+`.obsp["neighbors_<name>_connectivities"]`, `.obsp["neighbors_<name>_distances"]`;
+`neighbors_<output_key>` when `output_key` is given). Nothing else in the file changes: an
+existing `.obsm["X_umap"]`, `.obsp["connectivities"]` / `["distances"]` or
+`.uns["neighbors"]` / `["umap"]` is kept. Returns `umap_key`, `neighbors_key` and `umap_shape`.
+
+Cells whose embedding has NaN or infinite values (e.g. rows left empty by
+`compute_embeddings(..., missing="nan")`) are left out of the graph and get NaN coordinates;
+`n_excluded_nonfinite` counts them and `warning` names a few. If no cell has a finite
+embedding, the call returns `error_type: "NonFiniteEmbeddingError"`.
 
 ---
 
@@ -260,6 +270,10 @@ Stores coordinates in `.obsm["X_umap_<name>"]` and returns `umap_key` and `umap_
 `benchmark_scib(path, embedding_keys, label_key, batch_key=None, output_csv=None)`
 
 Returns `markdown_table`, `rankings` (by `total`) and per-key `metrics`. Needs `embpy[scib]`.
+
+Cells with NaN or infinite values in any of the `embedding_keys` are left out, so every
+embedding is scored on the same cells: `n_cells_scored`, `n_excluded_nonfinite`,
+`nonfinite_rows_by_key` and a `warning` report them, as in `compute_umap`.
 
 ---
 

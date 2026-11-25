@@ -130,6 +130,8 @@ jobs:
         run: >-
           pytest -v --color=yes
           tests/test_mcp.py tests/test_mcp_client.py tests/test_resolvers.py
+          tests/test_mcp_single_cell.py tests/test_mcp_annotation.py tests/test_mcp_benchmarks.py
+          tests/test_mcp_save_permissions.py tests/test_plugin_and_server.py
           tests/embpy/test_gene_resolver_exact_lookup.py
       # Required: the MCP Skills' tool calls, run offline on generated data.
       - name: MCP Skill examples (offline)

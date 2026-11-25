@@ -1,7 +1,8 @@
 """Single-cell steps of the embpy MCP tools: what each step keeps, changes and reports.
 
 Covers which inputs ``preprocess_counts`` refuses, which cells and genes it and
-``compute_embeddings`` remove, and which genes PCA is fitted on.
+``compute_embeddings`` remove, which genes PCA is fitted on, which keys ``compute_umap``
+writes, and how rows without a finite embedding are handled.
 """
 
 from __future__ import annotations
@@ -14,7 +15,7 @@ import numpy as np
 import pytest
 from anndata import AnnData
 
-from embpy.mcp import compute_embeddings, preprocess_counts
+from embpy.mcp import benchmark_scib, compute_embeddings, compute_umap, preprocess_counts
 
 SKILLS_DIR = Path(__file__).resolve().parents[1] / "skills"
 
@@ -250,3 +251,97 @@ def test_filtering_everything_is_an_error(tmp_path, thresholds, emptied):
     assert res["thresholds"] == expected
     assert f"every {emptied}" in res["error"]
     assert not os.path.exists(out)
+
+
+# --- compute_umap / benchmark_scib --------------------------------------------------------
+
+
+def _embedded_cells(nan_rows=()) -> AnnData:
+    rng = np.random.default_rng(2)
+    adata = _cells(rng.poisson(2.0, size=(60, 30)))
+    centers = rng.normal(scale=4.0, size=(3, 8))
+    for key, seed in (("X_emb", 0), ("X_pca", 1), ("X_prior", 2)):
+        noise = np.random.default_rng(seed).normal(size=(60, 8))
+        adata.obsm[key] = (centers[np.arange(60) % 3] + noise).astype(np.float32)
+    adata.obsm["X_emb"][list(nan_rows)] = np.nan
+    return adata
+
+
+def _same(a, b) -> bool:
+    import scipy.sparse as sp
+
+    if isinstance(a, dict):
+        return isinstance(b, dict) and a.keys() == b.keys() and all(_same(a[k], b[k]) for k in a)
+    if sp.issparse(a):
+        return sp.issparse(b) and a.dtype == b.dtype and a.shape == b.shape and (a != b).nnz == 0
+    if isinstance(a, np.ndarray):
+        return isinstance(b, np.ndarray) and a.dtype == b.dtype and np.array_equal(a, b)
+    return type(a) is type(b) and a == b
+
+
+def test_umap_keeps_the_existing_umap_and_neighbors(tmp_path):
+    """Only the new coordinates and this embedding's neighbors graph are added; nothing else changes."""
+    import anndata
+    import scanpy as sc
+
+    adata = _embedded_cells()
+    sc.pp.neighbors(adata, use_rep="X_prior", n_neighbors=5)
+    sc.tl.umap(adata, random_state=0)
+    path = str(tmp_path / "with_umap.h5ad")
+    adata.write_h5ad(path)
+    before = anndata.read_h5ad(path)
+
+    out = str(tmp_path / "umap_pca.h5ad")
+    res = compute_umap(path=path, embedding_key="X_pca", n_neighbors=5, output_path=out)
+    assert res["status"] == "success", res
+    after = anndata.read_h5ad(out)
+
+    for slot in ("obsm", "obsp", "uns"):
+        old, new = getattr(before, slot), getattr(after, slot)
+        changed = [key for key in old if key not in new or not _same(old[key], new[key])]
+        assert not changed, f"{slot} entries changed: {changed}"
+    nkey = res["neighbors_key"]
+    assert res["umap_key"] == "X_umap_pca" and nkey == "neighbors_pca"
+    assert set(after.obsm) - set(before.obsm) == {"X_umap_pca"}
+    assert set(after.obsp) - set(before.obsp) == {f"{nkey}_connectivities", f"{nkey}_distances"}
+    assert set(after.uns) - set(before.uns) == {nkey}
+    assert after.uns[nkey]["params"]["use_rep"] == "X_pca"
+    assert after.obsm["X_umap_pca"].shape == (60, 2)
+
+
+def test_umap_leaves_out_rows_without_a_finite_embedding(tmp_path):
+    """Two NaN rows (as missing='nan' leaves them): excluded, counted, named, NaN coordinates."""
+    import anndata
+
+    adata = _embedded_cells(nan_rows=(3, 10))
+    adata.obsm["X_all_nan"] = np.full((60, 4), np.nan, dtype=np.float32)
+    path = str(tmp_path / "with_nan.h5ad")
+    adata.write_h5ad(path)
+
+    out = str(tmp_path / "umap.h5ad")
+    res = compute_umap(path=path, embedding_key="X_emb", n_neighbors=5, output_path=out)
+    assert res["status"] == "success", res
+    assert res["n_excluded_nonfinite"] == 2
+    assert "cell_3" in res["warning"] and "cell_10" in res["warning"] and "missing='nan'" in res["warning"]
+    coords = np.asarray(anndata.read_h5ad(out).obsm[res["umap_key"]])
+    assert coords.shape == (60, 2)
+    assert np.isnan(coords[[3, 10]]).all()
+    assert np.isfinite(np.delete(coords, [3, 10], axis=0)).all()
+
+    none_left = compute_umap(path=path, embedding_key="X_all_nan", output_path=str(tmp_path / "x.h5ad"))
+    assert none_left["status"] == "error" and "cell_0" in none_left["error"]
+    assert not os.path.exists(tmp_path / "x.h5ad")
+
+
+def test_scib_leaves_out_rows_without_a_finite_embedding(tmp_path):
+    """benchmark_scib scores the other cells and reports the excluded ones like compute_umap."""
+    pytest.importorskip("scib", reason="scib is not installed")
+    path = str(tmp_path / "with_nan.h5ad")
+    _embedded_cells(nan_rows=(3, 10)).write_h5ad(path)
+
+    res = benchmark_scib(path=path, embedding_keys=["X_emb", "X_pca"], label_key="cell_type", batch_key="batch")
+    assert res["status"] == "success", res
+    assert res["n_excluded_nonfinite"] == 2
+    assert res["n_cells_scored"] == 58
+    assert "cell_3" in res["warning"] and "cell_10" in res["warning"] and "missing='nan'" in res["warning"]
+    assert set(res["metrics"]) == {"X_emb", "X_pca"}

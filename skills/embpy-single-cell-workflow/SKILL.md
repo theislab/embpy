@@ -81,8 +81,12 @@ compute_embeddings(path="data/pbmc_preprocessed.h5ad", models=["pca", "scvi"], e
 compute_umap(path="data/pbmc_preprocessed_embedded.h5ad", embedding_key="X_pca", n_neighbors=15)
 ```
 
-The coordinates are stored as `.obsm["X_umap_<name>"]` (here `X_umap_pca`). The tool returns
-their shape, not a plot.
+The coordinates are stored as `.obsm["X_umap_<name>"]` (here `X_umap_pca`) and the kNN graph
+under the returned `neighbors_key` (here neighbors_pca); an existing UMAP or graph in the file
+is kept.
+The tool returns their shape, not a plot. If `n_excluded_nonfinite` is above 0, those cells had
+NaN embeddings (often from `missing="nan"` in `compute_embeddings`) and got NaN coordinates:
+tell the user how many, using `warning`.
 
 ## 5. Benchmark embeddings with scIB
 
@@ -94,6 +98,8 @@ benchmark_scib(path="data/pbmc_preprocessed_embedded.h5ad", embedding_keys=["X_p
   only bio-conservation metrics are meaningful.
 - Show the user `markdown_table` as is, and use `rankings` (best first by `total`) to
   summarize. Do not invent scores that are not in the table.
+- Cells with NaN embeddings are left out of every embedding's score (`n_excluded_nonfinite`,
+  `n_cells_scored`, `warning`); mention it when it is above 0.
 - Needs `pip install "embpy[scib]"`; the error says so when it is missing.
 
 ## 6. Benchmark perturbation predictions

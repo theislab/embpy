@@ -3185,6 +3185,40 @@ def annotate_metadata(
 # 4. Analysis & Benchmarking Skills
 # =========================================================================
 
+def _finite_rows(matrix: Any) -> tuple[np.ndarray, np.ndarray]:
+    """An embedding as a 2-D array, and which of its rows hold only finite values."""
+    import scipy.sparse as sp
+
+    values = matrix.toarray() if sp.issparse(matrix) else np.asarray(matrix)
+    if values.ndim != 2:
+        raise ValueError(f"An embedding must be a 2-D matrix (one row per cell), got shape {values.shape}.")
+    return values, np.isfinite(values).all(axis=1)
+
+
+def _nonfinite_rows_note(names: Any, keys: list[str], n_total: int) -> str:
+    """Warning text for cells left out because their embedding has NaN or infinite values."""
+    sample = [str(name) for name in list(names)[:5]]
+    return (
+        f"{len(names)} of {n_total} cells have NaN or infinite values in .obsm {keys} and were left "
+        f"out (e.g. {sample}). Such rows usually come from compute_embeddings(..., missing='nan'), "
+        "which leaves rows without an identifier (e.g. controls) as NaN."
+    )
+
+
+def _no_finite_rows_error(path: str, names: Any, keys: list[str]) -> dict[str, Any]:
+    """Error reply when no cell has a finite embedding."""
+    return {
+        "status": "error",
+        "error_type": "NonFiniteEmbeddingError",
+        "error": (
+            f"Every cell has NaN or infinite values in .obsm {keys} (e.g. {[str(n) for n in list(names)[:5]]}), "
+            "so nothing can be computed. Such rows usually come from compute_embeddings(..., missing='nan'); "
+            "check which identifiers could not be embedded."
+        ),
+        "path": str(path),
+    }
+
+
 def compute_umap(
     path: str,
     embedding_key: str = "X_pca",
@@ -3198,6 +3232,15 @@ def compute_umap(
 
     Token-Saving: Stores 2D coordinates in .obsm['X_umap_<model>'] on disk and returns
     array dimensions to the agent.
+
+    Only two things are added to the file: the coordinates and this embedding's kNN graph,
+    stored as scanpy does with ``neighbors_key='neighbors_<model>'`` (.uns['neighbors_<model>'],
+    .obsp['neighbors_<model>_connectivities'] and .obsp['neighbors_<model>_distances'];
+    ``neighbors_<output_key>`` when output_key is given). An existing .obsm['X_umap'],
+    .obsp['connectivities'] / ['distances'] or .uns['neighbors'] / ['umap'] is left as it is.
+    Rows of the embedding with NaN or infinite values (e.g. from compute_embeddings with
+    missing='nan') are left out: they get NaN coordinates and no graph edges, and the reply
+    counts them in n_excluded_nonfinite with a warning.
 
     Parameters
     ----------
@@ -3224,8 +3267,11 @@ def compute_umap(
         - output_path: Path to saved dataset
         - embedding_key: Source embedding key
         - umap_key: Resulting 2D coordinate key in adata.obsm
+        - neighbors_key: Key of the kNN graph in .uns (its matrices are in .obsp)
         - umap_shape: Array dimensions [n_cells, 2]
         - n_cells: Total cells embedded
+        - n_excluded_nonfinite: Cells left out because their embedding is not finite
+          (named in ``warning``)
     """
     try:
         resolved_path = os.path.abspath(path)
@@ -3249,20 +3295,46 @@ def compute_umap(
                 "error": f"embedding_key '{embedding_key}' not found in adata.obsm. Available keys: {list(adata.obsm.keys())}",
             }
 
-        target_key = output_key or f"X_umap_{embedding_key.replace('X_', '')}"
+        name = embedding_key.replace("X_", "")
+        target_key = output_key or f"X_umap_{name}"
+        neighbors_key = f"neighbors_{output_key or name}"
 
+        values, finite = _finite_rows(adata.obsm[embedding_key])
+        n_excluded = int((~finite).sum())
+        if not finite.any():
+            return _no_finite_rows_error(path, adata.obs_names, [embedding_key])
+
+        import pandas as pd
+        import scipy.sparse as sp
+
+        # Build the graph and the layout in a container holding only the cells with a
+        # finite embedding, so scanpy's default keys (X_umap, connectivities, distances,
+        # neighbors, umap) in the file are neither overwritten nor fed NaN rows.
+        work = anndata.AnnData(obs=pd.DataFrame(index=adata.obs_names[finite]))
+        work.obsm["rep"] = values[finite]
         # Adjust n_neighbors for small datasets
-        effective_neighbors = min(n_neighbors, max(2, adata.n_obs - 1))
+        effective_neighbors = min(n_neighbors, max(2, work.n_obs - 1))
 
         with contextlib.redirect_stdout(sys.stderr):
-            sc.pp.neighbors(
-                adata,
-                use_rep=embedding_key,
-                n_neighbors=effective_neighbors,
-                random_state=random_state,
+            sc.pp.neighbors(work, use_rep="rep", n_neighbors=effective_neighbors, random_state=random_state)
+            sc.tl.umap(work, min_dist=min_dist, random_state=random_state)
+
+        layout = np.asarray(work.obsm["X_umap"])
+        coords = np.full((adata.n_obs, layout.shape[1]), np.nan, dtype=np.result_type(layout.dtype, np.float32))
+        coords[finite] = layout
+        adata.obsm[target_key] = coords
+        # The graph under this embedding's own key, scanpy layout (neighbors_key=...).
+        rows = np.flatnonzero(finite)
+        for kind in ("connectivities", "distances"):
+            graph = sp.coo_matrix(work.obsp[kind])
+            adata.obsp[f"{neighbors_key}_{kind}"] = sp.csr_matrix(
+                (graph.data, (rows[graph.row], rows[graph.col])), shape=(adata.n_obs, adata.n_obs)
             )
-            sc.tl.umap(adata, min_dist=min_dist, random_state=random_state)
-            adata.obsm[target_key] = adata.obsm["X_umap"].copy()
+        adata.uns[neighbors_key] = {
+            "connectivities_key": f"{neighbors_key}_connectivities",
+            "distances_key": f"{neighbors_key}_distances",
+            "params": {**dict(work.uns["neighbors"]["params"]), "use_rep": str(embedding_key)},
+        }
 
         if not output_path:
             base, ext = os.path.splitext(resolved_path)
@@ -3272,15 +3344,23 @@ def compute_umap(
 
         _save_anndata_safely(adata, saved_path)
 
-        return {
+        response = {
             "status": "success",
             "path": str(resolved_path),
             "output_path": saved_path,
             "embedding_key": str(embedding_key),
             "umap_key": str(target_key),
+            "neighbors_key": neighbors_key,
             "n_cells": int(adata.n_obs),
+            "n_excluded_nonfinite": n_excluded,
             "umap_shape": [int(d) for d in adata.obsm[target_key].shape],
         }
+        if n_excluded:
+            response["warning"] = (
+                _nonfinite_rows_note(adata.obs_names[~finite], [embedding_key], adata.n_obs)
+                + " They have NaN UMAP coordinates and no edges in the graph."
+            )
+        return response
     except Exception as exc:
         logger.error("compute_umap failed on %s: %s", path, exc, exc_info=True)
         resp = {
@@ -3309,6 +3389,10 @@ def benchmark_scib(
 
     Token-Saving: Produces a compact Markdown table directly readable by the LLM agent.
 
+    Cells whose embedding has NaN or infinite values in any of ``embedding_keys`` (e.g.
+    from compute_embeddings with missing='nan') are left out, so every embedding is scored
+    on the same cells; the reply counts them in n_excluded_nonfinite with a warning.
+
     Parameters
     ----------
     path : str
@@ -3330,6 +3414,8 @@ def benchmark_scib(
         - markdown_table: Formatted Markdown string of ranking metrics for agent display
         - rankings: Models ordered by composite benchmark performance
         - metrics: Dictionary mapping each embedding key to its metric results
+        - n_cells_scored / n_excluded_nonfinite: Cells scored, and cells left out because
+          an embedding is not finite (nonfinite_rows_by_key and ``warning`` name them)
     """
     try:
         resolved_path = os.path.abspath(path)
@@ -3370,6 +3456,22 @@ def benchmark_scib(
                 "error": f"batch_key '{batch_key}' not found in adata.obs. Available: {list(adata.obs.columns)}",
             }
 
+        # Every embedding is scored on the same cells: those finite in all of them.
+        keep = np.ones(adata.n_obs, dtype=bool)
+        nonfinite_by_key: dict[str, int] = {}
+        for key in keys_list:
+            _, finite = _finite_rows(adata.obsm[key])
+            if not finite.all():
+                nonfinite_by_key[key] = int((~finite).sum())
+            keep &= finite
+        if not keep.any():
+            return _no_finite_rows_error(path, adata.obs_names, list(nonfinite_by_key))
+        n_excluded = int((~keep).sum())
+        excluded_names = adata.obs_names[~keep]
+        n_total = int(adata.n_obs)
+        if n_excluded:
+            adata = adata[keep].copy()
+
         with contextlib.redirect_stdout(sys.stderr):
             metrics_df = tl.compute_scib_metrics(
                 adata,
@@ -3405,18 +3507,27 @@ def benchmark_scib(
         summary_records = _sanitize_val(metrics_df.reset_index().to_dict(orient="records"))
         rankings = list(metrics_df.sort_values(by="total", ascending=False).index) if "total" in metrics_df.columns else keys_list
 
-        return {
+        response = {
             "status": "success",
             "path": str(resolved_path),
             "embedding_keys": keys_list,
             "label_key": label_key,
             "batch_key": batch_key,
             "output_csv": csv_path,
+            "n_cells_scored": int(adata.n_obs),
+            "n_excluded_nonfinite": n_excluded,
             "markdown_table": md_table,
             "summary": summary_records,
             "rankings": [str(r) for r in rankings],
             "metrics": metrics_dict,
         }
+        if n_excluded:
+            response["nonfinite_rows_by_key"] = nonfinite_by_key
+            response["warning"] = (
+                _nonfinite_rows_note(excluded_names, list(nonfinite_by_key), n_total)
+                + " Every embedding was scored on the remaining cells."
+            )
+        return response
 
     except Exception as exc:
         logger.error("benchmark_scib failed on %s: %s", path, exc, exc_info=True)
