@@ -145,6 +145,8 @@ EXTRA_KNOWN = {
     "idxmax",  # pandas Series.idxmax
     # Claude Code's MCP server startup timeout (environment variable).
     "MCP_TIMEOUT=60000",
+    # The Python that the plugin's launcher, scripts/embpy-mcp-launcher, uses first.
+    "EMBPY_PYTHON",
     # VCF column name.
     "CHROM",
     # Written as f"mol_{key}" from RDKit's property names (molecular_weight, logp, qed).

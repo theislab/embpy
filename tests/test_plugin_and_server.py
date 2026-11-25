@@ -4,7 +4,8 @@
   (``embpy-mcp-launcher.cmd`` on Windows). The launcher picks the Python that has embpy
   and, when there is none, tells the MCP client what to do;
 * the server registers exactly the nine documented tools;
-* the statistics advice in the benchmark and quality-check skills.
+* the statistics advice in the benchmark and quality-check skills;
+* the setup docs show how to get the plugin folder.
 
 The launcher tests run the real scripts against fake interpreters: the POSIX script
 wherever ``sh`` exists (Linux, macOS, Git for Windows), the ``.cmd`` script on Windows.
@@ -664,3 +665,21 @@ def test_hoeffding_sample_size_does_not_cover_mean_pairwise_similarity():
     k = np.random.default_rng(0).hypergeometric(n_first, n_rows - n_first, n, size=4000)
     misses = np.mean(np.abs(mean_cosine(k, n) - mean_cosine(n_first, n_rows)) > 0.05)
     assert misses > 0.10  # about 16%, not at most 5%
+
+
+# ---------------------------------------------------------------------------
+# Getting the plugin folder
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "doc", ["README.md", "docs/mcp/skills.md", "docs/mcp/client-setup.md", "skills/embpy-mcp-setup/SKILL.md"]
+)
+def test_plugin_docs_show_how_to_get_the_plugin_folder(doc):
+    text = (ROOT / doc).read_text(encoding="utf-8")
+    assert "--plugin-dir" in text
+    assert "git clone https://github.com/theislab/embpy.git" in text
+    # Until the MCP server is on main, it is on the branch of pull request #52.
+    assert "pull/52/head" in text
+    # How the plugin's launcher finds the Python.
+    assert "EMBPY_PYTHON" in text

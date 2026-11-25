@@ -33,16 +33,53 @@ Python API (`embpy.tl`, `embpy.pl`), which the assistant runs through its shell.
 ## Installing
 
 The repository is a Claude Code plugin: `.claude-plugin/plugin.json` registers the MCP
-server, and `skills/` holds the skills.
+server, and `skills/` holds the skills. Claude Code loads it from a folder on disk, a git clone
+of the repository:
 
 ```bash
-pip install "embpy[mcp,models]"     # models = PyTorch, needed by every embedding tool
-claude --plugin-dir /path/to/embpy      # load for one session
+git clone https://github.com/theislab/embpy.git
+cd embpy
+# Until the MCP server is released, it is on the branch of pull request #52:
+git fetch origin pull/52/head:mcp
+git checkout mcp
+# Later, to update that branch: git pull origin pull/52/head
 ```
 
-The plugin starts the server with `python -m embpy.mcp.server`, so run Claude from an
-environment where that `python` has embpy installed. Other clients (Claude Desktop, Cursor)
-use only the MCP server; see [Client Setup](client-setup.md).
+The plugin starts the server through `scripts/embpy-mcp-launcher` (`embpy-mcp-launcher.cmd`
+on Windows). It uses the first of these Pythons that has embpy's MCP server and the `mcp`
+package:
+
+1. the Python named by the environment variable `EMBPY_PYTHON`;
+2. the environment that `uv tool install` creates (below);
+3. `python3`, then `python`, on PATH, for example from an environment activated before
+   starting Claude.
+
+Install embpy from the clone, so that the server matches the skills, in one of two ways:
+
+```bash
+# a) In your own environment (venv, conda, ...). models = PyTorch, needed by every embedding tool.
+pip install -e ".[mcp,models]"
+python -c "import sys; print(sys.executable)"   # the value for EMBPY_PYTHON
+
+# b) With uv, in an environment of its own (takes a few minutes the first time)
+uv tool install --python 3.12 --editable ".[mcp,models]"
+```
+
+With a), set `EMBPY_PYTHON` to that Python unless you start Claude from a shell where the
+environment is active: `export EMBPY_PYTHON=/path/to/env/bin/python` (macOS, Linux),
+`setx EMBPY_PYTHON C:\path\to\env\python.exe` (Windows, for new terminals), or for every
+session in `~/.claude/settings.json`: `{"env": {"EMBPY_PYTHON": "/path/to/env/bin/python"}}`.
+Then load the plugin and check that the server connects:
+
+```bash
+claude --plugin-dir /path/to/embpy             # load for one session
+claude --plugin-dir /path/to/embpy mcp list    # plugin:embpy:embpy should be connected
+```
+
+If no Python can run the server, `claude mcp list` shows it as failed with the reason and these
+steps. A server also registered with `claude mcp add` gives every tool twice; keep one of them.
+Other clients (Claude Desktop, Cursor) use only the MCP server; see
+[Client Setup](client-setup.md).
 
 ## How they are checked
 

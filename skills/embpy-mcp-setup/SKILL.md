@@ -27,9 +27,25 @@ Optional extras, installed only when a task needs them:
 
 ## Connect
 
-- Claude Code: `claude mcp add embpy --scope user -- <full path of that python> -m embpy.mcp.server`
-  (on Windows add `-e PYTHONUTF8=1` before `--`), or load this repository as a plugin with
-  `claude --plugin-dir <path-to-embpy>`. `claude mcp list` shows whether it connects.
+- Claude Code, server only: `claude mcp add embpy --scope user -- <full path of that python> -m embpy.mcp.server`
+  (on Windows add `-e PYTHONUTF8=1` before `--`). `claude mcp list` shows whether it connects.
+- Claude Code, as a plugin (the server and these skills): Claude Code loads a git clone of the
+  repository. Until the MCP server is released, it is on the branch of pull request #52:
+
+  ```bash
+  git clone https://github.com/theislab/embpy.git
+  cd embpy
+  git fetch origin pull/52/head:mcp
+  git checkout mcp
+  pip install -e ".[mcp,models]"   # or: uv tool install --python 3.12 --editable ".[mcp,models]"
+  claude --plugin-dir /path/to/embpy
+  ```
+
+  The plugin's launcher starts the server with the first Python that has embpy: the one in
+  the environment variable `EMBPY_PYTHON`, then the environment of the uv command above, then
+  python3 or python on PATH. When none has it, `claude mcp list` shows `plugin:embpy:embpy` as
+  failed, with the reason and what to do. Use the plugin or `claude mcp add`, not both: with
+  both, every tool is listed twice.
 - Claude Desktop / Cursor: add a server whose `command` is the **full path** of the Python that
   has embpy installed, with `args` `["-m", "embpy.mcp.server"]` (see `docs/mcp/client-setup.md`).
 
@@ -49,7 +65,7 @@ runs; `optional_extras_status` shows which extras are installed.
 
 | Symptom | Cause and fix |
 |---|---|
-| No embpy tools available | The server did not start: wrong Python in the config, or embpy/mcp not installed there. Run `python -m embpy.mcp.server` in a terminal with that Python and read the error (no output and no exit means it works). |
+| No embpy tools available | The server did not start: wrong Python in the config, or embpy/mcp not installed there. Run `python -m embpy.mcp.server` in a terminal with that Python and read the error (no output and no exit means it works). With the plugin, `claude mcp list` shows the launcher's reason; set `EMBPY_PYTHON` to a Python that has embpy. |
 | `list_model_registry` says PyTorch is not installed | Install the `models` extra: `pip install "embpy[mcp,models]"`. |
 | `preprocess_counts(log_transform=False)` asks for scikit-misc | Older install: `pip install scikit-misc` (the `mcp` extra now includes it). |
 | Reactome pathways: the first request is slow | It downloads Reactome's release files once (about 37 MB) into `~/.cache/embpy/reactome`; later requests reuse them. "Couldn't reach Reactome." means that download failed: retry when online. |

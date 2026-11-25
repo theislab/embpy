@@ -487,7 +487,20 @@ claude mcp add embpy -- /path/to/env/bin/python -m embpy.mcp.server
 
 Use the full path of the Python that has embpy installed. `benchmark_scib` and `benchmark_perturbations` also need `embpy[scib]` and `embpy[eval]`; [Client Setup](docs/mcp/client-setup.md) covers Claude Desktop, Cursor and Windsurf.
 
-The repository is also a Claude Code plugin whose [Agent Skills](docs/mcp/skills.md) (`skills/`) teach Claude how to use these tools (`claude --plugin-dir .`). For tool references, setup guides, and example prompts, see the **[MCP documentation](docs/mcp/index.md)** or follow the interactive walkthrough in **[tutorials/05_mcp_agent_workflows.ipynb](tutorials/05_mcp_agent_workflows.ipynb)**.
+The repository is also a Claude Code plugin whose [Agent Skills](docs/mcp/skills.md) (`skills/`) teach Claude how to use these tools. Claude Code loads it from a git clone; until the MCP server is released, it is on the branch of pull request #52:
+
+```bash
+git clone https://github.com/theislab/embpy.git
+cd embpy
+git fetch origin pull/52/head:mcp
+git checkout mcp
+pip install -e ".[mcp,models]"     # or: uv tool install --python 3.12 --editable ".[mcp,models]"
+claude --plugin-dir /path/to/embpy
+```
+
+The plugin starts the server itself, with the first Python that has embpy: the one in `EMBPY_PYTHON`, then the environment of the uv command above, then `python3` or `python` on PATH ([details](docs/mcp/skills.md#installing)). Use the plugin or `claude mcp add`, not both, or every tool is listed twice.
+
+For tool references, setup guides, and example prompts, see the **[MCP documentation](docs/mcp/index.md)** or follow the interactive walkthrough in **[tutorials/05_mcp_agent_workflows.ipynb](tutorials/05_mcp_agent_workflows.ipynb)**.
 
 ## Tutorials
 

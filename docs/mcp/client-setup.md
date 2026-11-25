@@ -42,8 +42,29 @@ claude mcp add embpy --scope user -e PYTHONUTF8=1 -- C:\path\to\env\Scripts\pyth
 
 `claude mcp list` then shows `embpy` as connected, and `/mcp` inside a session lists its tools.
 `--scope user` makes the server available in every project; without it, it is added to the
-current project only. To load the [Agent Skills](skills.md) as well, start Claude with
-`claude --plugin-dir /path/to/embpy` from an environment whose `python` has embpy installed.
+current project only.
+
+### As a plugin, with the Agent Skills
+
+The repository is also a Claude Code plugin that adds the [Agent Skills](skills.md) and starts
+the server itself. Claude Code loads it from a git clone of the repository:
+
+```bash
+git clone https://github.com/theislab/embpy.git
+cd embpy
+# Until the MCP server is released, it is on the branch of pull request #52:
+git fetch origin pull/52/head:mcp
+git checkout mcp
+claude --plugin-dir /path/to/embpy
+```
+
+The plugin starts the server through `scripts/embpy-mcp-launcher` (`.cmd` on Windows) with the
+first Python that has embpy's MCP server: the one in the environment variable `EMBPY_PYTHON`,
+then the environment of `uv tool install --python 3.12 --editable "/path/to/embpy[mcp,models]"`,
+then `python3` or `python` on PATH. If there is none, `claude mcp list` shows
+`plugin:embpy:embpy` as failed and says what to do. [Agent Skills](skills.md#installing) has
+the install steps. Use either the plugin or `claude mcp add`, not both: with both, every tool
+is listed twice.
 
 ---
 
