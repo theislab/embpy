@@ -436,3 +436,41 @@ def test_identifiers_with_output_path_report_the_columns_written(recorded_pathwa
                             sources="reactome", output_path=out)
     assert res["new_columns_added"] == ["gene_pathways_n"]
     assert "gene_pathways_n" in anndata.read_h5ad(out).obs
+
+
+# ---------------------------------------------------------------------------
+# 6. Each identifier column keeps its own record counts
+# ---------------------------------------------------------------------------
+
+
+def test_a_second_identifier_column_gets_its_own_count_column(uniprot, tmp_path):
+    """Perturbed gene and target gene in one file: annotating the second keeps the first's counts."""
+    pairs = _write_obs(tmp_path / "pairs.h5ad", gene=["TP53", "TP53", "EGFR"], target=["EGFR", "EGFR", "EGFR"])
+    first = annotate_metadata(path=pairs, entity_type="gene", column="gene", annotation_types="go",
+                              output_path=str(tmp_path / "gene.h5ad"))
+    assert first["new_columns_added"] == ["gene_go_n"]
+    second = annotate_metadata(path=first["output_path"], entity_type="gene", column="target",
+                               annotation_types="go", output_path=str(tmp_path / "target.h5ad"))
+    assert second["status"] == "success", second
+    assert second["new_columns_added"] == ["gene_go_n_target"]
+
+    saved, _, record = _stored(second["output_path"])
+    assert list(saved.obs["gene_go_n"]) == [3, 3, 2]  # still the counts of column 'gene'
+    assert list(saved.obs["gene_go_n_target"]) == [2, 2, 2]
+    assert json.loads(record["provenance_json"])["count_columns"] == {
+        "gene_go_n": {"column": "gene", "entity_type": "gene", "annotation_type": "go"},
+        "gene_go_n_target": {"column": "target", "entity_type": "gene", "annotation_type": "go"},
+    }
+
+    # Annotating either column again updates its own counts, under the same names.
+    uniprot["entries"]["P00533"]["uniProtKBCrossReferences"] = [_go_xref("GO:0005886", "C", "plasma membrane")]
+    gene_again = annotate_metadata(path=second["output_path"], entity_type="gene", column="gene",
+                                   annotation_types="go", output_path=str(tmp_path / "gene_again.h5ad"))
+    assert gene_again["new_columns_added"] == ["gene_go_n"]
+    target_again = annotate_metadata(path=gene_again["output_path"], entity_type="gene", column="target",
+                                     annotation_types="go", output_path=str(tmp_path / "target_again.h5ad"))
+    assert target_again["new_columns_added"] == ["gene_go_n_target"]
+    saved = anndata.read_h5ad(target_again["output_path"])
+    assert sorted(c for c in saved.obs.columns if c.startswith("gene_go_n")) == ["gene_go_n", "gene_go_n_target"]
+    assert list(saved.obs["gene_go_n"]) == [3, 3, 1]
+    assert list(saved.obs["gene_go_n_target"]) == [1, 1, 1]

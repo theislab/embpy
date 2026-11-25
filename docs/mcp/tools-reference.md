@@ -218,6 +218,13 @@ and source looked up again replace their records for the entities looked up; whe
 failed, the earlier records stay. `provenance_json` gives the organism and column of each
 stored entity type, annotation type and source, and `annotation_types` lists every stored type.
 
+Each identifier column keeps its own counts. `<prefix>_<type>_n` belongs to the first column
+annotated for that type, and annotating that column again updates it. When another column is
+annotated for a type that already has counts from a different column (e.g. `target` after
+`gene`), its counts go to `<prefix>_<type>_n_<column>` (`gene_go_n_target`), listed in
+`new_columns_added`. `provenance_json["count_columns"]` maps each count column to its identifier
+column, entity type and annotation type.
+
 ---
 
 ## `compute_umap`

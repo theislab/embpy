@@ -2241,6 +2241,26 @@ def _merge_annotation_records(
     return merged, updated
 
 
+def _count_column_source(
+    name: str, record: Any, provenance: dict[str, Any], entity_type: str, ann_type: str
+) -> str | None:
+    """The identifier column whose record counts ``.obs[name]`` holds, or None if unknown."""
+    recorded = provenance.get("count_columns")
+    if isinstance(recorded, dict) and isinstance(recorded.get(name), dict):
+        return recorded[name].get("column")
+    # Written before count columns were recorded: the column the type's records came from ...
+    by_source = provenance.get(entity_type, {}).get(ann_type) if isinstance(provenance.get(entity_type), dict) else None
+    if isinstance(by_source, dict):
+        columns = {info.get("column") for info in by_source.values() if isinstance(info, dict)}
+        return columns.pop() if len(columns) == 1 else None
+    # ... or, before any provenance was kept, the column of the call that wrote the record.
+    if isinstance(record, dict) and "provenance_json" not in record and record.get("entity_type") == entity_type:
+        types = record.get("annotation_types", [])
+        if ann_type in ([types] if isinstance(types, str) else [str(t) for t in types]):
+            return str(record.get("column"))
+    return None
+
+
 # Names a KEGG reference folder (written by kegg_index.build_kegg_reference).
 _KEGG_REFERENCE_ENV = "EMBPY_KEGG_REFERENCE"
 
@@ -2577,7 +2597,8 @@ def annotate_metadata(
         - successful_count: Entities annotated for every requested type
         - failed_count: Entities missing at least one requested type
         - new_columns_added: '<entity>_<type>_n' record counts per row in .obs (empty when
-          nothing was written, e.g. identifiers without output_path)
+          nothing was written, e.g. identifiers without output_path); '<entity>_<type>_n_<column>'
+          when that name already holds the counts of another identifier column
         - summary: Human-readable description
     """
     resolved_entity = str(entity_type)  # the entity type resolved below; for the install hint
@@ -2923,13 +2944,20 @@ def annotate_metadata(
             stored, updated = _merge_annotation_records(
                 _json_field(earlier, "results_json"), results, sources_queried, failed_lookups
             )
+            provenance = _json_field(earlier, "provenance_json")
+            count_columns = provenance.get("count_columns")
+            count_columns = dict(count_columns) if isinstance(count_columns, dict) else {}
             prefix = {"gene": "gene", "protein": "prot", "molecule": "mol"}[resolved_entity]
             for t in requested:
                 col = f"{prefix}_{t}_n"
+                if col in adata.obs.columns and _count_column_source(col, earlier, provenance, resolved_entity, t) != query_col:
+                    # These are another identifier column's counts: keep them, name this column's after it.
+                    col = f"{col}_{query_col}"
                 # The number of records stored for the row's entity, from every source of the type.
                 n_stored = {e: _n_annotation_items(stored.get(e, {}).get(t)) for e in entities}
                 adata.obs[col] = [n_stored.get(v, 0) if v else 0 for v in values]
                 new_cols.append(col)
+                count_columns[col] = {"column": query_col, "entity_type": resolved_entity, "annotation_type": t}
             if resolved_entity == "molecule" and "properties" in requested:
                 # Scalar RDKit properties as columns, as tl.annotate_molecules writes them.
                 props = {e: (results[e].get("properties", {}).get("rdkit") or {}).get("physicochemical") or {} for e in entities}
@@ -2946,11 +2974,11 @@ def annotate_metadata(
                     else:
                         adata.obs[f"mol_{key}"] = pd.Categorical([None if x is None else str(x) for x in column_values])
                     new_cols.append(f"mol_{key}")
-            provenance = _json_field(earlier, "provenance_json")
             if not isinstance(provenance.get(resolved_entity), dict):
                 provenance[resolved_entity] = {}
             for t, source in sorted(updated):
                 provenance[resolved_entity].setdefault(t, {})[source] = {"organism": org, "column": query_col}
+            provenance["count_columns"] = count_columns
             earlier_types = earlier.get("annotation_types", []) if isinstance(earlier, dict) else []
             if isinstance(earlier_types, str):
                 earlier_types = [earlier_types]
