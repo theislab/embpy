@@ -37,17 +37,20 @@ print(report)
 ## 2. Collapse: does everything look the same?
 
 ```python
-n = ep.tl.sample_size_for(epsilon=0.05, delta=0.05)
-rows = np.random.default_rng(0).choice(adata.n_obs, size=min(adata.n_obs, n), replace=False)
+n = min(adata.n_obs, 1000)
+rows = np.random.default_rng(0).choice(adata.n_obs, size=n, replace=False)
 sample = adata[rows].copy()
 similarity = ep.tl.compute_similarity(sample, obsm_key=key, metric="cosine")
-off_diagonal = similarity[~np.eye(len(similarity), dtype=bool)]
-print(len(rows), round(float(off_diagonal.mean()), 3), round(float(off_diagonal.std()), 3))
+off_diagonal = similarity[~np.eye(n, dtype=bool)]
+print(n, round(float(off_diagonal.mean()), 3), round(float(off_diagonal.std()), 3))
 ```
 
-- `sample_size_for(epsilon, delta)` is the number of rows needed to estimate a mean within
-  `epsilon` with probability `1 - delta` (738 for 0.05 / 0.05), whatever the dataset size, so the
-  check stays fast on large data.
+- The mean over the pairs of a random sample of rows is a sample estimate of the mean over all
+  pairs of rows (exact when the sample holds every row). Pairs that share a row are dependent, so
+  the n(n - 1) pairs are not independent values: an error bound computed as if they were is far
+  too narrow, and `sample_size_for`, which assumes independent values, gives no guarantee for this
+  mean either. Do not attach a confidence level to it. To see how much it moves, rerun with two or
+  three other seeds and report the range; the matrix has n² entries, so keep n in the thousands.
 - A mean cosine similarity near 1 with a small spread means the vectors share one dominant
   direction (common for raw transformer embeddings). Similarity rankings and clustering are then
   unreliable: centre the embedding (subtract the column means) or reduce it with PCA first.

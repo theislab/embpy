@@ -3,7 +3,8 @@
 * ``.claude-plugin/plugin.json`` starts the server through ``scripts/embpy-mcp-launcher``
   (``embpy-mcp-launcher.cmd`` on Windows). The launcher picks the Python that has embpy
   and, when there is none, tells the MCP client what to do;
-* the server registers exactly the nine documented tools.
+* the server registers exactly the nine documented tools;
+* the statistics advice in the benchmark and quality-check skills.
 
 The launcher tests run the real scripts against fake interpreters: the POSIX script
 wherever ``sh`` exists (Linux, macOS, Git for Windows), the ``.cmd`` script on Windows.
@@ -11,7 +12,9 @@ wherever ``sh`` exists (Linux, macOS, Git for Windows), the ``.cmd`` script on W
 
 from __future__ import annotations
 
+import ast
 import asyncio
+import inspect
 import json
 import os
 import queue
@@ -23,6 +26,7 @@ import threading
 import venv
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -569,3 +573,94 @@ def test_docs_do_not_offer_the_older_names_as_tools():
             if re.search(rf'call_tool\(\s*"{old}"', text) or f"mcp__embpy__{old}" in text:
                 problems.append(f"{path.relative_to(ROOT)}: calls {old} as a tool")
     assert not problems, problems
+
+
+# ---------------------------------------------------------------------------
+# Statistics in the Agent Skills
+# ---------------------------------------------------------------------------
+
+SKILLS = ROOT / "skills"
+
+
+def _python_blocks(text: str) -> list[str]:
+    return re.findall(r"```python\n(.*?)```", text, re.S)
+
+
+def test_benchmark_skill_keeps_repeated_compounds_together():
+    import embpy as ep
+
+    assert "groupby" in inspect.signature(ep.tl.benchmark_embeddings).parameters
+    text = (SKILLS / "embpy-embedding-task-benchmark" / "SKILL.md").read_text(encoding="utf-8")
+    calls = [
+        node
+        for block in _python_blocks(text)
+        for node in ast.walk(ast.parse(block))
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "ep.tl.benchmark_embeddings"
+    ]
+    assert calls
+    for call in calls:
+        assert "groupby" in {kw.arg for kw in call.keywords}, ast.unparse(call)
+
+
+def test_grouped_split_holds_out_whole_compounds():
+    """With targets that are pure noise, only a split by compound shows there is nothing to learn."""
+    from anndata import AnnData
+
+    import embpy as ep
+
+    rng = np.random.default_rng(0)
+    n_compounds, replicates = 40, 5
+    embedding = rng.normal(size=(n_compounds, 16)).astype(np.float32)
+    noise_target = rng.normal(size=n_compounds)
+    adata = AnnData(X=np.zeros((n_compounds * replicates, 1), dtype=np.float32))
+    adata.obs["compound_id"] = np.repeat([f"compound_{i}" for i in range(n_compounds)], replicates)
+    adata.obs["readout"] = np.repeat(noise_target, replicates) + rng.normal(scale=0.05, size=adata.n_obs)
+    adata.obsm["X_emb"] = np.repeat(embedding, replicates, axis=0)
+    kwargs = {
+        "perturbation_column": "compound_id",
+        "perturbation_type": "chemical",
+        "target": "readout",
+        "obsm_key": "X_emb",
+        "models": ["random_forest"],
+        "mode": "quick",
+    }
+
+    by_row = ep.tl.benchmark_embeddings(adata, **kwargs)
+    by_compound = ep.tl.benchmark_embeddings(adata, groupby="compound_id", **kwargs)
+
+    assert by_row.loc["random_forest", "r2"] > 0.8  # replicates of test compounds were in training
+    assert by_compound.loc["random_forest", "r2"] < 0.1
+
+
+def test_quality_skill_reports_mean_pairwise_similarity_as_an_estimate():
+    text = (SKILLS / "embpy-embedding-quality-checks" / "SKILL.md").read_text(encoding="utf-8")
+    section = text.split("## 2.", 1)[1].split("## 3.", 1)[0]
+    code = "".join(_python_blocks(section))
+    prose = re.sub(r"```.*?```", "", section, flags=re.S)
+    # The sample is not sized with a bound for independent values, and the text promises no
+    # confidence level for a mean over pairs that share rows.
+    assert "sample_size_for" not in code
+    assert "with probability" not in prose
+    assert "estimate" in prose and "dependent" in prose
+
+
+def test_hoeffding_sample_size_does_not_cover_mean_pairwise_similarity():
+    """``sample_size_for(0.05, 0.05)`` rows do not give the mean pairwise cosine within 0.05 95% of the time.
+
+    The bound is for a mean of independent values in [0, 1]; pairs that share a row are
+    dependent and cosine similarities lie in [-1, 1]. Two opposite clusters (cosine +1
+    within, -1 between), 85.4% of rows in the first: a sample with ``k`` rows from that
+    cluster has mean pairwise cosine ``(k(k-1) + (n-k)(n-k-1) - 2k(n-k)) / (n(n-1))``.
+    """
+    import embpy as ep
+
+    n_rows, n_first = 20_000, 17_080
+    n = ep.tl.sample_size_for(epsilon=0.05, delta=0.05)
+    assert n == 738
+
+    def mean_cosine(k, n):
+        return (k * (k - 1) + (n - k) * (n - k - 1) - 2 * k * (n - k)) / (n * (n - 1))
+
+    k = np.random.default_rng(0).hypergeometric(n_first, n_rows - n_first, n, size=4000)
+    misses = np.mean(np.abs(mean_cosine(k, n) - mean_cosine(n_first, n_rows)) > 0.05)
+    assert misses > 0.10  # about 16%, not at most 5%
