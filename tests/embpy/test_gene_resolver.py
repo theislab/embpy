@@ -17,8 +17,8 @@ _HAS_BIOPYTHON = importlib.util.find_spec("Bio") is not None
 
 
 @pytest.fixture
-def resolver():
-    """GeneResolver with pyensembl disabled (API-only mode)."""
+def resolver(tmp_path):
+    """GeneResolver with pyensembl disabled (API-only mode) and its id cache in tmp_path."""
     r = GeneResolver.__new__(GeneResolver)
     r.ensembl = None
     r.mart_file = None
@@ -28,6 +28,7 @@ def resolver():
     # Match GeneResolver.__init__: lazy local-genome handles default to None.
     r._genome_fasta = None
     r._genome_dir = None
+    r._cache_file = tmp_path / "gene_id_cache.json"
     return r
 
 
@@ -225,16 +226,49 @@ class TestEnsemblToSymbol:
             assert result == "TP53"
 
 
+def _ensembl_bulk_answer(found: dict) -> MagicMock:
+    """Response of Ensembl's bulk lookup (POST) knowing only the entries in ``found``."""
+    resp = MagicMock(ok=True, status_code=200)
+    resp.json.return_value = found
+    return resp
+
+
 class TestBatchMappings:
+    # Ensembl's bulk lookup finds nothing, so the batch hands every entry to the
+    # single lookup, which these tests replace.
     def test_symbols_to_ensembl_batch(self, resolver):
         resolver.symbol_to_ensembl = MagicMock(side_effect=["ENSG1", "ENSG2"])
-        result = resolver.symbols_to_ensembl_batch(["TP53", "BRCA1"])
+        with patch("embpy.resources.gene.resolver._ensembl_post", return_value=_ensembl_bulk_answer({})):
+            result = resolver.symbols_to_ensembl_batch(["TP53", "BRCA1"])
         assert result == {"TP53": "ENSG1", "BRCA1": "ENSG2"}
 
     def test_ensembl_to_symbols_batch(self, resolver):
         resolver.ensembl_to_symbol = MagicMock(side_effect=["TP53", "BRCA1"])
-        result = resolver.ensembl_to_symbols_batch(["ENSG1", "ENSG2"])
+        with patch("embpy.resources.gene.resolver._ensembl_post", return_value=_ensembl_bulk_answer({})):
+            result = resolver.ensembl_to_symbols_batch(["ENSG1", "ENSG2"])
         assert result == {"ENSG1": "TP53", "ENSG2": "BRCA1"}
+
+    def test_replaced_symbol_lookup_does_not_change_the_batch_path(self, resolver):
+        resolver.symbol_to_ensembl = MagicMock(return_value="ENSG00000012048")
+        found = _ensembl_bulk_answer({"TP53": {"id": "ENSG00000141510", "display_name": "TP53"}})
+        with patch("embpy.resources.gene.resolver._ensembl_post", return_value=found) as post:
+            result = resolver.symbols_to_ensembl_batch(["TP53", "BRCA1"])
+        post.assert_called_once()
+        assert result == {"TP53": "ENSG00000141510", "BRCA1": "ENSG00000012048"}
+        resolver.symbol_to_ensembl.assert_called_once_with(
+            "BRCA1", organism="human", fallback_to_unmapped=False, strict=False
+        )
+
+    def test_replaced_id_lookup_does_not_change_the_batch_path(self, resolver):
+        resolver.ensembl_to_symbol = MagicMock(return_value="BRCA1")
+        found = _ensembl_bulk_answer({"ENSG00000141510": {"display_name": "TP53"}})
+        with patch("embpy.resources.gene.resolver._ensembl_post", return_value=found) as post:
+            result = resolver.ensembl_to_symbols_batch(["ENSG00000141510", "ENSG00000012048"])
+        post.assert_called_once()
+        assert result == {"ENSG00000141510": "TP53", "ENSG00000012048": "BRCA1"}
+        resolver.ensembl_to_symbol.assert_called_once_with(
+            "ENSG00000012048", organism="human", fallback_to_unmapped=False, strict=False
+        )
 
 
 class TestGetLocalDnaSequence:
