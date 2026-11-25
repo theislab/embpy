@@ -76,33 +76,76 @@ def _save_anndata_safely(adata: Any, path: str) -> None:
     The data is written to a temporary file in the destination's folder and moved
     over ``path`` only once the write has succeeded, so a failed write (for example
     a column h5py cannot store) leaves an existing file at ``path`` untouched.
-    """
-    import tempfile
 
+    Access is what collaborators expect: the temporary file is created like any
+    other new file, so a new output gets the folder's sharing settings (umask or
+    default ACL), and when an existing file is replaced its group, mode and access
+    control list are copied onto the new file first.
+    """
     target = os.path.abspath(path)
     target_dir = os.path.dirname(target)
     os.makedirs(target_dir, exist_ok=True)
     if getattr(adata, "uns", None):
         for k in list(adata.uns.keys()):
             adata.uns[k] = _sanitize_for_h5ad(adata.uns[k])
-    fd, tmp_path = tempfile.mkstemp(prefix=".embpy-tmp-", suffix=".h5ad", dir=target_dir)
-    os.close(fd)
+    tmp_path = _new_sibling_file(target_dir)
     try:
         adata.write_h5ad(tmp_path)
-        # mkstemp creates the file owner-only (0600); give it the permissions the
-        # destination has, or the ones a newly created file would get.
         if os.path.exists(target):
-            mode = os.stat(target).st_mode & 0o777
-        else:
-            umask = os.umask(0)
-            os.umask(umask)
-            mode = 0o666 & ~umask
-        os.chmod(tmp_path, mode)
+            _copy_access(target, tmp_path)
         os.replace(tmp_path, target)
     except BaseException:
         with contextlib.suppress(OSError):
             os.remove(tmp_path)
         raise
+
+
+def _new_sibling_file(folder: str) -> str:
+    """Create an empty, uniquely named ``.h5ad`` file in ``folder`` as an ordinary new file.
+
+    ``os.open(..., 0o666)`` lets the system apply the umask or the folder's default
+    ACL exactly as for any program's new file; ``mkstemp`` would create it owner-only
+    and an ACL mask derived from that would lock collaborators out.
+    """
+    import secrets
+
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    for _ in range(100):
+        candidate = os.path.join(folder, f".embpy-tmp-{os.getpid()}-{secrets.token_hex(6)}.h5ad")
+        try:
+            fd = os.open(candidate, flags, 0o666)
+        except FileExistsError:
+            continue
+        os.close(fd)
+        return candidate
+    raise FileExistsError(f"Could not create a temporary file in {folder}")
+
+
+_POSIX_ACL_XATTR = "system.posix_acl_access"
+
+
+def _copy_access(source: str, destination: str) -> None:
+    """Give ``destination`` the group, mode and POSIX ACL of ``source`` (best effort).
+
+    The group change only succeeds for groups the user belongs to, and ACLs only
+    where the system exposes them as extended attributes (Linux); elsewhere the
+    mode bits are copied.
+    """
+    import stat
+
+    info = os.stat(source)
+    if hasattr(os, "chown"):
+        with contextlib.suppress(OSError):
+            os.chown(destination, -1, info.st_gid)
+    os.chmod(destination, stat.S_IMODE(info.st_mode))
+    if hasattr(os, "getxattr"):
+        try:
+            acl = os.getxattr(source, _POSIX_ACL_XATTR)
+        except OSError:  # no ACL beyond the mode bits, or ACLs unsupported here
+            acl = None
+        if acl:
+            with contextlib.suppress(OSError):
+                os.setxattr(destination, _POSIX_ACL_XATTR, acl)
 
 
 def _detect_expression_nature(adata: Any) -> dict[str, Any]:
