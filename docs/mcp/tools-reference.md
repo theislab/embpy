@@ -207,7 +207,8 @@ downloaded automatically, because KEGG's REST API is for academic use only; buil
 `error` / `KeggReferenceUnavailable` ("The KEGG search could not run ..."), with the build
 command in `suggestion`; "No pathways found" means the search ran and matched nothing.
 
-Nothing is written when nothing was annotated, or for `identifiers` without `output_path`.
+Nothing is written when nothing was annotated, or for `identifiers` without `output_path`
+(`output_path` is then null and `new_columns_added` empty).
 Otherwise `.uns["embpy_annotations"]["results_json"]` holds the records as JSON (entity, type,
 source), and `.obs` gains `<prefix>_<type>_n` counts of the records stored per row (`gene_`,
 `prot_`, `mol_`; molecules with `properties` also get `mol_<property>` columns).

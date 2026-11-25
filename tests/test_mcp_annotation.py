@@ -415,3 +415,24 @@ def test_a_package_missing_during_a_lookup_is_not_a_service_outage(monkeypatch):
     assert res["error_type"] == "ModuleNotFoundError", res
     assert "Couldn't reach" not in res["error"]
     assert 'pip install "embpy[genome]"' in res["suggestion"]
+
+
+# ---------------------------------------------------------------------------
+# 5. Identifiers without output_path write nothing, and the reply says so
+# ---------------------------------------------------------------------------
+
+
+def test_identifiers_without_output_path_report_no_new_columns(recorded_pathways):
+    res = annotate_metadata(identifiers=["TP53"], entity_type="gene", annotation_types="pathways",
+                            sources="reactome")
+    assert res["status"] == "success", res
+    assert res["output_path"] is None
+    assert res["new_columns_added"] == [] and res["added_columns"] == []
+
+
+def test_identifiers_with_output_path_report_the_columns_written(recorded_pathways, tmp_path):
+    out = str(tmp_path / "tp53.h5ad")
+    res = annotate_metadata(identifiers=["TP53"], entity_type="gene", annotation_types="pathways",
+                            sources="reactome", output_path=out)
+    assert res["new_columns_added"] == ["gene_pathways_n"]
+    assert "gene_pathways_n" in anndata.read_h5ad(out).obs

@@ -2576,7 +2576,8 @@ def annotate_metadata(
         - sources_queried: Databases queried per type
         - successful_count: Entities annotated for every requested type
         - failed_count: Entities missing at least one requested type
-        - new_columns_added: '<entity>_<type>_n' record counts per row in .obs
+        - new_columns_added: '<entity>_<type>_n' record counts per row in .obs (empty when
+          nothing was written, e.g. identifiers without output_path)
         - summary: Human-readable description
     """
     resolved_entity = str(entity_type)  # the entity type resolved below; for the install hint
@@ -2973,6 +2974,8 @@ def annotate_metadata(
             saved_path = None  # identifiers only: the answer is in records_preview
         if saved_path:
             _save_anndata_safely(adata, saved_path)
+        else:
+            new_cols = []  # nothing was written, so no file gained columns
 
         response = {
             "status": "success" if n_annotated_pairs == len(entities) * len(requested) else "partial_success",
