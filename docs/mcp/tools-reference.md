@@ -191,6 +191,14 @@ Reactome pathways come from Reactome's release files (release 98). The first Rea
 downloads them (about 37 MB) into `~/.cache/embpy/reactome/98` (`$EMBPY_CACHE` moves it) and
 later requests reuse them.
 
+KEGG pathways of molecules are looked up in a local KEGG reference: the folder named by
+`$EMBPY_KEGG_REFERENCE`, or else `~/.cache/embpy/kegg` (`$EMBPY_CACHE/kegg`). It is not
+downloaded automatically, because KEGG's REST API is for academic use only; build it once with
+`embpy.resources.molecule.kegg_index.build_kegg_reference("<folder>")`. The reply's
+`kegg_reference` gives the folder and KEGG release used. Without a usable reference the reply is
+`error` / `KeggReferenceUnavailable` ("The KEGG search could not run ..."), with the build
+command in `suggestion`; "No pathways found" means the search ran and matched nothing.
+
 Nothing is written when nothing was annotated, or for `identifiers` without `output_path`.
 Otherwise `.uns["embpy_annotations"]["results_json"]` holds the records as JSON (entity, type,
 source), and `.obs` gains `<prefix>_<type>_n` counts of the records stored per row (`gene_`,

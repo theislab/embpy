@@ -88,6 +88,9 @@ Annotation types and their sources per entity type:
 - Reactome pathways come from Reactome's own release files. The first Reactome request
   downloads them (about 37 MB) into `~/.cache/embpy/reactome` (or `$EMBPY_CACHE/reactome`);
   later requests and sessions reuse them. Nothing has to be downloaded by hand.
+- KEGG pathways of molecules need a local KEGG reference (`$EMBPY_KEGG_REFERENCE`, or
+  `~/.cache/embpy/kegg`). It is never downloaded automatically: KEGG's REST API is for academic
+  use only, so the user builds it once with `build_kegg_reference` (the command is in the reply).
 
 **Reading the result.** `per_type` gives, for each type, how many entities were `annotated`,
 had `no_match`, or hit a `service_error`. An entity counts as annotated only when that type
@@ -99,6 +102,9 @@ returned records. `records_preview` holds, per entity, type and source, the numb
 - `error` with `AnnotationServiceError`: the error starts "Couldn't reach <service>." (e.g.
   "Couldn't reach Reactome."). Say that and suggest retrying later; do not claim the genes have
   no annotations.
+- `error` with `KeggReferenceUnavailable` ("The KEGG search could not run ..."): no usable KEGG
+  reference. Say the search did not run and pass on the `suggestion`; do not say the molecules
+  have no pathways.
 - `warning` and `unreachable_services` with a success: one source failed while others answered;
   mention which.
 - Nothing is written when nothing was annotated, or with `identifiers` unless `output_path` is

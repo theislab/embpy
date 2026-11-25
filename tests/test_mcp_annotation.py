@@ -2,13 +2,15 @@
 
 No test touches the network. Gene pathways come from recorded MyGene rows and the
 Reactome release 98 fixture; UniProt entries are mocked (trimmed to the fields the
-tool reads).
+tool reads); the KEGG reference is built from the synthetic KEGG fixture tables and
+the recorded PubChem payloads in ``embpy/fixtures/kegg``.
 """
 
 from __future__ import annotations
 
 import copy
 import json
+import os
 from pathlib import Path
 
 import anndata
@@ -22,6 +24,11 @@ from embpy.resources._service_errors import report_service_error
 
 _FIXTURES = Path(__file__).parent / "embpy" / "fixtures"
 _GENE = _FIXTURES / "gene"
+_KEGG = _FIXTURES / "kegg"
+
+ASPIRIN = "CC(=O)OC1=CC=CC=C1C(=O)O"
+ETHANOL = "CCO"
+ETHANOL_INCHIKEY = "LFQSCWFLJHTTHZ-UHFFFAOYSA-N"
 
 
 # ---------------------------------------------------------------------------
@@ -197,3 +204,111 @@ def test_a_rerun_replaces_records_it_found_and_keeps_those_it_could_not_fetch(un
     assert _go_ids(records["TP53"]["go"]["uniprot"]) == {"GO:0005634"}  # replaced, not added to
     assert _go_ids(records["EGFR"]["go"]["uniprot"]) == {g[0] for g in _EGFR_GO}  # the failed lookup kept them
     assert list(saved.obs["gene_go_n"]) == [1, 2, 1]
+
+
+# ---------------------------------------------------------------------------
+# 2. KEGG pathways of molecules need a KEGG reference
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def offline_molecules(monkeypatch):
+    """Molecule lookups must stay local: every web request is recorded and answered with nothing."""
+    from embpy.resources.molecule import annotator as molecule_annotator
+
+    requests_made: list[str] = []
+
+    def refuse(url, *args, **kwargs):
+        requests_made.append(url)
+        return None
+
+    for helper in ("_get_json", "_get_text", "_post_json"):
+        monkeypatch.setattr(molecule_annotator, helper, refuse)
+    return requests_made
+
+
+@pytest.fixture(scope="module")
+def kegg_reference(tmp_path_factory):
+    """A KEGG reference folder (``<cache>/kegg``) built from the fixture tables, offline."""
+    from embpy.resources.molecule import kegg_index
+
+    folder = tmp_path_factory.mktemp("cache") / "kegg"
+    table_of = {path: name for name, path in kegg_index.KEGG_TABLES.items()}
+
+    def get_text(url, params=None, timeout=30):
+        name = table_of[url[len(kegg_index.KEGG) + 1:]]
+        return (_KEGG / kegg_index.KEGG_TABLE_FILES[name]).read_text(encoding="utf-8")
+
+    def post_json(url, json_data=None, data=None, timeout=30):
+        if url == kegg_index.PUBCHEM_SID_CIDS_URL:
+            wanted = {int(x) for x in data["sid"].split(",")}
+            info = json.loads((_KEGG / "pubchem_sid_cids_standardized.json").read_text(encoding="utf-8"))
+            return {"InformationList": {"Information": [
+                i for i in info["InformationList"]["Information"] if i["SID"] in wanted]}}
+        wanted = {int(x) for x in data["cid"].split(",")}
+        table = json.loads((_KEGG / "pubchem_cid_inchikey.json").read_text(encoding="utf-8"))
+        return {"PropertyTable": {"Properties": [
+            p for p in table["PropertyTable"]["Properties"] if p["CID"] in wanted]}}
+
+    kegg_index.build_kegg_reference(folder, get_text=get_text, post_json=post_json,
+                                    clock=lambda: 0.0, sleep=lambda seconds: None)
+    return str(folder)
+
+
+@pytest.mark.parametrize("configured_by", ["EMBPY_KEGG_REFERENCE", "EMBPY_CACHE"])
+def test_kegg_pathways_of_a_molecule_in_the_reference(kegg_reference, configured_by, monkeypatch, tmp_path,
+                                                      offline_molecules):
+    if configured_by == "EMBPY_KEGG_REFERENCE":
+        monkeypatch.setenv("EMBPY_KEGG_REFERENCE", kegg_reference)
+        monkeypatch.setenv("EMBPY_CACHE", str(tmp_path / "empty_cache"))
+    else:  # the default location, $EMBPY_CACHE/kegg
+        monkeypatch.delenv("EMBPY_KEGG_REFERENCE", raising=False)
+        monkeypatch.setenv("EMBPY_CACHE", str(Path(kegg_reference).parent))
+    res = annotate_metadata(identifiers=[ASPIRIN], entity_type="molecule", annotation_types="pathways")
+    assert res["status"] == "success", res
+    kegg = res["records_preview"][ASPIRIN]["pathways"]["kegg"]["kegg_pathways"]
+    # One compound pathway, four drug maps and three target pathways of the fixture's aspirin entries.
+    assert kegg["n"] == 8
+    assert {"id": "map94976", "name": "Synthetic reference map 94976"} in kegg["items"]
+    assert os.path.normcase(res["kegg_reference"]["path"]) == os.path.normcase(os.path.abspath(kegg_reference))
+    assert res["kegg_reference"]["release"].startswith("KEGG pathway 2026/11/09")
+    assert offline_molecules == []
+
+
+def test_no_kegg_pathways_after_a_completed_search(kegg_reference, monkeypatch, offline_molecules):
+    from embpy.resources.molecule.kegg_index import KeggIndex
+
+    looked_up = []
+    real_lookup = KeggIndex.lookup
+
+    def lookup(self, inchikey, **kwargs):
+        looked_up.append(inchikey)
+        return real_lookup(self, inchikey, **kwargs)
+
+    monkeypatch.setattr(KeggIndex, "lookup", lookup)
+    monkeypatch.setenv("EMBPY_KEGG_REFERENCE", kegg_reference)
+    res = annotate_metadata(identifiers=[ETHANOL], entity_type="molecule", annotation_types="pathways")
+    assert looked_up == [ETHANOL_INCHIKEY]  # the search ran
+    assert res["status"] == "error"
+    assert res["error_type"] == "NoAnnotationsFound"
+    assert res["error"].startswith("No pathways found")
+
+
+def test_without_a_kegg_reference_the_search_could_not_run(monkeypatch, tmp_path, offline_molecules):
+    monkeypatch.delenv("EMBPY_KEGG_REFERENCE", raising=False)
+    monkeypatch.setenv("EMBPY_CACHE", str(tmp_path / "empty_cache"))
+    res = annotate_metadata(identifiers=[ETHANOL], entity_type="molecule", annotation_types="pathways")
+    assert res["status"] == "error"
+    assert res["error_type"] == "KeggReferenceUnavailable", res
+    assert res["error"].startswith("The KEGG search could not run")
+    assert "No pathways found" not in res["error"] + res.get("summary", "")
+    assert "build_kegg_reference" in res["suggestion"]
+    assert "EMBPY_KEGG_REFERENCE" in res["suggestion"]
+
+
+def test_a_kegg_reference_that_cannot_be_loaded_is_reported(monkeypatch, tmp_path, offline_molecules):
+    monkeypatch.setenv("EMBPY_KEGG_REFERENCE", str(tmp_path / "never_built"))
+    res = annotate_metadata(identifiers=[ETHANOL], entity_type="molecule", annotation_types="pathways")
+    assert res["error_type"] == "KeggReferenceUnavailable", res
+    assert res["error"].startswith("The KEGG search could not run")
+    assert "never_built" in res["error"]

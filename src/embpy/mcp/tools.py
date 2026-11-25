@@ -2240,6 +2240,49 @@ def _merge_annotation_records(
     return merged, updated
 
 
+# Names a KEGG reference folder (written by kegg_index.build_kegg_reference).
+_KEGG_REFERENCE_ENV = "EMBPY_KEGG_REFERENCE"
+
+
+def _load_kegg_reference() -> tuple[Any, dict[str, str] | None]:
+    """The KEGG reference for molecule pathways, or ``(None, {"error": ..., "suggestion": ...})``.
+
+    The folder is ``$EMBPY_KEGG_REFERENCE`` if set, otherwise ``$EMBPY_CACHE/kegg``
+    (default ``~/.cache/embpy/kegg``). It is never built here: KEGG's REST API is for
+    academic use only, so building the reference is left to the user.
+    """
+    from embpy.resources.molecule.kegg_index import INCHIKEY_FILE, KeggIndex, KeggReferenceError
+
+    configured = os.environ.get(_KEGG_REFERENCE_ENV)
+    if configured:
+        folder = os.path.abspath(os.path.expanduser(configured))
+    else:
+        cache = os.environ.get("EMBPY_CACHE") or os.path.join(os.path.expanduser("~"), ".cache", "embpy")
+        folder = os.path.abspath(os.path.join(cache, "kegg"))
+    build = (
+        "Build the KEGG reference once (KEGG's REST API is for academic use only): python -c "
+        f"\"from embpy.resources.molecule.kegg_index import build_kegg_reference; build_kegg_reference(r'{folder}')\""
+    )
+    if not configured and not os.path.isfile(os.path.join(folder, INCHIKEY_FILE)):
+        return None, {
+            "error": (
+                "The KEGG search could not run: KEGG pathways of molecules are looked up in a local KEGG "
+                f"reference, and there is none ({_KEGG_REFERENCE_ENV} is not set and {folder} holds none)."
+            ),
+            "suggestion": (
+                f"{build}. Or set {_KEGG_REFERENCE_ENV} in the MCP server's environment to a folder written "
+                "by build_kegg_reference."
+            ),
+        }
+    try:
+        return KeggIndex.from_dir(folder), None
+    except (OSError, ValueError, KeggReferenceError) as exc:
+        return None, {
+            "error": f"The KEGG search could not run: the KEGG reference in {folder} could not be loaded ({exc}).",
+            "suggestion": f"{build}. Or point {_KEGG_REFERENCE_ENV} to a folder written by build_kegg_reference.",
+        }
+
+
 def _protein_id_type(identifier: str, id_type: str) -> str:
     if id_type != "auto":
         return id_type
@@ -2250,8 +2293,11 @@ def _protein_id_type(identifier: str, id_type: str) -> str:
     return "symbol"
 
 
-def _annotation_fetchers(entity: str, organism: str, id_type: str) -> dict[str, Any]:
-    """Return {annotation_type: fn(identifier, sources) -> {source: data}} for ``entity``."""
+def _annotation_fetchers(entity: str, organism: str, id_type: str, kegg_index: Any = None) -> dict[str, Any]:
+    """Return {annotation_type: fn(identifier, sources) -> {source: data}} for ``entity``.
+
+    ``kegg_index`` (a KeggIndex) is what molecule KEGG pathways are looked up in.
+    """
     if entity == "gene":
         from embpy.resources.gene.annotator import GeneAnnotator
         from embpy.resources.protein.annotator import ProteinAnnotator
@@ -2355,7 +2401,7 @@ def _annotation_fetchers(entity: str, organism: str, id_type: str) -> dict[str, 
     if entity == "molecule":
         from embpy.resources.molecule.annotator import MoleculeAnnotator
 
-        ma = MoleculeAnnotator()
+        ma = MoleculeAnnotator(kegg_index=kegg_index)
         native = {
             "properties": ("structural", ("physicochemical",), "rdkit"),
             "interactions": ("bioactivity", ("targets", "bioactivities", "mechanism_of_action"), "chembl"),
@@ -2412,6 +2458,10 @@ def annotate_metadata(
     - molecule: properties (rdkit), interactions (chembl), pathways (kegg), diseases (pubchem)
     - cell_line: cell_line (depmap, via pertpy)
 
+    Molecule KEGG pathways are looked up in a local KEGG reference ($EMBPY_KEGG_REFERENCE,
+    else $EMBPY_CACHE/kegg), built once with kegg_index.build_kegg_reference; without one
+    the reply is error_type "KeggReferenceUnavailable" ("The KEGG search could not run").
+
     Token-Saving: Writes the enriched dataset to disk and returns per-type counts plus a
     short preview of the records (ids and names, first entries per source).
 
@@ -2458,6 +2508,7 @@ def annotate_metadata(
         - per_type: For each type, counts of entities annotated / no_match / service_error
         - records_preview: entity -> type -> source -> {"n": total, "items": first records}
         - unreachable_services: type -> services that failed, also when other sources answered
+        - kegg_reference: folder and release of the KEGG reference used (molecule pathways)
         - sources_queried: Databases queried per type
         - successful_count: Entities annotated for every requested type
         - failed_count: Entities missing at least one requested type
@@ -2582,6 +2633,16 @@ def annotate_metadata(
                 "error": "Source 'dorothea' needs the decoupler package: pip install decoupler.",
             }
 
+        # KEGG pathways of molecules are looked up in a local KEGG reference; without one
+        # the search cannot run, which is not the same as finding no pathways.
+        kegg_index = None
+        kegg_reference: dict[str, Any] | None = None
+        if resolved_entity == "molecule" and "kegg" in sources_queried.get("pathways", ()):
+            kegg_index, kegg_problem = _load_kegg_reference()
+            if kegg_index is None:
+                return {"status": "error", "error_type": "KeggReferenceUnavailable", **kegg_problem}
+            kegg_reference = {"path": kegg_index.source_dir, "release": kegg_index.release}
+
         query_col = obs_column or column
         if not query_col:
             keywords = {
@@ -2655,7 +2716,7 @@ def annotate_metadata(
                         }
                 new_cols.extend(str(c) for c in added)
             else:
-                fetchers = _annotation_fetchers(resolved_entity, org, id_type)
+                fetchers = _annotation_fetchers(resolved_entity, org, id_type, kegg_index=kegg_index)
                 for e in entities:
                     for t in requested:
                         with record_service_errors() as errs:
@@ -2734,6 +2795,8 @@ def annotate_metadata(
             "summary": summary,
             "records_preview": records_preview,
         }
+        if kegg_reference is not None:
+            base_payload["kegg_reference"] = kegg_reference
         if service_errors:
             base_payload["service_errors_sample"] = service_errors[:5]
         if unreachable:
