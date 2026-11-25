@@ -3270,6 +3270,19 @@ def _nonfinite_rows_note(names: Any, keys: list[str], n_total: int) -> str:
     )
 
 
+# Known reasons a scib metric cannot run here, matched in its error message.
+_SCIB_METRIC_HINTS = (
+    (("WinError 193", "not a valid Win32"), "scib's LISI metrics run a compiled helper that does not run on Windows."),
+    (("rpy2",), "kBET needs R with the kBET package and the Python package rpy2."),
+    (("value_counts",), "This scib version calls pandas.value_counts, which pandas 3 removed."),
+)
+
+
+def _scib_metric_hint(reason: str) -> str | None:
+    """A short explanation for a scib metric failure with a known cause."""
+    return next((hint for needles, hint in _SCIB_METRIC_HINTS if any(n in reason for n in needles)), None)
+
+
 def _metrics_markdown(table: Any, index_name: str) -> str:
     """A Markdown table of a metrics DataFrame, with its row labels as the first column."""
 
@@ -3498,6 +3511,8 @@ def benchmark_scib(
         - metrics: Dictionary mapping each embedding key to its metric results
         - n_cells_scored / n_excluded_nonfinite: Cells scored, and cells left out because
           an embedding is not finite (nonfinite_rows_by_key and ``warning`` name them)
+        - metrics_unavailable: Metric -> {reason, embedding_keys, hint} for metrics scib
+          could not compute (NaN in the table, left out of the aggregate scores)
     """
     try:
         resolved_path = os.path.abspath(path)
@@ -3580,6 +3595,18 @@ def benchmark_scib(
         summary_records = _sanitize_val(metrics_df.reset_index().to_dict(orient="records"))
         rankings = list(metrics_df.sort_values(by="total", ascending=False).index) if "total" in metrics_df.columns else keys_list
 
+        # Metrics scib could not compute are NaN in the table; say which and why.
+        unavailable: dict[str, dict[str, Any]] = {}
+        for metric, entry in (metrics_df.attrs.get("metrics_unavailable") or {}).items():
+            reason = str(entry.get("reason", ""))
+            unavailable[str(metric)] = {
+                "reason": reason,
+                "embedding_keys": [str(k) for k in entry.get("embedding_keys", [])],
+            }
+            hint = _scib_metric_hint(reason)
+            if hint:
+                unavailable[str(metric)]["hint"] = hint
+
         response = {
             "status": "success",
             "path": str(resolved_path),
@@ -3593,13 +3620,23 @@ def benchmark_scib(
             "summary": summary_records,
             "rankings": [str(r) for r in rankings],
             "metrics": metrics_dict,
+            "metrics_unavailable": unavailable,
         }
+        warnings: list[str] = []
         if n_excluded:
             response["nonfinite_rows_by_key"] = nonfinite_by_key
-            response["warning"] = (
+            warnings.append(
                 _nonfinite_rows_note(excluded_names, list(nonfinite_by_key), n_total)
                 + " Every embedding was scored on the remaining cells."
             )
+        if unavailable:
+            warnings.append(
+                f"{len(unavailable)} scIB metrics could not be computed ({', '.join(unavailable)}): they are "
+                "NaN in the table and left out of bio_conservation, batch_correction and total. "
+                "metrics_unavailable gives the reason for each."
+            )
+        if warnings:
+            response["warning"] = " ".join(warnings)
         return response
 
     except Exception as exc:

@@ -100,6 +100,9 @@ benchmark_scib(path="data/pbmc_preprocessed_embedded.h5ad", embedding_keys=["X_p
   summarize. Do not invent scores that are not in the table.
 - Cells with NaN embeddings are left out of every embedding's score (`n_excluded_nonfinite`,
   `n_cells_scored`, `warning`); mention it when it is above 0.
+- Metrics scib could not compute here (e.g. LISI on Windows, kBET without R) are NaN and are
+  listed in `metrics_unavailable` with a `reason` and often a `hint`. Tell the user which
+  metrics are missing and why; the aggregate scores leave them out.
 - Needs `pip install "embpy[scib]"`; the error says so when it is missing.
 
 ## 6. Benchmark perturbation predictions

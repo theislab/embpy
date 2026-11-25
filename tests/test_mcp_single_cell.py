@@ -467,3 +467,26 @@ def test_scib_table_names_each_embedding_without_tabulate(tmp_path, monkeypatch)
     rows = {line.strip("|").split("|")[0].strip(): line for line in lines[2:]}
     assert set(rows) == {"X_pca", "X_prior"}
     assert "0.5000" in rows["X_pca"] and "0.2500" in rows["X_prior"]
+
+
+def test_scib_names_the_metrics_it_could_not_compute(tmp_path, monkeypatch):
+    """A metric that fails is listed with its reason instead of appearing as a bare NaN."""
+    scib = pytest.importorskip("scib", reason="scib is not installed")
+
+    def no_value_counts(*args, **kwargs):
+        raise AttributeError("module 'pandas' has no attribute 'value_counts'")
+
+    monkeypatch.setattr(scib.metrics, "graph_connectivity", no_value_counts)
+    path = str(tmp_path / "embedded.h5ad")
+    _embedded_cells().write_h5ad(path)
+
+    res = benchmark_scib(path=path, embedding_keys=["X_pca", "X_prior"], label_key="cell_type", batch_key="batch")
+    assert res["status"] == "success", res
+    unavailable = res["metrics_unavailable"]
+    assert "value_counts" in unavailable["graph_conn"]["reason"]
+    assert sorted(unavailable["graph_conn"]["embedding_keys"]) == ["X_pca", "X_prior"]
+    battery = {"nmi", "ari", "asw_label", "isolated_label_asw", "clisi", "asw_batch", "graph_conn", "ilisi", "kbet"}
+    for key, scores in res["metrics"].items():
+        missing = {metric for metric, value in scores.items() if metric in battery and value is None}
+        assert missing <= set(unavailable), (key, missing - set(unavailable))
+    assert "graph_conn" in res["warning"]

@@ -280,6 +280,13 @@ embedding, the call returns `error_type: "NonFiniteEmbeddingError"`.
 Returns `markdown_table` (one row per embedding, named in its first column, `embedding`),
 `rankings` (by `total`) and per-key `metrics`. Needs `embpy[scib]`.
 
+A metric scib cannot compute here is NaN in the table and left out of `bio_conservation`,
+`batch_correction` and `total`. `metrics_unavailable` lists each such metric with its `reason`
+(the error, or a NaN scib returned), the `embedding_keys` it failed for and, for known causes,
+a `hint`: LISI metrics (`clisi`, `ilisi`) do not run on Windows, `kbet` needs R and rpy2, and
+`graph_conn` fails with scib versions that call `pandas.value_counts` on pandas 3. A `warning`
+names them.
+
 Cells with NaN or infinite values in any of the `embedding_keys` are left out, so every
 embedding is scored on the same cells: `n_cells_scored`, `n_excluded_nonfinite`,
 `nonfinite_rows_by_key` and a `warning` report them, as in `compute_umap`.
