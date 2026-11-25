@@ -489,12 +489,12 @@ def _resolve_ensembl_id(gene_or_ensembl: str) -> str | None:
     try:
         from embpy.resources.gene_resolver import GeneResolver
 
-        resolver = GeneResolver(organism="human")
+        resolver = GeneResolver(species="human")
         ensembl_id = resolver.symbol_to_ensembl(gene_or_ensembl)
         if ensembl_id:
             return ensembl_id
-    except Exception:  # noqa: BLE001
-        logger.debug("GeneResolver fallback failed for %r", gene_or_ensembl)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("GeneResolver lookup failed for %r: %s", gene_or_ensembl, exc)
 
     # Fallback: direct mygene package
     try:
@@ -535,7 +535,7 @@ def _resolve_ensembl_id_quiet(gene_or_ensembl: str) -> tuple[str | None, str | N
     try:
         from embpy.resources.gene_resolver import GeneResolver
 
-        resolver = GeneResolver(organism="human")
+        resolver = GeneResolver(species="human")
         ensembl_id = resolver.symbol_to_ensembl(gene_or_ensembl)
         if ensembl_id:
             return ensembl_id, "GeneResolver"
