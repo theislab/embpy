@@ -1134,9 +1134,11 @@ def preprocess_counts(
                 sc.pp.scale(adata, max_value=10)
                 adata.layers["scaled"] = adata.X.copy()
 
-            # Restore .X to raw counts to honor embpy output contract
+            # Restore .X to raw counts to honor embpy output contract. uns['log1p'] tells
+            # scanpy (and cell-eval) that .X is log-transformed, which it no longer is.
             if "counts" in adata.layers and adata.n_obs > 0:
                 adata.X = adata.layers["counts"].copy()
+                adata.uns.pop("log1p", None)
 
         # Determine output destination
         if not output_path:

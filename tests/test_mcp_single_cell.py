@@ -401,3 +401,27 @@ def test_unrelated_keys_with_the_temporary_prefix_survive(tmp_path):
     np.testing.assert_array_equal(np.asarray(saved.obsm["_embpy_new_X_notes"]), 2.0)
     assert set(saved.obsm) == {"_embpy_new_X_pca", "_embpy_new_X_notes", "X_pca"}
     assert res["embedding_keys"] == ["X_pca"]
+
+
+# --- what the saved files and replies say about themselves ----------------------------------
+
+
+def test_saved_files_with_counts_in_x_are_not_marked_log_transformed(tmp_path):
+    """.X holds raw counts after preprocessing, so uns has no 'log1p' (scanpy's mark of a log .X)."""
+    import anndata
+
+    counts = _poisson_counts()
+    path = str(tmp_path / "counts.h5ad")
+    _cells(counts).write_h5ad(path)
+
+    prepped = str(tmp_path / "prepped.h5ad")
+    res = preprocess_counts(path=path, output_path=prepped, min_genes=0, min_cells=0)
+    assert res["status"] == "success", res
+    embedded = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", output_path=embedded)
+    assert res["status"] == "success", res
+    for saved_path in (prepped, embedded):
+        saved = anndata.read_h5ad(saved_path)
+        np.testing.assert_array_equal(np.asarray(saved.X), counts)
+        assert "log1p" not in saved.uns, saved_path
+        np.testing.assert_allclose(saved.layers["log_normalized"], _log_normalized(counts), rtol=1e-5, atol=1e-6)

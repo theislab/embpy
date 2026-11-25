@@ -91,7 +91,9 @@ With `path` and `output_path`, the mapped ids are written to `<column>_mapped` (
 `standard` applies the thresholds exactly; `auto` / `auto_adjust=True` lowers them for small
 datasets and reports `adjustments_applied`; `none` only copies counts to `.layers["counts"]`.
 Raw counts stay in `.X` and `.layers["counts"]`; normalized values go to
-`.layers["log_normalized"]` (and `.layers["scaled"]`). Default output:
+`.layers["log_normalized"]` (and `.layers["scaled"]`). Because `.X` holds counts, the file has
+no `.uns["log1p"]`, which scanpy and cell-eval read as "`.X` is log-transformed"; the same
+holds for files that `compute_embeddings` preprocessed. Default output:
 `<input>_preprocessed.h5ad`.
 
 **Input checks.** Normalization starts from `.layers["counts"]` when it exists, else from `.X`.

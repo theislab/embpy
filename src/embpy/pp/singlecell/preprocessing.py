@@ -115,6 +115,8 @@ def preprocess_counts(
         - ``.layers["log_normalized"]`` = processed expression
           (standard pipeline only)
         - ``.var["highly_variable"]`` = HVG flag (standard pipeline)
+        - no ``.uns["log1p"]``: scanpy reads that entry as "``.X`` is
+          log-transformed", and ``.X`` holds counts
     """
     sc = _require_scanpy()
     if backend == "gpu":
@@ -198,8 +200,10 @@ def preprocess_counts(
         pp.scale(adata, max_value=max_value)
         logger.info("Scaled to unit variance (max_value=%s)", max_value)
 
-    # Restore .X to raw counts
+    # Restore .X to raw counts. uns['log1p'] tells scanpy (and cell-eval) that .X is
+    # log-transformed, which it no longer is.
     adata.X = adata.layers["counts"].copy()
+    adata.uns.pop("log1p", None)
 
     logger.info(
         "Pipeline 'standard' (backend=%s): %d cells x %d genes, log_normalized in .layers, raw counts in .X",
