@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import inspect
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -10,8 +11,43 @@ from anndata import AnnData
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
+from embpy.errors import GeneResolutionError
 from embpy.resources.drug_resolver import DrugResolver
 from embpy.resources.gene_resolver import GeneResolver, detect_identifier_type
+
+
+def _symbol_lookup(
+    gene_resolver, organism: str, *, fallback_to_unmapped: bool, strict: bool
+) -> Callable[[str], str | None]:
+    """Return ``lookup(symbol)`` calling ``gene_resolver.symbol_to_ensembl`` with both options honoured.
+
+    The resolver's signature is read once with :func:`inspect.signature`, and
+    the options it accepts are passed on, so any error it raises (a
+    ``TypeError`` too) reaches the caller. For a custom resolver that only takes
+    ``(symbol, organism)``, ``strict`` and ``fallback_to_unmapped`` are applied here.
+    """
+    symbol_to_ensembl = gene_resolver.symbol_to_ensembl
+    options = {"fallback_to_unmapped": fallback_to_unmapped, "strict": strict}
+    try:
+        params = inspect.signature(symbol_to_ensembl).parameters.values()
+    except (TypeError, ValueError):  # no signature to read: assume GeneResolver's
+        kwargs = options
+    else:
+        names = {p.name for p in params}
+        takes_any = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params)
+        kwargs = {k: v for k, v in options.items() if takes_any or k in names}
+
+    def lookup(symbol: str) -> str | None:
+        ens = symbol_to_ensembl(symbol, organism=organism, **kwargs)
+        if ens is None and strict and "strict" not in kwargs:
+            raise GeneResolutionError(
+                f"Could not resolve Ensembl ID for symbol '{symbol}'", failed_genes=[symbol], species=organism
+            )
+        if ens is None and fallback_to_unmapped and "fallback_to_unmapped" not in kwargs:
+            return symbol
+        return ens
+
+    return lookup
 
 
 class PerturbationProcessor:
@@ -76,22 +112,13 @@ class PerturbationProcessor:
         or ``None`` where resolution failed.
         """
         result: dict[str, str | None] = {}
+        lookup = _symbol_lookup(self.gene_resolver, organism, fallback_to_unmapped=fallback_to_unmapped, strict=strict)
         for ident in identifiers:
             kind = detect_identifier_type(ident)
             if kind == "ensembl_id":
                 result[ident] = ident.split(".")[0].strip()
             elif kind == "symbol":
-                try:
-                    ens = self.gene_resolver.symbol_to_ensembl(
-                        ident,
-                        organism=organism,
-                        fallback_to_unmapped=fallback_to_unmapped,
-                        strict=strict,
-                    )
-                except TypeError:
-                    # In case a custom/mock resolver only accepts (ident, organism)
-                    ens = self.gene_resolver.symbol_to_ensembl(ident, organism=organism)
-                result[ident] = ens
+                result[ident] = lookup(ident)
             else:
                 result[ident] = ident if fallback_to_unmapped else None
         return result
@@ -126,6 +153,7 @@ class PerturbationProcessor:
         ``id_type``, ``resolved``.
         """
         rows: list[dict] = []
+        lookup = _symbol_lookup(self.gene_resolver, organism, fallback_to_unmapped=fallback_to_unmapped, strict=strict)
         for ident in identifiers:
             detected = detect_identifier_type(ident) if id_type == "auto" else id_type
 
@@ -136,15 +164,7 @@ class PerturbationProcessor:
                 canonical = ident.split(".")[0].strip()
                 resolved = True
             elif detected == "symbol":
-                try:
-                    ens = self.gene_resolver.symbol_to_ensembl(
-                        ident,
-                        organism=organism,
-                        fallback_to_unmapped=fallback_to_unmapped,
-                        strict=strict,
-                    )
-                except TypeError:
-                    ens = self.gene_resolver.symbol_to_ensembl(ident, organism=organism)
+                ens = lookup(ident)
                 if ens:
                     canonical = ens
                     resolved = True
