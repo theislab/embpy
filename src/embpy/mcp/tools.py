@@ -1538,6 +1538,8 @@ _INSTALL_FOR_MODULE = {
     "scvi": "pip install scvi-tools",
     "skmisc": "pip install scikit-misc",
     "scanpy": 'pip install "embpy[mcp]"',
+    # Same pin as the mcp extra in pyproject.toml.
+    "umap": 'pip install "umap-learn<0.6"',
     "scib": 'pip install "embpy[scib]"',
     "cell_eval": 'pip install "embpy[eval]"',
     "pertpy": 'pip install "embpy[pertpy]"',
@@ -3465,7 +3467,9 @@ def compute_umap(
             "path": str(path),
         }
         if isinstance(exc, (ImportError, ModuleNotFoundError)):
-            resp["suggestion"] = "Install scanpy using 'pip install scanpy' or 'pip install embpy[mcp]' to enable compute_umap."
+            resp["suggestion"] = _install_hint(str(exc)) or (
+                "Install scanpy using 'pip install scanpy' or 'pip install embpy[mcp]' to enable compute_umap."
+            )
         return resp
 
 

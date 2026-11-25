@@ -490,3 +490,27 @@ def test_scib_names_the_metrics_it_could_not_compute(tmp_path, monkeypatch):
         missing = {metric for metric, value in scores.items() if metric in battery and value is None}
         assert missing <= set(unavailable), (key, missing - set(unavailable))
     assert "graph_conn" in res["warning"]
+
+
+def test_umap_without_umap_learn_names_the_package(tmp_path, monkeypatch):
+    """A missing umap module is reported with the package that provides it."""
+    import importlib.abc
+    import sys
+
+    class NoUmap(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path=None, target=None):
+            if name == "umap" or name.startswith("umap."):
+                raise ModuleNotFoundError(f"No module named '{name}'", name=name)
+            return None
+
+    for name in [m for m in sys.modules if m == "umap" or m.startswith("umap.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(sys, "meta_path", [NoUmap(), *sys.meta_path])
+    path = str(tmp_path / "embedded.h5ad")
+    _embedded_cells().write_h5ad(path)
+
+    res = compute_umap(path=path, embedding_key="X_pca", n_neighbors=5, output_path=str(tmp_path / "u.h5ad"))
+    assert res["status"] == "error", res
+    assert "No module named 'umap'" in res["error"]
+    assert "umap-learn" in res["suggestion"]
+    assert not os.path.exists(tmp_path / "u.h5ad")
