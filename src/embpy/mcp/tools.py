@@ -31,7 +31,7 @@ import re
 import sys
 import time
 import uuid
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
 import numpy as np
 import requests
