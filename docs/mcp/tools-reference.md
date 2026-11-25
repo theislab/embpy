@@ -162,6 +162,16 @@ the models need, with QC/HVG thresholds lowered for small datasets (`preprocessi
 `standard` and `raw` always run their pipeline; `none` never filters or transforms.
 `preprocessing_applied` names the pipeline that ran.
 
+**Normalized input without raw counts.** If `.X` is already normalized or log-transformed (as
+`inspect_data`'s `expression_nature` reports) and the file has neither `.layers["counts"]` nor
+`.layers["log_normalized"]` (e.g. a file normalized with scanpy), `auto` embeds `.X` as the
+normalized expression, as `none` would, and says so in `warning`: nothing is normalized again.
+`standard` and `raw` refuse such a file with `error_type: "NotRawCountsError"` instead of treating
+`.X` as counts. Whenever no preprocessing runs (`none`, or `auto` on prepared input), models that
+read raw counts (`scvi`, `scanvi`, `totalvi`) need counts in `.layers["counts"]` or `.X`; given
+other values, each fails in `models_failed` with a message saying so (`partial_success`, or an
+`error` with `error_type: "NotRawCountsError"` when no model could run).
+
 **Keys.** Each single-cell model is saved as `.obsm["X_<model>"]` (or `output_key`) and recorded
 in `.uns["embpy_cell_embeddings"]`. A key that this record assigns to another model is refused
 before anything runs (`error_type: "OutputKeyConflictError"`, naming the model in

@@ -514,3 +514,73 @@ def test_umap_without_umap_learn_names_the_package(tmp_path, monkeypatch):
     assert "No module named 'umap'" in res["error"]
     assert "umap-learn" in res["suggestion"]
     assert not os.path.exists(tmp_path / "u.h5ad")
+
+
+# --- normalized .X without raw counts -----------------------------------------------------
+
+
+@pytest.fixture
+def pca_input_means(monkeypatch):
+    """Column means of the matrix each PCA fit started from (its StandardScaler's means)."""
+    from embpy.models.singlecell_models import PCAEmbedding
+
+    means: list[np.ndarray] = []
+    real_embed_cells = PCAEmbedding.embed_cells
+
+    def embed_cells(self, adata):
+        result = real_embed_cells(self, adata)
+        means.append(np.asarray(self._scaler.mean_))
+        return result
+
+    monkeypatch.setattr(PCAEmbedding, "embed_cells", embed_cells)
+    return means
+
+
+def _normalized_only(tmp_path) -> tuple[str, np.ndarray]:
+    """A file whose .X is log-normalized, with neither a counts nor a log_normalized layer."""
+    x = _log_normalized(_poisson_counts(60, 300))
+    path = str(tmp_path / "lognorm.h5ad")
+    _cells(x).write_h5ad(path)
+    return path, x
+
+
+def test_normalized_x_is_embedded_as_is_and_count_models_are_refused(tmp_path, pca_input_means, fast_scvi):
+    """preprocessing='auto' on log-normalized .X: PCA uses .X as it is, scVI fails asking for counts."""
+    import anndata
+
+    path, x = _normalized_only(tmp_path)
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models=["pca", "scvi"], output_path=out)
+    assert res["status"] == "partial_success", res
+    assert res["models_computed"] == ["pca"]
+    assert "needs raw counts" in res["models_failed"]["scvi"]
+    assert "log_normalized" in res["models_failed"]["scvi"]
+    assert "log_normalized" in res["warning"] and "not normalized again" in res["warning"]
+    np.testing.assert_allclose(pca_input_means[0], x.mean(axis=0), rtol=1e-5, atol=1e-6)
+    saved = anndata.read_h5ad(out)
+    assert (saved.n_obs, saved.n_vars) == (60, 300)
+    assert "counts" not in saved.layers
+    assert "X_scvi" not in saved.obsm
+
+
+@pytest.mark.parametrize("mode", ["standard", "raw"])
+def test_preprocessing_normalized_x_again_is_refused(tmp_path, mode):
+    """preprocessing='standard' (or 'raw') would treat log-normalized .X as counts: NotRawCountsError."""
+    path, _ = _normalized_only(tmp_path)
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", preprocessing=mode, output_path=out)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "NotRawCountsError"
+    assert "needs raw counts" in res["error"] and "log_normalized" in res["error"]
+    assert not os.path.exists(out)
+
+
+@pytest.mark.parametrize("mode", ["auto", "none"])
+def test_count_models_alone_on_normalized_x_are_an_error(tmp_path, fast_scvi, mode):
+    path, _ = _normalized_only(tmp_path)
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="scvi", preprocessing=mode, output_path=out)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "NotRawCountsError"
+    assert "needs raw counts" in res["models_failed"]["scvi"]
+    assert not os.path.exists(out)

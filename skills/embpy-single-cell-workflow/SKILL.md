@@ -39,8 +39,10 @@ preprocess_counts(path="data/pbmc.h5ad", preprocessing="standard", n_top_genes=2
   thresholds were changed (`adjustments_applied`).
 - The input must hold raw counts, in `.layers["counts"]` or in `.X`. Normalized values there give
   `error_type: "NotRawCountsError"` (the message says what was found): the data is already
-  normalized, so skip this step and run step 3 on the input file with `preprocessing="none"`. Pass `assume_counts=True` only if the user confirms the values
-  are counts (e.g. ambient-corrected, non-integer counts).
+  normalized, so skip this step and run step 3 on the input file with `preprocessing="none"`.
+  Models that need raw counts (`scvi`, `scanvi`, `totalvi`) cannot run on such a file; `pca` can.
+  Pass `assume_counts=True` only if the user confirms the values are counts (e.g.
+  ambient-corrected, non-integer counts).
 - Raw counts stay in `.X` and `.layers["counts"]`; normalized values go to
   `.layers["log_normalized"]` (and `.layers["scaled"]` with `scale=True`).
 
@@ -67,7 +69,10 @@ compute_embeddings(path="data/pbmc_preprocessed.h5ad", models=["pca", "scvi"], e
 - Raw counts that skipped step 2 need the default `preprocessing="auto"`: it filters cells and
   genes and normalizes first, with lower QC/HVG thresholds on small datasets (listed in
   `preprocessing_adjustments`). A file that already holds `.layers["log_normalized"]` is used
-  as is under `auto` too.
+  as is under `auto` too, and so is an already normalized `.X` without a counts layer (the
+  `warning` says so). On such a file `scvi`, `scanvi` and `totalvi` fail with a message that
+  they need raw counts (`models_failed`); tell the user, and do not retry with
+  `preprocessing="standard"`, which refuses it (`NotRawCountsError`).
 - If preprocessing removed cells or genes, `n_obs_output` / `n_vars_output` are smaller than
   `n_obs_input` / `n_vars_input` and the result has a `warning` saying how many. Tell the user.
 - `obs_column` / `var_column` do not apply to `single_cell`; it embeds the expression matrix.

@@ -209,25 +209,52 @@ def _layer_names(adata: Any) -> list[str]:
 _NOT_RAW_COUNTS = ("log_normalized", "continuous_normalized", "scaled_or_centered")
 
 
-def _not_raw_counts_error(path: str, nature: dict[str, Any], counts_layer: str | None) -> dict[str, Any]:
-    """Error reply for preprocess_counts when its raw-count source holds normalized values."""
+def _found_values(nature: dict[str, Any], counts_layer: str | None) -> str:
+    """'<where> holds <what>' for a raw-count source that holds something else."""
     source = f".layers['{counts_layer}']" if counts_layer else ".X (and there is no .layers['counts'])"
-    found = (
-        f"{nature['detected_nature']} values (sampled range {nature['sample_min']:.3g} to "
+    return (
+        f"{source} holds {nature['detected_nature']} values (sampled range {nature['sample_min']:.3g} to "
         f"{nature['sample_max']:.3g}, {'integers' if nature['is_discrete_integers'] else 'not integers'})"
     )
+
+
+def _not_raw_counts_error(
+    path: str,
+    nature: dict[str, Any],
+    counts_layer: str | None,
+    needed_by: str = "preprocess_counts",
+    consequence: str = "Normalizing and log-transforming them again would distort the data.",
+    remedy: str = (
+        "If the data is already normalized, skip preprocess_counts. If these values are counts "
+        "(e.g. ambient-corrected, non-integer counts), call again with assume_counts=True."
+    ),
+) -> dict[str, Any]:
+    """Error reply when a step that starts from raw counts is given normalized values."""
     return {
         "status": "error",
         "error_type": "NotRawCountsError",
-        "error": (
-            f"preprocess_counts needs raw counts, but {source} holds {found}. Normalizing and "
-            "log-transforming them again would distort the data. If the data is already normalized, "
-            "skip preprocess_counts. If these values are counts (e.g. ambient-corrected, non-integer "
-            "counts), call again with assume_counts=True."
-        ),
+        "error": f"{needed_by} needs raw counts, but {_found_values(nature, counts_layer)}. {consequence} {remedy}",
         "path": str(path),
         "expression_nature": _sanitize_val(nature),
     }
+
+
+def _raw_count_model_problems(adata: Any, models: list[str]) -> dict[str, str]:
+    """Models that read raw counts (model card input_layer 'counts') whose input holds other values.
+
+    Their input is .layers['counts'], or .X when that layer is missing. Returns model -> error.
+    """
+    from embpy.models.singlecell_models import singlecell_info
+
+    needs_counts = [m for m in models if singlecell_info(m).input_layer == "counts"]
+    if not needs_counts:
+        return {}
+    layer = "counts" if "counts" in adata.layers else None
+    nature = _detect_expression_nature(adata, layer=layer)
+    if nature["detected_nature"] not in _NOT_RAW_COUNTS:
+        return {}
+    found = _found_values(nature, layer)
+    return {m: f"{m} needs raw counts in .X or .layers['counts'], but {found}." for m in needs_counts}
 
 
 # =========================================================================
@@ -1936,6 +1963,11 @@ def compute_embeddings(
         input that already holds .layers['log_normalized'] (preprocess_counts output) as
         is; otherwise it filters, normalizes and selects HVGs as each model needs, with
         thresholds scaled down for small datasets. 'none' never filters or transforms.
+        A .X that is already normalized, with neither .layers['counts'] nor
+        .layers['log_normalized'], is embedded as is by 'auto' (with a warning), and
+        refused by 'standard' and 'raw' (error_type 'NotRawCountsError'). Without
+        preprocessing, models that read raw counts (scvi, scanvi, totalvi) fail when
+        .layers['counts'] (or .X) does not hold counts.
     device : str, default='auto'
         Compute device target ('auto', 'cpu', 'cuda', 'mps').
 
@@ -2041,9 +2073,13 @@ def compute_embeddings(
         adjustments: dict[str, str] = {}
         applied_preprocessing: str | None = None
         preprocessing_note: str | None = None
+        input_warning: str | None = None
+        # Models that need raw counts but would get other values: model -> error.
+        blocked: dict[str, str] = {}
         # embed_cells' QC defaults; preprocessing='auto' scales them for small datasets.
         qc_thresholds = {"min_genes": 200, "min_cells": 3}
 
+        x_not_counts: dict[str, Any] | None = None
         if ent_str == "single_cell":
             # A key another model's record points at would leave two records describing
             # one matrix; refuse before anything runs.
@@ -2052,6 +2088,29 @@ def compute_embeddings(
             )
             if conflicts:
                 return _key_conflict_error(path, resolved_models, conflicts)
+            # Normalized .X with no raw counts and no log_normalized layer (e.g. a file
+            # normalized with scanpy): 'standard' and 'raw' would treat .X as counts.
+            if "counts" not in adata.layers and "log_normalized" not in adata.layers:
+                nature = _detect_expression_nature(adata)
+                if nature["detected_nature"] in _NOT_RAW_COUNTS:
+                    x_not_counts = nature
+            if x_not_counts and preprocessing in ("standard", "raw"):
+                return _not_raw_counts_error(
+                    path,
+                    x_not_counts,
+                    None,
+                    needed_by=f"compute_embeddings(preprocessing='{preprocessing}')",
+                    consequence=(
+                        "Normalizing and log-transforming them again would distort the data."
+                        if preprocessing == "standard"
+                        else "It would store them in .layers['counts'] as if they were counts."
+                    ),
+                    remedy=(
+                        "The data is already normalized: preprocessing='auto' or 'none' embeds .X as it is. "
+                        "If these values are counts (e.g. ambient-corrected, non-integer counts), run "
+                        "preprocess_counts(assume_counts=True) first."
+                    ),
+                )
 
         with contextlib.redirect_stdout(sys.stderr):
             embedder = BioEmbedder(device=device)
@@ -2076,6 +2135,21 @@ def compute_embeddings(
                         "as written by preprocess_counts), so it was used as is: no cells or genes "
                         "were filtered and the highly variable genes in .var were not selected again."
                     )
+                elif preprocessing == "auto" and x_not_counts:
+                    # Already normalized (e.g. with scanpy), without raw counts: embed .X as
+                    # the normalized expression instead of normalizing it a second time.
+                    run_preprocessing = "none"
+                    kind = x_not_counts["detected_nature"]
+                    preprocessing_note = (
+                        f"The input .X already holds {kind} values and there is no .layers['counts'], so .X "
+                        "was used as the normalized expression: no cells or genes were filtered and nothing "
+                        "was normalized again."
+                    )
+                    input_warning = (
+                        f"The input .X holds {kind} values (not raw counts) and there is no .layers['counts'], "
+                        "so preprocessing='auto' embedded .X as the normalized expression; it was not "
+                        "normalized again."
+                    )
                 elif preprocessing == "auto":
                     # embed_cells' defaults (min_genes=200, 2000 HVGs) would filter out
                     # every cell of a small dataset; scale them as preprocess_counts does.
@@ -2085,28 +2159,42 @@ def compute_embeddings(
                     if adata.n_vars < 2000:
                         extra_kwargs["pca_use_hvg"] = False
 
+                # Without preprocessing, models that read raw counts (scVI family) get the
+                # file's values as they are; normalized values are refused per model.
+                if run_preprocessing == "none":
+                    blocked = _raw_count_model_problems(adata, resolved_models)
+                runnable = [m for m in resolved_models if m not in blocked]
+
                 # embed_cells records a failed model as {"error": ...} and carries on.
                 # New matrices go to temporary keys and move to X_<model> (or
                 # output_key) only for the models that succeeded, so a failure
                 # never leaves an earlier result looking freshly computed. The
                 # prefix is unique to this call, so the cleanup cannot touch other keys.
                 earlier_records = dict(adata.uns.get(_CELL_EMBEDDING_RECORDS) or {})
-                run_prefix = f"{_NEW_CELL_EMBEDDING_PREFIX}{uuid.uuid4().hex[:12]}_"
-                adata_out = embedder.embed_cells(
-                    adata,
-                    models=resolved_models,
-                    batch_size=batch_size,
-                    preprocessing=run_preprocessing,
-                    obsm_prefix=run_prefix,
-                    **extra_kwargs,
-                )
-                plan = (adata_out.uns.get(_CELL_EMBEDDING_RECORDS) or {}).get("__preprocessing__") or {}
-                applied_preprocessing = str(plan.get("resolved", run_preprocessing))
-                if preprocessing_note:
-                    _note_preprocessing_choice(adata_out, requested=preprocessing, reason=preprocessing_note)
-                written, succeeded, failed, not_updated = _settle_cell_embeddings(
-                    adata_out, earlier_records, resolved_models, output_key, prefix=run_prefix
-                )
+                if runnable:
+                    run_prefix = f"{_NEW_CELL_EMBEDDING_PREFIX}{uuid.uuid4().hex[:12]}_"
+                    adata_out = embedder.embed_cells(
+                        adata,
+                        models=runnable,
+                        batch_size=batch_size,
+                        preprocessing=run_preprocessing,
+                        obsm_prefix=run_prefix,
+                        **extra_kwargs,
+                    )
+                    plan = (adata_out.uns.get(_CELL_EMBEDDING_RECORDS) or {}).get("__preprocessing__") or {}
+                    applied_preprocessing = str(plan.get("resolved", run_preprocessing))
+                    if preprocessing_note:
+                        _note_preprocessing_choice(adata_out, requested=preprocessing, reason=preprocessing_note)
+                    # The blocked models have no run record, so they are settled as failed.
+                    written, succeeded, failed, not_updated = _settle_cell_embeddings(
+                        adata_out, earlier_records, resolved_models, output_key, prefix=run_prefix
+                    )
+                else:
+                    adata_out = adata
+                    applied_preprocessing = run_preprocessing
+                    keys = dict.fromkeys(output_key or f"X_{m}" for m in blocked)
+                    not_updated = [key for key in keys if key in adata.obsm]
+                failed.update(blocked)
             else:
                 # Rows with no identifier in the chosen column (e.g. control wells after
                 # name -> SMILES resolution) cannot be embedded; embpy rejects them.
@@ -2173,7 +2261,10 @@ def compute_embeddings(
                 adata_out = adata
 
         if not succeeded:
-            return _no_model_succeeded(path, resolved_models, failed, not_updated)
+            response = _no_model_succeeded(path, resolved_models, failed, not_updated)
+            if blocked and set(failed) <= set(blocked):
+                response["error_type"] = "NotRawCountsError"
+            return response
 
         after = {("obsm", k) for k in adata_out.obsm} | {("varm", k) for k in adata_out.varm} | {("uns", k) for k in adata_out.uns}
         added = sorted((after - before) | set(written))
@@ -2215,6 +2306,10 @@ def compute_embeddings(
         if preprocessing_note:
             response["preprocessing_note"] = preprocessing_note
         warnings: list[str] = []
+        if input_warning:
+            if blocked:
+                input_warning += f" Models that need raw counts were not run: {list(blocked)}."
+            warnings.append(input_warning)
         if failed:
             response["models_failed"] = failed
             warning = (
