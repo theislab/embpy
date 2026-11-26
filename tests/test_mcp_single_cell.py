@@ -886,3 +886,59 @@ def test_standard_preprocessing_that_removes_every_cell_is_an_error(tmp_path):
 
     with pytest.raises(ValueError, match="every cell"):
         library_preprocess(adata, min_genes=200)
+
+
+def _corrected_layout(kind: str) -> tuple[np.ndarray, np.ndarray]:
+    """Original UMI counts, and corrected counts as CellBender (integers) or SoupX (non-integers) write them."""
+    rng = np.random.default_rng(5)
+    raw = rng.negative_binomial(5, 0.3, size=(100, 300)).astype(np.float32)
+    if kind == "integer":
+        return raw, np.maximum(raw - rng.integers(0, 2, size=raw.shape), 0).astype(np.float32)
+    return raw, np.clip(raw - rng.uniform(0, 1.5, size=raw.shape), 0, None).astype(np.float32)
+
+
+@pytest.mark.parametrize("kind", ["integer", "non-integer"])
+def test_a_different_counts_layer_is_kept_as_counts_original(tmp_path, kind):
+    """.X (corrected counts) is the count source; the input's own layers['counts'] is not lost but
+    kept as layers['counts_original'], by preprocess_counts, compute_embeddings and embpy.pp."""
+    import anndata
+
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    raw, corrected = _corrected_layout(kind)
+    adata = _cells(corrected)
+    adata.layers["counts"] = raw.copy()
+    path = str(tmp_path / "corrected.h5ad")
+    adata.write_h5ad(path)
+
+    prepped = str(tmp_path / "prepped.h5ad")
+    res = preprocess_counts(path=path, output_path=prepped, min_genes=0, min_cells=0, select_hvg=False)
+    assert res["status"] == "success", res
+    assert "counts_original" in res["warning"]
+    embedded = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", output_path=embedded)
+    assert res["status"] == "success", res
+    assert "counts_original" in res["warning"]
+    for saved_path in (prepped, embedded):
+        saved = anndata.read_h5ad(saved_path)
+        np.testing.assert_array_equal(np.asarray(saved.layers["counts_original"]), raw)
+        np.testing.assert_array_equal(np.asarray(saved.layers["counts"]), corrected)
+
+    with pytest.warns(UserWarning, match="counts_original"):
+        out = library_preprocess(adata, min_genes=0, min_cells=0, select_hvg=False)
+    np.testing.assert_array_equal(np.asarray(out.layers["counts_original"]), raw)
+
+
+def test_a_counts_layer_equal_to_x_is_not_duplicated(tmp_path):
+    import anndata
+
+    counts = _poisson_counts(60, 300)
+    adata = _cells(counts)
+    adata.layers["counts"] = counts.copy()
+    path = str(tmp_path / "counts.h5ad")
+    adata.write_h5ad(path)
+    prepped = str(tmp_path / "prepped.h5ad")
+    res = preprocess_counts(path=path, output_path=prepped, min_genes=0, min_cells=0, select_hvg=False)
+    assert res["status"] == "success", res
+    assert "warning" not in res
+    assert "counts_original" not in anndata.read_h5ad(prepped).layers

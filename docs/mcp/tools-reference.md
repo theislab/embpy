@@ -119,7 +119,10 @@ holds for files that `compute_embeddings` preprocessed. Default output:
   `warning` says so.
 
 `counts_source` names the matrix used, and the saved file holds it in `.X` and
-`.layers["counts"]`. If neither holds counts, the call returns
+`.layers["counts"]`. When `.X` is used and the input's `.layers["counts"]` holds other values
+(e.g. the original counts next to SoupX- or CellBender-corrected ones in `.X`), that layer is not
+overwritten but kept as `.layers["counts_original"]`, and the `warning` says so; files that
+`compute_embeddings` preprocesses keep it the same way. If neither holds counts, the call returns
 `error_type: "NotRawCountsError"` with the detected `expression_nature` instead of normalizing
 normalized data again; `assume_counts=True` uses `.X` as the counts anyway. If filtering would
 leave no cell or no gene, the call returns `error_type: "EmptyAfterFilteringError"` with the

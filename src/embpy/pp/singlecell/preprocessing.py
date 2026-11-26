@@ -104,7 +104,11 @@ def preprocess_counts(
         normalized or scaled) and ``.layers["counts"]`` holds counts are those used
         instead; if neither holds counts, ``.X`` is treated as counts. Every case but
         integer counts in ``.X`` gives a :class:`NotRawCountsWarning` (a
-        ``UserWarning``) saying what was found and which matrix was used.
+        ``UserWarning``) saying what was found and which matrix was used. When ``.X``
+        is used and the input's ``.layers["counts"]`` holds other values (e.g. the
+        original counts next to corrected ones), that layer is kept as
+        ``.layers["counts_original"]`` instead of being overwritten, with the same
+        warning.
     pipeline
         ``"raw"`` applies only basic QC filtering.
         ``"standard"`` runs the full workflow (normalize, log1p,
@@ -169,14 +173,17 @@ def preprocess_counts(
     if copy:
         adata = adata.copy()
 
-    use_counts_layer, message = _raw_counts_source(adata)
-    if message:
-        warnings.warn(message, NotRawCountsWarning, stacklevel=2)
-    if use_counts_layer:
+    choice = _counts_source(adata)
+    if choice["message"]:
+        warnings.warn(choice["message"], NotRawCountsWarning, stacklevel=2)
+    if choice["source"] == "counts":
         # .X is clearly not counts, but .layers["counts"] holds them: start from those.
         # .uns['log1p'] described the replaced .X, which now holds counts.
         adata.X = adata.layers["counts"].copy()
         adata.uns.pop("log1p", None)
+    elif choice["keep_original_as"]:
+        # .X is the source; keep the input's different .layers["counts"] instead of overwriting it.
+        adata.layers[choice["keep_original_as"]] = adata.layers["counts"]
 
     # Preserve raw counts
     if sp.issparse(adata.X):

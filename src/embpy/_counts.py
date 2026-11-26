@@ -14,7 +14,11 @@ import numpy as np
 
 
 class NotRawCountsWarning(UserWarning):
-    """Preprocessing was given values that are not raw integer counts."""
+    """Preprocessing was given values that are not raw integer counts.
+
+    Also given when preprocessing keeps an input ``.layers['counts']`` that differs from the
+    counts it used, as ``.layers['counts_original']``.
+    """
 
 
 # Kinds of values that are clearly not counts.
@@ -99,44 +103,77 @@ def what_x_holds(x: dict[str, Any]) -> str:
     return f"{x['kind']} values ({why})"
 
 
+def same_values(a: Any, b: Any) -> bool:
+    """Whether two matrices (dense or sparse) hold the same values."""
+    import scipy.sparse as sp
+
+    if a.shape != b.shape:
+        return False
+    if sp.issparse(a) or sp.issparse(b):
+        return (sp.csr_matrix(a) != sp.csr_matrix(b)).nnz == 0
+    return bool(np.array_equal(np.asarray(a), np.asarray(b)))
+
+
 def counts_source(adata: Any) -> dict[str, Any]:
     """Which matrix preprocessing takes its counts from, and what to tell the user about it.
 
     ``.X`` is the source when it holds counts: integers, or non-integers with count-like
     magnitudes (corrected or EM counts). ``.layers['counts']`` is the source only when ``.X``
     is clearly not counts (log-transformed, normalized or scaled) and that layer holds counts.
+    Preprocessing stores the counts it used in ``.layers['counts']``; when ``.X`` is used and
+    the input's ``.layers['counts']`` holds other values (e.g. the original counts next to
+    corrected ones), that layer is kept under ``keep_original_as`` (``counts_original``).
 
-    Returns ``{"source": "X" | "counts", "found": bool, "x": ..., "layer": ..., "message": str | None}``:
-    ``found`` is False when neither holds counts (``.X`` is then the source), ``x`` and
-    ``layer`` describe ``.X`` and ``.layers['counts']`` (see :func:`describe_values`; ``layer``
-    is None without that layer), and ``message`` is the warning to give, if any.
+    Returns ``{"source": "X" | "counts", "found": bool, "x": ..., "layer": ...,
+    "keep_original_as": str | None, "message": str | None}``: ``found`` is False when neither
+    holds counts (``.X`` is then the source), ``x`` and ``layer`` describe ``.X`` and
+    ``.layers['counts']`` (see :func:`describe_values`; ``layer`` is None without that layer),
+    and ``message`` is the warning to give, if any.
     """
     x = describe_values(adata.X, log1p_marked="log1p" in adata.uns)
     layer = describe_values(adata.layers["counts"]) if "counts" in adata.layers else None
-    choice: dict[str, Any] = {"source": "X", "found": True, "x": x, "layer": layer, "message": None}
-    if x["kind"] in ("raw_counts", "unknown"):
-        return choice
+    choice: dict[str, Any] = {
+        "source": "X",
+        "found": True,
+        "x": x,
+        "layer": layer,
+        "keep_original_as": None,
+        "message": None,
+    }
+    notes: list[str] = []
     if x["kind"] == "non_integer_counts":
-        choice["message"] = (
+        notes.append(
             f".X holds non-integer values with count-like magnitudes (up to {x['max']:.4g}), e.g. "
-            "ambient-corrected (SoupX, DecontX) or EM-assigned counts. They are used as the counts"
-            + (", and .layers['counts'] is set to them." if layer is not None else ".")
+            "ambient-corrected (SoupX, DecontX) or EM-assigned counts. They are used as the counts."
         )
-        return choice
-    if layer is not None and layer["kind"] in COUNT_LIKE:
+    elif x["kind"] in NOT_COUNTS and layer is not None and layer["kind"] in COUNT_LIKE:
         choice["source"] = "counts"
         choice["message"] = (
             f".X holds {what_x_holds(x)}, so the counts are taken from .layers['counts'] "
             f"({layer['kind']}) instead of .X."
         )
         return choice
-    elsewhere = (
-        f" and .layers['counts'] holds {layer['kind']} values" if layer is not None else " and there is no .layers['counts']"
-    )
-    choice["found"] = False
-    choice["message"] = (
-        f"preprocess_counts expects raw counts, but .X holds {what_x_holds(x)}{elsewhere}. They are "
-        "treated as raw counts, so normalizing and log-transforming them again distorts the data. "
-        "Pass raw counts in .X or .layers['counts'], or skip preprocessing for data that is already normalized."
-    )
+    elif x["kind"] in NOT_COUNTS:
+        elsewhere = (
+            f" and .layers['counts'] holds {layer['kind']} values"
+            if layer is not None
+            else " and there is no .layers['counts']"
+        )
+        choice["found"] = False
+        notes.append(
+            f"preprocess_counts expects raw counts, but .X holds {what_x_holds(x)}{elsewhere}. They are "
+            "treated as raw counts, so normalizing and log-transforming them again distorts the data. "
+            "Pass raw counts in .X or .layers['counts'], or skip preprocessing for data that is already normalized."
+        )
+    # .X is the source; an input .layers['counts'] with other values is kept, not overwritten.
+    if layer is not None and not same_values(adata.X, adata.layers["counts"]):
+        name, number = "counts_original", 2
+        while name in adata.layers:
+            name, number = f"counts_original_{number}", number + 1
+        choice["keep_original_as"] = name
+        notes.append(
+            f"The input's .layers['counts'] holds other values than .X, which is used as the counts, "
+            f"so that layer is kept as .layers['{name}']."
+        )
+    choice["message"] = " ".join(notes) or None
     return choice

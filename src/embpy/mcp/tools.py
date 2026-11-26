@@ -1137,6 +1137,9 @@ def preprocess_counts(
                 # .uns['log1p'] described the replaced .X, which now holds counts.
                 adata.uns.pop("log1p", None)
             else:
+                if choice["keep_original_as"]:
+                    # The input's different .layers['counts'] is kept, not overwritten.
+                    adata.layers[choice["keep_original_as"]] = adata.layers["counts"]
                 adata.layers["counts"] = adata.X.copy()
 
             # QC Filtering
