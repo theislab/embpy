@@ -112,7 +112,10 @@ benchmark_scib(path="data/pbmc_preprocessed_embedded.h5ad", embedding_keys=["X_p
   `n_cells_scored`, `warning`); mention it when it is above 0.
 - Metrics scib could not compute here (e.g. LISI on Windows, kBET without R) are NaN and are
   listed in `metrics_unavailable` with a `reason` and often a `hint`. Tell the user which
-  metrics are missing and why; the aggregate scores leave them out.
+  metrics are missing and why; the aggregate scores leave them out. If no metric could be
+  computed for an embedding, the result is `partial_success` (or an `error` with
+  `error_type: "NoMetricsComputedError"` when that holds for all of them): do not compare
+  embeddings that have no scores.
 - Needs `pip install "embpy[scib]"`; the error says so when it is missing.
 
 ## 6. Benchmark perturbation predictions

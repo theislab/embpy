@@ -3812,7 +3812,10 @@ def benchmark_scib(
     -------
     dict[str, Any]
         Dictionary reporting evaluation status, summary scores, and markdown table:
-        - status: "success" or "error"
+        - status: "success"; "partial_success" when scib computed no metric at all for some
+          embeddings (named in ``warning``); "error" with error_type 'NoMetricsComputedError'
+          when it computed none for any embedding (the reasons from metrics_unavailable are
+          in the error, and no CSV is written)
         - markdown_table: Formatted Markdown string of ranking metrics for agent display
         - rankings: Models ordered by composite benchmark performance
         - metrics: Dictionary mapping each embedding key to its metric results
@@ -3885,6 +3888,35 @@ def benchmark_scib(
                 verbose=False,
             )
 
+        # Metrics scib could not compute are NaN in the table; say which and why.
+        unavailable: dict[str, dict[str, Any]] = {}
+        for metric, entry in (metrics_df.attrs.get("metrics_unavailable") or {}).items():
+            reason = str(entry.get("reason", ""))
+            unavailable[str(metric)] = {
+                "reason": reason,
+                "embedding_keys": [str(k) for k in entry.get("embedding_keys", [])],
+            }
+            hint = _scib_metric_hint(reason)
+            if hint:
+                unavailable[str(metric)]["hint"] = hint
+
+        # Embeddings without a single metric (every one NaN) have no scores at all.
+        metric_columns = [c for c in metrics_df.columns if c not in ("bio_conservation", "batch_correction", "total")]
+        without_metrics = [str(key) for key, row in metrics_df[metric_columns].iterrows() if row.isna().all()]
+        if len(without_metrics) == len(metrics_df.index):
+            reasons = "; ".join(f"{metric}: {entry['reason']}" for metric, entry in unavailable.items())
+            return {
+                "status": "error",
+                "error_type": "NoMetricsComputedError",
+                "error": (
+                    f"scib computed no metric for any embedding ({', '.join(without_metrics)}), so there are "
+                    f"no scores and nothing was written. {reasons or 'Every metric came back NaN.'}"
+                ),
+                "path": str(resolved_path),
+                "embedding_keys": keys_list,
+                "metrics_unavailable": unavailable,
+            }
+
         csv_path: str | None = None
         if output_csv:
             csv_path = os.path.abspath(output_csv)
@@ -3902,20 +3934,8 @@ def benchmark_scib(
         summary_records = _sanitize_val(metrics_df.reset_index().to_dict(orient="records"))
         rankings = list(metrics_df.sort_values(by="total", ascending=False).index) if "total" in metrics_df.columns else keys_list
 
-        # Metrics scib could not compute are NaN in the table; say which and why.
-        unavailable: dict[str, dict[str, Any]] = {}
-        for metric, entry in (metrics_df.attrs.get("metrics_unavailable") or {}).items():
-            reason = str(entry.get("reason", ""))
-            unavailable[str(metric)] = {
-                "reason": reason,
-                "embedding_keys": [str(k) for k in entry.get("embedding_keys", [])],
-            }
-            hint = _scib_metric_hint(reason)
-            if hint:
-                unavailable[str(metric)]["hint"] = hint
-
         response = {
-            "status": "success",
+            "status": "partial_success" if without_metrics else "success",
             "path": str(resolved_path),
             "embedding_keys": keys_list,
             "label_key": label_key,
@@ -3935,6 +3955,11 @@ def benchmark_scib(
             warnings.append(
                 _nonfinite_rows_note(excluded_names, list(nonfinite_by_key), n_total)
                 + " Every embedding was scored on the remaining cells."
+            )
+        if without_metrics:
+            warnings.append(
+                f"scib computed no metric for {without_metrics}: those embeddings have no scores, only the "
+                "others can be compared. metrics_unavailable gives the reasons."
             )
         if unavailable:
             warnings.append(

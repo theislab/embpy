@@ -342,7 +342,10 @@ A metric scib cannot compute here is NaN in the table and left out of `bio_conse
 (the error, or a NaN scib returned), the `embedding_keys` it failed for and, for known causes,
 a `hint`: LISI metrics (`clisi`, `ilisi`) do not run on Windows, `kbet` needs R and rpy2, and
 `graph_conn` fails with scib versions that call `pandas.value_counts` on pandas 3. A `warning`
-names them.
+names them. An embedding for which scib computed no metric at all has no scores: the call is
+then `partial_success` (the `warning` names it), or an `error` with
+`error_type: "NoMetricsComputedError"` and the reasons when that holds for every embedding (no
+CSV is written).
 
 Cells with NaN or infinite values in any of the `embedding_keys` are left out, so every
 embedding is scored on the same cells: `n_cells_scored`, `n_excluded_nonfinite`,

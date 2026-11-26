@@ -814,3 +814,57 @@ def test_foundation_models_need_raw_counts_in_x(tmp_path, fast_foundation_models
     res = compute_embeddings(path=counts_path, models="scgpt", preprocessing="none",
                              output_path=str(tmp_path / "counts_embedded.h5ad"))
     assert res["status"] == "success", res
+
+
+def _fake_scib_metrics(monkeypatch, rows: dict, unavailable: dict) -> None:
+    """compute_scib_metrics returns this table, as if scib had computed it."""
+    import pandas as pd
+
+    from embpy import tl
+
+    def compute_scib_metrics(adata, embedding_keys, **kwargs):
+        table = pd.DataFrame.from_dict(rows, orient="index")
+        table.attrs["metrics_unavailable"] = unavailable
+        return table
+
+    monkeypatch.setattr(tl, "compute_scib_metrics", compute_scib_metrics)
+
+
+def test_scib_without_any_metric_is_an_error(tmp_path, monkeypatch):
+    nan = float("nan")
+    lisi = {"reason": "OSError: [WinError 193] %1 is not a valid Win32 application", "embedding_keys": ["X_pca", "X_prior"]}
+    nmi = {"reason": "ValueError: leiden found one cluster", "embedding_keys": ["X_pca", "X_prior"]}
+    empty = {"nmi": nan, "clisi": nan, "bio_conservation": nan, "batch_correction": nan, "total": nan}
+    _fake_scib_metrics(monkeypatch, {"X_pca": empty, "X_prior": dict(empty)}, {"nmi": nmi, "clisi": lisi})
+    path = str(tmp_path / "embedded.h5ad")
+    _embedded_cells().write_h5ad(path)
+    csv = str(tmp_path / "scores.csv")
+
+    res = benchmark_scib(path=path, embedding_keys=["X_pca", "X_prior"], label_key="cell_type", output_csv=csv)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "NoMetricsComputedError"
+    assert "WinError 193" in res["error"] and "one cluster" in res["error"]
+    assert res["metrics_unavailable"]["clisi"]["embedding_keys"] == ["X_pca", "X_prior"]
+    assert not os.path.exists(csv)
+
+
+def test_scib_with_an_embedding_without_metrics_is_partial(tmp_path, monkeypatch):
+    nan = float("nan")
+    _fake_scib_metrics(
+        monkeypatch,
+        {
+            "X_pca": {"nmi": 0.5, "clisi": nan, "bio_conservation": 0.5, "batch_correction": nan, "total": 0.5},
+            "X_prior": {"nmi": nan, "clisi": nan, "bio_conservation": nan, "batch_correction": nan, "total": nan},
+        },
+        {
+            "nmi": {"reason": "ValueError: leiden found one cluster", "embedding_keys": ["X_prior"]},
+            "clisi": {"reason": "OSError: [WinError 193]", "embedding_keys": ["X_pca", "X_prior"]},
+        },
+    )
+    path = str(tmp_path / "embedded.h5ad")
+    _embedded_cells().write_h5ad(path)
+
+    res = benchmark_scib(path=path, embedding_keys=["X_pca", "X_prior"], label_key="cell_type")
+    assert res["status"] == "partial_success", res
+    assert "X_prior" in res["warning"] and "no metric" in res["warning"]
+    assert res["metrics"]["X_pca"]["nmi"] == 0.5
