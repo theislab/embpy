@@ -290,21 +290,23 @@ for _ in range(60):
 """
 
 # Writer tag -> (id digit, number of entries). The files differ in length, so
-# two writes mixed into one file show up as broken JSON or as both tags.
+# two writes mixed into one file show up as broken JSON.
 _WRITERS = {"A": ("1", 3000), "B": ("2", 1000)}
 
 
-def _check_one_writers_file(text: str) -> None:
+def _check_writers_entries(text: str, *, both: bool = False) -> None:
+    """Each writer's entries are in the file completely or not at all; with ``both``, both are."""
     saved = json.loads(text)
     assert saved["version"] == _GENE_CACHE_VERSION
-    tags = {key.split(":", 1)[1][0] for key in saved["symbols"]}
-    assert len(tags) == 1, f"entries of both writers in one file: {sorted(tags)}"
-    (tag,) = tags
-    digit, size = _WRITERS[tag]
-    assert saved["symbols"] == {f"human:{tag}{i}": f"ENSG{digit}{i:010d}" for i in range(size)}
+    for tag, (digit, size) in _WRITERS.items():
+        found = {k: v for k, v in saved["symbols"].items() if k.startswith(f"human:{tag}")}
+        if found or both:
+            assert found == {f"human:{tag}{i}": f"ENSG{digit}{i:010d}" for i in range(size)}, (
+                f"writer {tag}: {len(found)} of {size} entries"
+            )
 
 
-def test_two_processes_saving_at_once_leave_a_valid_cache_file(tmp_path):
+def test_two_processes_saving_at_once_keep_both_processes_entries(tmp_path):
     cache_file = tmp_path / "cache" / "gene_id_cache.json"
     flags = tmp_path / "flags"
     flags.mkdir()
@@ -326,14 +328,14 @@ def test_two_processes_saving_at_once_leave_a_valid_cache_file(tmp_path):
                 break
             time.sleep(0.01)
         (flags / "go").touch()
-        # Every version of the file a reader sees meanwhile is one writer's complete file.
+        # Every version of the file a reader sees meanwhile is valid and holds whole writes.
         while any(p.poll() is None for p in procs) and time.monotonic() < deadline:
             try:
                 text = cache_file.read_text(encoding="utf-8")
             except OSError:  # not written yet, or being replaced (Windows)
                 text = None
             if text is not None:
-                _check_one_writers_file(text)
+                _check_writers_entries(text)
             time.sleep(0.005)
         outputs = [p.communicate(timeout=300) for p in procs]
     finally:
@@ -341,5 +343,5 @@ def test_two_processes_saving_at_once_leave_a_valid_cache_file(tmp_path):
             if p.poll() is None:
                 p.kill()
     assert [p.returncode for p in procs] == [0, 0], outputs
-    _check_one_writers_file(cache_file.read_text(encoding="utf-8"))
+    _check_writers_entries(cache_file.read_text(encoding="utf-8"), both=True)
     assert [p.name for p in cache_file.parent.iterdir()] == [cache_file.name]

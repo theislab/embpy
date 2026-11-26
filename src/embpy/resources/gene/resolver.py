@@ -16,7 +16,7 @@ from embpy.errors import GeneResolutionError
 from embpy.observability import log_event, time_block
 from embpy.retry import retry_with_backoff
 
-from ._cache_files import save_every, write_json_atomically
+from ._cache_files import merge_into_cache_file, save_every
 
 
 def _load_seqio():
@@ -412,6 +412,13 @@ _CANONICAL_GENE_SEEDS: list[tuple[str, str, str]] = [
     ("mouse", "Braf", "ENSMUSG00000002413"),
 ]
 
+# Reverse (Ensembl -> symbol) keys of the seeds above; the seeds win over the cache file for them.
+_SEEDED_REVERSE_KEYS = frozenset(
+    (org_key, ensembl_id)
+    for organism, _symbol, ensembl_id in _CANONICAL_GENE_SEEDS
+    for org_key in (organism, _SPECIES_SLUG_MAP.get(organism, organism))
+)
+
 
 def _get_ensembl_offline_warning(
     species: str = "homo_sapiens",
@@ -656,6 +663,10 @@ class GeneResolver:
             self._cache_unsaved = 0
         if not hasattr(self, "_cache_batch_depth"):
             self._cache_batch_depth = 0
+        if not hasattr(self, "_cache_on_disk"):
+            # The file's "symbols" and "ensembl" entries as of this resolver's last
+            # load or save; entries that differ from them are what a save merges in.
+            self._cache_on_disk: tuple[dict[str, str], dict[str, str]] = ({}, {})
 
     def _load_cache(self) -> None:
         self._ensure_cache()
@@ -670,6 +681,7 @@ class GeneResolver:
                     self._symbol_cache[(org_key, symbol.upper())] = ensembl_id
                     self._ensembl_cache[(org_key, ensembl_id)] = symbol
                     seeded_reverse.add((org_key, ensembl_id))
+        self._cache_on_disk = ({}, {})
         if self._cache_file and self._cache_file.exists():
             try:
                 import json
@@ -699,40 +711,66 @@ class GeneResolver:
                             org_part, ens_part = parts[0], parts[1]
                             if _is_ensembl_id(ens_part) and (org_part, ens_part) not in seeded_reverse:
                                 self._ensembl_cache[(org_part, ens_part)] = v
+                    self._cache_on_disk = (dict(data.get("symbols", {})), dict(data.get("ensembl", {})))
             except Exception as e:
                 logging.debug("Could not load gene cache: %s", e)
 
-    def _save_cache(self) -> None:
-        """Write the whole cache to ``self._cache_file``.
+    def _pending_cache_entries(self) -> dict[str, dict[str, str]]:
+        """Entries this resolver holds that the cache file did not hold at its last load or save."""
+        on_disk_symbols, on_disk_ensembl = self._cache_on_disk
+        symbols = {}
+        for (org, sym), ens in list(self._symbol_cache.items()):
+            key = f"{org}:{sym}"
+            if ens is not None and on_disk_symbols.get(key) != ens:
+                symbols[key] = ens
+        ensembl = {}
+        for (org, ens), sym in list(self._ensembl_cache.items()):
+            key = f"{org}:{ens}"
+            if sym is not None and on_disk_ensembl.get(key) != sym:
+                ensembl[key] = sym
+        return {"symbols": symbols, "ensembl": ensembl}
 
-        The data goes to a temporary file of its own in the cache folder, which
-        then replaces the cache file in one step: readers never see a half-written
-        file, and processes sharing the folder (e.g. SLURM array jobs) never write
-        into the same temporary file.
+    def _absorb_cache_file(self, content: dict[str, Any]) -> None:
+        """Take in what the cache file holds after a save, entries of other resolvers included."""
+        symbols = content.get("symbols", {})
+        ensembl = content.get("ensembl", {})
+        for key, ens in symbols.items():
+            org, _, sym = key.partition(":")
+            if sym and ens and ens != sym and _is_ensembl_id(ens):
+                self._symbol_cache[(org, sym)] = ens
+        for key, sym in ensembl.items():
+            org, _, ens = key.partition(":")
+            seeded = (org, ens) in _SEEDED_REVERSE_KEYS and (org, ens) in self._ensembl_cache
+            if ens and _is_ensembl_id(ens) and not seeded:
+                self._ensembl_cache[(org, ens)] = sym
+        self._cache_on_disk = (dict(symbols), dict(ensembl))
+
+    def _save_cache(self) -> None:
+        """Merge this resolver's new entries into ``self._cache_file``.
+
+        The file is read, the entries this resolver added or changed since its
+        last load or save are merged into it, and the result is written
+        atomically under a lock file (see
+        :func:`embpy.resources.gene._cache_files.merge_into_cache_file`). So no
+        save erases entries other resolvers or processes saved meanwhile, and
+        this resolver learns them.
         """
         self._ensure_cache()
         if not self._cache_file:
             return
+        pending = self._pending_cache_entries()
         try:
-            payload = {
-                "version": _GENE_CACHE_VERSION,
-                "symbols": {
-                    f"{org}:{sym}": ens
-                    for (org, sym), ens in list(self._symbol_cache.items())
-                    if ens is not None
-                },
-                "ensembl": {
-                    f"{org}:{ens}": sym
-                    for (org, ens), sym in list(self._ensembl_cache.items())
-                    if sym is not None
-                },
-            }
-            write_json_atomically(Path(self._cache_file), payload, indent=2)
+            written = merge_into_cache_file(Path(self._cache_file), _GENE_CACHE_VERSION, pending, indent=2)
         except Exception as e:  # noqa: BLE001
             logging.warning("Could not save gene cache %s: %s", self._cache_file, e)
             if self._cache_unsaved:
                 _RESOLVERS_WITH_UNSAVED_CACHE.add(self)
             return
+        if written is None:  # handed to the save of this file that this thread is in the middle of
+            self._cache_on_disk[0].update(pending["symbols"])
+            self._cache_on_disk[1].update(pending["ensembl"])
+        else:
+            self._absorb_cache_file(written)
         self._cache_unsaved = 0
         _RESOLVERS_WITH_UNSAVED_CACHE.discard(self)
 
@@ -767,11 +805,14 @@ class GeneResolver:
             self._save_cache()
 
     def __del__(self) -> None:
-        # A dropped resolver writes what it has not saved yet (the exit hook
-        # covers resolvers still alive when the process ends).
+        # A dropped resolver saves what it has not saved yet (the exit hook covers
+        # resolvers still alive when the process ends). wait=False: if this file
+        # is being saved in this process right now, that save writes the entries.
         try:
-            if getattr(self, "_cache_unsaved", 0):
-                self._save_cache()
+            if getattr(self, "_cache_unsaved", 0) and getattr(self, "_cache_file", None):
+                merge_into_cache_file(
+                    Path(self._cache_file), _GENE_CACHE_VERSION, self._pending_cache_entries(), wait=False, indent=2
+                )
         except Exception:  # noqa: BLE001 - a finalizer must not raise
             pass
 

@@ -40,13 +40,12 @@ import contextlib
 import json
 import logging
 import os
-import threading
 import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from ._cache_files import save_every, write_json_atomically
+from ._cache_files import merge_into_cache_file, save_every
 
 __all__ = [
     "ALIAS_CACHE_VERSION",
@@ -61,10 +60,6 @@ logger = logging.getLogger(__name__)
 
 ALIAS_CACHE_VERSION: int = 1
 """Bump if the cache schema changes incompatibly."""
-
-# Re-entrant: a cache garbage-collected while another one is saving saves itself
-# from __del__ in the same thread.
-_CACHE_LOCK = threading.RLock()
 
 # The file is saved every this many new entries (EMBPY_GENE_CACHE_SAVE_EVERY overrides it).
 _ALIAS_CACHE_SAVE_EVERY = 500
@@ -108,10 +103,10 @@ class Resolution:
 class AliasCache:
     """File-backed JSON cache for :class:`Resolution` results.
 
-    Writes go through a temporary file of their own and ``os.replace``, and
-    are batched (see :meth:`flush`); a re-entrant lock guards against
-    interleaved writes in the same process. Cross-process races are tolerated
-    (last writer wins; the data is insert-only modulo unresolved-flag flips).
+    Saves are batched (see :meth:`flush`) and merge this cache's new entries
+    into the file under a lock file, so entries other caches or processes
+    saved meanwhile are kept (see
+    :func:`embpy.resources.gene._cache_files.merge_into_cache_file`).
     """
 
     path: Path
@@ -119,12 +114,15 @@ class AliasCache:
     _data: dict[str, dict[str, Any]] = field(default_factory=dict)
     _loaded: bool = False
     _unsaved: int = field(default=0, init=False, repr=False, compare=False)
+    # The file's entries as of the last load or save; entries that differ are what a save merges in.
+    _on_disk: dict[str, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def _load(self) -> None:
         if self._loaded:
             return
         if not self.path.exists():
             self._data = {}
+            self._on_disk = {}
             self._loaded = True
             return
         try:
@@ -150,6 +148,7 @@ class AliasCache:
                 self.path, e,
             )
             self._data = {}
+        self._on_disk = dict(self._data)
         self._loaded = True
 
     def _key(self, symbol: str, organism: str) -> str:
@@ -198,25 +197,37 @@ class AliasCache:
         if self._unsaved:
             self._flush()
 
+    def _pending(self) -> dict[str, Any]:
+        """Entries this cache holds that the file did not hold at the last load or save."""
+        return {key: entry for key, entry in list(self._data.items()) if self._on_disk.get(key) != entry}
+
     def _flush(self) -> None:
-        # Last writer wins across processes: rows are insert-only, so the worst
-        # case is another process re-issuing the same HTTP request.
-        with _CACHE_LOCK:
-            payload = {"version": int(self.version), "entries": dict(self._data)}
-            try:
-                write_json_atomically(self.path, payload, indent=2, sort_keys=True)
-            except Exception as e:  # noqa: BLE001 - a cache that cannot be saved must not break resolution
-                logger.warning("AliasCache: could not save %s (%s); retrying at the next save.", self.path, e)
-                return
-            self._unsaved = 0
-            _UNSAVED_ALIAS_CACHES.pop(id(self), None)
+        pending = self._pending()
+        try:
+            written = merge_into_cache_file(
+                self.path, int(self.version), {"entries": pending}, indent=2, sort_keys=True
+            )
+        except Exception as e:  # noqa: BLE001 - a cache that cannot be saved must not break resolution
+            logger.warning("AliasCache: could not save %s (%s); retrying at the next save.", self.path, e)
+            return
+        if written is None:  # handed to the save of this file that this thread is in the middle of
+            self._on_disk.update(pending)
+        else:
+            entries = written.get("entries", {})
+            self._data.update(entries)  # what other caches saved meanwhile
+            self._on_disk = dict(entries)
+        self._unsaved = 0
+        _UNSAVED_ALIAS_CACHES.pop(id(self), None)
 
     def __del__(self) -> None:
-        # A dropped cache writes what it has not saved yet (the exit hook
-        # covers caches still alive when the process ends).
+        # A dropped cache saves what it has not saved yet (the exit hook covers
+        # caches still alive when the process ends). wait=False: if this file is
+        # being saved in this process right now, that save writes the entries.
         try:
             if getattr(self, "_unsaved", 0):
-                self._flush()
+                merge_into_cache_file(
+                    self.path, int(self.version), {"entries": self._pending()}, wait=False, indent=2, sort_keys=True
+                )
         except Exception:  # noqa: BLE001 - a finalizer must not raise
             pass
 
