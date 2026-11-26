@@ -410,6 +410,24 @@ def test_an_embedding_cell_eval_cannot_score_is_an_error(write_pair):
     assert "discrimination_score_cosine" in res["error"]
 
 
+def test_an_embedding_error_quotes_only_its_own_calls_messages():
+    """Overlapping calls run on worker threads; cell-eval logs each call's errors on its own thread."""
+    import logging
+    import threading
+
+    from embpy.mcp.tools import _logged_errors
+
+    log = logging.getLogger("cell_eval._pipeline._runner")
+    with _logged_errors("cell_eval") as errors:
+        other_call = threading.Thread(
+            target=log.error, args=("Error computing metric 'discrimination_score_cosine': another call's data",)
+        )
+        other_call.start()
+        other_call.join()
+        log.error("Error computing metric 'discrimination_score_l2': this call's data")
+    assert errors == ["Error computing metric 'discrimination_score_l2': this call's data"]
+
+
 # ---------------------------------------------------------------------------
 # 4. Reports are written to output_dir, and nowhere else
 # ---------------------------------------------------------------------------

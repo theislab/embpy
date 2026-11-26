@@ -29,6 +29,7 @@ import math
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 from typing import Any, Literal
@@ -3855,12 +3856,18 @@ _EXPRESSION_DATA = "gene expression (.X)"
 
 @contextlib.contextmanager
 def _logged_errors(logger_name: str):
-    """Collect the error messages that ``logger_name`` and its children log in the block."""
+    """Collect the error messages that ``logger_name`` and its children log in the block.
+
+    Only records logged on the calling thread are kept: the MCP server runs overlapping
+    tool calls on worker threads, and cell-eval logs a call's metric errors on its own thread.
+    """
     messages: list[str] = []
+    caller = threading.get_ident()
 
     class _Collect(logging.Handler):
         def emit(self, record: logging.LogRecord) -> None:
-            messages.append(record.getMessage())
+            if record.thread == caller:
+                messages.append(record.getMessage())
 
     handler = _Collect(logging.ERROR)
     target = logging.getLogger(logger_name)
