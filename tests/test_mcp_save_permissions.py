@@ -76,10 +76,10 @@ def test_new_file_follows_the_folder_default_acl(tmp_path):
 
 
 def test_overwrite_keeps_access_granted_on_the_file(tmp_path):
+    _require_acls(tmp_path)  # first: macOS has no setfacl
     out = tmp_path / "shared.h5ad"
     _adata().write_h5ad(out)
-    subprocess.run(["setfacl", "-m", f"u:{COLLABORATOR}:rw", str(out)], check=False)
-    _require_acls(tmp_path)
+    subprocess.run(["setfacl", "-m", f"u:{COLLABORATOR}:rw", str(out)], check=True)
     before = _acl(out)
     assert f"user:{COLLABORATOR}:rw-" in before
     _save_anndata_safely(_adata(4), str(out))
