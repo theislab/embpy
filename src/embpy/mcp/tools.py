@@ -2391,6 +2391,11 @@ def compute_embeddings(
             "path": str(path),
             "models": [str(m) for m in (model_list or [models])],
         }
+        if type(exc).__name__ == "EmptyAfterFilteringError":
+            # Raised by embpy.pp.preprocess_counts before anything is embedded or written.
+            resp["thresholds"] = dict(getattr(exc, "thresholds", {}))
+            resp["error"] = f"{msg} Nothing was written."
+            resp["suggestion"] = "Use preprocessing='auto', which scales min_genes / min_cells to the dataset."
         if isinstance(exc, (ImportError, ModuleNotFoundError)):
             resp["suggestion"] = _install_hint(msg) or (
                 "Install the model's optional dependencies (see list_model_registry optional_extras_status)."

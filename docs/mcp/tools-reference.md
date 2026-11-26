@@ -179,7 +179,10 @@ holds `.layers["log_normalized"]` (`preprocess_counts` output) is used as is: no
 are filtered and `.var["highly_variable"]` is kept, so PCA uses the genes `preprocess_counts`
 selected (`preprocessing_note` says so). Raw counts are filtered, normalized and given HVGs as
 the models need, with QC/HVG thresholds lowered for small datasets (`preprocessing_adjustments`).
-`standard` and `raw` always run their pipeline; `none` never filters or transforms.
+`standard` and `raw` always run their pipeline, with `min_genes=200` and `min_cells=3`; if that
+removes every cell or every gene (e.g. a small toy file), the call returns
+`error_type: "EmptyAfterFilteringError"` with the `thresholds` used and writes nothing. `none`
+never filters or transforms.
 `preprocessing_applied` names the pipeline that ran.
 
 **Counts.** Preprocessing starts from the counts chosen by the rule described under

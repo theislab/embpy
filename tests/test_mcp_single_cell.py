@@ -868,3 +868,21 @@ def test_scib_with_an_embedding_without_metrics_is_partial(tmp_path, monkeypatch
     assert res["status"] == "partial_success", res
     assert "X_prior" in res["warning"] and "no metric" in res["warning"]
     assert res["metrics"]["X_pca"]["nmi"] == 0.5
+
+
+def test_standard_preprocessing_that_removes_every_cell_is_an_error(tmp_path):
+    """embed_cells' default min_genes=200 on a 40-gene file: EmptyAfterFilteringError, no file."""
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    adata = _cells(_poisson_counts(30, 40))
+    path = str(tmp_path / "small.h5ad")
+    adata.write_h5ad(path)
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", preprocessing="standard", output_path=out)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "EmptyAfterFilteringError"
+    assert res["thresholds"] == {"min_genes": 200, "min_cells": 3}
+    assert not os.path.exists(out)
+
+    with pytest.raises(ValueError, match="every cell"):
+        library_preprocess(adata, min_genes=200)
