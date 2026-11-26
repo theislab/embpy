@@ -1,0 +1,35 @@
+{
+ "written_by": "b6dc03c",
+ "calls": [
+  {
+   "entity_type": "gene",
+   "column": "gene",
+   "annotation_types": "go"
+  }
+ ],
+ "obs_names": [
+  "c0",
+  "c1"
+ ],
+ "obs": {
+  "gene": [
+   "TP53",
+   "EGFR"
+  ],
+  "gene_go_n": [
+   3,
+   2
+  ]
+ },
+ "uns": {
+  "embpy_annotations": {
+   "annotation_types": [
+    "go"
+   ],
+   "column": "gene",
+   "entity_type": "gene",
+   "organism": "human",
+   "results_json": "{\"TP53\": {\"go\": {\"uniprot\": {\"molecular_function\": [{\"id\": \"GO:0003700\", \"term\": \"DNA-binding transcription factor activity\", \"evidence\": \"IDA:UniProtKB\"}], \"biological_process\": [{\"id\": \"GO:0006915\", \"term\": \"apoptotic process\", \"evidence\": \"IDA:UniProtKB\"}], \"cellular_component\": [{\"id\": \"GO:0005634\", \"term\": \"nucleus\", \"evidence\": \"IDA:UniProtKB\"}]}}}, \"EGFR\": {\"go\": {\"uniprot\": {\"molecular_function\": [{\"id\": \"GO:0004714\", \"term\": \"transmembrane receptor protein tyrosine kinase activity\", \"evidence\": \"IDA:UniProtKB\"}], \"biological_process\": [], \"cellular_component\": [{\"id\": \"GO:0005886\", \"term\": \"plasma membrane\", \"evidence\": \"IDA:UniProtKB\"}]}}}}"
+  }
+ }
+}

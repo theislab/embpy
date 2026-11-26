@@ -1,0 +1,49 @@
+{
+ "written_by": "b6dc03c then 0eec156",
+ "calls": [
+  {
+   "version": "b6dc03c",
+   "entity_type": "gene",
+   "column": "gene",
+   "annotation_types": "go"
+  },
+  {
+   "version": "0eec156",
+   "entity_type": "gene",
+   "column": "gene",
+   "annotation_types": "pathways",
+   "sources": "reactome"
+  }
+ ],
+ "obs_names": [
+  "c0",
+  "c1"
+ ],
+ "obs": {
+  "gene": [
+   "TP53",
+   "EGFR"
+  ],
+  "gene_go_n": [
+   3,
+   2
+  ],
+  "gene_pathways_n": [
+   1,
+   1
+  ]
+ },
+ "uns": {
+  "embpy_annotations": {
+   "annotation_types": [
+    "go",
+    "pathways"
+   ],
+   "column": "gene",
+   "entity_type": "gene",
+   "organism": "human",
+   "provenance_json": "{\"gene\": {\"pathways\": {\"reactome\": {\"organism\": \"human\", \"column\": \"gene\"}}}, \"count_columns\": {\"gene_pathways_n\": {\"column\": \"gene\", \"entity_type\": \"gene\", \"annotation_type\": \"pathways\"}}}",
+   "results_json": "{\"TP53\": {\"go\": {\"uniprot\": {\"molecular_function\": [{\"id\": \"GO:0003700\", \"term\": \"DNA-binding transcription factor activity\", \"evidence\": \"IDA:UniProtKB\"}], \"biological_process\": [{\"id\": \"GO:0006915\", \"term\": \"apoptotic process\", \"evidence\": \"IDA:UniProtKB\"}], \"cellular_component\": [{\"id\": \"GO:0005634\", \"term\": \"nucleus\", \"evidence\": \"IDA:UniProtKB\"}]}}, \"pathways\": {\"reactome\": [{\"id\": \"R-HSA-69488\", \"name\": \"Cell Cycle Checkpoints\"}]}}, \"EGFR\": {\"go\": {\"uniprot\": {\"molecular_function\": [{\"id\": \"GO:0004714\", \"term\": \"transmembrane receptor protein tyrosine kinase activity\", \"evidence\": \"IDA:UniProtKB\"}], \"biological_process\": [], \"cellular_component\": [{\"id\": \"GO:0005886\", \"term\": \"plasma membrane\", \"evidence\": \"IDA:UniProtKB\"}]}}, \"pathways\": {\"reactome\": [{\"id\": \"R-HSA-69488\", \"name\": \"Cell Cycle Checkpoints\"}]}}}"
+  }
+ }
+}

@@ -35,6 +35,7 @@ with ``pip install embpy[scib]`` (or ``pip install scib``).
 
 from __future__ import annotations
 
+import functools
 import logging
 from typing import TYPE_CHECKING
 
@@ -122,7 +123,10 @@ def compute_scib_metrics(
         One row per embedding key, columns for each computed metric plus
         ``bio_conservation``, ``batch_correction`` (NaN when ``batch_key`` is
         ``None``) and ``total``. Higher is better for every column. Sorted by
-        ``total`` descending.
+        ``total`` descending. A metric that could not be computed is NaN and
+        left out of the aggregates; ``report.attrs["metrics_unavailable"]``
+        maps it to ``{"reason": <first error>, "embedding_keys": [...]}``
+        (e.g. LISI's compiled helper on Windows, kBET without rpy2).
 
     Raises
     ------
@@ -148,8 +152,11 @@ def compute_scib_metrics(
     sc = _load_scanpy()
 
     rows: dict[str, dict[str, float]] = {}
+    # metric -> {"reason": first error, "embedding_keys": keys it failed for}
+    unavailable: dict[str, dict[str, object]] = {}
     for key in embedding_keys:
         logger.info("Scoring embedding %r with scIB ...", key)
+        failures: dict[str, str] = {}
         rows[key] = _score_one_embedding(
             adata,
             embed_key=key,
@@ -160,11 +167,17 @@ def compute_scib_metrics(
             cluster_resolution_range=cluster_resolution_range,
             n_neighbors=n_neighbors,
             verbose=verbose,
+            failures=failures,
         )
+        for metric, reason in failures.items():
+            entry = unavailable.setdefault(metric, {"reason": reason, "embedding_keys": []})
+            entry["embedding_keys"].append(key)  # type: ignore[union-attr]
 
     report = pd.DataFrame.from_dict(rows, orient="index")
     report = _add_aggregate_scores(report, has_batch=batch_key is not None)
-    return report.sort_values("total", ascending=False)
+    report = report.sort_values("total", ascending=False)
+    report.attrs["metrics_unavailable"] = unavailable
+    return report
 
 
 def _score_one_embedding(
@@ -178,8 +191,13 @@ def _score_one_embedding(
     cluster_resolution_range: tuple[float, float, float],
     n_neighbors: int,
     verbose: bool,
+    failures: dict[str, str] | None = None,
 ) -> dict[str, float]:
-    """Compute the scIB metric battery for a single ``.obsm`` embedding."""
+    """Compute the scIB metric battery for a single ``.obsm`` embedding.
+
+    A metric that raises is reported as NaN; its error goes into ``failures``.
+    """
+    metric = functools.partial(_safe_metric, failures=failures)
     # Work on a shallow copy so the per-embedding neighbours graph / clustering
     # does not leak between embeddings or mutate the caller's AnnData.
     ad = adata.copy()
@@ -208,9 +226,9 @@ def _score_one_embedding(
     # platforms, and older scib releases call APIs removed in pandas >= 2). A
     # failure in any single metric reports NaN -- with a warning -- rather than
     # sinking the whole comparison; the aggregate scores skip NaNs.
-    out["nmi"] = _safe_metric("nmi", embed_key, lambda: scib.metrics.nmi(ad, "scib_cluster", label_key))
-    out["ari"] = _safe_metric("ari", embed_key, lambda: scib.metrics.ari(ad, "scib_cluster", label_key))
-    out["asw_label"] = _safe_metric("asw_label", embed_key, lambda: scib.metrics.silhouette(ad, label_key, embed_key))
+    out["nmi"] = metric("nmi", embed_key, lambda: scib.metrics.nmi(ad, "scib_cluster", label_key))
+    out["ari"] = metric("ari", embed_key, lambda: scib.metrics.ari(ad, "scib_cluster", label_key))
+    out["asw_label"] = metric("asw_label", embed_key, lambda: scib.metrics.silhouette(ad, label_key, embed_key))
     # scIB counts isolated-label ASW as a bio-conservation metric, but it
     # *identifies* the isolated labels by how few batches they appear in, so it
     # needs the batch covariate. Called with batch_key=None, scib indexes
@@ -218,45 +236,53 @@ def _score_one_embedding(
     # _safe_metric would turn into a NaN column plus one warning per embedding.
     # Skip it instead: an absent column is honest, a NaN column looks broken.
     if batch_key is not None:
-        out["isolated_label_asw"] = _safe_metric(
+        out["isolated_label_asw"] = metric(
             "isolated_label_asw",
             embed_key,
             lambda: scib.metrics.isolated_labels(ad, label_key, batch_key, embed_key, cluster=False, verbose=verbose),
         )
-    out["clisi"] = _safe_metric(
+    out["clisi"] = metric(
         "clisi", embed_key, lambda: scib.metrics.clisi_graph(ad, label_key, type_="embed", use_rep=embed_key)
     )
 
     # --- Batch correction (needs a batch covariate) ------------------------
     if batch_key is not None:
-        out["asw_batch"] = _safe_metric(
+        out["asw_batch"] = metric(
             "asw_batch", embed_key, lambda: scib.metrics.silhouette_batch(ad, batch_key, label_key, embed_key, verbose=verbose)
         )
-        out["graph_conn"] = _safe_metric(
+        out["graph_conn"] = metric(
             "graph_conn", embed_key, lambda: scib.metrics.graph_connectivity(ad, label_key)
         )
-        out["ilisi"] = _safe_metric(
+        out["ilisi"] = metric(
             "ilisi", embed_key, lambda: scib.metrics.ilisi_graph(ad, batch_key, type_="embed", use_rep=embed_key)
         )
-        out["kbet"] = _safe_metric(
+        out["kbet"] = metric(
             "kbet", embed_key, lambda: scib.metrics.kBET(ad, batch_key, label_key, type_="embed", embed=embed_key)
         )
 
     return out
 
 
-def _safe_metric(name: str, embed_key: str, fn) -> float:
+def _safe_metric(name: str, embed_key: str, fn, failures: dict[str, str] | None = None) -> float:
     """Run a single scIB metric, returning NaN (with a warning) on any failure.
 
     scib metrics vary in their compatibility with the installed scanpy / pandas
     versions and the host platform, so a failure in one metric must not abort
-    the whole embedding comparison.
+    the whole embedding comparison. When ``failures`` is given, the reason for
+    every NaN (the error, or a NaN that scib returned itself) is stored in
+    ``failures[name]``, so callers can say why a metric is missing.
     """
     try:
-        return float(fn())
+        value = float(fn())
     except Exception as e:  # noqa: BLE001 - any failure degrades to NaN, never fatal
         logger.warning("scIB metric %r failed for %r (%s); reporting NaN.", name, embed_key, e)
+        if failures is not None:
+            reason = " ".join(f"{type(e).__name__}: {e}".split())
+            failures[name] = reason if len(reason) <= 300 else reason[:297] + "..."
         return float("nan")
+    if np.isnan(value) and failures is not None:
+        failures[name] = "scib returned NaN for this metric, without an error."
+    return value
 
 
 def _resolutions(rng: tuple[float, float, float]) -> list[float]:

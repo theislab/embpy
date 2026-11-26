@@ -54,6 +54,8 @@ from typing import Any, Literal
 
 import requests
 
+from embpy.resources._service_errors import report_service_error
+
 from .chembl import (
     DEFAULT_ACTIVITIES,
     DEFAULT_INDICATIONS,
@@ -104,6 +106,9 @@ def _failure(url: str, exc: Exception) -> None:
     response = getattr(exc, "response", None)
     _record_http(url, getattr(response, "status_code", None), f"{type(exc).__name__}: {exc}")
     logger.debug("Request failed for %s: %s", url, exc)
+    # Lets callers inside record_service_errors() (the MCP tools) tell an
+    # outage from an empty answer.
+    report_service_error(url, exc)
 
 
 def _get_json(url: str, params: dict | None = None, timeout: int = 30) -> dict | None:

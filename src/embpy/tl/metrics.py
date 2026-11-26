@@ -35,6 +35,7 @@ evaluation tools for comparing predicted vs. observed expression.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -604,6 +605,33 @@ def compare_deg(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+# cell-eval keeps metric settings in one registry for the whole process, and compute()
+# writes metric_configs into it. Calls take turns from saving the settings to restoring
+# them, so calls on different threads (the MCP server runs tools on worker threads)
+# neither score with nor restore each other's settings. Reentrant, so a nested call
+# restores in order instead of waiting for itself.
+_REGISTRY_LOCK = threading.RLock()
+
+
+def _stored_metric_kwargs(ce: Any, metric_configs: dict[str, dict[str, Any]] | None) -> dict[str, Any]:
+    """Copy the registry settings of the metrics ``metric_configs`` will change."""
+    stored = getattr(getattr(ce, "metrics_registry", None), "metrics", None)
+    if not metric_configs or not isinstance(stored, dict):
+        return {}
+    return {
+        name: None if stored[name].kwargs is None else dict(stored[name].kwargs)
+        for name in metric_configs
+        if name in stored
+    }
+
+
+def _restore_metric_kwargs(ce: Any, saved: dict[str, Any]) -> None:
+    """Put back the registry settings copied by :func:`_stored_metric_kwargs`."""
+    stored = ce.metrics_registry.metrics if saved else {}
+    for name, kwargs in saved.items():
+        stored[name].kwargs = kwargs
+
+
 def cell_eval(
     adata_pred: AnnData,
     adata_real: AnnData,
@@ -649,7 +677,9 @@ def cell_eval(
 
         Note that ``discrimination_score_l1`` ignores ``embed_key`` upstream,
         so a profile including it mixes expression-space and embedding-space
-        numbers.
+        numbers. The configs apply to this call only: cell-eval keeps them in
+        its process-wide metric registry, which is restored afterwards. For
+        that reason, calls on several threads compute one at a time.
     skip_metrics
         Metric names to leave out, also forwarded to ``compute``.
     **kwargs
@@ -680,12 +710,21 @@ def cell_eval(
     # `MetricsEvaluator.__init__() got an unexpected keyword argument
     # 'metric_configs'`, which left `embed_key` -- and therefore the whole
     # embedding-scoring path -- unreachable through this wrapper.
-    results_pl, agg_pl = evaluator.compute(
-        profile=profile,
-        metric_configs=metric_configs,
-        skip_metrics=skip_metrics,
-        write_csv=False,
-    )
+    # cell-eval also stores metric_configs in its process-wide metric registry,
+    # where they would outlive this call: a later call without an embed_key
+    # would still score the embedding named here. Put the stored settings back,
+    # holding the lock so overlapping calls cannot interleave save and restore.
+    with _REGISTRY_LOCK:
+        saved = _stored_metric_kwargs(ce, metric_configs)
+        try:
+            results_pl, agg_pl = evaluator.compute(
+                profile=profile,
+                metric_configs=metric_configs,
+                skip_metrics=skip_metrics,
+                write_csv=False,
+            )
+        finally:
+            _restore_metric_kwargs(ce, saved)
 
     results = results_pl.to_pandas()
     agg_results = agg_pl.to_pandas()
@@ -782,11 +821,13 @@ def phenocopy_score(
     for t in mad_thresholds:
         aurocs: list[float] = []
         for i in range(n_perts):
-            sim_vec = sim_true[i].copy()
-            sim_vec[i] = -np.inf  # exclude self
+            # Leave the perturbation itself out rather than scoring it -inf:
+            # roc_auc_score rejects non-finite scores.
+            others = np.arange(n_perts) != i
+            sim_vec = sim_true[i][others]
 
-            med = np.median(sim_vec[sim_vec > -np.inf])
-            mad = median_abs_deviation(sim_vec[sim_vec > -np.inf])
+            med = np.median(sim_vec)
+            mad = median_abs_deviation(sim_vec)
             if mad == 0:
                 continue
 
@@ -794,10 +835,7 @@ def phenocopy_score(
             if neighbors.sum() == 0 or neighbors.sum() == (n_perts - 1):
                 continue
 
-            pred_vec = sim_pred[i].copy()
-            pred_vec[i] = -np.inf
-
-            aurocs.append(float(roc_auc_score(neighbors, pred_vec)))
+            aurocs.append(float(roc_auc_score(neighbors, sim_pred[i][others])))
 
         metrics[f"phenocopy_auroc_mad_{t}"] = float(np.mean(aurocs)) if aurocs else float("nan")
 

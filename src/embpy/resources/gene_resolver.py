@@ -5,6 +5,8 @@ from .gene.resolver import *  # noqa: F403
 # explicitly so existing call sites (and unit tests) keep working.
 from .gene.resolver import (  # noqa: F401
     _ensembl_get,
+    _ensembl_post,
     _is_ensembl_id,
     _looks_like_smiles,
 )
+

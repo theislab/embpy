@@ -45,8 +45,10 @@ Complete, interactive documentation and API references are available:
   - [🧪 **Hands-On Workflows & Practical Recipes**](docs/hands-on.md)
   - [💻 **Cross-Platform & Hardware Guide**](docs/cross-platform.md)
   - [🏛️ **Architecture & Technical Design**](docs/technical.md)
+  - [🤖 **Agentic Workflows & MCP Skills**](docs/mcp/index.md)
   - [📚 **API Reference**](docs/api-reference.md)
   - [🤝 **Contributing Guide**](docs/contributing.md)
+
 
 ### Running Documentation Locally
 ```bash
@@ -474,6 +476,32 @@ pl.plot_embedding_space(
 )
 ```
 
+### 🤖 Agentic Workflows & MCP Support
+
+`embpy` includes a native [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server exposing an extended suite of bioinformatics tools directly to AI coding assistants (Claude Desktop, Cursor, Windsurf) and autonomous agents. With MCP, your agent can inspect `.h5ad` datasets, map gene identifiers, execute foundation model cell embeddings (`pca`, `scvi`, `scgpt`, `geneformer`, `state`), run `scIB` bio-conservation benchmarks, evaluate perturbations, and project 2D UMAP coordinates.
+
+```bash
+pip install "embpy[mcp,models]"     # models = PyTorch, needed by every embedding tool
+claude mcp add embpy -- /path/to/env/bin/python -m embpy.mcp.server
+```
+
+Use the full path of the Python that has embpy installed. `benchmark_scib` and `benchmark_perturbations` also need `embpy[scib]` and `embpy[eval]`; [Client Setup](docs/mcp/client-setup.md) covers Claude Desktop, Cursor and Windsurf.
+
+The repository is also a Claude Code plugin whose [Agent Skills](docs/mcp/skills.md) (`skills/`) teach Claude how to use these tools. Claude Code loads it from a git clone; until the MCP server is released, it is on the branch of pull request #52:
+
+```bash
+git clone https://github.com/theislab/embpy.git
+cd embpy
+git fetch origin pull/52/head:mcp
+git checkout mcp
+pip install -e ".[mcp,models]"     # or: uv tool install --python 3.12 --editable ".[mcp,models]"
+claude --plugin-dir /path/to/embpy
+```
+
+The plugin starts the server itself, with the first Python that has embpy: the one in `EMBPY_PYTHON`, then the environment of the uv command above, then `python3` or `python` on PATH ([details](docs/mcp/skills.md#installing)). Use the plugin or `claude mcp add`, not both, or every tool is listed twice.
+
+For tool references, setup guides, and example prompts, see the **[MCP documentation](docs/mcp/index.md)** or follow the interactive walkthrough in **[tutorials/05_mcp_agent_workflows.ipynb](tutorials/05_mcp_agent_workflows.ipynb)**.
+
 ## Tutorials
 
 **Start here** — a short, goal-oriented path:
@@ -493,6 +521,8 @@ pl.plot_embedding_space(
    analysis did not choose.
 6. [Reading a model's attention](docs/notebooks/06_attention_weights.ipynb) —
    extract per-layer attention and reduce it to AnnData-ready summaries.
+7. [Agentic MCP Workflows](tutorials/05_mcp_agent_workflows.ipynb) —
+   programmatic inspection, multi-model cell embedding, scIB conservation benchmarking, and autonomous agent tool loops.
 
 **By modality** — deeper, domain-specific workflows:
 

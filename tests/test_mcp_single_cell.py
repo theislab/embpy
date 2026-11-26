@@ -1,0 +1,944 @@
+"""Single-cell steps of the embpy MCP tools: what each step keeps, changes and reports.
+
+Covers which inputs ``preprocess_counts`` refuses, which cells and genes it and
+``compute_embeddings`` remove, which genes PCA is fitted on, which keys ``compute_umap`` and
+``compute_embeddings`` write, and how rows without a finite embedding are handled.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from pathlib import Path
+
+import numpy as np
+import pytest
+from anndata import AnnData
+
+from embpy.mcp import benchmark_scib, compute_embeddings, compute_umap, inspect_data, preprocess_counts
+
+SKILLS_DIR = Path(__file__).resolve().parents[1] / "skills"
+
+
+@pytest.fixture
+def pca_genes(monkeypatch):
+    """The genes of every PCA fit in the test, read from the fitted wrapper."""
+    from embpy.models.singlecell_models import PCAEmbedding
+
+    fits: list[list[str]] = []
+    real_embed_cells = PCAEmbedding.embed_cells
+
+    def embed_cells(self, adata):
+        result = real_embed_cells(self, adata)
+        genes = list(self._var_names)
+        if self._hvg_mask is not None:
+            genes = [gene for gene, used in zip(genes, self._hvg_mask, strict=True) if used]
+        # One fitted component weight per input gene.
+        assert self._pca.components_.shape[1] == len(genes)
+        fits.append(genes)
+        return result
+
+    monkeypatch.setattr(PCAEmbedding, "embed_cells", embed_cells)
+    return fits
+
+
+@pytest.fixture
+def fast_scvi(monkeypatch):
+    """scVI returns a fixed latent space instead of training, whether or not scvi-tools is installed."""
+    from embpy.models.singlecell_models import ScVIToolsWrapper
+
+    monkeypatch.setattr(
+        ScVIToolsWrapper, "embed_cells", lambda self, adata: np.zeros((adata.n_obs, 10), dtype=np.float32)
+    )
+
+
+def _cells(x: np.ndarray, n_types: int = 3) -> AnnData:
+    adata = AnnData(X=x.astype(np.float32))
+    adata.obs_names = [f"cell_{i}" for i in range(adata.n_obs)]
+    adata.var_names = [f"gene_{j}" for j in range(adata.n_vars)]
+    adata.obs["cell_type"] = [f"type_{i % n_types}" for i in range(adata.n_obs)]
+    adata.obs["batch"] = [f"b{i % 2}" for i in range(adata.n_obs)]
+    return adata
+
+
+def _raw_with_shallow_cells() -> AnnData:
+    """150 cells x 600 genes of raw counts. Cells 75-149 detect exactly 150 genes and the
+    last 4 genes are detected in one cell each, so min_genes=100 keeps every cell while the
+    default min_genes=200 removes half of them."""
+    rng = np.random.default_rng(0)
+    n_cells, n_genes, n_rare = 150, 600, 4
+    lam = rng.gamma(2.0, 1.5, size=n_genes) + 0.5
+    programs = np.ones((3, n_genes))
+    for t in range(3):
+        programs[t, t * 40 : (t + 1) * 40] = 6.0
+    x = rng.poisson(lam * programs[np.arange(n_cells) % 3]).astype(np.float32)
+    for i in range(75, n_cells):
+        detected = rng.choice(n_genes - n_rare, size=150, replace=False)
+        row = np.zeros(n_genes, dtype=np.float32)
+        row[detected] = x[i, detected] + 1
+        x[i] = row
+    x[:, n_genes - n_rare :] = 0
+    for j in range(n_rare):
+        x[j, n_genes - n_rare + j] = 1
+    return _cells(x)
+
+
+# --- compute_embeddings: removed cells and genes, already preprocessed input --------------
+
+
+def test_preprocessed_input_is_embedded_as_is(tmp_path, pca_genes):
+    """compute_embeddings on preprocess_counts output keeps its cells and fits PCA on its HVGs."""
+    import anndata
+
+    raw = str(tmp_path / "raw.h5ad")
+    _raw_with_shallow_cells().write_h5ad(raw)
+    prepped = str(tmp_path / "prepped.h5ad")
+    step2 = preprocess_counts(path=raw, output_path=prepped, min_genes=100, n_top_genes=100)
+    assert step2["status"] == "success", step2
+    pp = anndata.read_h5ad(prepped)
+    assert pp.n_obs == 150 and pp.var["highly_variable"].sum() == 100
+
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=prepped, models="pca", output_path=out)
+    assert res["status"] == "success", res
+    embedded = anndata.read_h5ad(out)
+    assert list(embedded.obs_names) == list(pp.obs_names)
+    assert pca_genes == [list(pp.var_names[pp.var["highly_variable"].to_numpy()])]
+    assert (res["n_obs_input"], res["n_obs_output"]) == (pp.n_obs, pp.n_obs)
+    assert (res["n_vars_input"], res["n_vars_output"]) == (pp.n_vars, pp.n_vars)
+    assert "warning" not in res
+
+
+def test_removed_cells_and_genes_are_reported(tmp_path):
+    """Raw counts with preprocessing='auto': QC removes cells and genes, and the reply says so."""
+    import anndata
+
+    raw = str(tmp_path / "raw.h5ad")
+    _raw_with_shallow_cells().write_h5ad(raw)
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=raw, models="pca", output_path=out)
+    assert res["status"] == "success", res
+
+    embedded = anndata.read_h5ad(out)
+    assert (res["n_obs_input"], res["n_vars_input"]) == (150, 600)
+    assert (res["n_obs_output"], res["n_vars_output"]) == (embedded.n_obs, embedded.n_vars)
+    assert embedded.n_obs == 75 and embedded.n_vars < 600
+    assert res["n_cells"] == embedded.n_obs
+    assert "75 of 150 cells" in res["warning"]
+    assert f"{600 - embedded.n_vars} of 600 genes" in res["warning"]
+    assert "cell_75" in res["warning"]
+
+
+def _skill_dataset() -> AnnData:
+    """120 cells x 2100 genes. Cells 0-3 detect exactly 200 genes, two of which no other cell
+    detects: min_genes=200 keeps those cells, min_cells=3 then drops the two genes, so the
+    cells would not survive a second round of filtering."""
+    rng = np.random.default_rng(1)
+    n_cells, n_genes = 120, 2100
+    lam = rng.gamma(0.8, 1.0, size=n_genes) + 0.1
+    programs = np.ones((3, n_genes))
+    for t in range(3):
+        programs[t, t * 50 : (t + 1) * 50] = 8.0
+    x = rng.poisson(lam * programs[np.arange(n_cells) % 3]).astype(np.float32)
+    rare = np.arange(n_genes - 8, n_genes)
+    x[:, rare] = 0
+    common = np.argsort(-lam[: n_genes - 8])[:198]
+    for i in range(4):
+        x[i] = 0
+        x[i, common] = rng.poisson(lam[common]) + 1
+        x[i, rare[2 * i : 2 * i + 2]] = 1
+    return _cells(x)
+
+
+def _skill_blocks(skill: str, *tools: str) -> list[str]:
+    text = (SKILLS_DIR / skill / "SKILL.md").read_text(encoding="utf-8")
+    blocks = re.findall(r"```python\n(.*?)```", text, re.S)
+    return [block for block in blocks if any(f"{tool}(" in block for tool in tools)]
+
+
+def test_skill_steps_2_and_3_embed_the_genes_step_2_selected(tmp_path, monkeypatch, pca_genes, fast_scvi):
+    """The single-cell Skill's preprocess_counts and compute_embeddings calls, run as written."""
+    import anndata
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    _skill_dataset().write_h5ad(tmp_path / "data" / "pbmc.h5ad")
+
+    results = {}
+    namespace = {}
+    for tool in (preprocess_counts, compute_embeddings):
+        namespace[tool.__name__] = lambda _tool=tool, **kwargs: results.setdefault(_tool.__name__, _tool(**kwargs))
+    blocks = _skill_blocks("embpy-single-cell-workflow", "preprocess_counts", "compute_embeddings")
+    assert len(blocks) == 2
+    for block in blocks:
+        exec(compile(block, "SKILL.md", "exec"), namespace)
+
+    step2, step3 = results["preprocess_counts"], results["compute_embeddings"]
+    assert step2["status"] == "success", step2
+    assert step3["status"] == "success", step3
+    prepped = anndata.read_h5ad(step2["output_path"])
+    selected = list(prepped.var_names[prepped.var["highly_variable"].to_numpy()])
+    assert 0 < len(selected) < prepped.n_vars
+    assert pca_genes == [selected]
+    assert list(anndata.read_h5ad(step3["output_path"]).obs_names) == list(prepped.obs_names)
+
+
+# --- preprocess_counts: input checks ------------------------------------------------------
+
+
+def _log_normalized(counts: np.ndarray) -> np.ndarray:
+    return np.log1p(counts / counts.sum(axis=1, keepdims=True) * 1e4).astype(np.float32)
+
+
+def _poisson_counts(n_cells: int = 60, n_genes: int = 50, seed: int = 3) -> np.ndarray:
+    return np.random.default_rng(seed).poisson(3.0, size=(n_cells, n_genes)).astype(np.float32)
+
+
+@pytest.mark.parametrize("mode", ["standard", "auto", "none"])
+def test_normalized_input_without_counts_is_refused(tmp_path, mode):
+    """Log-normalized .X and no counts layer: NotRawCountsError, unless assume_counts=True."""
+    path = str(tmp_path / "lognorm.h5ad")
+    _cells(_log_normalized(_poisson_counts())).write_h5ad(path)
+    out = str(tmp_path / "prepped.h5ad")
+
+    res = preprocess_counts(path=path, output_path=out, preprocessing=mode, min_genes=0, min_cells=0)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "NotRawCountsError"
+    assert res["expression_nature"]["detected_nature"] == "log_normalized"
+    assert "log_normalized" in res["error"] and "assume_counts=True" in res["error"]
+    assert not os.path.exists(out)
+
+    forced = preprocess_counts(path=path, output_path=out, preprocessing=mode, min_genes=0, min_cells=0,
+                               assume_counts=True)
+    assert forced["status"] == "success", forced
+    assert os.path.exists(out)
+
+
+def test_counts_layer_is_the_raw_source(tmp_path):
+    """Normalized .X next to a counts layer: normalization starts from the counts layer."""
+    import anndata
+
+    counts = _poisson_counts()
+    adata = _cells(_log_normalized(counts))
+    adata.layers["counts"] = counts.copy()
+    path = str(tmp_path / "with_counts.h5ad")
+    adata.write_h5ad(path)
+    out = str(tmp_path / "prepped.h5ad")
+
+    res = preprocess_counts(path=path, output_path=out, min_genes=0, min_cells=0, select_hvg=False)
+    assert res["status"] == "success", res
+    saved = anndata.read_h5ad(out)
+    np.testing.assert_allclose(saved.layers["log_normalized"], _log_normalized(counts), rtol=1e-5, atol=1e-6)
+    np.testing.assert_array_equal(saved.layers["counts"], counts)
+    np.testing.assert_array_equal(saved.X, counts)
+
+
+@pytest.mark.parametrize(
+    ("thresholds", "emptied"),
+    [({"min_genes": 200}, "cell"), ({"min_genes": 0, "min_cells": 1000}, "gene")],
+    ids=["no-cells-left", "no-genes-left"],
+)
+def test_filtering_everything_is_an_error(tmp_path, thresholds, emptied):
+    """40 genes with min_genes=200 (or min_cells above the cell count): an error and no file."""
+    path = str(tmp_path / "small.h5ad")
+    _cells(_poisson_counts(30, 40)).write_h5ad(path)
+    out = str(tmp_path / "prepped.h5ad")
+
+    res = preprocess_counts(path=path, output_path=out, **thresholds)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "EmptyAfterFilteringError"
+    expected = {"min_genes": thresholds["min_genes"], "min_cells": thresholds.get("min_cells", 3)}
+    assert res["thresholds"] == expected
+    assert f"every {emptied}" in res["error"]
+    assert not os.path.exists(out)
+
+
+# --- compute_umap / benchmark_scib --------------------------------------------------------
+
+
+def _embedded_cells(nan_rows=()) -> AnnData:
+    rng = np.random.default_rng(2)
+    adata = _cells(rng.poisson(2.0, size=(60, 30)))
+    centers = rng.normal(scale=4.0, size=(3, 8))
+    for key, seed in (("X_emb", 0), ("X_pca", 1), ("X_prior", 2)):
+        noise = np.random.default_rng(seed).normal(size=(60, 8))
+        adata.obsm[key] = (centers[np.arange(60) % 3] + noise).astype(np.float32)
+    adata.obsm["X_emb"][list(nan_rows)] = np.nan
+    return adata
+
+
+def _same(a, b) -> bool:
+    import scipy.sparse as sp
+
+    if isinstance(a, dict):
+        return isinstance(b, dict) and a.keys() == b.keys() and all(_same(a[k], b[k]) for k in a)
+    if sp.issparse(a):
+        return sp.issparse(b) and a.dtype == b.dtype and a.shape == b.shape and (a != b).nnz == 0
+    if isinstance(a, np.ndarray):
+        return isinstance(b, np.ndarray) and a.dtype == b.dtype and np.array_equal(a, b)
+    return type(a) is type(b) and a == b
+
+
+def test_umap_keeps_the_existing_umap_and_neighbors(tmp_path):
+    """Only the new coordinates and this embedding's neighbors graph are added; nothing else changes."""
+    import anndata
+    import scanpy as sc
+
+    adata = _embedded_cells()
+    sc.pp.neighbors(adata, use_rep="X_prior", n_neighbors=5)
+    sc.tl.umap(adata, random_state=0)
+    path = str(tmp_path / "with_umap.h5ad")
+    adata.write_h5ad(path)
+    before = anndata.read_h5ad(path)
+
+    out = str(tmp_path / "umap_pca.h5ad")
+    res = compute_umap(path=path, embedding_key="X_pca", n_neighbors=5, output_path=out)
+    assert res["status"] == "success", res
+    after = anndata.read_h5ad(out)
+
+    for slot in ("obsm", "obsp", "uns"):
+        old, new = getattr(before, slot), getattr(after, slot)
+        changed = [key for key in old if key not in new or not _same(old[key], new[key])]
+        assert not changed, f"{slot} entries changed: {changed}"
+    nkey = res["neighbors_key"]
+    assert res["umap_key"] == "X_umap_pca" and nkey == "neighbors_pca"
+    assert set(after.obsm) - set(before.obsm) == {"X_umap_pca"}
+    assert set(after.obsp) - set(before.obsp) == {f"{nkey}_connectivities", f"{nkey}_distances"}
+    assert set(after.uns) - set(before.uns) == {nkey}
+    assert after.uns[nkey]["params"]["use_rep"] == "X_pca"
+    assert after.obsm["X_umap_pca"].shape == (60, 2)
+
+
+def test_umap_leaves_out_rows_without_a_finite_embedding(tmp_path):
+    """Two NaN rows (as missing='nan' leaves them): excluded, counted, named, NaN coordinates."""
+    import anndata
+
+    adata = _embedded_cells(nan_rows=(3, 10))
+    adata.obsm["X_all_nan"] = np.full((60, 4), np.nan, dtype=np.float32)
+    path = str(tmp_path / "with_nan.h5ad")
+    adata.write_h5ad(path)
+
+    out = str(tmp_path / "umap.h5ad")
+    res = compute_umap(path=path, embedding_key="X_emb", n_neighbors=5, output_path=out)
+    assert res["status"] == "success", res
+    assert res["n_excluded_nonfinite"] == 2
+    assert "cell_3" in res["warning"] and "cell_10" in res["warning"] and "missing='nan'" in res["warning"]
+    coords = np.asarray(anndata.read_h5ad(out).obsm[res["umap_key"]])
+    assert coords.shape == (60, 2)
+    assert np.isnan(coords[[3, 10]]).all()
+    assert np.isfinite(np.delete(coords, [3, 10], axis=0)).all()
+
+    none_left = compute_umap(path=path, embedding_key="X_all_nan", output_path=str(tmp_path / "x.h5ad"))
+    assert none_left["status"] == "error" and "cell_0" in none_left["error"]
+    assert not os.path.exists(tmp_path / "x.h5ad")
+
+
+def test_scib_leaves_out_rows_without_a_finite_embedding(tmp_path):
+    """benchmark_scib scores the other cells and reports the excluded ones like compute_umap."""
+    pytest.importorskip("scib", reason="scib is not installed")
+    path = str(tmp_path / "with_nan.h5ad")
+    _embedded_cells(nan_rows=(3, 10)).write_h5ad(path)
+
+    res = benchmark_scib(path=path, embedding_keys=["X_emb", "X_pca"], label_key="cell_type", batch_key="batch")
+    assert res["status"] == "success", res
+    assert res["n_excluded_nonfinite"] == 2
+    assert res["n_cells_scored"] == 58
+    assert "cell_3" in res["warning"] and "cell_10" in res["warning"] and "missing='nan'" in res["warning"]
+    assert set(res["metrics"]) == {"X_emb", "X_pca"}
+
+
+# --- compute_embeddings: keys owned by other models, temporary keys -----------------------
+
+
+def _with_cell_records(tmp_path, records: dict, obsm: dict) -> str:
+    adata = _cells(_poisson_counts(30, 40))
+    for key, value in obsm.items():
+        adata.obsm[key] = np.full((adata.n_obs, 3), value, dtype=np.float32)
+    adata.uns["embpy_cell_embeddings"] = records
+    path = str(tmp_path / "with_records.h5ad")
+    adata.write_h5ad(path)
+    return path
+
+
+@pytest.mark.parametrize("output_key", ["X_scvi", None], ids=["output_key", "default-key"])
+def test_key_of_another_model_is_refused(tmp_path, output_key):
+    """PCA must not be saved where uns['embpy_cell_embeddings'] says scVI's embedding is."""
+    scvi_key = output_key or "X_pca"
+    path = _with_cell_records(tmp_path, {"scvi": {"obsm_key": scvi_key, "embedding_dim": 3}}, {scvi_key: 7.0})
+    with open(path, "rb") as fh:
+        before = fh.read()
+
+    res = compute_embeddings(path=path, models="pca", output_key=output_key, output_path=path)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "OutputKeyConflictError"
+    assert "'scvi'" in res["error"] and scvi_key in res["error"]
+    with open(path, "rb") as fh:
+        assert fh.read() == before
+
+
+def test_a_model_can_reuse_its_own_key(tmp_path):
+    import anndata
+
+    path = _with_cell_records(tmp_path, {"pca": {"obsm_key": "my_pca", "embedding_dim": 3}}, {"my_pca": 7.0})
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", output_key="my_pca", preprocessing="none", output_path=out)
+    assert res["status"] == "success", res
+    saved = anndata.read_h5ad(out)
+    assert saved.uns["embpy_cell_embeddings"]["pca"]["obsm_key"] == "my_pca"
+    assert not np.all(np.asarray(saved.obsm["my_pca"]) == 7.0)
+
+
+def test_unrelated_keys_with_the_temporary_prefix_survive(tmp_path):
+    """Only this call's temporary matrices are deleted, even when other keys share their prefix."""
+    import anndata
+
+    path = _with_cell_records(tmp_path, {}, {"_embpy_new_X_pca": 1.0, "_embpy_new_X_notes": 2.0})
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", preprocessing="none", output_path=out)
+    assert res["status"] == "success", res
+    saved = anndata.read_h5ad(out)
+    np.testing.assert_array_equal(np.asarray(saved.obsm["_embpy_new_X_pca"]), 1.0)
+    np.testing.assert_array_equal(np.asarray(saved.obsm["_embpy_new_X_notes"]), 2.0)
+    assert set(saved.obsm) == {"_embpy_new_X_pca", "_embpy_new_X_notes", "X_pca"}
+    assert res["embedding_keys"] == ["X_pca"]
+
+
+# --- what the saved files and replies say about themselves ----------------------------------
+
+
+def test_saved_files_with_counts_in_x_are_not_marked_log_transformed(tmp_path):
+    """.X holds raw counts after preprocessing, so uns has no 'log1p' (scanpy's mark of a log .X)."""
+    import anndata
+
+    counts = _poisson_counts()
+    path = str(tmp_path / "counts.h5ad")
+    _cells(counts).write_h5ad(path)
+
+    prepped = str(tmp_path / "prepped.h5ad")
+    res = preprocess_counts(path=path, output_path=prepped, min_genes=0, min_cells=0)
+    assert res["status"] == "success", res
+    embedded = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", output_path=embedded)
+    assert res["status"] == "success", res
+    for saved_path in (prepped, embedded):
+        saved = anndata.read_h5ad(saved_path)
+        np.testing.assert_array_equal(np.asarray(saved.X), counts)
+        assert "log1p" not in saved.uns, saved_path
+        np.testing.assert_allclose(saved.layers["log_normalized"], _log_normalized(counts), rtol=1e-5, atol=1e-6)
+
+
+def test_only_named_layers_are_reported(tmp_path):
+    """anndata 0.13 lists .X as layers[None]; the replies list only real, named layers."""
+    adata = _cells(_poisson_counts())
+    adata.layers["counts"] = adata.X.copy()
+    path = str(tmp_path / "counts.h5ad")
+    adata.write_h5ad(path)
+
+    assert inspect_data(path=path)["layers"] == ["counts"]
+    res = preprocess_counts(path=path, output_path=str(tmp_path / "pp.h5ad"), min_genes=0, min_cells=0)
+    assert sorted(res["layers"]) == ["counts", "log_normalized"]
+    res = preprocess_counts(path=path, output_path=str(tmp_path / "none.h5ad"), preprocessing="none")
+    assert res["layers"] == ["counts"]
+
+
+def test_scib_table_names_each_embedding_without_tabulate(tmp_path, monkeypatch):
+    """pandas' to_markdown needs tabulate; the table must name each row's embedding without it."""
+    import sys
+
+    import pandas as pd
+
+    from embpy import tl
+
+    monkeypatch.setitem(sys.modules, "tabulate", None)  # as if tabulate were not installed
+    monkeypatch.setattr(
+        tl,
+        "compute_scib_metrics",
+        lambda adata, embedding_keys, **kwargs: pd.DataFrame(
+            {"nmi": [0.5, 0.25], "graph_conn": [np.nan, np.nan], "total": [0.6, 0.3]}, index=embedding_keys
+        ),
+    )
+    path = str(tmp_path / "embedded.h5ad")
+    _embedded_cells().write_h5ad(path)
+
+    res = benchmark_scib(path=path, embedding_keys=["X_pca", "X_prior"], label_key="cell_type")
+    assert res["status"] == "success", res
+    lines = res["markdown_table"].splitlines()
+    assert [cell.strip() for cell in lines[0].strip("|").split("|")] == ["embedding", "nmi", "graph_conn", "total"]
+    rows = {line.strip("|").split("|")[0].strip(): line for line in lines[2:]}
+    assert set(rows) == {"X_pca", "X_prior"}
+    assert "0.5000" in rows["X_pca"] and "0.2500" in rows["X_prior"]
+
+
+def test_scib_names_the_metrics_it_could_not_compute(tmp_path, monkeypatch):
+    """A metric that fails is listed with its reason instead of appearing as a bare NaN."""
+    scib = pytest.importorskip("scib", reason="scib is not installed")
+
+    def no_value_counts(*args, **kwargs):
+        raise AttributeError("module 'pandas' has no attribute 'value_counts'")
+
+    monkeypatch.setattr(scib.metrics, "graph_connectivity", no_value_counts)
+    path = str(tmp_path / "embedded.h5ad")
+    _embedded_cells().write_h5ad(path)
+
+    res = benchmark_scib(path=path, embedding_keys=["X_pca", "X_prior"], label_key="cell_type", batch_key="batch")
+    assert res["status"] == "success", res
+    unavailable = res["metrics_unavailable"]
+    assert "value_counts" in unavailable["graph_conn"]["reason"]
+    assert sorted(unavailable["graph_conn"]["embedding_keys"]) == ["X_pca", "X_prior"]
+    battery = {"nmi", "ari", "asw_label", "isolated_label_asw", "clisi", "asw_batch", "graph_conn", "ilisi", "kbet"}
+    for key, scores in res["metrics"].items():
+        missing = {metric for metric, value in scores.items() if metric in battery and value is None}
+        assert missing <= set(unavailable), (key, missing - set(unavailable))
+    assert "graph_conn" in res["warning"]
+
+
+def test_umap_without_umap_learn_names_the_package(tmp_path, monkeypatch):
+    """A missing umap module is reported with the package that provides it."""
+    import importlib.abc
+    import sys
+
+    class NoUmap(importlib.abc.MetaPathFinder):
+        def find_spec(self, name, path=None, target=None):
+            if name == "umap" or name.startswith("umap."):
+                raise ModuleNotFoundError(f"No module named '{name}'", name=name)
+            return None
+
+    for name in [m for m in sys.modules if m == "umap" or m.startswith("umap.")]:
+        monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setattr(sys, "meta_path", [NoUmap(), *sys.meta_path])
+    path = str(tmp_path / "embedded.h5ad")
+    _embedded_cells().write_h5ad(path)
+
+    res = compute_umap(path=path, embedding_key="X_pca", n_neighbors=5, output_path=str(tmp_path / "u.h5ad"))
+    assert res["status"] == "error", res
+    assert "No module named 'umap'" in res["error"]
+    assert "umap-learn" in res["suggestion"]
+    assert not os.path.exists(tmp_path / "u.h5ad")
+
+
+# --- normalized .X without raw counts -----------------------------------------------------
+
+
+@pytest.fixture
+def pca_input_means(monkeypatch):
+    """Column means of the matrix each PCA fit started from (its StandardScaler's means)."""
+    from embpy.models.singlecell_models import PCAEmbedding
+
+    means: list[np.ndarray] = []
+    real_embed_cells = PCAEmbedding.embed_cells
+
+    def embed_cells(self, adata):
+        result = real_embed_cells(self, adata)
+        means.append(np.asarray(self._scaler.mean_))
+        return result
+
+    monkeypatch.setattr(PCAEmbedding, "embed_cells", embed_cells)
+    return means
+
+
+def _normalized_only(tmp_path) -> tuple[str, np.ndarray]:
+    """A file whose .X is log-normalized, with neither a counts nor a log_normalized layer."""
+    x = _log_normalized(_poisson_counts(60, 300))
+    path = str(tmp_path / "lognorm.h5ad")
+    _cells(x).write_h5ad(path)
+    return path, x
+
+
+def test_normalized_x_is_embedded_as_is_and_count_models_are_refused(tmp_path, pca_input_means, fast_scvi):
+    """preprocessing='auto' on log-normalized .X: PCA uses .X as it is, scVI fails asking for counts."""
+    import anndata
+
+    path, x = _normalized_only(tmp_path)
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models=["pca", "scvi"], output_path=out)
+    assert res["status"] == "partial_success", res
+    assert res["models_computed"] == ["pca"]
+    assert "needs raw counts" in res["models_failed"]["scvi"]
+    assert "log_normalized" in res["models_failed"]["scvi"]
+    assert "log_normalized" in res["warning"] and "not normalized again" in res["warning"]
+    np.testing.assert_allclose(pca_input_means[0], x.mean(axis=0), rtol=1e-5, atol=1e-6)
+    saved = anndata.read_h5ad(out)
+    assert (saved.n_obs, saved.n_vars) == (60, 300)
+    assert "counts" not in saved.layers
+    assert "X_scvi" not in saved.obsm
+
+
+@pytest.mark.parametrize("mode", ["standard", "raw"])
+def test_preprocessing_normalized_x_again_is_refused(tmp_path, mode):
+    """preprocessing='standard' (or 'raw') would treat log-normalized .X as counts: NotRawCountsError."""
+    path, _ = _normalized_only(tmp_path)
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", preprocessing=mode, output_path=out)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "NotRawCountsError"
+    assert "needs raw counts" in res["error"] and "log_normalized" in res["error"]
+    assert not os.path.exists(out)
+
+
+@pytest.mark.parametrize("mode", ["auto", "none"])
+def test_count_models_alone_on_normalized_x_are_an_error(tmp_path, fast_scvi, mode):
+    path, _ = _normalized_only(tmp_path)
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="scvi", preprocessing=mode, output_path=out)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "NotRawCountsError"
+    assert "needs raw counts" in res["models_failed"]["scvi"]
+    assert not os.path.exists(out)
+
+
+# --- embpy.pp preprocess_counts, the library function embed_cells uses ----------------------
+
+
+def test_library_preprocessing_warns_when_x_is_not_counts():
+    """No counts layer and log-normalized .X: a UserWarning names what was found."""
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    adata = _cells(_log_normalized(_poisson_counts()))
+    with pytest.warns(UserWarning, match="log_normalized"):
+        library_preprocess(adata, min_genes=0, min_cells=0)
+
+
+def test_library_preprocessing_of_raw_counts_is_unchanged():
+    """Raw counts: no warning, and the same result as scanpy's steps run by hand."""
+    import warnings
+
+    import scanpy as sc
+
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    counts = _poisson_counts()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = library_preprocess(_cells(counts), min_genes=0, min_cells=0, n_top_genes=20)
+    assert not [w for w in caught if "raw counts" in str(w.message)]
+    expected = _cells(counts)
+    sc.pp.normalize_total(expected, target_sum=1e4)
+    sc.pp.log1p(expected)
+    sc.pp.highly_variable_genes(expected, n_top_genes=20, flavor="seurat")
+    np.testing.assert_array_equal(np.asarray(result.X), counts)
+    np.testing.assert_array_equal(np.asarray(result.layers["counts"]), counts)
+    np.testing.assert_allclose(result.layers["log_normalized"], expected.X, rtol=1e-6)
+    np.testing.assert_array_equal(result.var["highly_variable"], expected.var["highly_variable"])
+
+
+def test_library_preprocessing_starts_from_the_counts_layer():
+    """Log-normalized .X next to a counts layer: the counts layer is used, not overwritten."""
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    counts = _poisson_counts()
+    adata = _cells(_log_normalized(counts))
+    adata.layers["counts"] = counts.copy()
+    result = library_preprocess(adata, min_genes=0, min_cells=0, select_hvg=False)
+    np.testing.assert_array_equal(np.asarray(result.layers["counts"]), counts)
+    np.testing.assert_array_equal(np.asarray(result.X), counts)
+    np.testing.assert_allclose(result.layers["log_normalized"], _log_normalized(counts), rtol=1e-5, atol=1e-6)
+
+
+def test_embed_cells_records_the_counts_warning():
+    """BioEmbedder.embed_cells keeps the warning in uns['embpy_cell_embeddings']['__preprocessing__']."""
+    from embpy import BioEmbedder
+
+    adata = _cells(_log_normalized(_poisson_counts()))
+    with pytest.warns(UserWarning, match="log_normalized"):
+        out = BioEmbedder(device="cpu").embed_cells(adata, models="pca", preprocessing="standard",
+                                                    min_genes=0, min_cells=0)
+    record = out.uns["embpy_cell_embeddings"]["__preprocessing__"]
+    assert any("log_normalized" in warning for warning in record["input_warnings"])
+
+
+# --- which matrix holds the counts: corrected or EM counts in .X, original counts in a layer -----
+
+
+def _corrected_counts(seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """UMI counts, and the same counts after ambient-RNA removal without rounding (SoupX)."""
+    rng = np.random.default_rng(seed)
+    raw = rng.negative_binomial(5, 0.3, size=(100, 300)).astype(np.float32)
+    corrected = np.clip(raw - rng.uniform(0, 1.5, size=raw.shape), 0, None).astype(np.float32)
+    return raw, corrected
+
+
+def test_corrected_counts_in_x_stay_the_count_source():
+    """SoupX layout (corrected counts in .X, the original ones in .layers['counts']): .X is used, with a warning."""
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    raw, corrected = _corrected_counts()
+    adata = _cells(corrected)
+    adata.layers["counts"] = raw.copy()
+    with pytest.warns(UserWarning, match="non-integer"):
+        out = library_preprocess(adata, min_genes=1, min_cells=1, n_top_genes=50)
+    assert out.shape == corrected.shape
+    np.testing.assert_array_equal(np.asarray(out.X), corrected)
+    np.testing.assert_allclose(out.layers["log_normalized"], _log_normalized(corrected), rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("pipeline", ["raw", "standard"])
+def test_log_x_next_to_counts_switches_to_the_counts_with_a_warning(monkeypatch, pipeline):
+    """Log-normalized .X (marked by uns['log1p']) next to integer counts: the counts are used, the
+    switch is reported, and no stale uns['log1p'] reaches scanpy or the result."""
+    import scanpy as sc
+
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    marked_when_logged = []
+    real_log1p = sc.pp.log1p
+
+    def log1p(adata, *args, **kwargs):
+        marked_when_logged.append("log1p" in adata.uns)
+        return real_log1p(adata, *args, **kwargs)
+
+    monkeypatch.setattr(sc.pp, "log1p", log1p)
+    counts = _poisson_counts()
+    adata = _cells(_log_normalized(counts))
+    adata.uns["log1p"] = {"base": None}
+    adata.layers["counts"] = counts.copy()
+    with pytest.warns(UserWarning, match=r"layers\['counts'\]"):
+        out = library_preprocess(adata, pipeline=pipeline, min_genes=0, min_cells=0, select_hvg=False)
+    np.testing.assert_array_equal(np.asarray(out.X), counts)
+    assert "log1p" not in out.uns
+    assert not any(marked_when_logged)
+
+
+def test_embed_cells_records_the_switch_to_the_counts_layer():
+    from embpy import BioEmbedder
+
+    counts = _poisson_counts()
+    adata = _cells(_log_normalized(counts))
+    adata.layers["counts"] = counts.copy()
+    with pytest.warns(UserWarning, match=r"layers\['counts'\]"):
+        out = BioEmbedder(device="cpu").embed_cells(adata, models="pca", preprocessing="standard",
+                                                    min_genes=0, min_cells=0)
+    record = out.uns["embpy_cell_embeddings"]["__preprocessing__"]
+    assert any("layers['counts']" in warning for warning in record["input_warnings"])
+
+
+def test_mcp_tools_classify_corrected_counts_as_counts(tmp_path, fast_scvi):
+    """inspect_data and compute_embeddings follow the same rule: corrected counts are counts."""
+    _, corrected = _corrected_counts()
+    path = str(tmp_path / "soupx.h5ad")
+    _cells(corrected).write_h5ad(path)
+    assert inspect_data(path=path)["expression_nature"]["detected_nature"] == "non_integer_counts"
+    res = compute_embeddings(path=path, models=["pca", "scvi"], output_path=str(tmp_path / "embedded.h5ad"))
+    assert res["status"] == "success", res
+    assert res["models_computed"] == ["pca", "scvi"]
+    assert res["preprocessing_applied"] == "standard"
+
+
+@pytest.mark.parametrize("kind", ["integer", "non-integer"])
+def test_preprocess_counts_and_compute_embeddings_use_the_same_counts(tmp_path, kind):
+    """Corrected counts in .X and the original counts in .layers['counts'] (CellBender, SoupX):
+    both tools normalize .X, and preprocess_counts saves it as the counts."""
+    import anndata
+
+    rng = np.random.default_rng(4)
+    raw = rng.negative_binomial(5, 0.3, size=(100, 300)).astype(np.float32)
+    if kind == "integer":
+        corrected = np.maximum(raw - rng.integers(0, 2, size=raw.shape), 0).astype(np.float32)
+    else:
+        corrected = np.clip(raw - rng.uniform(0, 1.5, size=raw.shape), 0, None).astype(np.float32)
+    adata = _cells(corrected)
+    adata.layers["counts"] = raw.copy()
+    path = str(tmp_path / "corrected.h5ad")
+    adata.write_h5ad(path)
+    expected = _log_normalized(corrected)
+
+    prepped = str(tmp_path / "prepped.h5ad")
+    res = preprocess_counts(path=path, output_path=prepped, min_genes=0, min_cells=0, select_hvg=False)
+    assert res["status"] == "success", res
+    assert res["counts_source"] == ".X"
+    if kind == "non-integer":
+        assert "non-integer" in res["warning"]
+    saved = anndata.read_h5ad(prepped)
+    np.testing.assert_allclose(saved.layers["log_normalized"], expected, rtol=1e-5, atol=1e-6)
+    np.testing.assert_array_equal(np.asarray(saved.X), corrected)
+
+    embedded = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", output_path=embedded)
+    assert res["status"] == "success", res
+    saved = anndata.read_h5ad(embedded)
+    assert saved.shape == corrected.shape
+    np.testing.assert_allclose(saved.layers["log_normalized"], expected, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("mode", ["standard", "raw"])
+def test_normalized_x_without_counts_is_refused_whatever_other_layers_exist(tmp_path, mode):
+    """Log-normalized .X, a log_normalized layer and no counts layer: still NotRawCountsError."""
+    x = _log_normalized(_poisson_counts(60, 300))
+    adata = _cells(x)
+    adata.layers["log_normalized"] = x.copy()
+    path = str(tmp_path / "lognorm.h5ad")
+    adata.write_h5ad(path)
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", preprocessing=mode, output_path=out)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "NotRawCountsError"
+    assert not os.path.exists(out)
+
+
+def test_preprocessing_warnings_are_in_the_reply(tmp_path):
+    """The warning embed_cells records when preprocessing switches to the counts layer is in the reply."""
+    counts = _poisson_counts(60, 300)
+    adata = _cells(_log_normalized(counts))
+    adata.layers["counts"] = counts.copy()
+    path = str(tmp_path / "lognorm_with_counts.h5ad")
+    adata.write_h5ad(path)
+    res = compute_embeddings(path=path, models="pca", output_path=str(tmp_path / "embedded.h5ad"))
+    assert res["status"] == "success", res
+    assert "layers['counts']" in res["warning"]
+
+
+@pytest.fixture
+def fast_foundation_models(monkeypatch):
+    """Foundation models return a fixed embedding instead of loading weights or converting gene names."""
+    from embpy import BioEmbedder
+
+    class FixedWrapper:
+        def embed_cells(self, adata):
+            return np.zeros((adata.n_obs, 8), dtype=np.float32)
+
+    monkeypatch.setattr(BioEmbedder, "_get_or_load_singlecell_wrapper", lambda self, *args, **kwargs: FixedWrapper())
+    monkeypatch.setattr(
+        BioEmbedder, "_ensure_singlecell_vocabulary", lambda self, adata, model_key, organism="human": (adata, {})
+    )
+
+
+def test_foundation_models_need_raw_counts_in_x(tmp_path, fast_foundation_models):
+    """scGPT and the other foundation models read raw counts from .X (model card: input .X, preprocessing 'raw')."""
+    path, _ = _normalized_only(tmp_path)
+    res = compute_embeddings(path=path, models=["pca", "scgpt"], output_path=str(tmp_path / "embedded.h5ad"))
+    assert res["status"] == "partial_success", res
+    assert res["models_computed"] == ["pca"]
+    assert "needs raw counts in .X" in res["models_failed"]["scgpt"]
+
+    counts_path = str(tmp_path / "counts.h5ad")
+    _cells(_poisson_counts(60, 300)).write_h5ad(counts_path)
+    res = compute_embeddings(path=counts_path, models="scgpt", preprocessing="none",
+                             output_path=str(tmp_path / "counts_embedded.h5ad"))
+    assert res["status"] == "success", res
+
+
+def _fake_scib_metrics(monkeypatch, rows: dict, unavailable: dict) -> None:
+    """compute_scib_metrics returns this table, as if scib had computed it."""
+    import pandas as pd
+
+    from embpy import tl
+
+    def compute_scib_metrics(adata, embedding_keys, **kwargs):
+        table = pd.DataFrame.from_dict(rows, orient="index")
+        table.attrs["metrics_unavailable"] = unavailable
+        return table
+
+    monkeypatch.setattr(tl, "compute_scib_metrics", compute_scib_metrics)
+
+
+def test_scib_without_any_metric_is_an_error(tmp_path, monkeypatch):
+    nan = float("nan")
+    lisi = {"reason": "OSError: [WinError 193] %1 is not a valid Win32 application", "embedding_keys": ["X_pca", "X_prior"]}
+    nmi = {"reason": "ValueError: leiden found one cluster", "embedding_keys": ["X_pca", "X_prior"]}
+    empty = {"nmi": nan, "clisi": nan, "bio_conservation": nan, "batch_correction": nan, "total": nan}
+    _fake_scib_metrics(monkeypatch, {"X_pca": empty, "X_prior": dict(empty)}, {"nmi": nmi, "clisi": lisi})
+    path = str(tmp_path / "embedded.h5ad")
+    _embedded_cells().write_h5ad(path)
+    csv = str(tmp_path / "scores.csv")
+
+    res = benchmark_scib(path=path, embedding_keys=["X_pca", "X_prior"], label_key="cell_type", output_csv=csv)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "NoMetricsComputedError"
+    assert "WinError 193" in res["error"] and "one cluster" in res["error"]
+    assert res["metrics_unavailable"]["clisi"]["embedding_keys"] == ["X_pca", "X_prior"]
+    assert not os.path.exists(csv)
+
+
+def test_scib_with_an_embedding_without_metrics_is_partial(tmp_path, monkeypatch):
+    nan = float("nan")
+    _fake_scib_metrics(
+        monkeypatch,
+        {
+            "X_pca": {"nmi": 0.5, "clisi": nan, "bio_conservation": 0.5, "batch_correction": nan, "total": 0.5},
+            "X_prior": {"nmi": nan, "clisi": nan, "bio_conservation": nan, "batch_correction": nan, "total": nan},
+        },
+        {
+            "nmi": {"reason": "ValueError: leiden found one cluster", "embedding_keys": ["X_prior"]},
+            "clisi": {"reason": "OSError: [WinError 193]", "embedding_keys": ["X_pca", "X_prior"]},
+        },
+    )
+    path = str(tmp_path / "embedded.h5ad")
+    _embedded_cells().write_h5ad(path)
+
+    res = benchmark_scib(path=path, embedding_keys=["X_pca", "X_prior"], label_key="cell_type")
+    assert res["status"] == "partial_success", res
+    assert "X_prior" in res["warning"] and "no metric" in res["warning"]
+    assert res["metrics"]["X_pca"]["nmi"] == 0.5
+
+
+def test_standard_preprocessing_that_removes_every_cell_is_an_error(tmp_path):
+    """embed_cells' default min_genes=200 on a 40-gene file: EmptyAfterFilteringError, no file."""
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    adata = _cells(_poisson_counts(30, 40))
+    path = str(tmp_path / "small.h5ad")
+    adata.write_h5ad(path)
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", preprocessing="standard", output_path=out)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "EmptyAfterFilteringError"
+    assert res["thresholds"] == {"min_genes": 200, "min_cells": 3}
+    assert not os.path.exists(out)
+
+    with pytest.raises(ValueError, match="every cell"):
+        library_preprocess(adata, min_genes=200)
+
+
+def _corrected_layout(kind: str) -> tuple[np.ndarray, np.ndarray]:
+    """Original UMI counts, and corrected counts as CellBender (integers) or SoupX (non-integers) write them."""
+    rng = np.random.default_rng(5)
+    raw = rng.negative_binomial(5, 0.3, size=(100, 300)).astype(np.float32)
+    if kind == "integer":
+        return raw, np.maximum(raw - rng.integers(0, 2, size=raw.shape), 0).astype(np.float32)
+    return raw, np.clip(raw - rng.uniform(0, 1.5, size=raw.shape), 0, None).astype(np.float32)
+
+
+@pytest.mark.parametrize("kind", ["integer", "non-integer"])
+def test_a_different_counts_layer_is_kept_as_counts_original(tmp_path, kind):
+    """.X (corrected counts) is the count source; the input's own layers['counts'] is not lost but
+    kept as layers['counts_original'], by preprocess_counts, compute_embeddings and embpy.pp."""
+    import anndata
+
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    raw, corrected = _corrected_layout(kind)
+    adata = _cells(corrected)
+    adata.layers["counts"] = raw.copy()
+    path = str(tmp_path / "corrected.h5ad")
+    adata.write_h5ad(path)
+
+    prepped = str(tmp_path / "prepped.h5ad")
+    res = preprocess_counts(path=path, output_path=prepped, min_genes=0, min_cells=0, select_hvg=False)
+    assert res["status"] == "success", res
+    assert "counts_original" in res["warning"]
+    embedded = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", output_path=embedded)
+    assert res["status"] == "success", res
+    assert "counts_original" in res["warning"]
+    for saved_path in (prepped, embedded):
+        saved = anndata.read_h5ad(saved_path)
+        np.testing.assert_array_equal(np.asarray(saved.layers["counts_original"]), raw)
+        np.testing.assert_array_equal(np.asarray(saved.layers["counts"]), corrected)
+
+    with pytest.warns(UserWarning, match="counts_original"):
+        out = library_preprocess(adata, min_genes=0, min_cells=0, select_hvg=False)
+    np.testing.assert_array_equal(np.asarray(out.layers["counts_original"]), raw)
+
+
+def test_a_counts_layer_equal_to_x_is_not_duplicated(tmp_path):
+    import anndata
+
+    counts = _poisson_counts(60, 300)
+    adata = _cells(counts)
+    adata.layers["counts"] = counts.copy()
+    path = str(tmp_path / "counts.h5ad")
+    adata.write_h5ad(path)
+    prepped = str(tmp_path / "prepped.h5ad")
+    res = preprocess_counts(path=path, output_path=prepped, min_genes=0, min_cells=0, select_hvg=False)
+    assert res["status"] == "success", res
+    assert "warning" not in res
+    assert "counts_original" not in anndata.read_h5ad(prepped).layers

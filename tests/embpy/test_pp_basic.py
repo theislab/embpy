@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
@@ -10,6 +10,8 @@ import pytest
 from anndata import AnnData
 
 from embpy.pp.basic import PerturbationProcessor, reduce_embeddings
+from embpy.resources.gene import resolver as resolver_mod
+from embpy.resources.gene.resolver import GeneResolver
 
 # =====================================================================
 # Fixtures
@@ -101,6 +103,30 @@ class TestResolveIdentifiers:
         mock_resolver.symbol_to_ensembl.return_value = None
         df = processor.resolve_identifiers(["FAKEGENE"])
         assert df.iloc[0]["resolved"] == False  # noqa: E712
+
+    def test_unmapped_symbol_kept_by_fallback_is_not_resolved(self, tmp_path):
+        resolver = GeneResolver.__new__(GeneResolver)
+        resolver.ensembl = None
+        resolver.species = "human"
+        resolver._cache_file = tmp_path / "gene_id_cache.json"
+        resolver._ensure_cache()
+
+        def mygene(symbol, organism, **kwargs):
+            if symbol == "GENE7":
+                return {"status": "ok", "symbol": "GENE7", "ensembl_id": "ENSG90000000007", "candidates": ["GENE7"]}
+            return {"status": "miss", "symbol": None, "ensembl_id": None, "candidates": []}
+
+        with (
+            patch.object(resolver_mod, "_mygene_exact_symbol_lookup", side_effect=mygene),
+            patch.object(resolver_mod, "_ensembl_get", return_value=MagicMock(ok=False, status_code=400)),
+        ):
+            processor = PerturbationProcessor(gene_resolver=resolver, drug_resolver=MagicMock())
+            df = processor.resolve_identifiers(["GENE7", "NOTAGENE"], fallback_to_unmapped=True)
+        rows = df.set_index("original_id")
+        assert rows.loc["GENE7", "canonical_id"] == "ENSG90000000007"
+        assert rows.loc["GENE7", "resolved"] == True  # noqa: E712
+        assert rows.loc["NOTAGENE", "canonical_id"] == "NOTAGENE"
+        assert rows.loc["NOTAGENE", "resolved"] == False  # noqa: E712
 
 
 # =====================================================================

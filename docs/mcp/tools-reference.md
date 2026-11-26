@@ -1,0 +1,399 @@
+# MCP Tools Reference
+
+The `embpy` MCP server registers nine tools. (Older names of six of them, `inspect_anndata`,
+`map_gene_identifiers`, `list_available_models`, `embed_cells`, `evaluate_scib` and
+`evaluate_perturbations`, can still be imported from `embpy.mcp` as Python functions, but
+they are not MCP tools.) Every tool reads and writes `.h5ad` files on disk and returns
+compact JSON with a `status` field:
+
+| `status` | Meaning |
+|---|---|
+| `success` | Everything that was requested was done. |
+| `partial_success` | Some inputs succeeded; the counts in the result say which. |
+| `error` | Nothing usable was produced, or the request was invalid. `error_type` and `error` explain why. |
+
+| Tool | Purpose |
+|---|---|
+| [`inspect_data`](#inspect_data) | Dimensions, columns, layers and count type of a dataset |
+| [`resolve_identifiers`](#resolve_identifiers) | Gene symbols <-> Ensembl ids; compound names / SMILES -> canonical SMILES |
+| [`preprocess_counts`](#preprocess_counts) | QC filtering, normalization, log1p, HVG selection |
+| [`list_model_registry`](#list_model_registry) | Models each embedding modality can run; compute device |
+| [`compute_embeddings`](#compute_embeddings) | Embeddings for one modality, from a chosen input column |
+| [`annotate_metadata`](#annotate_metadata) | GO, pathways, domains, diseases, interactions, expression, properties |
+| [`compute_umap`](#compute_umap) | kNN graph and 2D UMAP on an embedding |
+| [`benchmark_scib`](#benchmark_scib) | scIB bio-conservation and batch-correction metrics |
+| [`benchmark_perturbations`](#benchmark_perturbations) | cell-eval scoring of predicted vs observed perturbations |
+
+---
+
+## `inspect_data`
+
+`inspect_data(path=None, data=None, max_categories=10)`
+
+Reads an `.h5ad` in backed mode (or inspects a list of strings via `data`) and returns
+`n_obs`, `n_vars`, `obs_columns`, `obs_summary`, `layers` (named layers only; anndata 0.13 also
+lists `.X` as an unnamed layer, which is left out), `obsm_keys`, `var_sample`,
+`gene_id_type_hint`, `expression_nature` (see below), and candidate label and batch columns
+(`recommended_label_key`, `recommended_batch_key`; picked from column names).
+
+`expression_nature.detected_nature` is judged from the first 50 cells of `.X`, by the same rule
+every tool and `embpy.pp.preprocess_counts` use:
+
+| `detected_nature` | Values | Used as counts |
+|---|---|---|
+| `raw_counts` | non-negative integers | yes |
+| `non_integer_counts` | non-negative non-integers above the log range (largest value over 25), cells with different totals: e.g. ambient-corrected (SoupX, DecontX) or EM-assigned counts | yes, with a warning |
+| `log_normalized` | non-integers up to 25, or a `.X` that `.uns["log1p"]` marks as log-transformed | no |
+| `continuous_normalized` | non-integers with the same total in every cell (normalized, no log) | no |
+| `scaled_or_centered` | negative values | no |
+
+---
+
+## `resolve_identifiers`
+
+```python
+resolve_identifiers(
+    identifiers=None, genes=None, path=None,
+    entity_type="auto",            # "auto" | "gene" | "molecule"
+    source_id_type="auto",         # "auto" | "symbol" | "ensembl" | "name" | "smiles"
+    target_id_type="auto",         # "auto" | "ensembl" | "symbol" | "smiles"
+    organism=None,                 # "human" | "mouse" | "auto" | omitted
+    column=None, obs_column=None, var_column=None,
+    output_path=None, strict=False,
+)
+```
+
+**Targets.** Genes convert to `ensembl` or `symbol` (`auto` converts each id to the other kind).
+Molecules convert to canonical `smiles` (names are looked up on PubChem/CIR; SMILES are
+canonicalized with RDKit). Any other target, or a target that does not fit the entity type, is
+rejected. `entity_type="auto"` treats strings with SMILES syntax that RDKit parses as molecules
+and everything else as genes; pass `entity_type="molecule"` for compound names.
+
+**Species.**
+
+- `organism="human"` / `"mouse"` is always used. Symbols are looked up in that species
+  whatever their capitalization (`Egfr` with `"human"` resolves to human EGFR; `notes` records
+  the case-insensitive match). An Ensembl id from another species returns
+  `error_type: "SpeciesMismatchError"`.
+- Omitted: human, except that an Ensembl id's prefix decides its species (`ENSMUSG...` -> mouse).
+- `"auto"`: opt-in detection from Ensembl prefixes and symbol case (`TP53` human, `Trp53` mouse).
+
+`organism_used` reports how many identifiers were resolved in each species.
+
+**Lookups.** Cache -> pyensembl (if installed) -> Ensembl REST -> MyGene.info. MyGene is queried
+by exact symbol, then exact alias, for the requested species only. An alias shared by several
+genes is reported in `ambiguous` with the candidate symbols instead of being resolved to
+whichever gene ranks first; resolved aliases are reported in `notes` (`P53` -> `TP53`).
+
+**Status.** Counted per input entry (duplicates and blanks included): all mapped -> `success`,
+some -> `partial_success`, none -> `error`. With `strict=True` any unmapped entry, including a
+blank one, makes the call an `error` and nothing is written. Entries rejected before lookup
+are listed in `invalid` with the reason.
+
+With `path` and `output_path`, the mapped ids are written to `<column>_mapped` (or
+`gene_mapped_id` for `var_names`) row by row, keeping order, duplicates and missing values.
+
+---
+
+## `preprocess_counts`
+
+`preprocess_counts(path, output_path=None, preprocessing="standard", min_genes=200, min_cells=3, target_sum=1e4, n_top_genes=2000, select_hvg=True, log_transform=True, scale=False, auto_adjust=False, assume_counts=False)`
+
+`standard` applies the thresholds exactly; `auto` / `auto_adjust=True` lowers them for small
+datasets and reports `adjustments_applied`; `none` only copies counts to `.layers["counts"]`.
+Raw counts stay in `.X` and `.layers["counts"]`; normalized values go to
+`.layers["log_normalized"]` (and `.layers["scaled"]`). Because `.X` holds counts, the file has
+no `.uns["log1p"]`, which scanpy and cell-eval read as "`.X` is log-transformed"; the same
+holds for files that `compute_embeddings` preprocessed. Default output:
+`<input>_preprocessed.h5ad`.
+
+**Which counts.** One rule, followed by `preprocess_counts`, `compute_embeddings` and
+`embpy.pp.preprocess_counts`, so every tool normalizes the same matrix of a file:
+
+- `.X` is the source when it holds counts: integers (`raw_counts`), or non-integer counts such
+  as ambient-corrected (SoupX, DecontX) or EM-assigned counts (`non_integer_counts`, with a
+  `warning`). An integer `.X` next to other integers in `.layers["counts"]` (e.g. CellBender
+  output next to the original counts) is used too.
+- `.layers["counts"]` is the source only when `.X` is clearly not counts (log-transformed,
+  normalized or scaled; see `inspect_data`'s `expression_nature`) and that layer holds counts.
+  `warning` says so.
+
+`counts_source` names the matrix used, and the saved file holds it in `.X` and
+`.layers["counts"]`. When `.X` is used and the input's `.layers["counts"]` holds other values
+(e.g. the original counts next to SoupX- or CellBender-corrected ones in `.X`), that layer is not
+overwritten but kept as `.layers["counts_original"]`, and the `warning` says so; files that
+`compute_embeddings` preprocesses keep it the same way. If neither holds counts, the call returns
+`error_type: "NotRawCountsError"` with the detected `expression_nature` instead of normalizing
+normalized data again; `assume_counts=True` uses `.X` as the counts anyway. If filtering would
+leave no cell or no gene, the call returns `error_type: "EmptyAfterFilteringError"` with the
+`thresholds` it used. No file is written in either case.
+
+---
+
+## `list_model_registry`
+
+`list_model_registry(entity_type=None)`
+
+Returns, per modality, `recommended_models` (curated canonical keys), `available_models`
+(every model that modality's execution path can run) and `execution_paths` (the expected
+input and the BioEmbedder backend), plus `compute_device`, `runnable_singlecell_models` and
+`optional_extras_status`. With `entity_type`, the lists are limited to that modality.
+
+---
+
+## `compute_embeddings`
+
+```python
+compute_embeddings(
+    path, models="pca", entity_type="single_cell",
+    obs_column=None, var_column=None, input_axis="auto",   # where the inputs are
+    id_type=None, organism="human", missing="error",
+    batch_size=32, output_key=None, output_path=None,
+    preprocessing="auto", device="auto",
+)
+```
+
+Each modality has one execution path, and a model is accepted only if that path can run it:
+
+| `entity_type` | Input | Backend | Model types accepted |
+|---|---|---|---|
+| `single_cell` | expression matrix | `BioEmbedder.embed_cells` | single-cell models (`pca`, `scvi`, `scgpt`, `geneformer_v2_12L`, `state`, ...) |
+| `gene` | gene symbols / Ensembl ids (`var_names` by default) | `embed(entity_type="gene")` | DNA, protein and text models; static tables (`genept`, `gene2vec`, ...) |
+| `perturbation` | each cell's perturbed gene, in `obs_column` | `embed(entity_type="gene", is_perturbation=True)` | as `gene`; one vector per cell |
+| `dna` | nucleotide sequences | `embed(entity_type="sequence")` | DNA models |
+| `protein` | identifiers or sequences (`id_type`) | `embed(entity_type="protein")` | protein models (ESM-2, ESM-1v, ProtT5, Boltz-2) |
+| `molecule` | SMILES (or names with `id_type="name"`) | `embed(entity_type="molecule")` | molecule models (fingerprints, ChemBERTa, MoLFormer) |
+| `text` | free text | `embed(entity_type="text")` | text models |
+| `morphology` | perturbation labels with HPA/JUMP images | `embed(entity_type="perturbation")` | SubCell models |
+
+A mismatch (e.g. `state` under `perturbation`, `boltz2` under `morphology`) or an unknown name
+returns `error_type: "UnsupportedModelError"` naming the modality the model belongs to.
+Aliases only map to the same model (`esm2_t33_650m` -> `esm2_650M`); applied aliases are
+listed in `model_aliases_applied`.
+
+For every modality except `single_cell` the call is the same as
+`BioEmbedder().embed(adata, entity_type=<backend>, model=..., obs_column=..., var_column=..., anndata_axis=..., id_type=..., organism=..., missing=...)`
+and gives the same matrix. Results are attached to the axis the inputs came from.
+`missing="error"` fails when a row gets no embedding and names it; `missing="nan"` fills
+those rows with NaN.
+
+**Single-cell preprocessing.** With `preprocessing="auto"` (the default), an input that already
+holds `.layers["log_normalized"]` (`preprocess_counts` output) is used as is: no cells or genes
+are filtered and `.var["highly_variable"]` is kept, so PCA uses the genes `preprocess_counts`
+selected (`preprocessing_note` says so). Raw counts are filtered, normalized and given HVGs as
+the models need, with QC/HVG thresholds lowered for small datasets (`preprocessing_adjustments`).
+`standard` and `raw` always run their pipeline, with `min_genes=200` and `min_cells=3`; if that
+removes every cell or every gene (e.g. a small toy file), the call returns
+`error_type: "EmptyAfterFilteringError"` with the `thresholds` used and writes nothing. `none`
+never filters or transforms.
+`preprocessing_applied` names the pipeline that ran.
+
+**Counts.** Preprocessing starts from the counts chosen by the rule described under
+[`preprocess_counts`](#preprocess_counts): `.X` when it holds counts (also corrected,
+non-integer counts), `.layers["counts"]` only when `.X` is normalized. Its warnings about them
+(corrected counts used as counts, or the switch to `.layers["counts"]`) are repeated in
+`warning` and kept in `.uns["embpy_cell_embeddings"]["__preprocessing__"]["input_warnings"]`.
+
+**Normalized input without raw counts.** If `.X` is already normalized or log-transformed (as
+`inspect_data`'s `expression_nature` reports) and no `.layers["counts"]` holds counts, whatever
+other layers exist (e.g. a file normalized with scanpy), `auto` embeds `.X` as the normalized
+expression, as `none` would, and says so in `warning`: nothing is normalized again. (A file
+that also holds `.layers["log_normalized"]` is used as is, as above.) `standard` and `raw`
+refuse such a file with `error_type: "NotRawCountsError"` instead of treating `.X` as counts.
+Whenever no preprocessing runs (`none`, or `auto` on prepared input), each model that needs raw
+counts gets them where its model card says it reads them: `scvi`, `scanvi` and `totalvi` in
+`.layers["counts"]` (or `.X`), the foundation models (`scgpt`, `geneformer_*`, `uce`,
+`transcriptformer_*`, `tahoe_*`, `cell2sentence_*`, `state`, `stack`) in `.X`. Given other
+values, each such model fails in `models_failed` with a message saying so (`partial_success`,
+or an `error` with `error_type: "NotRawCountsError"` when no model could run); `pca` reads
+normalized expression and runs.
+
+**Keys.** Each single-cell model is saved as `.obsm["X_<model>"]` (or `output_key`) and recorded
+in `.uns["embpy_cell_embeddings"]`. A key that this record assigns to another model is refused
+before anything runs (`error_type: "OutputKeyConflictError"`, naming the model in
+`conflicting_keys`), so two records never describe one matrix; a model may reuse its own key.
+
+Returns `n_obs_input` / `n_obs_output` and `n_vars_input` / `n_vars_output` (cells and genes
+before and after; when preprocessing removed some, `warning` says how many and which
+thresholds removed them), `embedding_keys`, `embedding_slots` (`obsm` / `varm`),
+`embedding_shapes`, `metadata_keys` (provenance in `.uns`) and `output_path` (default
+`<input>_embedded.h5ad`).
+
+---
+
+## `annotate_metadata`
+
+```python
+annotate_metadata(
+    path=None, entity_type="auto",  # "gene" | "protein" | "molecule" | "cell_line"
+    annotation_types=None, annotation_type=None,
+    column=None, sources=None, id_type="auto",
+    organism="human", output_path=None,
+    identifiers=None,               # e.g. ["TP53"]: annotate a list, no file needed
+)
+```
+
+Give either `path` (an `.h5ad` and its `column`) or `identifiers`. For example, "which human
+Reactome pathways include TP53?" is
+`annotate_metadata(identifiers=["TP53"], entity_type="gene", annotation_types="pathways", sources=["reactome"])`.
+
+| `entity_type` | `annotation_types` (sources) |
+|---|---|
+| `gene` | `go` (uniprot), `domains` (uniprot, interpro), `pathways` (reactome, kegg, wikipathways), `interactions` (string, dorothea), `diseases` (open_targets, gwas_catalog; human only), `expression` (gtex, hpa; human only) |
+| `protein` | `go`, `domains` (uniprot, interpro), `diseases`, `interactions`, `function`, `location` (uniprot) |
+| `molecule` | `properties` (rdkit), `interactions` (chembl), `pathways` (kegg), `diseases` (pubchem) |
+| `cell_line` | `cell_line` (depmap, via pertpy) |
+
+Every requested type runs for every unique entity in `column`, in `organism`, against the
+requested `sources` (default: all sources of the type). An entity counts as annotated for a
+type only if that type returned records; the input name echoed back does not count.
+`per_type` reports, per type, how many entities were `annotated`, had `no_match`, or hit a
+`service_error` (a request that failed after retries), plus `species_mismatch` when it happened:
+for UniProt-backed types the entry's species is checked against `organism`, and an entry of
+another species (e.g. human P04637 asked for as mouse) is not annotated; `species_mismatches`
+names both species.
+
+- `success`: every entity has every requested type; `partial_success`: some do.
+- `error` / `NoAnnotationsFound`: the lookups completed and matched nothing; the error starts
+  "No pathways found" (or "No GO terms found", ...).
+- `error` / `AnnotationServiceError`: requests failed; the error starts "Couldn't reach
+  <service>." (e.g. "Couldn't reach Reactome.") and `service_errors_sample` shows examples.
+- `error` / `SpeciesMismatch`: the identifiers lead to UniProt entries of another species; the
+  error starts "Species mismatch:" and names both species. With some entities annotated, the
+  same text is the `warning`.
+- `error` / `ModuleNotFoundError`: a package is missing (e.g. RDKit, used by every molecule
+  lookup; pertpy for cell lines); `suggestion` gives the install command.
+- A source that failed while others answered is listed in `unreachable_services`, with a
+  `warning`.
+
+`records_preview` gives, per entity (first 10), type and source, the number of records and the
+first ones (ids and names; up to 50 for a single entity).
+
+Reactome pathways come from Reactome's release files (release 98). The first Reactome request
+downloads them (about 37 MB) into `~/.cache/embpy/reactome/98` (`$EMBPY_CACHE` moves it) and
+later requests reuse them.
+
+KEGG pathways of molecules are looked up in a local KEGG reference: the folder named by
+`$EMBPY_KEGG_REFERENCE`, or else `~/.cache/embpy/kegg` (`$EMBPY_CACHE/kegg`). It is not
+downloaded automatically, because KEGG's REST API is for academic use only; build it once with
+`embpy.resources.molecule.kegg_index.build_kegg_reference("<folder>")`. The reply's
+`kegg_reference` gives the folder and KEGG release used. Without a usable reference the reply is
+`error` / `KeggReferenceUnavailable` ("The KEGG search could not run ..."), with the build
+command in `suggestion`; "No pathways found" means the search ran and matched nothing.
+
+Nothing is written when nothing was annotated, or for `identifiers` without `output_path`
+(`output_path` is then null and `new_columns_added` empty).
+Otherwise `.uns["embpy_annotations"]["results_json"]` holds the records as JSON: identifier ->
+entity type (`gene`, `protein`, `molecule`) -> organism (`any` for molecules, whose annotations
+do not depend on it) -> annotation type -> source -> records. `.obs` gains `<prefix>_<type>_n`
+counts of the records stored per row (`gene_`, `prot_`, `mol_`; molecules with `properties` also
+get `mol_<property>` columns of the stored values, so a compound whose lookup failed keeps its
+earlier values).
+
+Annotating the output again adds to the stored records: other entity types, organisms, types and
+sources stay, so gene and protein annotations of one column (or one column annotated for two
+organisms) never replace each other. A type and source looked up again replace their records for
+the entities looked up, for that entity type and organism; where that request failed, the
+earlier records stay. `provenance_json["sources"]` lists each stored entity type, organism,
+identifier column, annotation type and source, and `annotation_types` lists every stored type.
+Files written by earlier versions, which kept identifier -> type -> source, are read too: their
+records belong to the entity type and organism their stored provenance or record names.
+
+Each identifier column keeps its own counts. `<prefix>_<type>_n` belongs to the first column
+annotated for that type, and annotating that column again updates it. When another column is
+annotated for a type that already has counts from a different column (e.g. `target` after
+`gene`), its counts go to `<prefix>_<type>_n_<column>` (`gene_go_n_target`), listed in
+`new_columns_added`. `provenance_json["count_columns"]` maps each count column to its identifier
+column, entity type, organism and annotation type, and the column counts only the records of
+that entity type and organism. Every count column listed there is recounted from the stored
+records whenever the file is written, so columns that share entities always agree with the
+records. Molecule property columns follow the same naming rule:
+`mol_<property>` belongs to the first SMILES column annotated with `properties`, another column
+gets `mol_<property>_<column>` (e.g. `mol_molecular_weight_vehicle`), and
+`provenance_json["property_columns"]` maps each to its identifier column and property.
+Count and property columns that earlier versions wrote under these names (which they did not
+record) are taken over for the identifier column their records came from, so annotating that
+column again updates them. A column of such a name that this tool did not write is never
+overwritten: the new counts or values get the `_<column>` name instead.
+
+---
+
+## `compute_umap`
+
+`compute_umap(path, embedding_key="X_pca", n_neighbors=15, min_dist=0.5, output_key=None, output_path=None, random_state=42)`
+
+Stores coordinates in `.obsm["X_umap_<name>"]` and the kNN graph the way scanpy does with
+`neighbors_key="neighbors_<name>"` (`.uns["neighbors_<name>"]`,
+`.obsp["neighbors_<name>_connectivities"]`, `.obsp["neighbors_<name>_distances"]`;
+`neighbors_<output_key>` when `output_key` is given). Nothing else in the file changes: an
+existing `.obsm["X_umap"]`, `.obsp["connectivities"]` / `["distances"]` or
+`.uns["neighbors"]` / `["umap"]` is kept. Returns `umap_key`, `neighbors_key` and `umap_shape`.
+
+Cells whose embedding has NaN or infinite values (e.g. rows left empty by
+`compute_embeddings(..., missing="nan")`) are left out of the graph and get NaN coordinates;
+`n_excluded_nonfinite` counts them and `warning` names a few. If no cell has a finite
+embedding, the call returns `error_type: "NonFiniteEmbeddingError"`.
+
+---
+
+## `benchmark_scib`
+
+`benchmark_scib(path, embedding_keys, label_key, batch_key=None, output_csv=None)`
+
+Returns `markdown_table` (one row per embedding, named in its first column, `embedding`),
+`rankings` (by `total`) and per-key `metrics`. Needs `embpy[scib]`.
+
+A metric scib cannot compute here is NaN in the table and left out of `bio_conservation`,
+`batch_correction` and `total`. `metrics_unavailable` lists each such metric with its `reason`
+(the error, or a NaN scib returned), the `embedding_keys` it failed for and, for known causes,
+a `hint`: LISI metrics (`clisi`, `ilisi`) do not run on Windows, `kbet` needs R and rpy2, and
+`graph_conn` fails with scib versions that call `pandas.value_counts` on pandas 3. A `warning`
+names them. An embedding for which scib computed no metric at all has no scores: the call is
+then `partial_success` (the `warning` names it), or an `error` with
+`error_type: "NoMetricsComputedError"` and the reasons when that holds for every embedding (no
+CSV is written).
+
+Cells with NaN or infinite values in any of the `embedding_keys` are left out, so every
+embedding is scored on the same cells: `n_cells_scored`, `n_excluded_nonfinite`,
+`nonfinite_rows_by_key` and a `warning` report them, as in `compute_umap`.
+
+---
+
+## `benchmark_perturbations`
+
+`benchmark_perturbations(path, control_pert, pert_col="perturbation", split_col=None, pred_label=None, ref_label=None, path_pred=None, embedding_keys=None, output_csv=None, output_dir=None, profile="minimal")`
+
+Either `split_col` with two different categories `pred_label` and `ref_label`, or `path_pred`
+pointing to a different predictions file. Identical labels, the same file twice, or two files
+with the same cells and values are rejected, since they would score predictions against
+themselves. Needs `embpy[eval]` (cell-eval).
+
+Each of `embedding_keys` must be in `.obsm` of both the prediction and the reference data,
+with the same number of columns. Otherwise nothing is scored: the error names the missing
+key and the files it is missing from, and `available_keys` lists the embeddings both have
+(for example "Embedding 'X_DOES_NOT_EXIST' is missing from .obsm of the prediction file
+(pred.h5ad) and the reference file (real.h5ad). Available embedding: X_good.").
+
+Two cell-eval metrics score an embedding, the two that `cell-eval run --embed-key` uses:
+`discrimination_score_l2` and `discrimination_score_cosine`. They run with `profile="anndata"`
+or `"full"`: once on gene expression (the plain columns) and once per requested embedding, in
+columns `discrimination_score_l2[<key>]` and `discrimination_score_cosine[<key>]`. Every other
+score is computed on gene expression (`.X`). `profile="minimal"` (the default), `"vcc"` and
+`"de"` score gene expression only; requested embeddings are then listed in `unscored_keys`,
+with a `warning` naming the profiles that score them.
+
+Returns:
+
+- `markdown_table` and `results`: one row per perturbation, one column per score.
+- `scored_on`: the data each column was computed on, `"gene expression (.X)"` or
+  `"embedding <key> (.obsm['<key>'])"`.
+- `evaluated_keys`: the embeddings a metric read. A key is listed only if it was scored.
+- `unscored_keys`: requested embeddings the profile does not score.
+- `output_csv`: the per-perturbation table, if requested.
+- `output_dir` and `report_files`: the reports written to `output_dir`, as `cell-eval run`
+  names them: `results.csv` (the table in `results`), `agg_results.csv` (statistics per
+  score), and `real_de.csv` and `pred_de.csv` (differential expression of each perturbation
+  against `control_pert`). Without `output_dir` nothing is written apart from `output_csv`.
+
+An embedding that cell-eval cannot score (for example one with NaN values) is an error
+quoting cell-eval's message; cell-eval itself only logs a failing metric and leaves it out.

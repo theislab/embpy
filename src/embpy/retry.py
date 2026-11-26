@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import random
 import time
 from collections.abc import Callable, Sequence
 from typing import Any, TypeVar
@@ -48,6 +49,8 @@ def retry_with_backoff(
     base_delay: float = 1.0,
     max_delay: float = 30.0,
     backoff_factor: float = 2.0,
+    jitter: bool = False,
+    jitter_max: float = 0.5,
     retryable: tuple[type[BaseException], ...] = (Exception,),
     non_retryable: tuple[type[BaseException], ...] = (),
     on_retry: Callable[[int, BaseException, float], None] | None = None,
@@ -69,6 +72,12 @@ def retry_with_backoff(
         ``backoff_factor``.
     backoff_factor
         Multiplier applied to the delay between attempts.
+    jitter
+        If True, adds random jitter (between 0.0 and ``jitter_max`` seconds)
+        to the delay on retryable transient errors, avoiding synchronized
+        thundering herd surges.
+    jitter_max
+        Maximum jitter in seconds added when ``jitter`` is True (default: 0.5).
     retryable
         Exception types that trigger a retry. Defaults to ``Exception``
         i.e. retry everything Python; tighten to e.g.
@@ -121,6 +130,8 @@ def retry_with_backoff(
                     server_wait = getattr(exc, "retry_after", None)
                     if server_wait is not None:
                         sleep_for = max(sleep_for, float(server_wait))
+                    elif jitter:
+                        sleep_for = sleep_for + random.uniform(0.0, float(jitter_max))
                     if on_retry is not None:
                         try:
                             on_retry(attempt, exc, sleep_for)

@@ -15,12 +15,40 @@ preprocessing (normalize, log1p, HVG, scale).
 from __future__ import annotations
 
 import logging
+import warnings
 from typing import Literal
 
 import numpy as np
 import scipy.sparse as sp
 
+from embpy._counts import NotRawCountsWarning
+from embpy._counts import counts_source as _counts_source
+
 logger = logging.getLogger(__name__)
+
+
+class EmptyAfterFilteringError(ValueError):
+    """QC filtering in :func:`preprocess_counts` left no cell or no gene.
+
+    ``thresholds`` holds the filters that were applied; ``n_obs`` / ``n_vars`` the input size.
+    """
+
+    def __init__(self, emptied: str, thresholds: dict[str, float], n_obs: int, n_vars: int) -> None:
+        self.emptied = emptied
+        self.thresholds = thresholds
+        self.n_obs = n_obs
+        self.n_vars = n_vars
+        applied = " and ".join(f"{name}={value}" for name, value in thresholds.items())
+        super().__init__(
+            f"Filtering with {applied} removed every {emptied} (input: {n_obs} cells x {n_vars} genes), "
+            "so there is nothing to preprocess. Lower the thresholds."
+        )
+
+
+def _raw_counts_source(adata) -> tuple[bool, str | None]:  # type: ignore[no-untyped-def]
+    """``(use_counts_layer, warning)`` for :func:`preprocess_counts`; see :func:`embpy._counts.counts_source`."""
+    choice = _counts_source(adata)
+    return choice["source"] == "counts", choice["message"]
 
 
 def _require_scanpy():  # type: ignore[no-untyped-def]
@@ -70,7 +98,17 @@ def preprocess_counts(
     Parameters
     ----------
     adata
-        AnnData with raw counts in ``.X``.
+        AnnData with counts in ``.X``. Non-integer counts with count-like magnitudes
+        (ambient-corrected or EM counts) are used as they are. Only when ``.X`` is
+        clearly not counts (log-transformed, e.g. marked by ``.uns["log1p"]``,
+        normalized or scaled) and ``.layers["counts"]`` holds counts are those used
+        instead; if neither holds counts, ``.X`` is treated as counts. Every case but
+        integer counts in ``.X`` gives a :class:`NotRawCountsWarning` (a
+        ``UserWarning``) saying what was found and which matrix was used. When ``.X``
+        is used and the input's ``.layers["counts"]`` holds other values (e.g. the
+        original counts next to corrected ones), that layer is kept as
+        ``.layers["counts_original"]`` instead of being overwritten, with the same
+        warning.
     pipeline
         ``"raw"`` applies only basic QC filtering.
         ``"standard"`` runs the full workflow (normalize, log1p,
@@ -115,6 +153,14 @@ def preprocess_counts(
         - ``.layers["log_normalized"]`` = processed expression
           (standard pipeline only)
         - ``.var["highly_variable"]`` = HVG flag (standard pipeline)
+        - no ``.uns["log1p"]``: scanpy reads that entry as "``.X`` is
+          log-transformed", and ``.X`` holds counts
+
+    Raises
+    ------
+    EmptyAfterFilteringError
+        A ``ValueError`` raised when QC filtering leaves no cell or no gene; it
+        carries the ``thresholds`` that were applied.
     """
     sc = _require_scanpy()
     if backend == "gpu":
@@ -127,6 +173,18 @@ def preprocess_counts(
     if copy:
         adata = adata.copy()
 
+    choice = _counts_source(adata)
+    if choice["message"]:
+        warnings.warn(choice["message"], NotRawCountsWarning, stacklevel=2)
+    if choice["source"] == "counts":
+        # .X is clearly not counts, but .layers["counts"] holds them: start from those.
+        # .uns['log1p'] described the replaced .X, which now holds counts.
+        adata.X = adata.layers["counts"].copy()
+        adata.uns.pop("log1p", None)
+    elif choice["keep_original_as"]:
+        # .X is the source; keep the input's different .layers["counts"] instead of overwriting it.
+        adata.layers[choice["keep_original_as"]] = adata.layers["counts"]
+
     # Preserve raw counts
     if sp.issparse(adata.X):
         adata.layers["counts"] = adata.X.copy()
@@ -134,6 +192,7 @@ def preprocess_counts(
         adata.layers["counts"] = np.array(adata.X, copy=True)
 
     # ---- QC filtering (always scanpy -- fast on CPU) ---------------------
+    n_obs_input, n_vars_input = int(adata.n_obs), int(adata.n_vars)
     sc.pp.filter_cells(adata, min_genes=min_genes)
     sc.pp.filter_genes(adata, min_cells=min_cells)
 
@@ -159,6 +218,13 @@ def preprocess_counts(
                 adata.layers["counts"] = adata.X.copy()
             else:
                 adata.layers["counts"] = np.array(adata.X, copy=True)
+
+    if adata.n_obs == 0 or adata.n_vars == 0:
+        # Otherwise normalization and HVG selection fail later with an unclear error.
+        thresholds: dict[str, float] = {"min_genes": min_genes, "min_cells": min_cells}
+        if max_pct_mito is not None:
+            thresholds["max_pct_mito"] = max_pct_mito
+        raise EmptyAfterFilteringError("cell" if adata.n_obs == 0 else "gene", thresholds, n_obs_input, n_vars_input)
 
     logger.info("After QC: %d cells x %d genes", adata.n_obs, adata.n_vars)
 
@@ -198,8 +264,10 @@ def preprocess_counts(
         pp.scale(adata, max_value=max_value)
         logger.info("Scaled to unit variance (max_value=%s)", max_value)
 
-    # Restore .X to raw counts
+    # Restore .X to raw counts. uns['log1p'] tells scanpy (and cell-eval) that .X is
+    # log-transformed, which it no longer is.
     adata.X = adata.layers["counts"].copy()
+    adata.uns.pop("log1p", None)
 
     logger.info(
         "Pipeline 'standard' (backend=%s): %d cells x %d genes, log_normalized in .layers, raw counts in .X",

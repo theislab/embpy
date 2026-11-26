@@ -487,14 +487,14 @@ def _resolve_ensembl_id(gene_or_ensembl: str) -> str | None:
 
     # Prefer embpy GeneResolver (pyensembl + MyGene REST + Ensembl REST)
     try:
-        from embpy.resources.gene_resolver import GeneResolver
+        from embpy.resources.gene.resolver import _shared_gene_resolver
 
-        resolver = GeneResolver(organism="human")
+        resolver = _shared_gene_resolver("human")
         ensembl_id = resolver.symbol_to_ensembl(gene_or_ensembl)
         if ensembl_id:
             return ensembl_id
-    except Exception:  # noqa: BLE001
-        logger.debug("GeneResolver fallback failed for %r", gene_or_ensembl)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("GeneResolver lookup failed for %r: %s", gene_or_ensembl, exc)
 
     # Fallback: direct mygene package
     try:
@@ -531,12 +531,13 @@ def _resolve_ensembl_id_quiet(gene_or_ensembl: str) -> tuple[str | None, str | N
     if gene_or_ensembl.startswith("ENSG"):
         return gene_or_ensembl, "direct Ensembl ID"
 
-    # Prefer embpy GeneResolver (pyensembl + MyGene REST + Ensembl REST)
+    # Prefer embpy GeneResolver (pyensembl + MyGene REST + Ensembl REST); its
+    # per-gene warnings go to DEBUG for this thread only.
     try:
-        from embpy.resources.gene_resolver import GeneResolver
+        from embpy.resources.gene.resolver import _quiet_lookups, _shared_gene_resolver
 
-        resolver = GeneResolver(organism="human")
-        ensembl_id = resolver.symbol_to_ensembl(gene_or_ensembl)
+        with _quiet_lookups():
+            ensembl_id = _shared_gene_resolver("human").symbol_to_ensembl(gene_or_ensembl)
         if ensembl_id:
             return ensembl_id, "GeneResolver"
     except Exception:  # noqa: BLE001

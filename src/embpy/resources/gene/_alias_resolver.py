@@ -35,13 +35,17 @@ library so this module is importable in environments without
 
 from __future__ import annotations
 
+import atexit
+import contextlib
 import json
 import logging
 import os
-import threading
+import weakref
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+
+from ._cache_files import in_child_process, merge_into_cache_file, save_every, snapshot
 
 __all__ = [
     "ALIAS_CACHE_VERSION",
@@ -57,7 +61,8 @@ logger = logging.getLogger(__name__)
 ALIAS_CACHE_VERSION: int = 1
 """Bump if the cache schema changes incompatibly."""
 
-_CACHE_LOCK = threading.Lock()
+# The file is saved every this many new entries (EMBPY_GENE_CACHE_SAVE_EVERY overrides it).
+_ALIAS_CACHE_SAVE_EVERY = 500
 
 
 def default_cache_path() -> Path:
@@ -98,22 +103,27 @@ class Resolution:
 class AliasCache:
     """File-backed JSON cache for :class:`Resolution` results.
 
-    Atomic writes via ``os.replace``; threading lock guards against
-    interleaved writes from concurrent providers in the same process.
-    Cross-process races are tolerated (last writer wins; the data is
-    insert-only modulo unresolved-flag flips).
+    Saves are batched (see :meth:`flush`) and merge this cache's new entries
+    into the file under a lock file, so entries other caches or processes
+    saved meanwhile are kept (see
+    :func:`embpy.resources.gene._cache_files.merge_into_cache_file`).
     """
 
     path: Path
     version: int = ALIAS_CACHE_VERSION
     _data: dict[str, dict[str, Any]] = field(default_factory=dict)
     _loaded: bool = False
+    _unsaved: int = field(default=0, init=False, repr=False, compare=False)
+    # The file's entries as of the last load or save; entries that differ are what a save merges in.
+    _on_disk: dict[str, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _owner_pid: int = field(default_factory=os.getpid, init=False, repr=False, compare=False)
 
     def _load(self) -> None:
         if self._loaded:
             return
         if not self.path.exists():
             self._data = {}
+            self._on_disk = {}
             self._loaded = True
             return
         try:
@@ -139,6 +149,7 @@ class AliasCache:
                 self.path, e,
             )
             self._data = {}
+        self._on_disk = dict(self._data)
         self._loaded = True
 
     def _key(self, symbol: str, organism: str) -> str:
@@ -161,6 +172,7 @@ class AliasCache:
             return None
 
     def put(self, resolution: Resolution) -> None:
+        """Add ``resolution``; the file is saved every 500 new entries (see :meth:`flush`)."""
         self._load()
         key = self._key(resolution.input_symbol, resolution.organism)
         self._data[key] = {
@@ -170,22 +182,71 @@ class AliasCache:
             "source": resolution.source,
             "chain": [list(step) for step in resolution.chain],
         }
-        self._flush()
+        self._unsaved += 1
+        _UNSAVED_ALIAS_CACHES[id(self)] = self
+        # A forked or multiprocessing child may end without exit hooks: save each entry there.
+        if in_child_process(self._owner_pid) or self._unsaved % save_every(_ALIAS_CACHE_SAVE_EVERY) == 0:
+            self._flush()
+
+    def flush(self) -> None:
+        """Write entries that are not saved yet.
+
+        :meth:`put` saves the file every 500 new entries (the environment
+        variable ``EMBPY_GENE_CACHE_SAVE_EVERY`` changes that number); entries
+        still unsaved are written when the cache is garbage-collected or the
+        process exits normally. Call this to save earlier.
+        """
+        if self._unsaved:
+            self._flush()
+
+    def _pending(self) -> dict[str, Any]:
+        """Entries this cache holds that the file did not hold at the last load or save."""
+        return {key: entry for key, entry in list(self._data.items()) if self._on_disk.get(key) != entry}
 
     def _flush(self) -> None:
-        # Atomic write under a process-local lock. We do not bother with
-        # fcntl because resolution rows are append-only and an
-        # occasional last-writer-wins is fine; the worst case is a
-        # second resolver re-issuing the same HTTP request.
-        with _CACHE_LOCK:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {
-                "version": int(self.version),
-                "entries": self._data,
-            }
-            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
-            tmp.write_text(json.dumps(payload, indent=2, sort_keys=True))
-            os.replace(tmp, self.path)
+        pending = self._pending()
+        try:
+            written = merge_into_cache_file(
+                self.path, int(self.version), {"entries": pending}, indent=2, sort_keys=True
+            )
+        except Exception as e:  # noqa: BLE001 - a cache that cannot be saved must not break resolution
+            logger.warning("AliasCache: could not save %s (%s); retrying at the next save.", self.path, e)
+            return
+        if written is None:  # handed to the save of this file that this thread is in the middle of
+            self._on_disk.update(pending)
+        else:
+            entries = written.get("entries", {})
+            self._data.update(entries)  # what other caches saved meanwhile
+            self._on_disk = dict(entries)
+        self._unsaved = 0
+        _UNSAVED_ALIAS_CACHES.pop(id(self), None)
+
+    def __del__(self) -> None:
+        # A dropped cache saves what it has not saved yet (the exit hook covers
+        # caches still alive when the process ends). wait=False: if this file is
+        # being saved in this process right now, that save writes the entries.
+        try:
+            if getattr(self, "_unsaved", 0):
+                merge_into_cache_file(
+                    self.path, int(self.version), {"entries": self._pending()}, wait=False, indent=2, sort_keys=True
+                )
+        except Exception:  # noqa: BLE001 - a finalizer must not raise
+            pass
+
+
+# Caches holding entries their file does not have yet, by id (dataclass
+# instances are not hashable). Weak references: never keeps a cache alive.
+_UNSAVED_ALIAS_CACHES: weakref.WeakValueDictionary[int, AliasCache] = weakref.WeakValueDictionary()
+
+
+def _save_unsaved_alias_caches() -> None:
+    """Exit hook: write what each live alias cache has not saved yet."""
+    for cache in snapshot(lambda: list(_UNSAVED_ALIAS_CACHES.values())):
+        with contextlib.suppress(Exception):
+            cache.flush()
+
+
+atexit.register(_save_unsaved_alias_caches)
 
 
 # ----------------------------------------------------------------------
@@ -288,16 +349,18 @@ def _step_ensembl_retry(
     the audit log shows where the breakdown is.
     """
     try:
-        import requests
+        from .resolver import _ensembl_get
     except ImportError:
-        return None, "no_requests"
+        _ensembl_get = None
+
     url = f"https://rest.ensembl.org/lookup/symbol/{organism}/{symbol}"
     try:
-        resp = requests.get(
-            url,
-            headers={"Content-Type": "application/json"},
-            timeout=10,
-        )
+        if _ensembl_get is not None:
+            resp = _ensembl_get(url, headers={"Content-Type": "application/json"}, timeout=10)
+        else:
+            import requests
+
+            resp = requests.get(url, headers={"Content-Type": "application/json"}, timeout=10)
     except Exception as e:  # noqa: BLE001
         return None, f"error:{type(e).__name__}"
     if resp.status_code != 200:
@@ -313,40 +376,19 @@ def _step_ensembl_retry(
 
 
 def _step_mygene(symbol: str, organism: str) -> tuple[str | None, str]:
-    """MyGene.info is the most tolerant: keyword-style query."""
-    try:
-        import requests
-    except ImportError:
-        return None, "no_requests"
-    url = "https://mygene.info/v3/query"
-    try:
-        resp = requests.get(
-            url,
-            params={
-                "q": symbol,
-                "scopes": "symbol,alias,name",
-                "species": organism,
-                "fields": "symbol,ensembl.gene",
-                "size": 1,
-            },
-            timeout=10,
-        )
-    except Exception as e:  # noqa: BLE001
-        return None, f"error:{type(e).__name__}"
-    if resp.status_code != 200:
-        return None, f"http:{resp.status_code}"
-    try:
-        data = resp.json()
-    except Exception:  # noqa: BLE001
-        return None, "decode_error"
-    hits = data.get("hits", [])
-    if not hits:
-        return None, "miss"
-    approved = hits[0].get("symbol")
-    if approved:
-        return str(approved), "ok"
-    # No symbol but ensembl id -- return None and let the caller decide.
-    return None, "miss"
+    """MyGene.info by exact symbol, then exact alias, for the requested species.
+
+    An alias shared by several genes returns ``(None, "ambiguous:<symbols>")``
+    rather than whichever gene ranks first.
+    """
+    from .resolver import _mygene_exact_symbol_lookup
+
+    hit = _mygene_exact_symbol_lookup(symbol, organism)
+    if hit["status"] == "ok":
+        return str(hit["symbol"]), "ok"
+    if hit["status"] == "ambiguous":
+        return None, "ambiguous:" + ",".join(hit["candidates"])
+    return None, hit["status"]
 
 
 # ----------------------------------------------------------------------
@@ -360,6 +402,7 @@ def resolve_symbol_chain(
     organism: str = "human",
     ensembl: Any | None = None,
     cache: AliasCache | None = None,
+    refresh: bool = False,
 ) -> Resolution:
     """Run the four-step chain and cache the result.
 
@@ -378,6 +421,9 @@ def resolve_symbol_chain(
         Optional :class:`AliasCache`; defaults to a fresh cache pointing
         at :func:`default_cache_path`. Pass the same instance across
         many calls to amortise the cache load.
+    refresh
+        If True, ignore a cached answer and run the chain again; the new
+        result replaces the cached one.
     """
     sym = symbol.strip()
     if not sym:
@@ -389,8 +435,15 @@ def resolve_symbol_chain(
             chain=(("input", "empty"),),
         )
 
-    cache = cache or AliasCache(path=default_cache_path())
-    cached = cache.get(sym, organism)
+    if cache is None:
+        # A cache made for this one call is saved before returning.
+        cache = AliasCache(path=default_cache_path())
+        try:
+            return resolve_symbol_chain(symbol, organism=organism, ensembl=ensembl, cache=cache, refresh=refresh)
+        finally:
+            cache.flush()
+
+    cached = None if refresh else cache.get(sym, organism)
     if cached is not None:
         logger.debug(
             "resolve_symbol: cache hit for %s/%s -> %s (%s)",
@@ -448,7 +501,10 @@ def resolve_symbol_chain(
         return res
 
     # Everything failed: record a negative result so we never repeat
-    # the same 4xx storm.
+    # the same 4xx storm -- but only if some source answered. A chain of
+    # service failures alone (offline, timeouts, 5xx) proves nothing, so it is
+    # not stored: the next call asks again, and a cached answer is never
+    # replaced by an outage.
     res = Resolution(
         input_symbol=sym,
         organism=organism,
@@ -460,6 +516,23 @@ def resolve_symbol_chain(
         "resolve_symbol: could not resolve %r (%s); chain=%s",
         sym, organism, chain,
     )
-    cache.put(res)
+    if any(_is_answer(status) for _, status in chain):
+        cache.put(res)
     _ = hgnc_symbol  # kept for future telemetry; silences linters
     return res
+
+
+def _is_answer(status: str) -> bool:
+    """Whether a chain step's status is a source's answer rather than a failure to get one.
+
+    Found, not found, ambiguous and client errors (4xx other than 429) are
+    answers; network errors, 429, 5xx, unreadable replies and a missing
+    pyensembl or ``requests`` are not.
+    """
+    if status in ("ok", "alias_ok", "miss") or status.startswith("ambiguous:"):
+        return True
+    for prefix in ("http:", "error:HTTP"):
+        code = status[len(prefix) :] if status.startswith(prefix) else ""
+        if code.isdigit():
+            return 400 <= int(code) < 500 and int(code) != 429
+    return False

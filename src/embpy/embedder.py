@@ -3280,6 +3280,7 @@ class BioEmbedder:
             singlecell_info,
         )
         from .pp.sc_preprocessing import preprocess_counts
+        from .pp.singlecell.preprocessing import _raw_counts_source
 
         if isinstance(models, str):
             models = [models]
@@ -3311,7 +3312,12 @@ class BioEmbedder:
             "max_pct_mito": max_pct_mito,
             "backend": backend,
         }
+        # Raised by preprocess_counts as a NotRawCountsWarning; also kept in the metadata.
+        input_warnings: list[str] = []
         if resolved_preprocessing != "none":
+            _, counts_problem = _raw_counts_source(adata)
+            if counts_problem:
+                input_warnings.append(counts_problem)
             adata = preprocess_counts(
                 adata,
                 pipeline=resolved_preprocessing,
@@ -3347,6 +3353,8 @@ class BioEmbedder:
             "options": preprocessing_options,
             "warnings": preprocessing_warnings,
         }
+        if input_warnings:
+            preprocessing_metadata["input_warnings"] = input_warnings
 
         # ---- Embed with each model ---------------------------------------
         device_str = str(self.device)
@@ -5424,12 +5432,10 @@ def _resolve_gene_jump_fallback(
         return rows
 
     try:
-        from .resources.gene_resolver import GeneResolver
+        from .resources.gene.resolver import _shared_gene_resolver
 
-        # species=, not organism= -- passing organism= raised a TypeError that the
-        # broad `except Exception` below swallowed, silently disabling both this
-        # canonicalisation and the mygene alias fallback after it.
-        resolver = GeneResolver(species="human")
+        # One GeneResolver(species="human") per thread, reused across calls.
+        resolver = _shared_gene_resolver("human")
         ensembl_id = resolver.symbol_to_ensembl(gene_symbol)
         if ensembl_id:
             canonical = resolver.ensembl_to_symbol(ensembl_id)

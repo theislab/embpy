@@ -1,0 +1,45 @@
+{
+ "written_by": "0eec156",
+ "calls": [
+  {
+   "entity_type": "gene",
+   "column": "gene",
+   "annotation_types": "diseases"
+  },
+  {
+   "entity_type": "protein",
+   "column": "gene",
+   "annotation_types": "diseases"
+  }
+ ],
+ "obs_names": [
+  "c0",
+  "c1"
+ ],
+ "obs": {
+  "gene": [
+   "TP53",
+   "EGFR"
+  ],
+  "gene_diseases_n": [
+   8,
+   8
+  ],
+  "prot_diseases_n": [
+   8,
+   8
+  ]
+ },
+ "uns": {
+  "embpy_annotations": {
+   "annotation_types": [
+    "diseases"
+   ],
+   "column": "gene",
+   "entity_type": "protein",
+   "organism": "human",
+   "provenance_json": "{\"gene\": {\"diseases\": {\"gwas_catalog\": {\"organism\": \"human\", \"column\": \"gene\"}, \"open_targets\": {\"organism\": \"human\", \"column\": \"gene\"}}}, \"count_columns\": {\"gene_diseases_n\": {\"column\": \"gene\", \"entity_type\": \"gene\", \"annotation_type\": \"diseases\"}, \"prot_diseases_n\": {\"column\": \"gene\", \"entity_type\": \"protein\", \"annotation_type\": \"diseases\"}}, \"protein\": {\"diseases\": {\"uniprot\": {\"organism\": \"human\", \"column\": \"gene\"}}}}",
+   "results_json": "{\"TP53\": {\"diseases\": {\"open_targets\": [{\"id\": \"EFO:0\", \"disease\": \"disease 0\"}, {\"id\": \"EFO:1\", \"disease\": \"disease 1\"}, {\"id\": \"EFO:2\", \"disease\": \"disease 2\"}, {\"id\": \"EFO:3\", \"disease\": \"disease 3\"}, {\"id\": \"EFO:4\", \"disease\": \"disease 4\"}], \"gwas_catalog\": [{\"id\": \"GCST1\", \"disease\": \"trait 1\"}], \"uniprot\": [{\"name\": \"Li-Fraumeni syndrome\"}, {\"name\": \"Breast cancer\"}]}}, \"EGFR\": {\"diseases\": {\"open_targets\": [{\"id\": \"EFO:0\", \"disease\": \"disease 0\"}, {\"id\": \"EFO:1\", \"disease\": \"disease 1\"}, {\"id\": \"EFO:2\", \"disease\": \"disease 2\"}, {\"id\": \"EFO:3\", \"disease\": \"disease 3\"}, {\"id\": \"EFO:4\", \"disease\": \"disease 4\"}], \"gwas_catalog\": [{\"id\": \"GCST1\", \"disease\": \"trait 1\"}], \"uniprot\": [{\"name\": \"Li-Fraumeni syndrome\"}, {\"name\": \"Breast cancer\"}]}}}"
+  }
+ }
+}

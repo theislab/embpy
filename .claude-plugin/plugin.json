@@ -1,0 +1,13 @@
+{
+  "name": "embpy",
+  "description": "Universal biological embedding and single-cell representation pipeline for genes, proteins, cells, and molecules.",
+  "version": "0.1.0",
+  "mcpServers": {
+    "embpy": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/scripts/embpy-mcp-launcher",
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      }
+    }
+  }
+}

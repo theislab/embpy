@@ -39,6 +39,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import requests
 
+from embpy.resources._service_errors import report_service_error
+
 if TYPE_CHECKING:
     from .reactome import ReactomeIndex
 
@@ -102,6 +104,7 @@ def _get_json(url: str, params: dict | None = None, timeout: int = 30) -> dict |
         return resp.json()
     except Exception as e:  # noqa: BLE001
         logger.debug("Request failed for %s: %s", url, e)
+        report_service_error(url, e)
         return None
 
 
@@ -126,6 +129,7 @@ def _post_json(
         return resp.json()
     except Exception as e:  # noqa: BLE001
         logger.debug("POST failed for %s: %s", url, e)
+        report_service_error(url, e)
         return None
 
 
@@ -138,6 +142,7 @@ def _get_text(url: str, params: dict | None = None, timeout: int = 30) -> str | 
         return resp.text
     except Exception as e:  # noqa: BLE001
         logger.debug("Request failed for %s: %s", url, e)
+        report_service_error(url, e)
         return None
 
 
@@ -365,6 +370,10 @@ class GeneAnnotator:
                     logger.warning(
                         "MyGene batch of %d %s queries failed (%s)", len(chunk), scope, reason,
                     )
+                    if payload is not None:  # a failed request was reported by _post_json already
+                        report_service_error(
+                            f"{MYGENE}/query", RuntimeError(f"unexpected MyGene reply: {type(payload).__name__}")
+                        )
                     for term in chunk:
                         resolved[(scope, term)] = self._identity_record(term, scope, "batch_failed", reason=reason)
                     continue

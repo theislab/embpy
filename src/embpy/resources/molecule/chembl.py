@@ -67,6 +67,8 @@ from urllib.parse import urljoin
 
 import requests
 
+from embpy.resources._service_errors import report_service_error
+
 logger = logging.getLogger(__name__)
 
 CHEMBL_HOST = "https://www.ebi.ac.uk"
@@ -236,25 +238,36 @@ def _get_json(url: str, params: dict | None = None, timeout: int = 30) -> dict |
     try:
         resp = requests.get(url, params=params, timeout=timeout)
     except requests.Timeout as exc:
-        raise ChEMBLServiceError(None, url, str(exc), kind="timeout") from exc
+        raise _service_failure(None, url, str(exc), kind="timeout") from exc
     except requests.ConnectionError as exc:
-        raise ChEMBLServiceError(None, url, str(exc), kind="connection") from exc
+        raise _service_failure(None, url, str(exc), kind="connection") from exc
     except requests.RequestException as exc:
-        raise ChEMBLServiceError(None, url, str(exc), kind="connection") from exc
+        raise _service_failure(None, url, str(exc), kind="connection") from exc
     code = resp.status_code
     if code == 404:
         return None
     if code == 429:
-        raise ChEMBLServiceError(code, url, kind="rate_limited")
+        raise _service_failure(code, url, kind="rate_limited")
     if code >= 500:
-        raise ChEMBLServiceError(code, url, kind="http_5xx")
+        raise _service_failure(code, url, kind="http_5xx")
     if code >= 400:
         logger.warning("ChEMBL client error %s for %s: %s", code, url, resp.text[:200])
         return None
     try:
         return resp.json()
     except ValueError as exc:
-        raise ChEMBLServiceError(code, url, "response is not JSON", kind="invalid_json") from exc
+        raise _service_failure(code, url, "response is not JSON", kind="invalid_json") from exc
+
+
+def _service_failure(status_code: int | None, url: str, message: str = "", *, kind: str) -> ChEMBLServiceError:
+    """Build the error for a failed ChEMBL request and record it as a service error.
+
+    Callers catch :class:`ChEMBLServiceError` and return an empty result, so the
+    MCP tools (inside ``record_service_errors()``) only learn about the outage here.
+    """
+    exc = ChEMBLServiceError(status_code, url, message, kind=kind)
+    report_service_error(url, exc)
+    return exc
 
 
 # =====================================================================

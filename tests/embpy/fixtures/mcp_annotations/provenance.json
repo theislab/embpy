@@ -1,0 +1,12 @@
+{
+  "recorded": "2026-11-26",
+  "what": "Files written by earlier versions of the MCP tool annotate_metadata (src/embpy/mcp/tools.py), dumped as JSON: the .obs columns and .uns['embpy_annotations'] exactly as the written .h5ad held them. tests/test_mcp_annotation.py rebuilds each .h5ad from its dump.",
+  "how": "Each version's src was taken with `git archive <commit> src` and imported through PYTHONPATH; the tool's lookups (_annotation_fetchers) were replaced by fixed offline answers, and the calls listed under 'calls' were run on a new .h5ad holding only the identifier column (files written by two versions: the second version's call was run on the first version's file).",
+  "files": {
+    "b6dc03c_gene_go.json": "commit b6dc03c (the reviewed PR head): gene GO terms of TP53 (3) and EGFR (2), organism human, column 'gene'",
+    "0eec156_gene_then_protein_diseases.json": "commit 0eec156: gene diseases (open_targets 5, gwas_catalog 1), then protein diseases (uniprot 2) of the same column 'gene'; that version stored both in one identifier -> type -> source record and counted 8 in both count columns",
+    "b6dc03c_molecule_properties.json": "commit b6dc03c: molecule properties (molecular_weight, hbd, formula) of 'aspirin' and 'caffeine', column 'compound'",
+    "b6dc03c_go_then_0eec156_pathways.json": "b6dc03c_gene_go.json, then commit 0eec156: Reactome pathways of column 'gene'; that version recorded gene_pathways_n but not gene_go_n",
+    "b6dc03c_properties_then_0eec156_interactions.json": "b6dc03c_molecule_properties.json, then commit 0eec156: ChEMBL interactions of column 'compound'; that version recorded mol_interactions_n but not mol_properties_n or the mol_<property> columns"
+  }
+}
