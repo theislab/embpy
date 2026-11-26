@@ -7,15 +7,18 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import glob
 import json
 import logging
 import os
-import tempfile
+import secrets
+import stat
+import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 SAVE_EVERY_ENV = "EMBPY_GENE_CACHE_SAVE_EVERY"
 """Environment variable: save a gene cache after this many new entries."""
@@ -25,6 +28,11 @@ LOCK_TIMEOUT = 10.0
 
 STALE_LOCK_AGE = 60.0
 """A lock file older than this many seconds was left by a process that died while saving."""
+
+STALE_TEMP_AGE = 3600.0
+"""A cache's temporary file older than this many seconds was left by a process killed while saving."""
+
+_T = TypeVar("_T")
 
 _warned_values: set[str] = set()
 
@@ -63,6 +71,27 @@ def save_every(default: int) -> int:
             default,
         )
     return default
+
+
+def in_child_process(owner_pid: int) -> bool:
+    """Whether this process may end without running exit hooks, so a cache should save every entry.
+
+    True in a process forked from the one that made the cache (``owner_pid``)
+    and in any multiprocessing child: fork and forkserver children end with
+    ``os._exit``, which skips the exit hooks that save pending entries.
+    """
+    if os.getpid() != owner_pid:
+        return True
+    mp = sys.modules.get("multiprocessing")
+    return mp is not None and mp.parent_process() is not None
+
+
+def snapshot(take: Callable[[], list[_T]]) -> list[_T]:
+    """``take()``, a copy of a collection, retried while another thread changes the collection."""
+    for _ in range(100):
+        with contextlib.suppress(RuntimeError):  # "... changed size during iteration"
+            return take()
+    return []
 
 
 def merge_into_cache_file(
@@ -120,6 +149,8 @@ def _merge_locked(
         while True:
             orphaned = _take_orphaned(key)
             if entries is None and orphaned is None:
+                if written is not None:
+                    _remove_stale_temp_files(path)
                 return written
             for part in (orphaned, entries):
                 for section, new in (part or {}).items():
@@ -243,7 +274,7 @@ def _take_orphaned(key: str) -> dict[str, dict[str, Any]] | None:
 def _save_orphaned_entries() -> None:
     """Exit hook: write entries that are still waiting for their cache file."""
     with _GUARD:
-        waiting = [(path, version, dump_kwargs) for path, version, _, dump_kwargs in _ORPHANED.values()]
+        waiting = snapshot(lambda: [(p, v, kw) for p, v, _, kw in _ORPHANED.values()])
     for path, version, dump_kwargs in waiting:
         with contextlib.suppress(Exception):
             merge_into_cache_file(path, version, None, **dump_kwargs)
@@ -258,17 +289,18 @@ def write_json_atomically(path: Path, payload: Any, **dump_kwargs: Any) -> None:
     The data goes to a temporary file of its own in the same folder, which then
     replaces ``path`` in one step, so readers see the old or the new file and
     processes sharing the folder (e.g. SLURM array jobs) never write into the
-    same temporary file. On failure the temporary file is removed and the error
-    is raised.
+    same temporary file. The temporary file is created like any new file (the
+    umask or the folder's default ACL apply) and, when ``path`` exists, given
+    its mode. On failure the temporary file is removed and the error is raised.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    fd, tmp_name = _new_temp_file(path)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(payload, f, **dump_kwargs)
-        # mkstemp creates the file owner-only; keep the permissions of the file it replaces.
-        os.chmod(tmp_name, _file_mode(path))
+        with contextlib.suppress(FileNotFoundError):
+            os.chmod(tmp_name, stat.S_IMODE(os.stat(path).st_mode))
         _replace_file(tmp_name, path)
     except BaseException:
         with contextlib.suppress(OSError):
@@ -276,14 +308,30 @@ def write_json_atomically(path: Path, payload: Any, **dump_kwargs: Any) -> None:
         raise
 
 
-def _file_mode(path: Path) -> int:
-    """Permission bits for a new version of ``path``: the ones it has, or a new file's."""
-    try:
-        return os.stat(path).st_mode & 0o777
-    except OSError:
-        umask = os.umask(0)
-        os.umask(umask)
-        return 0o666 & ~umask
+def _new_temp_file(path: Path) -> tuple[int, str]:
+    """Create ``.<name>.<pid>-<random>.tmp`` next to ``path``, as an ordinary new file.
+
+    ``os.open(..., 0o666)`` lets the system apply the umask or the folder's
+    default ACL as for any new file; reading the umask would mean changing it,
+    which races with other threads creating files.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    for _ in range(100):
+        name = str(path.with_name(f".{path.name}.{os.getpid()}-{secrets.token_hex(6)}.tmp"))
+        try:
+            return os.open(name, flags, 0o666), name
+        except FileExistsError:
+            continue
+    raise FileExistsError(f"Could not create a temporary file next to {path}")
+
+
+def _remove_stale_temp_files(path: Path) -> None:
+    """Remove temporary files of ``path`` older than :data:`STALE_TEMP_AGE` (left by killed processes)."""
+    cutoff = time.time() - STALE_TEMP_AGE
+    for leftover in path.parent.glob(f".{glob.escape(path.name)}.*.tmp"):
+        with contextlib.suppress(OSError):
+            if leftover.stat().st_mtime < cutoff:
+                leftover.unlink()
 
 
 def _replace_file(src: str, dst: Path) -> None:

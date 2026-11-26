@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from ._cache_files import merge_into_cache_file, save_every
+from ._cache_files import in_child_process, merge_into_cache_file, save_every, snapshot
 
 __all__ = [
     "ALIAS_CACHE_VERSION",
@@ -116,6 +116,7 @@ class AliasCache:
     _unsaved: int = field(default=0, init=False, repr=False, compare=False)
     # The file's entries as of the last load or save; entries that differ are what a save merges in.
     _on_disk: dict[str, Any] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _owner_pid: int = field(default_factory=os.getpid, init=False, repr=False, compare=False)
 
     def _load(self) -> None:
         if self._loaded:
@@ -183,7 +184,8 @@ class AliasCache:
         }
         self._unsaved += 1
         _UNSAVED_ALIAS_CACHES[id(self)] = self
-        if self._unsaved % save_every(_ALIAS_CACHE_SAVE_EVERY) == 0:
+        # A forked or multiprocessing child may end without exit hooks: save each entry there.
+        if in_child_process(self._owner_pid) or self._unsaved % save_every(_ALIAS_CACHE_SAVE_EVERY) == 0:
             self._flush()
 
     def flush(self) -> None:
@@ -239,7 +241,7 @@ _UNSAVED_ALIAS_CACHES: weakref.WeakValueDictionary[int, AliasCache] = weakref.We
 
 def _save_unsaved_alias_caches() -> None:
     """Exit hook: write what each live alias cache has not saved yet."""
-    for cache in list(_UNSAVED_ALIAS_CACHES.values()):
+    for cache in snapshot(lambda: list(_UNSAVED_ALIAS_CACHES.values())):
         with contextlib.suppress(Exception):
             cache.flush()
 

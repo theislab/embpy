@@ -16,7 +16,7 @@ from embpy.errors import GeneResolutionError
 from embpy.observability import log_event, time_block
 from embpy.retry import retry_with_backoff
 
-from ._cache_files import merge_into_cache_file, save_every
+from ._cache_files import in_child_process, merge_into_cache_file, save_every, snapshot
 
 
 def _load_seqio():
@@ -452,7 +452,7 @@ _RESOLVERS_WITH_UNSAVED_CACHE: "weakref.WeakSet[GeneResolver]" = weakref.WeakSet
 
 def _save_unsaved_gene_caches() -> None:
     """Exit hook: write what each live resolver has not saved yet."""
-    for resolver in list(_RESOLVERS_WITH_UNSAVED_CACHE):
+    for resolver in snapshot(lambda: list(_RESOLVERS_WITH_UNSAVED_CACHE)):
         with contextlib.suppress(Exception):
             resolver.flush_cache()
 
@@ -646,6 +646,7 @@ class GeneResolver:
         # running (they save once when they finish).
         self._cache_unsaved = 0
         self._cache_batch_depth = 0
+        self._cache_owner_pid = os.getpid()
         self._load_cache()
 
     def _ensure_cache(self) -> None:
@@ -667,6 +668,8 @@ class GeneResolver:
             # The file's "symbols" and "ensembl" entries as of this resolver's last
             # load or save; entries that differ from them are what a save merges in.
             self._cache_on_disk: tuple[dict[str, str], dict[str, str]] = ({}, {})
+        if not hasattr(self, "_cache_owner_pid"):
+            self._cache_owner_pid = os.getpid()
 
     def _load_cache(self) -> None:
         self._ensure_cache()
@@ -781,7 +784,9 @@ class GeneResolver:
         """
         self._cache_unsaved += 1
         _RESOLVERS_WITH_UNSAVED_CACHE.add(self)
-        if not self._cache_batch_depth and self._cache_unsaved % save_every(_GENE_CACHE_SAVE_EVERY) == 0:
+        if self._cache_batch_depth:
+            return
+        if in_child_process(self._cache_owner_pid) or self._cache_unsaved % save_every(_GENE_CACHE_SAVE_EVERY) == 0:
             self._save_cache()
 
     def flush_cache(self) -> None:
@@ -795,7 +800,9 @@ class GeneResolver:
           number to change that (``1`` saves after every new entry);
         * batch lookups save it once, at the end of the call;
         * entries still unsaved are written when the resolver is
-          garbage-collected or the process exits normally.
+          garbage-collected or the process exits normally;
+        * in a forked process or a multiprocessing child, which may end without
+          running exit hooks, every new entry is saved right away.
 
         Call this to save earlier, for example in a job that may be killed
         (a killed process does not get to save at exit).
