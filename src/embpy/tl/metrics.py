@@ -35,6 +35,7 @@ evaluation tools for comparing predicted vs. observed expression.
 from __future__ import annotations
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -604,6 +605,14 @@ def compare_deg(
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+# cell-eval keeps metric settings in one registry for the whole process, and compute()
+# writes metric_configs into it. Calls take turns from saving the settings to restoring
+# them, so calls on different threads (the MCP server runs tools on worker threads)
+# neither score with nor restore each other's settings. Reentrant, so a nested call
+# restores in order instead of waiting for itself.
+_REGISTRY_LOCK = threading.RLock()
+
+
 def _stored_metric_kwargs(ce: Any, metric_configs: dict[str, dict[str, Any]] | None) -> dict[str, Any]:
     """Copy the registry settings of the metrics ``metric_configs`` will change."""
     stored = getattr(getattr(ce, "metrics_registry", None), "metrics", None)
@@ -669,7 +678,8 @@ def cell_eval(
         Note that ``discrimination_score_l1`` ignores ``embed_key`` upstream,
         so a profile including it mixes expression-space and embedding-space
         numbers. The configs apply to this call only: cell-eval keeps them in
-        its process-wide metric registry, which is restored afterwards.
+        its process-wide metric registry, which is restored afterwards. For
+        that reason, calls on several threads compute one at a time.
     skip_metrics
         Metric names to leave out, also forwarded to ``compute``.
     **kwargs
@@ -702,17 +712,19 @@ def cell_eval(
     # embedding-scoring path -- unreachable through this wrapper.
     # cell-eval also stores metric_configs in its process-wide metric registry,
     # where they would outlive this call: a later call without an embed_key
-    # would still score the embedding named here. Put the stored settings back.
-    saved = _stored_metric_kwargs(ce, metric_configs)
-    try:
-        results_pl, agg_pl = evaluator.compute(
-            profile=profile,
-            metric_configs=metric_configs,
-            skip_metrics=skip_metrics,
-            write_csv=False,
-        )
-    finally:
-        _restore_metric_kwargs(ce, saved)
+    # would still score the embedding named here. Put the stored settings back,
+    # holding the lock so overlapping calls cannot interleave save and restore.
+    with _REGISTRY_LOCK:
+        saved = _stored_metric_kwargs(ce, metric_configs)
+        try:
+            results_pl, agg_pl = evaluator.compute(
+                profile=profile,
+                metric_configs=metric_configs,
+                skip_metrics=skip_metrics,
+                write_csv=False,
+            )
+        finally:
+            _restore_metric_kwargs(ce, saved)
 
     results = results_pl.to_pandas()
     agg_results = agg_pl.to_pandas()

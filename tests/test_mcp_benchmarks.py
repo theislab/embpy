@@ -202,6 +202,133 @@ def test_cell_eval_does_not_keep_metric_configs(write_pair, tmp_path):
     assert after == before
 
 
+def _registry_settings() -> dict:
+    import copy
+
+    import cell_eval
+
+    return {name: copy.deepcopy(info.kwargs) for name, info in cell_eval.metrics_registry.metrics.items()}
+
+
+def _cosine_only(**kwargs) -> dict:
+    """Run embpy.tl.cell_eval with discrimination_score_cosine as the only metric."""
+    import cell_eval
+
+    from embpy.tl import cell_eval as run_cell_eval_suite
+
+    others = cell_eval.metrics_registry.list_metrics(cell_eval.MetricType.ANNDATA_PAIR)
+    results, _ = run_cell_eval_suite(
+        control_pert="ctrl", profile="anndata", skip_de=True,
+        skip_metrics=[m for m in others if m != "discrimination_score_cosine"], **kwargs,
+    )
+    return dict(zip(results["perturbation"], results["discrimination_score_cosine"]))
+
+
+def test_overlapping_cell_eval_calls_leave_the_registry_as_before(write_pair, tmp_path, monkeypatch):
+    """Two calls on worker threads, as the MCP server runs tools, must not restore each other's settings.
+
+    The patched save and restore steps force the interleaving that broke the registry: B saves
+    while A's embed_key is applied, A restores, then B restores what it saved.
+    """
+    import threading
+
+    import cell_eval
+
+    import embpy.tl.metrics as tl_metrics
+
+    real, pred = write_pair(real_emb={"X_a": CENTERS, "X_b": CENTERS}, pred_emb={"X_a": SWAPPED, "X_b": CENTERS})
+    before = _registry_settings()
+    save, restore = tl_metrics._stored_metric_kwargs, tl_metrics._restore_metric_kwargs
+    a_computed, b_saved, a_restored = threading.Event(), threading.Event(), threading.Event()
+
+    def saving(*args):
+        saved = save(*args)
+        if threading.current_thread().name == "B":
+            b_saved.set()
+        return saved
+
+    def restoring(*args):
+        name = threading.current_thread().name
+        if name == "A":
+            a_computed.set()
+            b_saved.wait(timeout=3)  # B saves here unless the calls take turns
+            restore(*args)
+            a_restored.set()
+        else:
+            if name == "B":
+                a_restored.wait(timeout=30)
+            restore(*args)
+
+    monkeypatch.setattr(tl_metrics, "_stored_metric_kwargs", saving)
+    monkeypatch.setattr(tl_metrics, "_restore_metric_kwargs", restoring)
+    scores, failures = {}, []
+
+    def score(key):
+        try:
+            if key == "X_b":
+                a_computed.wait(timeout=60)
+            scores[key] = _cosine_only(
+                adata_pred=_read(pred), adata_real=_read(real), outdir=str(tmp_path / key),
+                metric_configs={"discrimination_score_cosine": {"embed_key": key}},
+            )
+        except Exception as exc:  # noqa: BLE001 -- reported by the assertion below
+            failures.append(exc)
+
+    threads = [threading.Thread(target=score, args=(key,), name=name) for name, key in (("A", "X_a"), ("B", "X_b"))]
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=120)
+        assert not failures and set(scores) == {"X_a", "X_b"}, failures
+        real_ad, pred_ad = _read(real), _read(pred)
+        for key in ("X_a", "X_b"):
+            assert scores[key] == pytest.approx(_discrimination(real_ad, pred_ad, key, "cosine")), key
+        assert _registry_settings() == before
+        # A later call without metric_configs scores .X, not the embedding of either call.
+        later = _cosine_only(adata_pred=_read(pred), adata_real=_read(real), outdir=str(tmp_path / "later"))
+        assert later == pytest.approx(_discrimination(real_ad, pred_ad, None, "cosine"))
+    finally:
+        for name, kwargs in before.items():
+            cell_eval.metrics_registry.metrics[name].kwargs = kwargs
+
+
+def test_a_cell_eval_call_that_raises_restores_the_registry_and_lets_the_next_call_run(
+    write_pair, tmp_path, monkeypatch
+):
+    import threading
+
+    import cell_eval
+
+    real, pred = write_pair()
+    before = _registry_settings()
+
+    def failing(self, *args, metric_configs=None, **kwargs):
+        # compute() applies metric_configs to the registry first, then fails
+        for name, config in (metric_configs or {}).items():
+            cell_eval.metrics_registry.update_metric_kwargs(name, config)
+        raise RuntimeError("compute failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(cell_eval.MetricsEvaluator, "compute", failing)
+        with pytest.raises(RuntimeError, match="compute failed"):
+            _cosine_only(
+                adata_pred=_read(pred), adata_real=_read(real), outdir=str(tmp_path / "failing"),
+                metric_configs={"discrimination_score_cosine": {"embed_key": "X_good"}},
+            )
+    assert _registry_settings() == before
+
+    scores = []
+    thread = threading.Thread(
+        target=lambda: scores.append(
+            _cosine_only(adata_pred=_read(pred), adata_real=_read(real), outdir=str(tmp_path / "next"))
+        )
+    )
+    thread.start()
+    thread.join(timeout=60)
+    assert scores, "the next call did not finish: the failed call kept the registry locked"
+
+
 # ---------------------------------------------------------------------------
 # 3. Each score says which data it was computed on
 # ---------------------------------------------------------------------------
