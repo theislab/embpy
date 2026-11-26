@@ -247,23 +247,30 @@ command in `suggestion`; "No pathways found" means the search ran and matched no
 
 Nothing is written when nothing was annotated, or for `identifiers` without `output_path`
 (`output_path` is then null and `new_columns_added` empty).
-Otherwise `.uns["embpy_annotations"]["results_json"]` holds the records as JSON (entity, type,
-source), and `.obs` gains `<prefix>_<type>_n` counts of the records stored per row (`gene_`,
-`prot_`, `mol_`; molecules with `properties` also get `mol_<property>` columns).
+Otherwise `.uns["embpy_annotations"]["results_json"]` holds the records as JSON: identifier ->
+entity type (`gene`, `protein`, `molecule`) -> organism (`any` for molecules, whose annotations
+do not depend on it) -> annotation type -> source -> records. `.obs` gains `<prefix>_<type>_n`
+counts of the records stored per row (`gene_`, `prot_`, `mol_`; molecules with `properties` also
+get `mol_<property>` columns).
 
-Annotating the output again adds to the stored records: other types and sources stay. A type
-and source looked up again replace their records for the entities looked up; where that request
-failed, the earlier records stay. `provenance_json` gives the organism and column of each
-stored entity type, annotation type and source, and `annotation_types` lists every stored type.
+Annotating the output again adds to the stored records: other entity types, organisms, types and
+sources stay, so gene and protein annotations of one column (or one column annotated for two
+organisms) never replace each other. A type and source looked up again replace their records for
+the entities looked up, for that entity type and organism; where that request failed, the
+earlier records stay. `provenance_json["sources"]` lists each stored entity type, organism,
+identifier column, annotation type and source, and `annotation_types` lists every stored type.
+Files written by earlier versions, which kept identifier -> type -> source, are read too: their
+records belong to the entity type and organism their stored provenance or record names.
 
 Each identifier column keeps its own counts. `<prefix>_<type>_n` belongs to the first column
 annotated for that type, and annotating that column again updates it. When another column is
 annotated for a type that already has counts from a different column (e.g. `target` after
 `gene`), its counts go to `<prefix>_<type>_n_<column>` (`gene_go_n_target`), listed in
 `new_columns_added`. `provenance_json["count_columns"]` maps each count column to its identifier
-column, entity type and annotation type; every count column listed there is recounted from the
-stored records whenever the file is written, so columns that share entities always agree with
-the records. Molecule property columns follow the same naming rule:
+column, entity type, organism and annotation type, and the column counts only the records of
+that entity type and organism. Every count column listed there is recounted from the stored
+records whenever the file is written, so columns that share entities always agree with the
+records. Molecule property columns follow the same naming rule:
 `mol_<property>` belongs to the first SMILES column annotated with `properties`, another column
 gets `mol_<property>_<column>` (e.g. `mol_molecular_weight_vehicle`), and
 `provenance_json["property_columns"]` maps each to its identifier column and property.

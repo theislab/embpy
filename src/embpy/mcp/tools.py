@@ -2512,25 +2512,117 @@ def _json_field(record: Any, key: str) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+# Layout of the stored records (results_json):
+# identifier -> entity type -> organism -> annotation type -> source -> records.
+# Files written before carry no "version" and keep identifier -> type -> source.
+_RECORDS_VERSION = 2
+# Molecule annotations do not depend on the organism; their records are stored under this key.
+_ANY_ORGANISM = "any"
+_STORED_ENTITY_TYPES = ("gene", "protein", "molecule")
+
+
+def _records_organism(entity_type: str, organism: str) -> str:
+    """The organism key a call's records are stored under."""
+    return _ANY_ORGANISM if entity_type == "molecule" else organism
+
+
+def _child(parent: dict[str, Any], key: str) -> dict[str, Any]:
+    """``parent[key]``, made an empty dict first unless it is one."""
+    value = parent.get(key)
+    if not isinstance(value, dict):
+        value = parent[key] = {}
+    return value
+
+
+def _scoped_records(records: dict[str, Any], entity: str, entity_type: str, organism: str) -> dict[str, Any]:
+    """The records stored for ``entity`` as ``entity_type`` in ``organism``: type -> source -> records."""
+    value: Any = records.get(entity)
+    for key in (entity_type, organism):
+        value = value.get(key) if isinstance(value, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def _load_annotation_store(record: Any) -> tuple[dict[str, Any], list[dict[str, str]], dict | None, dict | None]:
+    """The records, provenance sources and column registries stored in ``.uns["embpy_annotations"]``.
+
+    Returns ``(records, sources, count_columns, property_columns)``; a registry is None when
+    the file has none. Files written before records were kept per entity type and organism
+    hold identifier -> type -> source: each type and source goes to the entity type and
+    organism their provenance names, else to those of the call that wrote the record (when
+    several entity types stored one type and source, to the record's own if it is one of them).
+    """
+    results = _json_field(record, "results_json")
+    provenance = _json_field(record, "provenance_json")
+    count_columns = provenance.get("count_columns")
+    count_columns = dict(count_columns) if isinstance(count_columns, dict) else None
+    property_columns = provenance.get("property_columns")
+    property_columns = dict(property_columns) if isinstance(property_columns, dict) else None
+    meta = record if isinstance(record, dict) else {}
+    version = meta.get("version")
+    if isinstance(version, (int, np.integer)) and int(version) == _RECORDS_VERSION:
+        records = {str(e): v for e, v in results.items() if isinstance(v, dict)}
+        sources = [dict(s) for s in provenance.get("sources") or () if isinstance(s, dict)]
+        return records, sources, count_columns, property_columns
+
+    entity_type = str(meta.get("entity_type") or "gene")
+    organism = str(meta.get("organism") or "human")
+    column = str(meta.get("column") or "")
+    # (type, source) -> [(entity type, organism, column)] named by the earlier provenance.
+    owners: dict[tuple[str, str], list[tuple[str, str, str]]] = {}
+    for et in _STORED_ENTITY_TYPES:
+        by_type = provenance.get(et)
+        for t, by_source in (by_type.items() if isinstance(by_type, dict) else ()):
+            for s, info in (by_source.items() if isinstance(by_source, dict) else ()):
+                info = info if isinstance(info, dict) else {}
+                owners.setdefault((str(t), str(s)), []).append((
+                    et, _records_organism(et, str(info.get("organism") or organism)), str(info.get("column") or column)
+                ))
+    records: dict[str, Any] = {}
+    sources: list[dict[str, str]] = []
+    for e, by_type in results.items():
+        for t, by_source in (by_type.items() if isinstance(by_type, dict) else ()):
+            for s, data in (by_source.items() if isinstance(by_source, dict) else ()):
+                found = owners.get((str(t), str(s))) or [(entity_type, _records_organism(entity_type, organism), column)]
+                et, org, col = next((o for o in found if o[0] == entity_type), found[0])
+                _child(_child(_child(records, str(e)), et), org).setdefault(str(t), {})[str(s)] = data
+                entry = {"entity_type": et, "organism": org, "column": col, "annotation_type": str(t), "source": str(s)}
+                if entry not in sources:
+                    sources.append(entry)
+    for info in (count_columns or {}).values():
+        if isinstance(info, dict) and "organism" not in info:
+            organisms = {
+                s["organism"] for s in sources
+                if (s["entity_type"], s["annotation_type"], s["column"])
+                == (info.get("entity_type"), info.get("annotation_type"), info.get("column"))
+            }
+            info["organism"] = (
+                organisms.pop() if len(organisms) == 1 else _records_organism(str(info.get("entity_type")), organism)
+            )
+    return records, sources, count_columns, property_columns
+
+
 def _merge_annotation_records(
     earlier: dict[str, Any],
     results: dict[str, dict[str, Any]],
     sources_queried: dict[str, list[str]],
     failed: set[tuple[str, str]],
-) -> tuple[dict[str, dict[str, Any]], set[tuple[str, str]]]:
-    """Merge this call's records into those stored by earlier calls (entity -> type -> source).
+    entity_type: str,
+    organism: str,
+) -> tuple[dict[str, Any], set[tuple[str, str]]]:
+    """Merge this call's records into those stored by earlier calls.
 
-    A source this call looked up replaces its earlier records for each entity looked up,
-    also with an empty answer. When the request for an entity and type failed, a source
-    that returned nothing keeps its earlier records. Other types, sources and entities
-    stay as they were.
+    Only the records of this call's entity type and organism are touched (identifier ->
+    ``entity_type`` -> ``organism`` -> type -> source). Among them, a source this call
+    looked up replaces its earlier records for each entity looked up, also with an empty
+    answer. When the request for an entity and type failed, a source that returned
+    nothing keeps its earlier records. Other types, sources and entities stay as they were.
 
     Returns the merged records and the (type, source) pairs this call wrote.
     """
-    merged = {str(e): dict(by_type) for e, by_type in earlier.items() if isinstance(by_type, dict)}
+    merged = earlier
     updated: set[tuple[str, str]] = set()
     for entity, by_type in results.items():
-        stored = merged.setdefault(entity, {})
+        stored = _child(_child(_child(merged, entity), entity_type), organism)
         for ann_type, data in by_type.items():
             slot = dict(stored[ann_type]) if isinstance(stored.get(ann_type), dict) else {}
             new = data if isinstance(data, dict) else {}
@@ -2885,8 +2977,9 @@ def annotate_metadata(
     output_path : str, optional
         Filesystem destination (default: '<input>_annotated.h5ad'; with identifiers,
         nothing is written unless output_path is given). Not written when nothing was
-        annotated. Records stored in the input by earlier calls are kept: a type and
-        source looked up again replace their records for the entities looked up.
+        annotated. Records stored in the input by earlier calls are kept, per entity
+        type and organism: a type and source looked up again replace only their records
+        of this entity type and organism, for the entities looked up.
     organism : {'human', 'mouse'}, default='human'
         Species for gene and protein annotations. A UniProt entry of another species
         (e.g. an accession of a human protein with organism='mouse') is not annotated.
@@ -3256,25 +3349,33 @@ def annotate_metadata(
             return {"status": "error", "error_type": error_type, "error": error, **base_payload}
 
         if resolved_entity != "cell_line":
-            # Records of earlier calls on this file are kept; this call's lookups update them.
+            # Records of earlier calls on this file are kept; this call's lookups update those
+            # of its own entity type and organism.
             earlier = adata.uns.get(_ANNOTATIONS_KEY)
+            records_org = _records_organism(resolved_entity, org)
+            stored, stored_sources, count_columns, property_columns = _load_annotation_store(earlier)
             stored, updated = _merge_annotation_records(
-                _json_field(earlier, "results_json"), results, sources_queried, failed_lookups
+                stored, results, sources_queried, failed_lookups, resolved_entity, records_org
             )
             provenance = _json_field(earlier, "provenance_json")
-            count_columns = provenance.get("count_columns")
-            count_columns = dict(count_columns) if isinstance(count_columns, dict) else {}
+            count_columns = count_columns if count_columns is not None else {}
             prefix = {"gene": "gene", "protein": "prot", "molecule": "mol"}[resolved_entity]
             for t in requested:
                 col = f"{prefix}_{t}_n"
                 if col in adata.obs.columns and _obs_column_source(col, earlier, provenance, resolved_entity, t) != query_col:
                     # These are another identifier column's counts: keep them, name this column's after it.
                     col = f"{col}_{query_col}"
-                # The number of records stored for the row's entity, from every source of the type.
-                n_stored = {e: _n_annotation_items(stored.get(e, {}).get(t)) for e in entities}
+                # The number of records stored for the row's entity (this entity type and organism),
+                # from every source of the type.
+                n_stored = {
+                    e: _n_annotation_items(_scoped_records(stored, e, resolved_entity, records_org).get(t))
+                    for e in entities
+                }
                 adata.obs[col] = [n_stored.get(v, 0) if v else 0 for v in values]
                 new_cols.append(col)
-                count_columns[col] = {"column": query_col, "entity_type": resolved_entity, "annotation_type": t}
+                count_columns[col] = {
+                    "column": query_col, "entity_type": resolved_entity, "organism": records_org, "annotation_type": t,
+                }
             # The other identifier columns' counts follow the stored records too: this call may
             # have looked up their entities again.
             for name, info in list(count_columns.items()):
@@ -3285,14 +3386,16 @@ def annotate_metadata(
                 if name in new_cols or column not in adata.obs.columns:
                     continue
                 rows = [str(v).strip() if pd.notna(v) else "" for v in adata.obs[column]]
+                scope = (str(info.get("entity_type")), str(info.get("organism")))
                 ann_type = info.get("annotation_type")
-                adata.obs[name] = [_n_annotation_items(stored.get(v, {}).get(ann_type)) if v else 0 for v in rows]
+                adata.obs[name] = [
+                    _n_annotation_items(_scoped_records(stored, v, *scope).get(ann_type)) if v else 0 for v in rows
+                ]
             if resolved_entity == "molecule" and "properties" in requested:
                 # Scalar RDKit properties as columns, as tl.annotate_molecules writes them.
                 props = {e: (results[e].get("properties", {}).get("rdkit") or {}).get("physicochemical") or {} for e in entities}
                 prop_keys = list(dict.fromkeys(k for p in props.values() for k, v in p.items() if not isinstance(v, (dict, list))))
-                property_columns = provenance.get("property_columns")
-                property_columns = dict(property_columns) if isinstance(property_columns, dict) else {}
+                property_columns = property_columns if property_columns is not None else {}
                 for key in prop_keys:
                     name = f"mol_{key}"
                     if name in adata.obs.columns and _obs_column_source(
@@ -3312,24 +3415,31 @@ def annotate_metadata(
                         adata.obs[name] = pd.Categorical([None if x is None else str(x) for x in column_values])
                     new_cols.append(name)
                     property_columns[name] = {"column": query_col, "property": key}
-                provenance["property_columns"] = property_columns
-            if not isinstance(provenance.get(resolved_entity), dict):
-                provenance[resolved_entity] = {}
+            # Where the stored records came from: one entry per entity type, organism, identifier
+            # column, annotation type and source.
             for t, source in sorted(updated):
-                provenance[resolved_entity].setdefault(t, {})[source] = {"organism": org, "column": query_col}
-            provenance["count_columns"] = count_columns
+                entry = {
+                    "entity_type": resolved_entity, "organism": records_org, "column": query_col,
+                    "annotation_type": t, "source": source,
+                }
+                if entry not in stored_sources:
+                    stored_sources.append(entry)
+            new_provenance: dict[str, Any] = {"sources": stored_sources, "count_columns": count_columns}
+            if property_columns is not None:
+                new_provenance["property_columns"] = property_columns
             earlier_types = earlier.get("annotation_types", []) if isinstance(earlier, dict) else []
             if isinstance(earlier_types, str):
                 earlier_types = [earlier_types]
             adata.uns[_ANNOTATIONS_KEY] = {
                 # entity_type, column and organism describe this call; provenance_json says
-                # where each stored type and source came from.
+                # where each stored entity type, organism, type and source came from.
+                "version": _RECORDS_VERSION,
                 "entity_type": resolved_entity,
                 "column": query_col,
                 "organism": org,
                 "annotation_types": list(dict.fromkeys([*(str(t) for t in earlier_types), *requested])),
                 "results_json": json.dumps(stored, default=str),
-                "provenance_json": json.dumps(provenance),
+                "provenance_json": json.dumps(new_provenance),
             }
 
         if output_path:

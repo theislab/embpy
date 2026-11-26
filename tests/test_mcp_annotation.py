@@ -134,9 +134,15 @@ def _write_obs(path: Path, **columns) -> str:
 
 
 def _stored(path: str):
+    """The file, its stored records (identifier -> entity type -> organism -> type -> source) and record."""
     saved = anndata.read_h5ad(path)
     record = saved.uns["embpy_annotations"]
     return saved, json.loads(record["results_json"]), record
+
+
+def _human_gene(records: dict, entity: str) -> dict:
+    """The records stored for ``entity`` as a human gene: type -> source -> records."""
+    return records[entity]["gene"]["human"]
 
 
 def _go_ids(go_terms: dict) -> set[str]:
@@ -161,14 +167,16 @@ def test_adding_pathways_keeps_the_go_records(uniprot, recorded_pathways, tmp_pa
     n_pathways = both["records_preview"]["TP53"]["pathways"]["reactome"]["n"]
 
     saved, records, record = _stored(both["output_path"])
-    assert _go_ids(records["TP53"]["go"]["uniprot"]) == {g[0] for g in _P53_GO}
-    assert len(records["TP53"]["pathways"]["reactome"]) == n_pathways > 40
+    assert _go_ids(_human_gene(records, "TP53")["go"]["uniprot"]) == {g[0] for g in _P53_GO}
+    assert len(_human_gene(records, "TP53")["pathways"]["reactome"]) == n_pathways > 40
     assert [str(t) for t in record["annotation_types"]] == ["go", "pathways"]
     assert list(saved.obs["gene_go_n"]) == [3, 3]
     assert list(saved.obs["gene_pathways_n"]) == [n_pathways, n_pathways]
-    provenance = json.loads(record["provenance_json"])
-    assert provenance["gene"]["go"]["uniprot"] == {"organism": "human", "column": "gene"}
-    assert provenance["gene"]["pathways"]["reactome"] == {"organism": "human", "column": "gene"}
+    assert json.loads(record["provenance_json"])["sources"] == [
+        {"entity_type": "gene", "organism": "human", "column": "gene", "annotation_type": "go", "source": "uniprot"},
+        {"entity_type": "gene", "organism": "human", "column": "gene", "annotation_type": "pathways",
+         "source": "reactome"},
+    ]
 
 
 def test_sources_of_one_type_are_kept_side_by_side(recorded_pathways, tmp_path):
@@ -180,7 +188,7 @@ def test_sources_of_one_type_are_kept_side_by_side(recorded_pathways, tmp_path):
     assert reactome["status"] == kegg["status"] == "success"
 
     saved, records, _ = _stored(kegg["output_path"])
-    pathways = records["TP53"]["pathways"]
+    pathways = _human_gene(records, "TP53")["pathways"]
     assert set(pathways) == {"reactome", "kegg"}
     assert len(pathways["reactome"]) == reactome["records_preview"]["TP53"]["pathways"]["reactome"]["n"]
     assert len(pathways["kegg"]) == kegg["records_preview"]["TP53"]["pathways"]["kegg"]["n"]
@@ -202,8 +210,9 @@ def test_a_rerun_replaces_records_it_found_and_keeps_those_it_could_not_fetch(un
     assert again["per_type"]["go"] == {"annotated": 1, "no_match": 0, "service_error": 1}
 
     saved, records, _ = _stored(again["output_path"])
-    assert _go_ids(records["TP53"]["go"]["uniprot"]) == {"GO:0005634"}  # replaced, not added to
-    assert _go_ids(records["EGFR"]["go"]["uniprot"]) == {g[0] for g in _EGFR_GO}  # the failed lookup kept them
+    assert _go_ids(_human_gene(records, "TP53")["go"]["uniprot"]) == {"GO:0005634"}  # replaced, not added to
+    # The failed lookup kept them.
+    assert _go_ids(_human_gene(records, "EGFR")["go"]["uniprot"]) == {g[0] for g in _EGFR_GO}
     assert list(saved.obs["gene_go_n"]) == [1, 2, 1]
 
 
@@ -458,8 +467,8 @@ def test_a_second_identifier_column_gets_its_own_count_column(uniprot, tmp_path)
     assert list(saved.obs["gene_go_n"]) == [3, 3, 2]  # still the counts of column 'gene'
     assert list(saved.obs["gene_go_n_target"]) == [2, 2, 2]
     assert json.loads(record["provenance_json"])["count_columns"] == {
-        "gene_go_n": {"column": "gene", "entity_type": "gene", "annotation_type": "go"},
-        "gene_go_n_target": {"column": "target", "entity_type": "gene", "annotation_type": "go"},
+        "gene_go_n": {"column": "gene", "entity_type": "gene", "organism": "human", "annotation_type": "go"},
+        "gene_go_n_target": {"column": "target", "entity_type": "gene", "organism": "human", "annotation_type": "go"},
     }
 
     # Annotating either column again updates its own counts, under the same names.
@@ -525,6 +534,115 @@ def test_every_count_column_follows_the_stored_records(uniprot, tmp_path):
     assert again["new_columns_added"] == ["gene_go_n_target"]
 
     saved, records, _ = _stored(again["output_path"])
-    assert _go_ids(records["EGFR"]["go"]["uniprot"]) == {"GO:0005886"}
+    assert _go_ids(_human_gene(records, "EGFR")["go"]["uniprot"]) == {"GO:0005886"}
     assert list(saved.obs["gene_go_n_target"]) == [1, 1]
     assert list(saved.obs["gene_go_n"]) == [3, 1]  # EGFR's row in column 'gene' agrees with the records
+
+
+# ---------------------------------------------------------------------------
+# 7. Records are kept per entity type and organism
+# ---------------------------------------------------------------------------
+
+_LEGACY = _FIXTURES / "mcp_annotations"
+
+
+def _legacy_file(name: str, tmp_path: Path) -> str:
+    """Rebuild the .h5ad an earlier annotate_metadata wrote, from its dump in fixtures/mcp_annotations."""
+    dump = json.loads((_LEGACY / name).read_text(encoding="utf-8"))
+    path = tmp_path / name.replace(".json", ".h5ad")
+    AnnData(obs=pd.DataFrame(dump["obs"], index=dump["obs_names"]), uns=copy.deepcopy(dump["uns"])).write_h5ad(path)
+    return str(path)
+
+
+def _fake_lookups(monkeypatch, answers: dict) -> None:
+    """Answer annotate_metadata's lookups from ``answers[(entity_type, organism)][type](identifier, sources)``."""
+    import embpy.mcp.tools as tools
+
+    def fetchers(entity, organism, id_type, kegg_index=None):
+        return answers[(entity, organism)]
+
+    monkeypatch.setattr(tools, "_annotation_fetchers", fetchers)
+
+
+_GENE_DISEASES = {"open_targets": [{"id": f"EFO:{i}"} for i in range(5)], "gwas_catalog": [{"id": "GCST1"}]}
+_THREE_GO = {"uniprot": {"cellular_component": [{"id": "GO:1"}, {"id": "GO:2"}], "biological_process": [{"id": "GO:3"}]}}
+
+
+def test_gene_and_protein_records_of_one_column_stay_apart(monkeypatch, tmp_path):
+    """Gene diseases (Open Targets, GWAS Catalog), then protein diseases (UniProt) of the same column."""
+    _fake_lookups(monkeypatch, {
+        ("gene", "human"): {"diseases": lambda e, s: {k: v for k, v in _GENE_DISEASES.items() if k in s}},
+        ("protein", "human"): {"diseases": lambda e, s: {"uniprot": [{"name": "Li-Fraumeni syndrome"}] * 2}},
+    })
+    genes = _write_obs(tmp_path / "genes.h5ad", gene=["TP53", "EGFR"])
+    gene = annotate_metadata(path=genes, entity_type="gene", column="gene", annotation_types="diseases",
+                             output_path=str(tmp_path / "gene.h5ad"))
+    protein = annotate_metadata(path=gene["output_path"], entity_type="protein", column="gene",
+                                annotation_types="diseases", output_path=str(tmp_path / "protein.h5ad"))
+    assert gene["status"] == protein["status"] == "success"
+
+    saved, records, _ = _stored(protein["output_path"])
+    assert list(saved.obs["gene_diseases_n"]) == [6, 6]
+    assert list(saved.obs["prot_diseases_n"]) == [2, 2]
+    assert set(_human_gene(records, "TP53")["diseases"]) == {"open_targets", "gwas_catalog"}
+    assert set(records["TP53"]["protein"]["human"]["diseases"]) == {"uniprot"}
+
+
+def test_protein_records_in_another_organism_leave_the_gene_records_alone(monkeypatch, tmp_path):
+    """Human gene GO, then mouse protein GO of the same column, where TP53 has no mouse match."""
+    _fake_lookups(monkeypatch, {
+        ("gene", "human"): {"go": lambda e, s: copy.deepcopy(_THREE_GO)},
+        ("protein", "mouse"): {"go": lambda e, s: {} if e == "TP53" else {"uniprot": {"cellular_component": [{"id": "GO:9"}]}}},
+    })
+    genes = _write_obs(tmp_path / "genes.h5ad", gene=["TP53", "Egfr"])
+    gene = annotate_metadata(path=genes, entity_type="gene", column="gene", annotation_types="go",
+                             output_path=str(tmp_path / "gene.h5ad"))
+    mouse = annotate_metadata(path=gene["output_path"], entity_type="protein", column="gene", annotation_types="go",
+                              organism="mouse", output_path=str(tmp_path / "mouse.h5ad"))
+    assert mouse["status"] == "partial_success", mouse
+
+    saved, records, record = _stored(mouse["output_path"])
+    assert list(saved.obs["gene_go_n"]) == [3, 3]
+    assert list(saved.obs["prot_go_n"]) == [0, 1]
+    for entity in ("TP53", "Egfr"):
+        assert _go_ids(_human_gene(records, entity)["go"]["uniprot"]) == {"GO:1", "GO:2", "GO:3"}
+    assert _go_ids(records["Egfr"]["protein"]["mouse"]["go"]["uniprot"]) == {"GO:9"}
+    provenance = json.loads(record["provenance_json"])
+    assert provenance["sources"] == [
+        {"entity_type": "gene", "organism": "human", "column": "gene", "annotation_type": "go", "source": "uniprot"},
+        {"entity_type": "protein", "organism": "mouse", "column": "gene", "annotation_type": "go", "source": "uniprot"},
+    ]
+    assert provenance["count_columns"]["gene_go_n"]["organism"] == "human"
+    assert provenance["count_columns"]["prot_go_n"]["organism"] == "mouse"
+
+
+def test_records_written_by_b6dc03c_keep_their_entity_type_and_organism(monkeypatch, tmp_path):
+    _fake_lookups(monkeypatch, {
+        ("protein", "mouse"): {"go": lambda e, s: {} if e == "TP53" else {"uniprot": {"cellular_component": [{"id": "GO:9"}]}}},
+    })
+    path = _legacy_file("b6dc03c_gene_go.json", tmp_path)
+    res = annotate_metadata(path=path, entity_type="protein", column="gene", annotation_types="go",
+                            organism="mouse", output_path=str(tmp_path / "mouse.h5ad"))
+    assert res["status"] == "partial_success", res
+
+    saved, records, _ = _stored(res["output_path"])
+    assert _go_ids(_human_gene(records, "TP53")["go"]["uniprot"]) == {g[0] for g in _P53_GO}
+    assert _go_ids(_human_gene(records, "EGFR")["go"]["uniprot"]) == {g[0] for g in _EGFR_GO}
+    assert list(saved.obs["gene_go_n"]) == [3, 2]
+    assert list(saved.obs["prot_go_n"]) == [0, 1]
+
+
+def test_records_mixed_by_0eec156_are_sorted_out_by_source(monkeypatch, tmp_path):
+    """0eec156 stored gene and protein disease records of TP53 and EGFR in one place and counted 8 for both."""
+    _fake_lookups(monkeypatch, {("gene", "human"): {"go": lambda e, s: copy.deepcopy(_THREE_GO)}})
+    path = _legacy_file("0eec156_gene_then_protein_diseases.json", tmp_path)
+    res = annotate_metadata(path=path, entity_type="gene", column="gene", annotation_types="go",
+                            output_path=str(tmp_path / "go.h5ad"))
+    assert res["status"] == "success", res
+
+    saved, records, _ = _stored(res["output_path"])
+    assert set(_human_gene(records, "TP53")["diseases"]) == {"open_targets", "gwas_catalog"}
+    assert set(records["TP53"]["protein"]["human"]["diseases"]) == {"uniprot"}
+    assert list(saved.obs["gene_diseases_n"]) == [6, 6]
+    assert list(saved.obs["prot_diseases_n"]) == [2, 2]
+    assert list(saved.obs["gene_go_n"]) == [3, 3]
