@@ -182,12 +182,19 @@ the models need, with QC/HVG thresholds lowered for small datasets (`preprocessi
 `standard` and `raw` always run their pipeline; `none` never filters or transforms.
 `preprocessing_applied` names the pipeline that ran.
 
+**Counts.** Preprocessing starts from the counts chosen by the rule described under
+[`preprocess_counts`](#preprocess_counts): `.X` when it holds counts (also corrected,
+non-integer counts), `.layers["counts"]` only when `.X` is normalized. Its warnings about them
+(corrected counts used as counts, or the switch to `.layers["counts"]`) are repeated in
+`warning` and kept in `.uns["embpy_cell_embeddings"]["__preprocessing__"]["input_warnings"]`.
+
 **Normalized input without raw counts.** If `.X` is already normalized or log-transformed (as
-`inspect_data`'s `expression_nature` reports) and the file has neither `.layers["counts"]` nor
-`.layers["log_normalized"]` (e.g. a file normalized with scanpy), `auto` embeds `.X` as the
-normalized expression, as `none` would, and says so in `warning`: nothing is normalized again.
-`standard` and `raw` refuse such a file with `error_type: "NotRawCountsError"` instead of treating
-`.X` as counts. Whenever no preprocessing runs (`none`, or `auto` on prepared input), models that
+`inspect_data`'s `expression_nature` reports) and no `.layers["counts"]` holds counts, whatever
+other layers exist (e.g. a file normalized with scanpy), `auto` embeds `.X` as the normalized
+expression, as `none` would, and says so in `warning`: nothing is normalized again. (A file
+that also holds `.layers["log_normalized"]` is used as is, as above.) `standard` and `raw`
+refuse such a file with `error_type: "NotRawCountsError"` instead of treating `.X` as counts.
+Whenever no preprocessing runs (`none`, or `auto` on prepared input), models that
 read raw counts (`scvi`, `scanvi`, `totalvi`) need counts in `.layers["counts"]` or `.X`; given
 other values, each fails in `models_failed` with a message saying so (`partial_success`, or an
 `error` with `error_type: "NotRawCountsError"` when no model could run).

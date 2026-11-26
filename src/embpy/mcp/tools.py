@@ -1973,9 +1973,11 @@ def compute_embeddings(
         input that already holds .layers['log_normalized'] (preprocess_counts output) as
         is; otherwise it filters, normalizes and selects HVGs as each model needs, with
         thresholds scaled down for small datasets. 'none' never filters or transforms.
-        A .X that is already normalized, with neither .layers['counts'] nor
-        .layers['log_normalized'], is embedded as is by 'auto' (with a warning), and
-        refused by 'standard' and 'raw' (error_type 'NotRawCountsError'). Without
+        A .X that is already normalized, with no counts in .layers['counts'] (whatever
+        other layers exist), is embedded as is by 'auto' (with a warning), and refused by
+        'standard' and 'raw' (error_type 'NotRawCountsError'). The counts preprocessing
+        starts from follow the rule of preprocess_counts, and its warnings about them
+        (e.g. corrected counts, or a switch to .layers['counts']) are in ``warning``. Without
         preprocessing, models that read raw counts (scvi, scanvi, totalvi) fail when
         .layers['counts'] (or .X) does not hold counts.
     device : str, default='auto'
@@ -2084,6 +2086,7 @@ def compute_embeddings(
         applied_preprocessing: str | None = None
         preprocessing_note: str | None = None
         input_warning: str | None = None
+        preprocessing_warnings: list[str] = []
         # Models that need raw counts but would get other values: model -> error.
         blocked: dict[str, str] = {}
         # embed_cells' QC defaults; preprocessing='auto' scales them for small datasets.
@@ -2098,17 +2101,16 @@ def compute_embeddings(
             )
             if conflicts:
                 return _key_conflict_error(path, resolved_models, conflicts)
-            # Normalized .X with no raw counts and no log_normalized layer (e.g. a file
-            # normalized with scanpy): 'standard' and 'raw' would treat .X as counts.
-            if "counts" not in adata.layers and "log_normalized" not in adata.layers:
-                nature = _detect_expression_nature(adata)
-                if nature["detected_nature"] in _NOT_RAW_COUNTS:
-                    x_not_counts = nature
+            # No counts anywhere (.X normalized, and no .layers['counts'] with counts, whatever
+            # other layers exist): 'standard' and 'raw' would treat .X as counts.
+            if not _counts_source(adata)["found"]:
+                x_not_counts = _detect_expression_nature(adata)
             if x_not_counts and preprocessing in ("standard", "raw"):
+                counts_layer = "counts" if "counts" in adata.layers else None
                 return _not_raw_counts_error(
                     path,
-                    x_not_counts,
-                    None,
+                    _detect_expression_nature(adata, layer=counts_layer),
+                    counts_layer,
                     needed_by=f"compute_embeddings(preprocessing='{preprocessing}')",
                     consequence=(
                         "Normalizing and log-transforming them again would distort the data."
@@ -2150,14 +2152,18 @@ def compute_embeddings(
                     # the normalized expression instead of normalizing it a second time.
                     run_preprocessing = "none"
                     kind = x_not_counts["detected_nature"]
+                    no_layer = (
+                        "there is no .layers['counts']"
+                        if "counts" not in adata.layers
+                        else ".layers['counts'] does not hold counts either"
+                    )
                     preprocessing_note = (
-                        f"The input .X already holds {kind} values and there is no .layers['counts'], so .X "
-                        "was used as the normalized expression: no cells or genes were filtered and nothing "
-                        "was normalized again."
+                        f"The input .X already holds {kind} values and {no_layer}, so .X was used as the "
+                        "normalized expression: no cells or genes were filtered and nothing was normalized again."
                     )
                     input_warning = (
-                        f"The input .X holds {kind} values (not raw counts) and there is no .layers['counts'], "
-                        "so preprocessing='auto' embedded .X as the normalized expression; it was not "
+                        f"The input .X holds {kind} values (not raw counts) and {no_layer}, so "
+                        "preprocessing='auto' embedded .X as the normalized expression; it was not "
                         "normalized again."
                     )
                 elif preprocessing == "auto":
@@ -2193,6 +2199,8 @@ def compute_embeddings(
                     )
                     plan = (adata_out.uns.get(_CELL_EMBEDDING_RECORDS) or {}).get("__preprocessing__") or {}
                     applied_preprocessing = str(plan.get("resolved", run_preprocessing))
+                    # What embpy.pp.preprocess_counts warned about the counts (NotRawCountsWarning).
+                    preprocessing_warnings = [str(w) for w in plan.get("input_warnings") or []]
                     if preprocessing_note:
                         _note_preprocessing_choice(adata_out, requested=preprocessing, reason=preprocessing_note)
                     # The blocked models have no run record, so they are settled as failed.
@@ -2320,6 +2328,7 @@ def compute_embeddings(
             if blocked:
                 input_warning += f" Models that need raw counts were not run: {list(blocked)}."
             warnings.append(input_warning)
+        warnings.extend(preprocessing_warnings)
         if failed:
             response["models_failed"] = failed
             warning = (

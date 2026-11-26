@@ -757,3 +757,30 @@ def test_preprocess_counts_and_compute_embeddings_use_the_same_counts(tmp_path, 
     saved = anndata.read_h5ad(embedded)
     assert saved.shape == corrected.shape
     np.testing.assert_allclose(saved.layers["log_normalized"], expected, rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("mode", ["standard", "raw"])
+def test_normalized_x_without_counts_is_refused_whatever_other_layers_exist(tmp_path, mode):
+    """Log-normalized .X, a log_normalized layer and no counts layer: still NotRawCountsError."""
+    x = _log_normalized(_poisson_counts(60, 300))
+    adata = _cells(x)
+    adata.layers["log_normalized"] = x.copy()
+    path = str(tmp_path / "lognorm.h5ad")
+    adata.write_h5ad(path)
+    out = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", preprocessing=mode, output_path=out)
+    assert res["status"] == "error", res
+    assert res["error_type"] == "NotRawCountsError"
+    assert not os.path.exists(out)
+
+
+def test_preprocessing_warnings_are_in_the_reply(tmp_path):
+    """The warning embed_cells records when preprocessing switches to the counts layer is in the reply."""
+    counts = _poisson_counts(60, 300)
+    adata = _cells(_log_normalized(counts))
+    adata.layers["counts"] = counts.copy()
+    path = str(tmp_path / "lognorm_with_counts.h5ad")
+    adata.write_h5ad(path)
+    res = compute_embeddings(path=path, models="pca", output_path=str(tmp_path / "embedded.h5ad"))
+    assert res["status"] == "success", res
+    assert "layers['counts']" in res["warning"]
