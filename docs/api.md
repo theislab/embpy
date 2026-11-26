@@ -288,6 +288,22 @@ distinction between feature fusion and score/rank ensembles.
     tl.phenocopy_score_adata
 ```
 
+### Protein–Phenotype Alignment
+
+See the [alignment guide](protein_phenotype_alignment.md) for examples and
+statistical assumptions.
+
+```{eval-rst}
+.. currentmodule:: embpy
+
+.. autosummary::
+    :toctree: generated
+
+    tl.protein_phenotype_alignment
+    tl.alignment_summary
+    tl.cross_modal_mantel
+```
+
 ### Weighted Protein Embeddings
 
 ```{eval-rst}

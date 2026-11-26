@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning][].
 
 ### Added
 
+- Protein–phenotype alignment tools: `tl.protein_phenotype_alignment`,
+  `tl.alignment_summary` and `tl.cross_modal_mantel`. Compare matched protein
+  and transcriptomic embeddings with a seeded Mantel permutation test,
+  kNN Jaccard, phenocopy AUROC and Recall@K; optional perturbation-level
+  aggregation and control filtering support cell-level inputs.
 - MCP server (`embpy-mcp`, `python -m embpy.mcp.server`) with nine tools -- `inspect_data`, `resolve_identifiers`, `preprocess_counts`, `list_model_registry`, `compute_embeddings`, `annotate_metadata`, `compute_umap`, `benchmark_scib`, `benchmark_perturbations` -- plus Agent Skills in `skills/` (the repository is a Claude Code plugin). Install with `pip install "embpy[mcp,models]"`; `docs/mcp/` covers Claude Code, Claude Desktop, Cursor and Windsurf.
 - `embpy.resources.gene.reactome.load_reactome_index()` downloads Reactome's release-98 files on first use (about 37 MB, into `$EMBPY_CACHE/reactome/98`, default `~/.cache/embpy`), parses them once per process and reuses them afterwards; `ReactomeUnavailableError` when they cannot be fetched. `download_reactome_files()` and `reactome_cache_dir()` are the building blocks. `annotate_metadata` uses it, so Reactome questions work on a fresh install, and it accepts `identifiers=[...]` to annotate a list without an `.h5ad`.
 - The Claude Code plugin starts the server through `scripts/embpy-mcp-launcher` (a POSIX script and a Windows `.cmd`), which uses `EMBPY_PYTHON`, then a `uv tool` environment, then `python3`/`python`, accepting only an interpreter that can run the server; otherwise `claude mcp list` shows what to do.
