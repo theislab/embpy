@@ -37,6 +37,8 @@ from typing import Any, Literal
 import numpy as np
 import requests
 
+from embpy._counts import NOT_COUNTS
+from embpy._counts import describe_values as _describe_values
 from embpy.errors import GeneResolutionError
 
 logger = logging.getLogger("embpy.mcp.tools")
@@ -151,7 +153,13 @@ def _copy_access(source: str, destination: str) -> None:
 
 
 def _detect_expression_nature(adata: Any, layer: str | None = None) -> dict[str, Any]:
-    """Inspect AnnData to determine if .X (or ``layer``) holds raw integer counts or normalized expression."""
+    """Inspect AnnData to determine if .X (or ``layer``) holds raw integer counts or normalized expression.
+
+    Uses the same rule as embpy.pp.preprocess_counts (embpy._counts.describe_values), so
+    every tool reads a file the same way: integers are raw_counts, non-integers with
+    count-like magnitudes (corrected or EM counts) non_integer_counts, and log-transformed
+    (marked by .uns['log1p'] or in the log range), normalized or scaled values are not counts.
+    """
     has_counts_layer = "counts" in adata.layers
     has_norm_layer = any(k in adata.layers for k in ("log_normalized", "normalized", "log1p"))
 
@@ -162,30 +170,13 @@ def _detect_expression_nature(adata: Any, layer: str | None = None) -> dict[str,
     max_val: float | None = None
 
     try:
-        import scipy.sparse as sp
-
-        # Sample up to 50 cells
-        n_sample = min(50, adata.n_obs)
-        X_sample = (adata.X if layer is None else adata.layers[layer])[:n_sample]
-        if sp.issparse(X_sample):
-            data_arr = X_sample.data[:1000] if len(X_sample.data) > 0 else np.array([])
-        else:
-            data_arr = np.ravel(X_sample)[:1000]
-
-        if len(data_arr) > 0:
-            min_val = float(np.min(data_arr))
-            max_val = float(np.max(data_arr))
-            has_negative = bool(min_val < -1e-5)
-            is_integer = bool(np.all(np.isclose(data_arr, np.round(data_arr), atol=1e-4)))
-
-            if has_negative:
-                nature = "scaled_or_centered"
-            elif is_integer and min_val >= 0:
-                nature = "raw_counts"
-            elif max_val <= 25.0 and not is_integer:
-                nature = "log_normalized"
-            else:
-                nature = "continuous_normalized"
+        info = _describe_values(
+            adata.X if layer is None else adata.layers[layer],
+            log1p_marked=layer is None and "log1p" in adata.uns,
+        )
+        nature = info["kind"]
+        is_integer, has_negative = info["is_integer"], info["has_negative"]
+        min_val, max_val = info["min"], info["max"]
     except Exception as exc:
         logger.debug("Could not sample .X for expression detection: %s", exc)
         nature = "could_not_sample"
@@ -206,8 +197,8 @@ def _layer_names(adata: Any) -> list[str]:
     return [str(k) for k in adata.layers.keys() if k is not None]
 
 
-# detected_nature values that are certainly not raw counts.
-_NOT_RAW_COUNTS = ("log_normalized", "continuous_normalized", "scaled_or_centered")
+# detected_nature values that are clearly not counts; the same kinds embpy.pp refuses to use as counts.
+_NOT_RAW_COUNTS = NOT_COUNTS
 
 
 def _found_values(nature: dict[str, Any], counts_layer: str | None) -> str:

@@ -33,9 +33,19 @@ compact JSON with a `status` field:
 Reads an `.h5ad` in backed mode (or inspects a list of strings via `data`) and returns
 `n_obs`, `n_vars`, `obs_columns`, `obs_summary`, `layers` (named layers only; anndata 0.13 also
 lists `.X` as an unnamed layer, which is left out), `obsm_keys`, `var_sample`,
-`gene_id_type_hint`, `expression_nature` (`detected_nature` is `raw_counts`,
-`log_normalized`, `scaled_or_centered` or `continuous_normalized`), and candidate label and
-batch columns (`recommended_label_key`, `recommended_batch_key`; picked from column names).
+`gene_id_type_hint`, `expression_nature` (see below), and candidate label and batch columns
+(`recommended_label_key`, `recommended_batch_key`; picked from column names).
+
+`expression_nature.detected_nature` is judged from the first 50 cells of `.X`, by the same rule
+every tool and `embpy.pp.preprocess_counts` use:
+
+| `detected_nature` | Values | Used as counts |
+|---|---|---|
+| `raw_counts` | non-negative integers | yes |
+| `non_integer_counts` | non-negative non-integers above the log range (largest value over 25), cells with different totals: e.g. ambient-corrected (SoupX, DecontX) or EM-assigned counts | yes, with a warning |
+| `log_normalized` | non-integers up to 25, or a `.X` that `.uns["log1p"]` marks as log-transformed | no |
+| `continuous_normalized` | non-integers with the same total in every cell (normalized, no log) | no |
+| `scaled_or_centered` | negative values | no |
 
 ---
 

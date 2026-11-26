@@ -644,3 +644,80 @@ def test_embed_cells_records_the_counts_warning():
                                                     min_genes=0, min_cells=0)
     record = out.uns["embpy_cell_embeddings"]["__preprocessing__"]
     assert any("log_normalized" in warning for warning in record["input_warnings"])
+
+
+# --- which matrix holds the counts: corrected or EM counts in .X, original counts in a layer -----
+
+
+def _corrected_counts(seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
+    """UMI counts, and the same counts after ambient-RNA removal without rounding (SoupX)."""
+    rng = np.random.default_rng(seed)
+    raw = rng.negative_binomial(5, 0.3, size=(100, 300)).astype(np.float32)
+    corrected = np.clip(raw - rng.uniform(0, 1.5, size=raw.shape), 0, None).astype(np.float32)
+    return raw, corrected
+
+
+def test_corrected_counts_in_x_stay_the_count_source():
+    """SoupX layout (corrected counts in .X, the original ones in .layers['counts']): .X is used, with a warning."""
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    raw, corrected = _corrected_counts()
+    adata = _cells(corrected)
+    adata.layers["counts"] = raw.copy()
+    with pytest.warns(UserWarning, match="non-integer"):
+        out = library_preprocess(adata, min_genes=1, min_cells=1, n_top_genes=50)
+    assert out.shape == corrected.shape
+    np.testing.assert_array_equal(np.asarray(out.X), corrected)
+    np.testing.assert_allclose(out.layers["log_normalized"], _log_normalized(corrected), rtol=1e-5, atol=1e-6)
+
+
+@pytest.mark.parametrize("pipeline", ["raw", "standard"])
+def test_log_x_next_to_counts_switches_to_the_counts_with_a_warning(monkeypatch, pipeline):
+    """Log-normalized .X (marked by uns['log1p']) next to integer counts: the counts are used, the
+    switch is reported, and no stale uns['log1p'] reaches scanpy or the result."""
+    import scanpy as sc
+
+    from embpy.pp.sc_preprocessing import preprocess_counts as library_preprocess
+
+    marked_when_logged = []
+    real_log1p = sc.pp.log1p
+
+    def log1p(adata, *args, **kwargs):
+        marked_when_logged.append("log1p" in adata.uns)
+        return real_log1p(adata, *args, **kwargs)
+
+    monkeypatch.setattr(sc.pp, "log1p", log1p)
+    counts = _poisson_counts()
+    adata = _cells(_log_normalized(counts))
+    adata.uns["log1p"] = {"base": None}
+    adata.layers["counts"] = counts.copy()
+    with pytest.warns(UserWarning, match=r"layers\['counts'\]"):
+        out = library_preprocess(adata, pipeline=pipeline, min_genes=0, min_cells=0, select_hvg=False)
+    np.testing.assert_array_equal(np.asarray(out.X), counts)
+    assert "log1p" not in out.uns
+    assert not any(marked_when_logged)
+
+
+def test_embed_cells_records_the_switch_to_the_counts_layer():
+    from embpy import BioEmbedder
+
+    counts = _poisson_counts()
+    adata = _cells(_log_normalized(counts))
+    adata.layers["counts"] = counts.copy()
+    with pytest.warns(UserWarning, match=r"layers\['counts'\]"):
+        out = BioEmbedder(device="cpu").embed_cells(adata, models="pca", preprocessing="standard",
+                                                    min_genes=0, min_cells=0)
+    record = out.uns["embpy_cell_embeddings"]["__preprocessing__"]
+    assert any("layers['counts']" in warning for warning in record["input_warnings"])
+
+
+def test_mcp_tools_classify_corrected_counts_as_counts(tmp_path, fast_scvi):
+    """inspect_data and compute_embeddings follow the same rule: corrected counts are counts."""
+    _, corrected = _corrected_counts()
+    path = str(tmp_path / "soupx.h5ad")
+    _cells(corrected).write_h5ad(path)
+    assert inspect_data(path=path)["expression_nature"]["detected_nature"] == "non_integer_counts"
+    res = compute_embeddings(path=path, models=["pca", "scvi"], output_path=str(tmp_path / "embedded.h5ad"))
+    assert res["status"] == "success", res
+    assert res["models_computed"] == ["pca", "scvi"]
+    assert res["preprocessing_applied"] == "standard"

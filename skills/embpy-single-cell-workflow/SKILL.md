@@ -22,7 +22,9 @@ inspect_data(path="data/pbmc.h5ad")
 
 Read from the result:
 - `n_obs` / `n_vars`, `layers`, `obsm_keys` (embeddings that already exist).
-- `expression_nature.detected_nature`: `raw_counts` needs preprocessing; `log_normalized` does not.
+- `expression_nature.detected_nature`: `raw_counts` needs preprocessing, and so does
+  `non_integer_counts` (e.g. ambient-corrected or EM counts, used as counts with a warning);
+  `log_normalized` does not.
 - `recommended_label_key` / `recommended_batch_key`: candidate columns for scIB. They come from
   column names only, so confirm them with the user when the choice matters.
 

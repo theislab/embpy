@@ -21,58 +21,16 @@ from typing import Literal
 import numpy as np
 import scipy.sparse as sp
 
+from embpy._counts import NotRawCountsWarning
+from embpy._counts import counts_source as _counts_source
+
 logger = logging.getLogger(__name__)
 
 
-class NotRawCountsWarning(UserWarning):
-    """:func:`preprocess_counts` was given values that do not look like raw counts."""
-
-
-# Kinds of values that are certainly not raw counts.
-_NOT_RAW_COUNTS = ("log_normalized", "continuous_normalized", "scaled_or_centered")
-
-
-def _expression_kind(matrix) -> str:  # type: ignore[no-untyped-def]
-    """What a count matrix holds, judged from up to 1000 values of its first 50 rows.
-
-    Returns ``"raw_counts"`` (non-negative integers), ``"log_normalized"`` (non-integers
-    up to 25), ``"continuous_normalized"`` (larger non-integers), ``"scaled_or_centered"``
-    (negative values) or ``"unknown"`` (nothing to sample); the same rules as the MCP
-    tool ``inspect_data``.
-    """
-    sample = matrix[: min(50, matrix.shape[0])]
-    values = sample.data[:1000] if sp.issparse(sample) else np.ravel(np.asarray(sample))[:1000]
-    if values.size == 0:
-        return "unknown"
-    if float(np.min(values)) < -1e-5:
-        return "scaled_or_centered"
-    if np.all(np.isclose(values, np.round(values), atol=1e-4)):
-        return "raw_counts"
-    return "log_normalized" if float(np.max(values)) <= 25.0 else "continuous_normalized"
-
-
 def _raw_counts_source(adata) -> tuple[bool, str | None]:  # type: ignore[no-untyped-def]
-    """Where :func:`preprocess_counts` should take raw counts from.
-
-    Returns ``(use_counts_layer, problem)``: ``use_counts_layer`` is True when ``.X`` is
-    not raw counts but ``.layers["counts"]`` is; ``problem`` describes the input when
-    neither holds raw counts (``.X`` is then treated as counts, as before).
-    """
-    x_kind = _expression_kind(adata.X)
-    if x_kind not in _NOT_RAW_COUNTS:
-        return False, None
-    if "counts" in adata.layers:
-        layer_kind = _expression_kind(adata.layers["counts"])
-        if layer_kind not in _NOT_RAW_COUNTS:
-            return True, None
-        found = f".X holds {x_kind} values and .layers['counts'] holds {layer_kind} values"
-    else:
-        found = f".X holds {x_kind} values and there is no .layers['counts']"
-    return False, (
-        f"preprocess_counts expects raw counts, but {found}. They are treated as raw counts, so "
-        "normalizing and log-transforming them again distorts the data. Pass raw counts in .X or "
-        ".layers['counts'], or skip preprocessing for data that is already normalized."
-    )
+    """``(use_counts_layer, warning)`` for :func:`preprocess_counts`; see :func:`embpy._counts.counts_source`."""
+    choice = _counts_source(adata)
+    return choice["source"] == "counts", choice["message"]
 
 
 def _require_scanpy():  # type: ignore[no-untyped-def]
@@ -122,10 +80,13 @@ def preprocess_counts(
     Parameters
     ----------
     adata
-        AnnData with raw counts in ``.X``. If ``.X`` holds other values (normalized,
-        log-transformed or scaled) and ``.layers["counts"]`` holds counts, those
-        counts are used instead. If neither holds counts, ``.X`` is treated as counts
-        and a :class:`NotRawCountsWarning` (a ``UserWarning``) says what was found.
+        AnnData with counts in ``.X``. Non-integer counts with count-like magnitudes
+        (ambient-corrected or EM counts) are used as they are. Only when ``.X`` is
+        clearly not counts (log-transformed, e.g. marked by ``.uns["log1p"]``,
+        normalized or scaled) and ``.layers["counts"]`` holds counts are those used
+        instead; if neither holds counts, ``.X`` is treated as counts. Every case but
+        integer counts in ``.X`` gives a :class:`NotRawCountsWarning` (a
+        ``UserWarning``) saying what was found and which matrix was used.
     pipeline
         ``"raw"`` applies only basic QC filtering.
         ``"standard"`` runs the full workflow (normalize, log1p,
@@ -184,13 +145,14 @@ def preprocess_counts(
     if copy:
         adata = adata.copy()
 
-    use_counts_layer, problem = _raw_counts_source(adata)
+    use_counts_layer, message = _raw_counts_source(adata)
+    if message:
+        warnings.warn(message, NotRawCountsWarning, stacklevel=2)
     if use_counts_layer:
-        # .X is already normalized, but .layers["counts"] holds the counts: start from those.
-        logger.info("preprocess_counts: .X is not raw counts; starting from .layers['counts'].")
+        # .X is clearly not counts, but .layers["counts"] holds them: start from those.
+        # .uns['log1p'] described the replaced .X, which now holds counts.
         adata.X = adata.layers["counts"].copy()
-    elif problem:
-        warnings.warn(problem, NotRawCountsWarning, stacklevel=2)
+        adata.uns.pop("log1p", None)
 
     # Preserve raw counts
     if sp.issparse(adata.X):
