@@ -494,6 +494,31 @@ def _shared_gene_resolver(species: str = "human") -> "GeneResolver":
     return entry[1]
 
 
+# How many _quiet_lookups blocks this thread is in.
+_QUIET = threading.local()
+
+
+@contextlib.contextmanager
+def _quiet_lookups():
+    """Inside the block, this thread's per-gene lookup warnings are logged at DEBUG level.
+
+    For callers documented as quiet that report misses themselves
+    (``hpa._resolve_ensembl_id_quiet``). Other threads and the logging
+    configuration are not touched.
+    """
+    depth = getattr(_QUIET, "depth", 0)
+    _QUIET.depth = depth + 1
+    try:
+        yield
+    finally:
+        _QUIET.depth = depth
+
+
+def _lookup_warning(msg: str, *args: Any) -> None:
+    """``logging.warning``, or ``logging.debug`` inside :func:`_quiet_lookups` in this thread."""
+    logging.log(logging.DEBUG if getattr(_QUIET, "depth", 0) else logging.WARNING, msg, *args)
+
+
 def _looks_like_smiles(s: str) -> bool:
     """Heuristic check for a SMILES string.
 
@@ -622,11 +647,11 @@ class GeneResolver:
                     logging.warning("You may need to run 'pyensembl install' manually or check internet connection.")
 
         except ImportError:
-            logging.warning(
-        "pyensembl not found, so gene lookups use the Ensembl REST API instead of a local "
-        "cache. This still works but is slower and needs network access. For offline/local "
-        'resolution: pip install "embpy[genome]"'
-    )
+            _lookup_warning(
+                "pyensembl not found, so gene lookups use the Ensembl REST API instead of a local "
+                "cache. This still works but is slower and needs network access. For offline/local "
+                'resolution: pip install "embpy[genome]"'
+            )
             self.ensembl = None
         except Exception as e:
             logging.warning(f"Failed to initialize pyensembl: {e}")
@@ -1512,7 +1537,7 @@ class GeneResolver:
                 resolved_id = hit["ensembl_id"]
             elif hit["status"] == "ambiguous":
                 self._ambiguous_symbols[(org, sym)] = hit["candidates"]
-                logging.warning(
+                _lookup_warning(
                     "Symbol '%s' is an alias of several %s genes %s; leaving it unresolved.",
                     sym, organism, hit["candidates"],
                 )
@@ -1540,7 +1565,7 @@ class GeneResolver:
                 logging.debug(f"Ensembl REST symbol->id failed for {sym}: {e}")
 
         if resolved_id and not ensembl_id_matches_species(resolved_id, org):
-            logging.warning(
+            _lookup_warning(
                 "Discarding %s for symbol '%s': it is not a %s Ensembl gene id.", resolved_id, sym, organism
             )
             resolved_id = None
@@ -1559,9 +1584,11 @@ class GeneResolver:
 
         # Not resolved
         if network_failed:
-            logging.warning(_get_ensembl_offline_warning(organism, getattr(self, "release_version", 110), reason=fail_reason))
+            _lookup_warning(
+                "%s", _get_ensembl_offline_warning(organism, getattr(self, "release_version", 110), reason=fail_reason)
+            )
         else:
-            logging.warning(f"Could not resolve Ensembl ID for symbol '{symbol}'")
+            _lookup_warning("Could not resolve Ensembl ID for symbol '%s'", symbol)
 
         if strict:
             raise GeneResolutionError(
@@ -1655,9 +1682,11 @@ class GeneResolver:
             return resolved_sym
 
         if network_failed:
-            logging.warning(_get_ensembl_offline_warning(organism, getattr(self, "release_version", 110), reason=fail_reason))
+            _lookup_warning(
+                "%s", _get_ensembl_offline_warning(organism, getattr(self, "release_version", 110), reason=fail_reason)
+            )
         else:
-            logging.warning(f"Could not resolve symbol for Ensembl ID '{ensembl_gene_id}'")
+            _lookup_warning("Could not resolve symbol for Ensembl ID '%s'", ensembl_gene_id)
 
         if strict:
             raise GeneResolutionError(

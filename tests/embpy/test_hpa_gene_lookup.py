@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 import threading
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -78,3 +79,50 @@ def test_each_thread_builds_its_own_resolver(mygene_lookup, resolver_builds):
     hpa._resolve_ensembl_id("GENEC")
     assert resolver_builds == [{"species": "human"}, {"species": "human"}]
     assert mygene_lookup.call_count == 3
+
+
+def _mygene_misses(symbol, organism, **kwargs):
+    if symbol == "AMBIG1":
+        return {"status": "ambiguous", "symbol": None, "ensembl_id": None, "candidates": ["GENEX", "GENEY"]}
+    return {"status": "miss", "symbol": None, "ensembl_id": None, "candidates": []}
+
+
+@pytest.fixture
+def unresolvable(mygene_lookup):
+    """MyGene.info knows no gene (or several for AMBIG1); Ensembl answers 'not found'."""
+    mygene_lookup.side_effect = _mygene_misses
+    not_found = MagicMock(ok=False, status_code=400)
+    with patch.object(resolver_mod, "_ensembl_get", return_value=not_found):
+        yield mygene_lookup
+
+
+def _warnings(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_quiet_lookup_logs_no_warnings(unresolvable, caplog):
+    with caplog.at_level(logging.DEBUG):
+        assert hpa._resolve_ensembl_id_quiet("NOTAGENE") == (None, None)
+        assert hpa._resolve_ensembl_id_quiet("AMBIG1") == (None, None)
+    assert _warnings(caplog) == []
+
+
+def test_quiet_lookup_does_not_silence_other_threads(unresolvable, caplog):
+    inside, done = threading.Event(), threading.Event()
+
+    def slow_misses(symbol, organism, **kwargs):
+        if symbol == "QUIETGENE":
+            inside.set()  # the quiet lookup is running ...
+            done.wait(30)  # ... until the other thread's lookup has finished
+        return _mygene_misses(symbol, organism)
+
+    unresolvable.side_effect = slow_misses
+    quiet = threading.Thread(target=hpa._resolve_ensembl_id_quiet, args=("QUIETGENE",))
+    with caplog.at_level(logging.WARNING):
+        quiet.start()
+        assert inside.wait(30)
+        assert hpa._resolve_ensembl_id("LOUDGENE") is None
+        done.set()
+        quiet.join(30)
+    assert any("LOUDGENE" in m for m in _warnings(caplog))
+    assert not any("QUIETGENE" in m for m in _warnings(caplog))

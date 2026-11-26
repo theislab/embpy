@@ -23,6 +23,7 @@ import pytest
 
 import embpy
 from embpy.pp.basic import PerturbationProcessor
+from embpy.resources.gene import _cache_files
 from embpy.resources.gene import resolver as resolver_mod
 from embpy.resources.gene.resolver import _GENE_CACHE_VERSION, GeneResolver
 
@@ -122,8 +123,22 @@ def test_save_threshold_can_be_set_with_an_environment_variable(resolver, monkey
     assert len(writes) == 2
 
 
+@pytest.fixture
+def unwarned_thresholds(monkeypatch):
+    """Forget which invalid thresholds were warned about (once per value and process) by earlier tests."""
+    monkeypatch.setattr(_cache_files, "_warned_values", set())
+
+
+def test_invalid_save_threshold_warns_once_per_value(monkeypatch, caplog, unwarned_thresholds):
+    monkeypatch.setenv("EMBPY_GENE_CACHE_SAVE_EVERY", "often")
+    with caplog.at_level(logging.WARNING):
+        assert _cache_files.save_every(500) == 500
+        assert _cache_files.save_every(500) == 500
+    assert len([r for r in caplog.records if "EMBPY_GENE_CACHE_SAVE_EVERY" in r.getMessage()]) == 1
+
+
 @pytest.mark.parametrize("value", ["0", "-3", "often"])
-def test_invalid_save_threshold_falls_back_to_the_default(resolver, monkeypatch, caplog, value):
+def test_invalid_save_threshold_falls_back_to_the_default(resolver, monkeypatch, caplog, value, unwarned_thresholds):
     monkeypatch.setattr(resolver_mod, "_GENE_CACHE_SAVE_EVERY", 10)
     monkeypatch.setenv("EMBPY_GENE_CACHE_SAVE_EVERY", value)
     with _fake_network(), _record_writes(resolver._cache_file) as writes, caplog.at_level(logging.WARNING):
