@@ -3392,8 +3392,14 @@ def annotate_metadata(
                     _n_annotation_items(_scoped_records(stored, v, *scope).get(ann_type)) if v else 0 for v in rows
                 ]
             if resolved_entity == "molecule" and "properties" in requested:
-                # Scalar RDKit properties as columns, as tl.annotate_molecules writes them.
-                props = {e: (results[e].get("properties", {}).get("rdkit") or {}).get("physicochemical") or {} for e in entities}
+                # Scalar RDKit properties as columns, as tl.annotate_molecules writes them, from the
+                # stored records: a compound whose lookup failed this time keeps its earlier values.
+                props: dict[str, dict[str, Any]] = {}
+                for e in entities:
+                    value: Any = _scoped_records(stored, e, "molecule", records_org).get("properties")
+                    for key in ("rdkit", "physicochemical"):
+                        value = value.get(key) if isinstance(value, dict) else None
+                    props[e] = value if isinstance(value, dict) else {}
                 prop_keys = list(dict.fromkeys(k for p in props.values() for k, v in p.items() if not isinstance(v, (dict, list))))
                 property_columns = property_columns if property_columns is not None else {}
                 for key in prop_keys:

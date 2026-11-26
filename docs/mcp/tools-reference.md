@@ -251,7 +251,8 @@ Otherwise `.uns["embpy_annotations"]["results_json"]` holds the records as JSON:
 entity type (`gene`, `protein`, `molecule`) -> organism (`any` for molecules, whose annotations
 do not depend on it) -> annotation type -> source -> records. `.obs` gains `<prefix>_<type>_n`
 counts of the records stored per row (`gene_`, `prot_`, `mol_`; molecules with `properties` also
-get `mol_<property>` columns).
+get `mol_<property>` columns of the stored values, so a compound whose lookup failed keeps its
+earlier values).
 
 Annotating the output again adds to the stored records: other entity types, organisms, types and
 sources stay, so gene and protein annotations of one column (or one column annotated for two

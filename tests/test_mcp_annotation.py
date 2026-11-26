@@ -646,3 +646,35 @@ def test_records_mixed_by_0eec156_are_sorted_out_by_source(monkeypatch, tmp_path
     assert list(saved.obs["gene_diseases_n"]) == [6, 6]
     assert list(saved.obs["prot_diseases_n"]) == [2, 2]
     assert list(saved.obs["gene_go_n"]) == [3, 3]
+
+
+# ---------------------------------------------------------------------------
+# 8. Molecule property columns show the stored records
+# ---------------------------------------------------------------------------
+
+
+def test_property_columns_keep_the_stored_values_when_a_lookup_fails(monkeypatch, tmp_path):
+    """Caffeine's lookup fails on the second call: its stored properties stay, and so does its row."""
+    down: set[str] = set()
+
+    def properties(e, s):
+        if e in down:
+            raise ConnectionError("PubChem unreachable")
+        return {"rdkit": {"physicochemical": {"molecular_weight": {"aspirin": 180.16, "caffeine": 194.19}[e]}}}
+
+    _fake_lookups(monkeypatch, {("molecule", "human"): {"properties": properties}})
+    wells = _write_obs(tmp_path / "wells.h5ad", compound=["aspirin", "caffeine"])
+    first = annotate_metadata(path=wells, entity_type="molecule", column="compound", annotation_types="properties",
+                              output_path=str(tmp_path / "first.h5ad"))
+    assert first["status"] == "success", first
+    down.add("caffeine")
+    second = annotate_metadata(path=first["output_path"], entity_type="molecule", column="compound",
+                               annotation_types="properties", output_path=str(tmp_path / "second.h5ad"))
+    assert second["status"] == "partial_success", second
+    assert second["per_type"]["properties"]["service_error"] == 1
+
+    saved, records, _ = _stored(second["output_path"])
+    caffeine = records["caffeine"]["molecule"]["any"]["properties"]["rdkit"]["physicochemical"]
+    assert caffeine == {"molecular_weight": 194.19}
+    assert list(saved.obs["mol_properties_n"]) == [1, 1]
+    assert list(saved.obs["mol_molecular_weight"]) == [180.16, 194.19]
