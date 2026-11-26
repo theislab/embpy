@@ -784,3 +784,33 @@ def test_preprocessing_warnings_are_in_the_reply(tmp_path):
     res = compute_embeddings(path=path, models="pca", output_path=str(tmp_path / "embedded.h5ad"))
     assert res["status"] == "success", res
     assert "layers['counts']" in res["warning"]
+
+
+@pytest.fixture
+def fast_foundation_models(monkeypatch):
+    """Foundation models return a fixed embedding instead of loading weights or converting gene names."""
+    from embpy import BioEmbedder
+
+    class FixedWrapper:
+        def embed_cells(self, adata):
+            return np.zeros((adata.n_obs, 8), dtype=np.float32)
+
+    monkeypatch.setattr(BioEmbedder, "_get_or_load_singlecell_wrapper", lambda self, *args, **kwargs: FixedWrapper())
+    monkeypatch.setattr(
+        BioEmbedder, "_ensure_singlecell_vocabulary", lambda self, adata, model_key, organism="human": (adata, {})
+    )
+
+
+def test_foundation_models_need_raw_counts_in_x(tmp_path, fast_foundation_models):
+    """scGPT and the other foundation models read raw counts from .X (model card: input .X, preprocessing 'raw')."""
+    path, _ = _normalized_only(tmp_path)
+    res = compute_embeddings(path=path, models=["pca", "scgpt"], output_path=str(tmp_path / "embedded.h5ad"))
+    assert res["status"] == "partial_success", res
+    assert res["models_computed"] == ["pca"]
+    assert "needs raw counts in .X" in res["models_failed"]["scgpt"]
+
+    counts_path = str(tmp_path / "counts.h5ad")
+    _cells(_poisson_counts(60, 300)).write_h5ad(counts_path)
+    res = compute_embeddings(path=counts_path, models="scgpt", preprocessing="none",
+                             output_path=str(tmp_path / "counts_embedded.h5ad"))
+    assert res["status"] == "success", res

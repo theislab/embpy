@@ -202,13 +202,18 @@ def _layer_names(adata: Any) -> list[str]:
 _NOT_RAW_COUNTS = NOT_COUNTS
 
 
+def _values_found(nature: dict[str, Any]) -> str:
+    """'<kind> values (sampled range ..., integers or not)' from _detect_expression_nature."""
+    return (
+        f"{nature['detected_nature']} values (sampled range {nature['sample_min']:.3g} to "
+        f"{nature['sample_max']:.3g}, {'integers' if nature['is_discrete_integers'] else 'not integers'})"
+    )
+
+
 def _found_values(nature: dict[str, Any], counts_layer: str | None) -> str:
     """'<where> holds <what>' for a raw-count source that holds something else."""
     source = f".layers['{counts_layer}']" if counts_layer else ".X (and there is no .layers['counts'])"
-    return (
-        f"{source} holds {nature['detected_nature']} values (sampled range {nature['sample_min']:.3g} to "
-        f"{nature['sample_max']:.3g}, {'integers' if nature['is_discrete_integers'] else 'not integers'})"
-    )
+    return f"{source} holds {_values_found(nature)}"
 
 
 def _not_raw_counts_error(
@@ -233,21 +238,34 @@ def _not_raw_counts_error(
 
 
 def _raw_count_model_problems(adata: Any, models: list[str]) -> dict[str, str]:
-    """Models that read raw counts (model card input_layer 'counts') whose input holds other values.
+    """Models whose input must be raw counts but holds other values: model -> error.
 
-    Their input is .layers['counts'], or .X when that layer is missing. Returns model -> error.
+    What a model reads comes from its model card: input_layer 'counts' (the scVI family)
+    means .layers['counts'], or .X when that layer is missing; input_layer 'X' with
+    default_preprocessing 'raw' (the foundation models: scGPT, Geneformer, UCE,
+    TranscriptFormer, Tahoe, Cell2Sentence, STATE, Stack) means raw counts in .X. Models
+    that read normalized expression (PCA) need nothing here.
     """
     from embpy.models.singlecell_models import singlecell_info
 
-    needs_counts = [m for m in models if singlecell_info(m).input_layer == "counts"]
-    if not needs_counts:
-        return {}
-    layer = "counts" if "counts" in adata.layers else None
-    nature = _detect_expression_nature(adata, layer=layer)
-    if nature["detected_nature"] not in _NOT_RAW_COUNTS:
-        return {}
-    found = _found_values(nature, layer)
-    return {m: f"{m} needs raw counts in .X or .layers['counts'], but {found}." for m in needs_counts}
+    natures: dict[str | None, dict[str, Any]] = {}
+    problems: dict[str, str] = {}
+    for model in models:
+        card = singlecell_info(model)
+        if card.input_layer == "counts":
+            layer = "counts" if "counts" in adata.layers else None
+            needs = ".X or .layers['counts']"
+        elif card.input_layer == "X" and card.default_preprocessing == "raw":
+            layer, needs = None, ".X"
+        else:
+            continue
+        if layer not in natures:
+            natures[layer] = _detect_expression_nature(adata, layer=layer)
+        nature = natures[layer]
+        if nature["detected_nature"] in _NOT_RAW_COUNTS:
+            found = _found_values(nature, layer) if needs != ".X" else f".X holds {_values_found(nature)}"
+            problems[model] = f"{model} needs raw counts in {needs}, but {found}."
+    return problems
 
 
 # =========================================================================
@@ -1978,8 +1996,10 @@ def compute_embeddings(
         'standard' and 'raw' (error_type 'NotRawCountsError'). The counts preprocessing
         starts from follow the rule of preprocess_counts, and its warnings about them
         (e.g. corrected counts, or a switch to .layers['counts']) are in ``warning``. Without
-        preprocessing, models that read raw counts (scvi, scanvi, totalvi) fail when
-        .layers['counts'] (or .X) does not hold counts.
+        preprocessing, models that need raw counts fail when their input does not hold
+        counts: scvi, scanvi and totalvi read .layers['counts'] (or .X), and the
+        foundation models (scgpt, geneformer_*, uce, transcriptformer_*, tahoe_*,
+        cell2sentence_*, state, stack) read .X.
     device : str, default='auto'
         Compute device target ('auto', 'cpu', 'cuda', 'mps').
 
@@ -2175,8 +2195,8 @@ def compute_embeddings(
                     if adata.n_vars < 2000:
                         extra_kwargs["pca_use_hvg"] = False
 
-                # Without preprocessing, models that read raw counts (scVI family) get the
-                # file's values as they are; normalized values are refused per model.
+                # Without preprocessing, models that need raw counts (scVI family, foundation
+                # models) get the file's values as they are; normalized values are refused per model.
                 if run_preprocessing == "none":
                     blocked = _raw_count_model_problems(adata, resolved_models)
                 runnable = [m for m in resolved_models if m not in blocked]

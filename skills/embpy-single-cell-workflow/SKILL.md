@@ -44,7 +44,8 @@ preprocess_counts(path="data/pbmc.h5ad", preprocessing="standard", n_top_genes=2
   `counts_source` says which. If neither holds counts, the result is
   `error_type: "NotRawCountsError"` (the message says what was found): the data is already
   normalized, so skip this step and run step 3 on the input file with `preprocessing="none"`.
-  Models that need raw counts (`scvi`, `scanvi`, `totalvi`) cannot run on such a file; `pca` can.
+  Models that need raw counts (`scvi`, `scanvi`, `totalvi`, and foundation models such as
+  `scgpt`, `geneformer_v2_12L` or `state`) cannot run on such a file; `pca` can.
   Pass `assume_counts=True` only if the user confirms the values are counts.
 - Raw counts stay in `.X` and `.layers["counts"]`; normalized values go to
   `.layers["log_normalized"]` (and `.layers["scaled"]` with `scale=True`).
@@ -73,9 +74,10 @@ compute_embeddings(path="data/pbmc_preprocessed.h5ad", models=["pca", "scvi"], e
   genes and normalizes first, with lower QC/HVG thresholds on small datasets (listed in
   `preprocessing_adjustments`). A file that already holds `.layers["log_normalized"]` is used
   as is under `auto` too, and so is an already normalized `.X` without a counts layer (the
-  `warning` says so). On such a file `scvi`, `scanvi` and `totalvi` fail with a message that
-  they need raw counts (`models_failed`); tell the user, and do not retry with
-  `preprocessing="standard"`, which refuses it (`NotRawCountsError`).
+  `warning` says so). On such a file the models that need raw counts (`scvi`, `scanvi`,
+  `totalvi` and the foundation models such as `scgpt`) fail with a message saying so
+  (`models_failed`); tell the user, and do not retry with `preprocessing="standard"`, which
+  refuses it (`NotRawCountsError`).
 - If preprocessing removed cells or genes, `n_obs_output` / `n_vars_output` are smaller than
   `n_obs_input` / `n_vars_input` and the result has a `warning` saying how many. Tell the user.
 - `obs_column` / `var_column` do not apply to `single_cell`; it embeds the expression matrix.

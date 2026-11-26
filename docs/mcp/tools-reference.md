@@ -194,10 +194,13 @@ other layers exist (e.g. a file normalized with scanpy), `auto` embeds `.X` as t
 expression, as `none` would, and says so in `warning`: nothing is normalized again. (A file
 that also holds `.layers["log_normalized"]` is used as is, as above.) `standard` and `raw`
 refuse such a file with `error_type: "NotRawCountsError"` instead of treating `.X` as counts.
-Whenever no preprocessing runs (`none`, or `auto` on prepared input), models that
-read raw counts (`scvi`, `scanvi`, `totalvi`) need counts in `.layers["counts"]` or `.X`; given
-other values, each fails in `models_failed` with a message saying so (`partial_success`, or an
-`error` with `error_type: "NotRawCountsError"` when no model could run).
+Whenever no preprocessing runs (`none`, or `auto` on prepared input), each model that needs raw
+counts gets them where its model card says it reads them: `scvi`, `scanvi` and `totalvi` in
+`.layers["counts"]` (or `.X`), the foundation models (`scgpt`, `geneformer_*`, `uce`,
+`transcriptformer_*`, `tahoe_*`, `cell2sentence_*`, `state`, `stack`) in `.X`. Given other
+values, each such model fails in `models_failed` with a message saying so (`partial_success`,
+or an `error` with `error_type: "NotRawCountsError"` when no model could run); `pca` reads
+normalized expression and runs.
 
 **Keys.** Each single-cell model is saved as `.obsm["X_<model>"]` (or `output_key`) and recorded
 in `.uns["embpy_cell_embeddings"]`. A key that this record assigns to another model is refused
