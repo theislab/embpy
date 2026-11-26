@@ -678,3 +678,66 @@ def test_property_columns_keep_the_stored_values_when_a_lookup_fails(monkeypatch
     assert caffeine == {"molecular_weight": 194.19}
     assert list(saved.obs["mol_properties_n"]) == [1, 1]
     assert list(saved.obs["mol_molecular_weight"]) == [180.16, 194.19]
+
+
+# ---------------------------------------------------------------------------
+# 9. Columns written by earlier versions are taken over
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("start", ["b6dc03c_gene_go.json", "b6dc03c_go_then_0eec156_pathways.json"])
+def test_count_columns_of_earlier_versions_are_taken_over(start, monkeypatch, tmp_path):
+    """gene_go_n written by b6dc03c stays the GO count of column 'gene' after a later call recorded other counts."""
+    n_go = {"TP53": 3, "EGFR": 2}
+    _fake_lookups(monkeypatch, {("gene", "human"): {
+        "go": lambda e, s: {"uniprot": {"cellular_component": [{"id": f"GO:{i}"} for i in range(n_go[e])]}},
+        "pathways": lambda e, s: {"reactome": [{"id": "R-HSA-69488"}]},
+    }})
+    path = _legacy_file(start, tmp_path)
+    if start == "b6dc03c_gene_go.json":  # this version's first call records the pathway counts only
+        pathways = annotate_metadata(path=path, entity_type="gene", column="gene", annotation_types="pathways",
+                                     sources="reactome", output_path=str(tmp_path / "pathways.h5ad"))
+        assert pathways["new_columns_added"] == ["gene_pathways_n"]
+        path = pathways["output_path"]
+
+    n_go["TP53"] = 1  # UniProt changed since
+    go = annotate_metadata(path=path, entity_type="gene", column="gene", annotation_types="go",
+                           output_path=str(tmp_path / "go.h5ad"))
+    assert go["new_columns_added"] == ["gene_go_n"]
+    saved, _, record = _stored(go["output_path"])
+    assert [c for c in saved.obs.columns if c.startswith("gene_go_n")] == ["gene_go_n"]
+    assert list(saved.obs["gene_go_n"]) == [1, 2]
+    assert json.loads(record["provenance_json"])["count_columns"]["gene_go_n"] == {
+        "column": "gene", "entity_type": "gene", "organism": "human", "annotation_type": "go",
+    }
+
+
+@pytest.mark.parametrize(
+    "start", ["b6dc03c_molecule_properties.json", "b6dc03c_properties_then_0eec156_interactions.json"]
+)
+def test_property_columns_of_earlier_versions_are_taken_over(start, monkeypatch, tmp_path):
+    """mol_<property> written by b6dc03c stays column 'compound''s, also when a later call skipped properties."""
+    weight = {"aspirin": 180.16, "caffeine": 194.19}
+    _fake_lookups(monkeypatch, {("molecule", "human"): {
+        "interactions": lambda e, s: {"chembl": {"targets": [{"target": "PTGS1"}]}},
+        "properties": lambda e, s: {"rdkit": {"physicochemical": {"molecular_weight": weight[e], "hbd": 0,
+                                                                  "formula": "C"}}},
+    }})
+    path = _legacy_file(start, tmp_path)
+    if start == "b6dc03c_molecule_properties.json":  # this version's first call does not ask for properties
+        interactions = annotate_metadata(path=path, entity_type="molecule", column="compound",
+                                         annotation_types="interactions", output_path=str(tmp_path / "inter.h5ad"))
+        assert interactions["new_columns_added"] == ["mol_interactions_n"]
+        path = interactions["output_path"]
+
+    weight["caffeine"] = 194.2
+    properties = annotate_metadata(path=path, entity_type="molecule", column="compound",
+                                   annotation_types="properties", output_path=str(tmp_path / "properties.h5ad"))
+    assert properties["status"] == "success", properties
+    assert set(properties["new_columns_added"]) == {"mol_properties_n", "mol_molecular_weight", "mol_hbd", "mol_formula"}
+    saved, _, record = _stored(properties["output_path"])
+    assert not any(c.endswith("_compound") for c in saved.obs.columns)
+    assert list(saved.obs["mol_molecular_weight"]) == [180.16, 194.2]
+    assert json.loads(record["provenance_json"])["property_columns"]["mol_molecular_weight"] == {
+        "column": "compound", "property": "molecular_weight",
+    }

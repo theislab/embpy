@@ -1,0 +1,60 @@
+{
+ "written_by": "b6dc03c then 0eec156",
+ "calls": [
+  {
+   "version": "b6dc03c",
+   "entity_type": "molecule",
+   "column": "compound",
+   "annotation_types": "properties"
+  },
+  {
+   "version": "0eec156",
+   "entity_type": "molecule",
+   "column": "compound",
+   "annotation_types": "interactions"
+  }
+ ],
+ "obs_names": [
+  "w0",
+  "w1"
+ ],
+ "obs": {
+  "compound": [
+   "aspirin",
+   "caffeine"
+  ],
+  "mol_properties_n": [
+   3,
+   3
+  ],
+  "mol_molecular_weight": [
+   180.16,
+   194.19
+  ],
+  "mol_hbd": [
+   1.0,
+   0.0
+  ],
+  "mol_formula": [
+   "C9H8O4",
+   "C8H10N4O2"
+  ],
+  "mol_interactions_n": [
+   1,
+   1
+  ]
+ },
+ "uns": {
+  "embpy_annotations": {
+   "annotation_types": [
+    "properties",
+    "interactions"
+   ],
+   "column": "compound",
+   "entity_type": "molecule",
+   "organism": "human",
+   "provenance_json": "{\"molecule\": {\"interactions\": {\"chembl\": {\"organism\": \"human\", \"column\": \"compound\"}}}, \"count_columns\": {\"mol_interactions_n\": {\"column\": \"compound\", \"entity_type\": \"molecule\", \"annotation_type\": \"interactions\"}}}",
+   "results_json": "{\"aspirin\": {\"properties\": {\"rdkit\": {\"physicochemical\": {\"molecular_weight\": 180.16, \"hbd\": 1, \"formula\": \"C9H8O4\"}}}, \"interactions\": {\"chembl\": {\"targets\": [{\"target\": \"PTGS1\"}]}}}, \"caffeine\": {\"properties\": {\"rdkit\": {\"physicochemical\": {\"molecular_weight\": 194.19, \"hbd\": 0, \"formula\": \"C8H10N4O2\"}}}, \"interactions\": {\"chembl\": {\"targets\": [{\"target\": \"ADORA2A\"}]}}}}"
+  }
+ }
+}

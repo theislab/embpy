@@ -1,0 +1,47 @@
+{
+ "written_by": "b6dc03c",
+ "calls": [
+  {
+   "entity_type": "molecule",
+   "column": "compound",
+   "annotation_types": "properties"
+  }
+ ],
+ "obs_names": [
+  "w0",
+  "w1"
+ ],
+ "obs": {
+  "compound": [
+   "aspirin",
+   "caffeine"
+  ],
+  "mol_properties_n": [
+   3,
+   3
+  ],
+  "mol_molecular_weight": [
+   180.16,
+   194.19
+  ],
+  "mol_hbd": [
+   1.0,
+   0.0
+  ],
+  "mol_formula": [
+   "C9H8O4",
+   "C8H10N4O2"
+  ]
+ },
+ "uns": {
+  "embpy_annotations": {
+   "annotation_types": [
+    "properties"
+   ],
+   "column": "compound",
+   "entity_type": "molecule",
+   "organism": "human",
+   "results_json": "{\"aspirin\": {\"properties\": {\"rdkit\": {\"physicochemical\": {\"molecular_weight\": 180.16, \"hbd\": 1, \"formula\": \"C9H8O4\"}}}}, \"caffeine\": {\"properties\": {\"rdkit\": {\"physicochemical\": {\"molecular_weight\": 194.19, \"hbd\": 0, \"formula\": \"C8H10N4O2\"}}}}}"
+  }
+ }
+}

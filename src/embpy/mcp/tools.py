@@ -2519,6 +2519,8 @@ _RECORDS_VERSION = 2
 # Molecule annotations do not depend on the organism; their records are stored under this key.
 _ANY_ORGANISM = "any"
 _STORED_ENTITY_TYPES = ("gene", "protein", "molecule")
+# Prefix of the .obs count columns <prefix>_<type>_n per entity type.
+_COUNT_PREFIX = {"gene": "gene", "protein": "prot", "molecule": "mol"}
 
 
 def _records_organism(entity_type: str, organism: str) -> str:
@@ -2542,21 +2544,36 @@ def _scoped_records(records: dict[str, Any], entity: str, entity_type: str, orga
     return value if isinstance(value, dict) else {}
 
 
-def _load_annotation_store(record: Any) -> tuple[dict[str, Any], list[dict[str, str]], dict | None, dict | None]:
+def _scalar_properties(records: dict[str, Any], entity: str) -> dict[str, Any]:
+    """The stored RDKit properties of molecule ``entity`` with a single value (no lists or dicts)."""
+    value: Any = _scoped_records(records, entity, "molecule", _ANY_ORGANISM).get("properties")
+    for key in ("rdkit", "physicochemical"):
+        value = value.get(key) if isinstance(value, dict) else None
+    return {k: v for k, v in value.items() if not isinstance(v, (dict, list))} if isinstance(value, dict) else {}
+
+
+def _load_annotation_store(
+    record: Any, obs_columns: Any
+) -> tuple[dict[str, Any], list[dict[str, str]], dict[str, Any], dict[str, Any]]:
     """The records, provenance sources and column registries stored in ``.uns["embpy_annotations"]``.
 
-    Returns ``(records, sources, count_columns, property_columns)``; a registry is None when
-    the file has none. Files written before records were kept per entity type and organism
-    hold identifier -> type -> source: each type and source goes to the entity type and
-    organism their provenance names, else to those of the call that wrote the record (when
-    several entity types stored one type and source, to the record's own if it is one of them).
+    Returns ``(records, sources, count_columns, property_columns)``. Files written before
+    records were kept per entity type and organism hold identifier -> type -> source: each
+    type and source goes to the entity type and organism their provenance names; without
+    provenance, to the entity type whose sources include it, preferring the one of the call
+    that wrote the record (whose organism and column then apply).
+
+    Those versions named count and property columns after the type alone
+    (``<prefix>_<type>_n``, ``mol_<property>``), and the first did not record them. Such a
+    column in ``obs_columns`` that no registry lists is taken over for the identifier column
+    its type's records came from.
     """
     results = _json_field(record, "results_json")
     provenance = _json_field(record, "provenance_json")
     count_columns = provenance.get("count_columns")
-    count_columns = dict(count_columns) if isinstance(count_columns, dict) else None
+    count_columns = dict(count_columns) if isinstance(count_columns, dict) else {}
     property_columns = provenance.get("property_columns")
-    property_columns = dict(property_columns) if isinstance(property_columns, dict) else None
+    property_columns = dict(property_columns) if isinstance(property_columns, dict) else {}
     meta = record if isinstance(record, dict) else {}
     version = meta.get("version")
     if isinstance(version, (int, np.integer)) and int(version) == _RECORDS_VERSION:
@@ -2577,18 +2594,28 @@ def _load_annotation_store(record: Any) -> tuple[dict[str, Any], list[dict[str, 
                 owners.setdefault((str(t), str(s)), []).append((
                     et, _records_organism(et, str(info.get("organism") or organism)), str(info.get("column") or column)
                 ))
+
+    def owner_of(ann_type: str, source: str) -> tuple[str, str, str]:
+        found = owners.get((ann_type, source))
+        if found:
+            return next((o for o in found if o[0] == entity_type), found[0])
+        serving = [et for et in _STORED_ENTITY_TYPES if source in _ANNOTATION_SOURCES[et].get(ann_type, ())]
+        if not serving or entity_type in serving:
+            return entity_type, _records_organism(entity_type, organism), column
+        # Another entity type's records, kept by a later call: their organism and column are unknown.
+        return serving[0], _records_organism(serving[0], "human"), ""
+
     records: dict[str, Any] = {}
     sources: list[dict[str, str]] = []
     for e, by_type in results.items():
         for t, by_source in (by_type.items() if isinstance(by_type, dict) else ()):
             for s, data in (by_source.items() if isinstance(by_source, dict) else ()):
-                found = owners.get((str(t), str(s))) or [(entity_type, _records_organism(entity_type, organism), column)]
-                et, org, col = next((o for o in found if o[0] == entity_type), found[0])
+                et, org, col = owner_of(str(t), str(s))
                 _child(_child(_child(records, str(e)), et), org).setdefault(str(t), {})[str(s)] = data
                 entry = {"entity_type": et, "organism": org, "column": col, "annotation_type": str(t), "source": str(s)}
                 if entry not in sources:
                     sources.append(entry)
-    for info in (count_columns or {}).values():
+    for info in count_columns.values():
         if isinstance(info, dict) and "organism" not in info:
             organisms = {
                 s["organism"] for s in sources
@@ -2598,6 +2625,30 @@ def _load_annotation_store(record: Any) -> tuple[dict[str, Any], list[dict[str, 
             info["organism"] = (
                 organisms.pop() if len(organisms) == 1 else _records_organism(str(info.get("entity_type")), organism)
             )
+
+    # Take over the columns those versions wrote: (entity type, type) -> {(column, organism)}.
+    columns_of: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    for s in sources:
+        if s["column"]:
+            columns_of.setdefault((s["entity_type"], s["annotation_type"]), set()).add((s["column"], s["organism"]))
+    types = meta.get("annotation_types", [])
+    if entity_type in _STORED_ENTITY_TYPES and column:  # also types whose lookups stored no record
+        for t in [types] if isinstance(types, str) else [str(t) for t in types]:
+            columns_of.setdefault((entity_type, t), {(column, _records_organism(entity_type, organism))})
+    for (et, t), found in columns_of.items():
+        if len(found) > 1:  # several columns: the column of the call that wrote the record, if one of them
+            found = {f for f in found if f[0] == column}
+        if len(found) != 1:
+            continue
+        ((col, org),) = found
+        name = f"{_COUNT_PREFIX[et]}_{t}_n"
+        if name in obs_columns and name not in count_columns:
+            count_columns[name] = {"column": col, "entity_type": et, "organism": org, "annotation_type": t}
+        if (et, t) == ("molecule", "properties"):
+            for key in dict.fromkeys(k for e in records for k in _scalar_properties(records, e)):
+                name = f"mol_{key}"
+                if name in obs_columns and name not in property_columns and name not in count_columns:
+                    property_columns[name] = {"column": col, "property": key}
     return records, sources, count_columns, property_columns
 
 
@@ -2638,35 +2689,10 @@ def _merge_annotation_records(
     return merged, updated
 
 
-def _obs_column_source(
-    name: str,
-    record: Any,
-    provenance: dict[str, Any],
-    entity_type: str,
-    ann_type: str,
-    registry: str = "count_columns",
-) -> str | None:
-    """The identifier column whose annotations ``.obs[name]`` holds, or None if unknown.
-
-    ``registry`` is the provenance_json entry that lists the columns of this kind
-    ("count_columns" or "property_columns"); a column it does not list was not written
-    by annotate_metadata. Files written before it existed are read from the stored
-    provenance or record.
-    """
-    recorded = provenance.get(registry)
-    if isinstance(recorded, dict):
-        return recorded[name].get("column") if isinstance(recorded.get(name), dict) else None
-    # Written before such columns were recorded: the column the type's records came from ...
-    by_source = provenance.get(entity_type, {}).get(ann_type) if isinstance(provenance.get(entity_type), dict) else None
-    if isinstance(by_source, dict):
-        columns = {info.get("column") for info in by_source.values() if isinstance(info, dict)}
-        return columns.pop() if len(columns) == 1 else None
-    # ... or, before any provenance was kept, the column of the call that wrote the record.
-    if isinstance(record, dict) and "provenance_json" not in record and record.get("entity_type") == entity_type:
-        types = record.get("annotation_types", [])
-        if ann_type in ([types] if isinstance(types, str) else [str(t) for t in types]):
-            return str(record.get("column"))
-    return None
+def _owned_by(registry: dict[str, Any], name: str, column: str) -> bool:
+    """Whether the registry lists ``.obs[name]`` as written for identifier column ``column``."""
+    info = registry.get(name)
+    return isinstance(info, dict) and info.get("column") == column
 
 
 # Names a KEGG reference folder (written by kegg_index.build_kegg_reference).
@@ -3353,17 +3379,17 @@ def annotate_metadata(
             # of its own entity type and organism.
             earlier = adata.uns.get(_ANNOTATIONS_KEY)
             records_org = _records_organism(resolved_entity, org)
-            stored, stored_sources, count_columns, property_columns = _load_annotation_store(earlier)
+            stored, stored_sources, count_columns, property_columns = _load_annotation_store(
+                earlier, adata.obs.columns
+            )
             stored, updated = _merge_annotation_records(
                 stored, results, sources_queried, failed_lookups, resolved_entity, records_org
             )
-            provenance = _json_field(earlier, "provenance_json")
-            count_columns = count_columns if count_columns is not None else {}
-            prefix = {"gene": "gene", "protein": "prot", "molecule": "mol"}[resolved_entity]
             for t in requested:
-                col = f"{prefix}_{t}_n"
-                if col in adata.obs.columns and _obs_column_source(col, earlier, provenance, resolved_entity, t) != query_col:
-                    # These are another identifier column's counts: keep them, name this column's after it.
+                col = f"{_COUNT_PREFIX[resolved_entity]}_{t}_n"
+                if col in adata.obs.columns and not _owned_by(count_columns, col, query_col):
+                    # Another identifier column's counts, or a column this tool did not write:
+                    # keep it, and name this column's counts after it.
                     col = f"{col}_{query_col}"
                 # The number of records stored for the row's entity (this entity type and organism),
                 # from every source of the type.
@@ -3394,20 +3420,13 @@ def annotate_metadata(
             if resolved_entity == "molecule" and "properties" in requested:
                 # Scalar RDKit properties as columns, as tl.annotate_molecules writes them, from the
                 # stored records: a compound whose lookup failed this time keeps its earlier values.
-                props: dict[str, dict[str, Any]] = {}
-                for e in entities:
-                    value: Any = _scoped_records(stored, e, "molecule", records_org).get("properties")
-                    for key in ("rdkit", "physicochemical"):
-                        value = value.get(key) if isinstance(value, dict) else None
-                    props[e] = value if isinstance(value, dict) else {}
-                prop_keys = list(dict.fromkeys(k for p in props.values() for k, v in p.items() if not isinstance(v, (dict, list))))
-                property_columns = property_columns if property_columns is not None else {}
+                props = {e: _scalar_properties(stored, e) for e in entities}
+                prop_keys = list(dict.fromkeys(k for p in props.values() for k in p))
                 for key in prop_keys:
                     name = f"mol_{key}"
-                    if name in adata.obs.columns and _obs_column_source(
-                        name, earlier, provenance, "molecule", "properties", registry="property_columns"
-                    ) != query_col:
-                        # Another identifier column's properties: keep them, name this column's after it.
+                    if name in adata.obs.columns and not _owned_by(property_columns, name, query_col):
+                        # Another identifier column's properties, or a column this tool did not
+                        # write: keep it, and name this column's after it.
                         name = f"{name}_{query_col}"
                     column_values = [props.get(v, {}).get(key) if v else None for v in values]
                     present = [x for x in column_values if x is not None]
@@ -3430,9 +3449,9 @@ def annotate_metadata(
                 }
                 if entry not in stored_sources:
                     stored_sources.append(entry)
-            new_provenance: dict[str, Any] = {"sources": stored_sources, "count_columns": count_columns}
-            if property_columns is not None:
-                new_provenance["property_columns"] = property_columns
+            new_provenance = {
+                "sources": stored_sources, "count_columns": count_columns, "property_columns": property_columns,
+            }
             earlier_types = earlier.get("annotation_types", []) if isinstance(earlier, dict) else []
             if isinstance(earlier_types, str):
                 earlier_types = [earlier_types]

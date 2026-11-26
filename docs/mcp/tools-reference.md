@@ -275,6 +275,10 @@ records. Molecule property columns follow the same naming rule:
 `mol_<property>` belongs to the first SMILES column annotated with `properties`, another column
 gets `mol_<property>_<column>` (e.g. `mol_molecular_weight_vehicle`), and
 `provenance_json["property_columns"]` maps each to its identifier column and property.
+Count and property columns that earlier versions wrote under these names (which they did not
+record) are taken over for the identifier column their records came from, so annotating that
+column again updates them. A column of such a name that this tool did not write is never
+overwritten: the new counts or values get the `_<column>` name instead.
 
 ---
 
