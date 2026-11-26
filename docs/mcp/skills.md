@@ -67,7 +67,7 @@ uv tool install --python 3.12 --editable ".[mcp,models]"
 
 With a), set `EMBPY_PYTHON` to that Python unless you start Claude from a shell where the
 environment is active: `export EMBPY_PYTHON=/path/to/env/bin/python` (macOS, Linux),
-`setx EMBPY_PYTHON C:\path\to\env\python.exe` (Windows, for new terminals), or for every
+`setx EMBPY_PYTHON C:\path\to\env\Scripts\python.exe` (Windows venv, for new terminals), or for every
 session in `~/.claude/settings.json`: `{"env": {"EMBPY_PYTHON": "/path/to/env/bin/python"}}`.
 Then load the plugin and check that the server connects:
 
