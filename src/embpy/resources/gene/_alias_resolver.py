@@ -499,7 +499,10 @@ def resolve_symbol_chain(
         return res
 
     # Everything failed: record a negative result so we never repeat
-    # the same 4xx storm.
+    # the same 4xx storm -- but only if some source answered. A chain of
+    # service failures alone (offline, timeouts, 5xx) proves nothing, so it is
+    # not stored: the next call asks again, and a cached answer is never
+    # replaced by an outage.
     res = Resolution(
         input_symbol=sym,
         organism=organism,
@@ -511,6 +514,23 @@ def resolve_symbol_chain(
         "resolve_symbol: could not resolve %r (%s); chain=%s",
         sym, organism, chain,
     )
-    cache.put(res)
+    if any(_is_answer(status) for _, status in chain):
+        cache.put(res)
     _ = hgnc_symbol  # kept for future telemetry; silences linters
     return res
+
+
+def _is_answer(status: str) -> bool:
+    """Whether a chain step's status is a source's answer rather than a failure to get one.
+
+    Found, not found, ambiguous and client errors (4xx other than 429) are
+    answers; network errors, 429, 5xx, unreadable replies and a missing
+    pyensembl or ``requests`` are not.
+    """
+    if status in ("ok", "alias_ok", "miss") or status.startswith("ambiguous:"):
+        return True
+    for prefix in ("http:", "error:HTTP"):
+        code = status[len(prefix) :] if status.startswith(prefix) else ""
+        if code.isdigit():
+            return 400 <= int(code) < 500 and int(code) != 429
+    return False

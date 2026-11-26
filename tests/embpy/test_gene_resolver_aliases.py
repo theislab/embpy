@@ -226,3 +226,39 @@ def test_resolve_symbol_without_cache_resolves_again(monkeypatch, tmp_path: Path
     resolver._alias_cache.flush()
     saved = json.loads((tmp_path / "symbol_resolution.json").read_text(encoding="utf-8"))
     assert saved["entries"]["human::OLDNAME"]["approved_symbol"] == "FRESH1"
+
+
+def _offline(url, **kwargs):
+    raise requests.ConnectionError(f"offline: {url}")
+
+
+def test_offline_refresh_keeps_the_cached_answer(monkeypatch, tmp_path: Path) -> None:
+    """A fresh resolution that only met service failures does not replace a good answer."""
+    from embpy.resources.gene.resolver import GeneResolver
+
+    monkeypatch.setenv("EMBPY_CACHE", str(tmp_path))
+    good = {
+        "input_symbol": "AARS",
+        "organism": "human",
+        "approved_symbol": "AARS1",
+        "source": "hgnc",
+        "chain": [["pyensembl", "no_pyensembl"], ["hgnc", "ok"]],
+    }
+    cache_file = tmp_path / "symbol_resolution.json"
+    cache_file.write_text(json.dumps({"version": 1, "entries": {"human::AARS": good}}), encoding="utf-8")
+    monkeypatch.setattr(requests, "get", _offline)  # HGNC, Ensembl and MyGene.info all unreachable
+    resolver = GeneResolver.__new__(GeneResolver)
+    resolver.ensembl = None  # no pyensembl
+
+    assert resolver.resolve_symbol("AARS", use_cache=False) is None  # the fresh attempt failed
+    assert resolver.resolve_symbol("AARS") == "AARS1"
+    resolver._alias_cache.flush()
+    assert json.loads(cache_file.read_text(encoding="utf-8"))["entries"]["human::AARS"] == good
+
+
+def test_offline_miss_is_not_cached(monkeypatch, cache: AliasCache) -> None:
+    """Only service failures: nothing is stored, so the next call asks again."""
+    monkeypatch.setattr(requests, "get", _offline)
+    res = resolve_symbol_chain("NEWNAME", organism="human", ensembl=None, cache=cache)
+    assert res.approved_symbol is None
+    assert cache.get("NEWNAME", "human") is None

@@ -1421,6 +1421,12 @@ class GeneResolver:
         the cache (forces a fresh resolution; still WRITES the cache:
         the new answer replaces the cached one).
 
+        A negative result is only stored when some source answered (e.g.
+        "not found"): when every step failed to reach its service (offline,
+        timeouts, server errors), nothing is stored. So ``use_cache=False``
+        while offline returns ``None`` and leaves the cached answer in place
+        for later calls.
+
         Returns the approved symbol or ``None`` if every step failed.
         See :class:`embpy.resources.gene._alias_resolver.Resolution` for
         the structured result with full per-step chain log.
