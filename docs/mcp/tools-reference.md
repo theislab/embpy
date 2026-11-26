@@ -107,13 +107,23 @@ no `.uns["log1p"]`, which scanpy and cell-eval read as "`.X` is log-transformed"
 holds for files that `compute_embeddings` preprocessed. Default output:
 `<input>_preprocessed.h5ad`.
 
-**Input checks.** Normalization starts from `.layers["counts"]` when it exists, else from `.X`.
-If those values are not raw counts (non-integer or negative; see `inspect_data`'s
-`expression_nature`), the call returns `error_type: "NotRawCountsError"` with the detected
-`expression_nature` instead of normalizing normalized data again; `assume_counts=True` treats
-them as counts anyway (e.g. ambient-corrected counts). If filtering would leave no cell or no
-gene, the call returns `error_type: "EmptyAfterFilteringError"` with the `thresholds` it used.
-No file is written in either case.
+**Which counts.** One rule, followed by `preprocess_counts`, `compute_embeddings` and
+`embpy.pp.preprocess_counts`, so every tool normalizes the same matrix of a file:
+
+- `.X` is the source when it holds counts: integers (`raw_counts`), or non-integer counts such
+  as ambient-corrected (SoupX, DecontX) or EM-assigned counts (`non_integer_counts`, with a
+  `warning`). An integer `.X` next to other integers in `.layers["counts"]` (e.g. CellBender
+  output next to the original counts) is used too.
+- `.layers["counts"]` is the source only when `.X` is clearly not counts (log-transformed,
+  normalized or scaled; see `inspect_data`'s `expression_nature`) and that layer holds counts.
+  `warning` says so.
+
+`counts_source` names the matrix used, and the saved file holds it in `.X` and
+`.layers["counts"]`. If neither holds counts, the call returns
+`error_type: "NotRawCountsError"` with the detected `expression_nature` instead of normalizing
+normalized data again; `assume_counts=True` uses `.X` as the counts anyway. If filtering would
+leave no cell or no gene, the call returns `error_type: "EmptyAfterFilteringError"` with the
+`thresholds` it used. No file is written in either case.
 
 ---
 

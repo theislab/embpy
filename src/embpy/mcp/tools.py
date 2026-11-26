@@ -38,6 +38,7 @@ import numpy as np
 import requests
 
 from embpy._counts import NOT_COUNTS
+from embpy._counts import counts_source as _counts_source
 from embpy._counts import describe_values as _describe_values
 from embpy.errors import GeneResolutionError
 
@@ -1019,10 +1020,13 @@ def preprocess_counts(
     auto_adjust : bool, default=False
         If True, automatically lowers thresholds for small tutorial/test datasets.
     assume_counts : bool, default=False
-        The raw counts are read from .layers['counts'] when it exists, else from .X. If
-        they do not look like counts (non-integer or negative values), the call fails with
+        The counts are read from .X when it holds counts (integers, or non-integer counts
+        such as ambient-corrected or EM counts, with a warning), and from .layers['counts']
+        only when .X is clearly not counts (log-transformed, normalized or scaled) and that
+        layer holds counts: the rule compute_embeddings follows too (counts_source in the
+        reply names the matrix used). If neither holds counts, the call fails with
         error_type 'NotRawCountsError' instead of normalizing normalized data again. Pass
-        True to treat them as counts anyway (e.g. ambient-corrected, non-integer counts).
+        True to use .X as the counts anyway.
 
     Returns
     -------
@@ -1054,13 +1058,19 @@ def preprocess_counts(
 
         adata = anndata.read_h5ad(resolved_path)
 
-        # Every step starts from raw counts: .layers['counts'] when present, else .X.
+        # The counts to start from, by the rule embpy.pp.preprocess_counts (and so
+        # compute_embeddings) follows: .X when it holds counts (integers, or corrected / EM
+        # counts), .layers['counts'] only when .X is clearly not counts.
         counts_layer = "counts" if "counts" in adata.layers else None
+        choice = _counts_source(adata)
+        source_warnings: list[str] = []
         # 'none' only writes .layers['counts'] (from .X) when it is missing.
-        if not assume_counts and (preprocessing != "none" or counts_layer is None):
-            nature = _detect_expression_nature(adata, layer=counts_layer)
-            if nature["detected_nature"] in _NOT_RAW_COUNTS:
-                return _not_raw_counts_error(path, nature, counts_layer)
+        if preprocessing != "none" or counts_layer is None:
+            if not choice["found"] and not assume_counts:
+                return _not_raw_counts_error(path, _detect_expression_nature(adata, layer=counts_layer), counts_layer)
+            if choice["found"] and choice["message"]:
+                source_warnings.append(choice["message"])
+        use_counts_layer = choice["source"] == "counts"
 
         if preprocessing == "auto":
             auto_adjust = True
@@ -1074,7 +1084,7 @@ def preprocess_counts(
             if "counts" not in adata.layers:
                 adata.layers["counts"] = adata.X.copy()
             _save_anndata_safely(adata, saved_path)
-            return {
+            reply = {
                 "status": "success",
                 "input_path": str(resolved_path),
                 "output_path": saved_path,
@@ -1088,6 +1098,9 @@ def preprocess_counts(
                     f"{adata.n_vars} genes with raw counts preserved in .layers['counts']."
                 ),
             }
+            if source_warnings:
+                reply["warning"] = " ".join(source_warnings)
+            return reply
 
         adjustments_applied: dict[str, Any] = {}
         if auto_adjust:
@@ -1100,9 +1113,11 @@ def preprocess_counts(
             effective_n_hvg = min(n_top_genes, adata.n_vars)
 
         with contextlib.redirect_stdout(sys.stderr):
-            # Normalize from the raw counts, and keep them in layers['counts'].
-            if counts_layer:
-                adata.X = adata.layers[counts_layer].copy()
+            # Normalize from the counts chosen above, and keep them in .X and layers['counts'].
+            if use_counts_layer:
+                adata.X = adata.layers["counts"].copy()
+                # .uns['log1p'] described the replaced .X, which now holds counts.
+                adata.uns.pop("log1p", None)
             else:
                 adata.layers["counts"] = adata.X.copy()
 
@@ -1184,6 +1199,7 @@ def preprocess_counts(
             "n_hvg": n_hvg_count,
             "hvg_count": n_hvg_count,
             "layers": _layer_names(adata),
+            "counts_source": ".layers['counts']" if use_counts_layer else ".X",
             "summary": (
                 f"Successfully preprocessed {adata.n_obs} cells and {adata.n_vars} genes. "
                 f"Stored raw counts in .layers['counts'], log-normalized expression in .layers['log_normalized'], "
@@ -1192,6 +1208,8 @@ def preprocess_counts(
         }
         if adjustments_applied:
             res_payload["adjustments_applied"] = adjustments_applied
+        if source_warnings:
+            res_payload["warning"] = " ".join(source_warnings)
         return res_payload
 
     except Exception as exc:

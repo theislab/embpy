@@ -721,3 +721,39 @@ def test_mcp_tools_classify_corrected_counts_as_counts(tmp_path, fast_scvi):
     assert res["status"] == "success", res
     assert res["models_computed"] == ["pca", "scvi"]
     assert res["preprocessing_applied"] == "standard"
+
+
+@pytest.mark.parametrize("kind", ["integer", "non-integer"])
+def test_preprocess_counts_and_compute_embeddings_use_the_same_counts(tmp_path, kind):
+    """Corrected counts in .X and the original counts in .layers['counts'] (CellBender, SoupX):
+    both tools normalize .X, and preprocess_counts saves it as the counts."""
+    import anndata
+
+    rng = np.random.default_rng(4)
+    raw = rng.negative_binomial(5, 0.3, size=(100, 300)).astype(np.float32)
+    if kind == "integer":
+        corrected = np.maximum(raw - rng.integers(0, 2, size=raw.shape), 0).astype(np.float32)
+    else:
+        corrected = np.clip(raw - rng.uniform(0, 1.5, size=raw.shape), 0, None).astype(np.float32)
+    adata = _cells(corrected)
+    adata.layers["counts"] = raw.copy()
+    path = str(tmp_path / "corrected.h5ad")
+    adata.write_h5ad(path)
+    expected = _log_normalized(corrected)
+
+    prepped = str(tmp_path / "prepped.h5ad")
+    res = preprocess_counts(path=path, output_path=prepped, min_genes=0, min_cells=0, select_hvg=False)
+    assert res["status"] == "success", res
+    assert res["counts_source"] == ".X"
+    if kind == "non-integer":
+        assert "non-integer" in res["warning"]
+    saved = anndata.read_h5ad(prepped)
+    np.testing.assert_allclose(saved.layers["log_normalized"], expected, rtol=1e-5, atol=1e-6)
+    np.testing.assert_array_equal(np.asarray(saved.X), corrected)
+
+    embedded = str(tmp_path / "embedded.h5ad")
+    res = compute_embeddings(path=path, models="pca", output_path=embedded)
+    assert res["status"] == "success", res
+    saved = anndata.read_h5ad(embedded)
+    assert saved.shape == corrected.shape
+    np.testing.assert_allclose(saved.layers["log_normalized"], expected, rtol=1e-5, atol=1e-6)

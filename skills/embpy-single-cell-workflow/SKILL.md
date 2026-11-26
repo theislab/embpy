@@ -39,12 +39,13 @@ preprocess_counts(path="data/pbmc.h5ad", preprocessing="standard", n_top_genes=2
   `error_type: "EmptyAfterFilteringError"` and the `thresholds` used, and no file is written.
   Use `preprocessing="auto"` to scale the thresholds to the dataset, and tell the user which
   thresholds were changed (`adjustments_applied`).
-- The input must hold raw counts, in `.layers["counts"]` or in `.X`. Normalized values there give
+- The counts come from `.X` when it holds counts (also corrected, non-integer counts; then the
+  result has a `warning`), and from `.layers["counts"]` only when `.X` is normalized.
+  `counts_source` says which. If neither holds counts, the result is
   `error_type: "NotRawCountsError"` (the message says what was found): the data is already
   normalized, so skip this step and run step 3 on the input file with `preprocessing="none"`.
   Models that need raw counts (`scvi`, `scanvi`, `totalvi`) cannot run on such a file; `pca` can.
-  Pass `assume_counts=True` only if the user confirms the values are counts (e.g.
-  ambient-corrected, non-integer counts).
+  Pass `assume_counts=True` only if the user confirms the values are counts.
 - Raw counts stay in `.X` and `.layers["counts"]`; normalized values go to
   `.layers["log_normalized"]` (and `.layers["scaled"]` with `scale=True`).
 
